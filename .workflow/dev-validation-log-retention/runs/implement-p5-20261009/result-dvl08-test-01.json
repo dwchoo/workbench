@@ -1,0 +1,19 @@
+{
+  "invocation": "dvl08-test-01",
+  "status": "failed_implementation",
+  "candidate": "0be44f68de9d15e27de43fe8c59e71fe41275636603b3f7204d673c9f8b9074c",
+  "tests": 21,
+  "passed": 19,
+  "failed": 2,
+  "files": [
+    "tests/backend/test_summary_gate_validator_independent.py",
+    "tests/backend/test_summary_probe_independent.py"
+  ],
+  "failures": [
+    "weakened canonical core policy minimum can be accepted as a new baseline",
+    "aliased importlib.import_module unknown dynamic import not invalidated"
+  ],
+  "runtime_coverage": "not_run; fixture-only judge phase",
+  "processes": "agent final response confirms no subprocess/socket observed",
+  "scope_audit": ".workflow/dev-validation-log-retention/runs/implement-p5-20261009/audit-dvl08-test-01.json"
+}

@@ -1,0 +1,26 @@
+{
+  "root": "/tmp/workbench-dvl-20261009-3l1ViH/dvl08",
+  "requirements": "docs/features/dev-validation-log-retention/requirements-r0.9-p5.json",
+  "argv": [
+    "/usr/bin/env",
+    "PYTHONPATH=src",
+    "PYTHONDONTWRITEBYTECODE=1",
+    "/tmp/workbench-dvl-20261009-3l1ViH/test-py312/bin/python",
+    "-m",
+    "unittest",
+    "discover",
+    "-s",
+    "tests/backend",
+    "-p",
+    "test_summary*.py",
+    "-v"
+  ],
+  "environment": "isolated DVL08 checkout; independent negative fixtures; no OMP/model/auth; frozen tester candidate",
+  "log": "/tmp/workbench-dvl-20261009-3l1ViH/dvl08/.workflow/dvl-local/independent-first-failure.log",
+  "check_id": "dvl08-independent-first-failure",
+  "watch": [],
+  "exclude": [
+    ".workflow/**"
+  ],
+  "timeout": 30
+}

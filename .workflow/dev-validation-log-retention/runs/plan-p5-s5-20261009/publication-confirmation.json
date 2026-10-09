@@ -1,0 +1,29 @@
+{
+  "schema_version": 1,
+  "bundle_digest": "78bc55919e57bbf2132d6653780c5c164a2ee1d618422e5232d4cf0d1d667c3e",
+  "candidate": "34e448b25f879f2a1113823dfb3756acd2133096dfaec23e78d9b5334fd1d0b1",
+  "observations": {
+    "all_21_file_hashes_match": true,
+    "record_reference_hashes_match": true,
+    "candidate_stable": true,
+    "scope_violations": 0,
+    "index_changes": 0,
+    "whitespace_diagnostics": 0,
+    "prior_p4_referenced_records_preserved": true,
+    "ticket_ids_and_dependencies_unchanged": 14,
+    "acceptance_ids_unchanged": 28,
+    "gate_ids_and_evidence_levels_unchanged": 46,
+    "supplier_errors": 0,
+    "cycles": 0,
+    "DVL10_judge_scope_excluded": true,
+    "canonical_policy_owner": "DVL-08",
+    "product_policy_created": false
+  },
+  "evidence": "Root final read-only publication integrity/AC/gate/supplier/scope comparisons + whitespace checks, exit0. This is structural/document evidence only.",
+  "product_tests_or_omp_probes_run": false,
+  "model_calls_run": false,
+  "new_agents_created": false,
+  "new_claude_review_requested": false,
+  "bundle_approved": false,
+  "implementation_authorized": false
+}

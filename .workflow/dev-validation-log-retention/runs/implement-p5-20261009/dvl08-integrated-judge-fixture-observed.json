@@ -1,0 +1,43 @@
+{
+  "after": "01d7459beac326c0b264736a7740cd4285a280b8b6d3ed43a51f7cc478dc8b2a",
+  "argv": [
+    "/usr/bin/env",
+    "PYTHONPATH=src",
+    "PYTHONDONTWRITEBYTECODE=1",
+    "TMPDIR=/home/dwchoo/ai-exp-assistant/.workflow/dev-validation-log-retention/runs/implement-p5-20261009",
+    "/tmp/workbench-dvl-20261009-3l1ViH/test-py312/bin/python",
+    "-m",
+    "unittest",
+    "discover",
+    "-s",
+    "tests/backend",
+    "-p",
+    "test_summary*.py",
+    "-v"
+  ],
+  "before": "01d7459beac326c0b264736a7740cd4285a280b8b6d3ed43a51f7cc478dc8b2a",
+  "check_id": "dvl08-integrated-judge-fixture-observed",
+  "cwd": "/home/dwchoo/ai-exp-assistant",
+  "environment": "Root integrated unchanged judge delta; Python3.12.3; independent31fixtures; no realOMP/models/auth; graphify AST-only finished",
+  "exit_code": 0,
+  "finished_at": "2026-10-09T08:25:23.814704+00:00",
+  "items": [
+    {
+      "id": "Q01-validator",
+      "acceptance_ids": [
+        "LG-AC-06"
+      ],
+      "result": "passed",
+      "observed_evidence_level": "fixture",
+      "evidence": ".workflow/dev-validation-log-retention/runs/implement-p5-20261009/integrated-judge31.log + q01-judge-freeze-01.json + result-dvl08-review-02.json;31 meaningful fixtures; no Q01 runtime pass",
+      "unknowns": []
+    }
+  ],
+  "log": "/home/dwchoo/ai-exp-assistant/.workflow/dev-validation-log-retention/runs/implement-p5-20261009/integrated-judge31.log",
+  "log_sha256": "6ad476df524debe7b62207d5a40ebe67585916d78fda325d58a2d74606f589ae",
+  "requirements_identity": "84d8dc604d543fb92116b25b00198ee43dc1b330466403534c377f1791d6eb18",
+  "schema_version": 1,
+  "stable": true,
+  "started_at": "2026-10-09T08:25:19.076875+00:00",
+  "timed_out": false
+}

@@ -1,0 +1,25 @@
+{
+  "schema_version": 1,
+  "feature": "dev-validation-log-retention",
+  "run_id": "implement-p5-20261009",
+  "recorded_at": "2026-10-09T07:34:25Z",
+  "user_request": "$implement docs/features/dev-validation-log-retention",
+  "approval": ".workflow/dev-validation-log-retention/runs/approval-s5-p5-20261009/approval.json",
+  "approved_bundle_digest": "78bc55919e57bbf2132d6653780c5c164a2ee1d618422e5232d4cf0d1d667c3e",
+  "implementation_authorized": true,
+  "isolated_scripted_tests_and_probes_authorized": true,
+  "independent_test_and_review_required": true,
+  "paid_models_authorized": false,
+  "actual_user_raw_activation_authorized": false,
+  "commit_publish_deploy_authorized": false,
+  "plan_bytes_preserved": true,
+  "prior_execution_accounting": "No execution ledger/assignment files found for this feature and host lists Root only. This explicitly starts a new implementation run; prior planning/review history is preserved, not reset.",
+  "model_effort": "Root actual host metadata unverified; no setting/model switch. Role configuration is tool metadata; higher user-selected effort not silently lowered.",
+  "workspace_policy": {
+    "base": "/tmp/workbench-dvl-20261009-3l1ViH",
+    "kind": "separate full checkout copies with independent .git and exact dirty inputs",
+    "max_writers": 2,
+    "tool_binding": "explicit workdir/absolute apply_patch paths; unrestricted shared host permissions remain detective, no enforced sandbox claim",
+    "smoke_required": true
+  }
+}

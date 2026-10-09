@@ -1,0 +1,32 @@
+{
+  "invocation": "dvl01-review-03",
+  "outcome": "failed",
+  "candidate": "be1fb71086af83bb16926a51371bee85747c4c490f6dad59cf89fd28490aa83a",
+  "resolved": [
+    "normal livefork/crossExec exactstop",
+    "structuredactualsuite/progress"
+  ],
+  "currentfast": {
+    "tests": 80,
+    "exit": 0,
+    "duration": 26.229,
+    "evidence": ".workflow/dev-validation-log-retention/runs/implement-p5-20261009/dvl01-fast-fixed03-check.json"
+  },
+  "findings": [
+    {
+      "id": "S01-R8",
+      "severity": "medium",
+      "fact": "Normal nativebackend shutdown canbeZ adoptedbeforeSuiteend; directchildren alivefilter/scan onlycleanup excludesZ so neithercontrolowned/adoptedSeen tracks PID; reaper skipsownedZ, priorOSrestore notreparent; bounded exactreap missing",
+      "paths": [
+        "tools/dev_validate.py:318",
+        "tools/dev_validate.py:346",
+        "tools/dev_validate.py:476",
+        "tools/dev_validate.py:390"
+      ],
+      "reported_by": "fresh readonly reviewer no newprobe",
+      "evidence": "current actualfast report installedplainbash reapedPids/adoptedPids empty (not aloneproof); sourcefault concrete"
+    }
+  ],
+  "next": "boundednormalcompletion+reapedZ correction, meaningful independenttest and refreshedfast/review affected",
+  "not_claimed": "currentfastpass doesNOTproveZreap; no repeatedunchangedreview"
+}

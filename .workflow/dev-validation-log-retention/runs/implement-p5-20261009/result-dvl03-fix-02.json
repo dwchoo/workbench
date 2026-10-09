@@ -1,0 +1,9 @@
+{
+  "invocation": "dvl03-fix-02",
+  "outcome": "candidate_ready",
+  "scope_audit": ".workflow/dev-validation-log-retention/runs/implement-p5-20261009/audit-dvl03-fix-02.json",
+  "candidate_ref": ".workflow/dev-validation-log-retention/runs/implement-p5-20261009/checkpoint-dvl03-test-03.json",
+  "tests": "worker39 tests pass; independent files unchanged; diff check pass",
+  "correction": "sourceKind-specific physical stream strict Python/TS/repo + complete-negative proof transaction revalidation after late gap",
+  "cleanup": "worker final, subprocess ended"
+}

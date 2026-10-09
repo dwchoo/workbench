@@ -1,0 +1,37 @@
+{
+  "schema_version": 1,
+  "record_type": "actual-agent-binding-observation",
+  "agents": {
+    "dvl03": "/root/dvl03",
+    "dvl08": "/root/dvl08"
+  },
+  "observed": {
+    "dvl03": {
+      "marker": {
+        "invocation": "binding-dvl03-01",
+        "observed_cwd": "/tmp/workbench-dvl-20261009-3l1ViH/dvl03",
+        "git_root": "/tmp/workbench-dvl-20261009-3l1ViH/dvl03"
+      },
+      "git_inode": 28704850,
+      "repo_inode": 28704845
+    },
+    "dvl08": {
+      "marker": {
+        "invocation": "binding-dvl08-01",
+        "actual_cwd": "/tmp/workbench-dvl-20261009-3l1ViH/dvl08",
+        "git_root": "/tmp/workbench-dvl-20261009-3l1ViH/dvl08"
+      },
+      "git_inode": 28705559,
+      "repo_inode": 28704846
+    }
+  },
+  "ports": {
+    "dvl03": 38161,
+    "dvl08": 41177
+  },
+  "socket_cleanup": "Agents observed socket close/03close/08rebind; no long-running children reported. Read-only host process observation before dispatch found no active feature assignment. Default cwd is integration,so explicit workdir required.",
+  "disjoint_git_inodes": true,
+  "scope_enforcement": "detective explicit workdir/absolute edits+whole-candidate scope audit, not OS sandbox",
+  "verified_for": "this tool host/binding/environment only",
+  "user_auth_inherited": false
+}

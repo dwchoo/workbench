@@ -1,0 +1,125 @@
+{
+  "feature_id": "dev-validation-log-retention",
+  "ticket_id": "DVL-04+DVL-05",
+  "attempt_id": "01",
+  "invocation": "dvl045-fix-01",
+  "phase": "atomic_confirmed_event_copy_and_cursor",
+  "approved_bundle_digest": "78bc55919e57bbf2132d6653780c5c164a2ee1d618422e5232d4cf0d1d667c3e",
+  "authority": ".workflow/dev-validation-log-retention/runs/implement-p5-20261009/authority.json",
+  "approval": ".workflow/dev-validation-log-retention/runs/approval-s5-p5-20261009/approval.json",
+  "actual_workspace": "/tmp/workbench-dvl-20261009-3l1ViH/dvl05",
+  "repository_identity": {
+    "head": "2f21ec91990a409ea0d25f351343b50e34b48196",
+    "input_candidate": "c49aa7e77be1c45a79760410d00bc71a0b06ffe2248e3cdc8e485316b7c2acba",
+    "dependency_candidate": "44b0027c9d42418cd6f165d97e16b6175ed5fa1ec2cfadb3f4ca6c5e7c573ace",
+    "dependency_bytes": "all15 DVL03 source/test delta hashes equal integrated validated root"
+  },
+  "baseline_snapshot": ".workflow/dev-validation-log-retention/runs/implement-p5-20261009/checkpoint-dvl045-fix-01.json",
+  "checkpoint_ref": ".workflow/dev-validation-log-retention/runs/implement-p5-20261009/checkpoint-dvl045-fix-01.json",
+  "effective_write_capability": "verified explicit workdir/absolute paths, independent git index; unrestricted detector-only; reaffirm before editing",
+  "acceptance_ids": [
+    "LG-AC-03",
+    "LG-AC-05",
+    "LG-AC-14",
+    "LG-AC-21",
+    "LG-AC-22"
+  ],
+  "relevant_contracts": [
+    "BRIEF r0.9",
+    "SPEC s5",
+    "PLAN p5",
+    "tickets/DVL-05.md",
+    ".codex/workflow-contract.md"
+  ],
+  "allowed_write_paths": [
+    "src/workbench/storage/important_log/lifecycle.py",
+    "src/workbench/storage/important_log/store.py",
+    "tests/storage/important_log/test_lifecycle.py",
+    "tests/storage/important_log/test_store.py",
+    "graphify-out/**"
+  ],
+  "generated_outputs": [
+    "src/workbench/backend/flow_tasks.py",
+    "src/workbench/backend/flow_terminal.py",
+    "src/workbench/backend/flow.py",
+    "src/workbench/backend/service.py",
+    "src/workbench/storage/important_log/**",
+    "tests/backend/test_important_subjects.py",
+    "tests/backend/test_summary_authority.py",
+    "tests/storage/important_log/**",
+    "graphify-out/**"
+  ],
+  "prohibited_paths": [
+    "approved BRIEF/SPEC/PLAN/tickets/requirements/core/AGENTS",
+    "Root/other checkout/central state",
+    "logs v1 contract/proof schema without exclusive reroute",
+    "new product agent/standing OMP/paid models/user auth/real raw activation",
+    "all independent tests"
+  ],
+  "operational_outputs": "/tmp/workbench-dvl-20261009-3l1ViH/dvl05/.workflow/dvl-local",
+  "resource_claims": [
+    {
+      "resource": "flow:subject-lifecycle",
+      "mode": "exclusive"
+    },
+    {
+      "resource": "important-log:schema",
+      "mode": "exclusive"
+    },
+    {
+      "resource": "backend:composition",
+      "mode": "exclusive"
+    },
+    {
+      "resource": "log-contract:v1",
+      "mode": "shared"
+    }
+  ],
+  "service_namespaces": {
+    "project": "전용 temp Git project",
+    "home": "전용 HOME/OMP/XDG, 사용자 인증 미상속",
+    "data_dir": "전용 <run>/<ticket>/<attempt>/data",
+    "sockets": "전용 backend/bridge/outer sockets",
+    "provider": "loopback dynamic port, no remote models",
+    "owned_cleanup": "pid+start-ticks 또는 pidfd; 전용 root 밖 종료 금지"
+  },
+  "mutation_owner": "dvl045-fix-01",
+  "exact_checks": [
+    "LIFECYCLE"
+  ],
+  "reserved_budget": {
+    "implementation": 1,
+    "independent_test": 1,
+    "fresh_review": 1,
+    "finite_run_limit": 96
+  },
+  "stop_conditions": [
+    "scope/core contract/authority expansion required",
+    "missing API requiring unadopted alternative",
+    "existing user data/auth/socket/mux targeted"
+  ],
+  "configured_model": "gpt-6-sol",
+  "configured_effort": "high (fixed worker_senior role)",
+  "host_observed_model": "unverified",
+  "host_observed_effort": "unverified",
+  "routing": {
+    "planned_role": "worker_senior",
+    "selected_role": "worker_senior",
+    "reason_codes": [
+      "coupled_invariants"
+    ],
+    "evidence_refs": [
+      "SPEC.md §5/7.2/8.3; task_closed/finished/blocked/held"
+    ]
+  },
+  "dependency_evidence": ".workflow/dev-validation-log-retention/runs/implement-p5-20261009/dvl03-foundation-observed.json",
+  "dependency_independent_review": ".workflow/dev-validation-log-retention/runs/implement-p5-20261009/result-dvl03-review-04.json",
+  "test_env": "/tmp/workbench-dvl-20261009-3l1ViH/test-py312/bin/python",
+  "task": "Fix concrete S045-R1 without core state/authority scope changes: one confirmed source event's entry, lifecycle facts/grant changes and seen cursor must commit atomically or none. Store autocommit and put_entry internal transaction currently split; use bounded existing-pattern transactional composition preserving safe paths/UUID/idempotence and metadata separation. Fault regression: delegated cursor insert failure, subsequent finished confirmed event durable, then restart reconcile must never rewind grant/core_status to dispatched or skip latest facts. Also failure at other commit boundary and chronological replay ordering; do not treat partially applied old event as fresh grant. Do not alter independent tests or approved contracts/schema arbitrarily. Targeted lifecycle/store/delivery tests once; no fullsuite/OMP/model/auth. Private SQLite fixtures own tmpfs allowed, no executable TMPDIR there. Sole candidate writer in dvl05; independent01 author owns different workspace, no other sourcewriter. Reaffirm explicitcwd/absolutepatch, no agents. Return exact hashes/candidate/scope/cleanup and release for independent regression.",
+  "prior_assignment_ref": ".workflow/dev-validation-log-retention/runs/implement-p5-20261009/assignment-dvl045-compose-01.json",
+  "source_composition": {
+    "dvl04_candidate": "b28d755c987c1bcc62852c36ceb2fe9b6531f808395d3363c155690d467901cd",
+    "dvl05_candidate": "b79d9b404fdb1573087b62305123efac9f1117ef470fbda96c065ef8fa900d2c"
+  },
+  "findings": ".workflow/dev-validation-log-retention/runs/implement-p5-20261009/result-dvl045-review-01.json"
+}

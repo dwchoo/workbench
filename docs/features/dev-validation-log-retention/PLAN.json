@@ -1,0 +1,2584 @@
+{
+  "schema_version": 1,
+  "feature_id": "dev-validation-log-retention",
+  "revision": "p5",
+  "status": "draft_pending_bundle_review",
+  "source_brief": {
+    "path": "BRIEF.md",
+    "revision": "r0.9",
+    "sha256": "5ba8c47f4e23b6e213d61e81be72bfadd57f4c30bd56a256ffe84d7f736fab46",
+    "approval_record": "../../../.workflow/dev-validation-log-retention/runs/approval-r0.8/approval.json",
+    "baseline_approved_revision": "r0.8",
+    "decisions_record": "../../../.workflow/dev-validation-log-retention/runs/plan-p3-s3-20261009/decisions.json",
+    "authority_note": "r0.8 승인 + r0.9 운영 원칙 개별 합의; r0.9 전체 bundle/구현 미승인"
+  },
+  "spec": {
+    "path": "SPEC.md",
+    "revision": "s5"
+  },
+  "requirements": {
+    "path": "requirements-r0.9-p5.json",
+    "revision": "r0.9-plan-p5-draft",
+    "derivation": "28 AC/14 ticket/46 gate ID·수준·dependency graph 유지; Claude final s4/p4 R1~R3 보강/R4~R5 착수 검사/R6 수신 기록. 이번 '그렇게 해'는 문서 수정 권한만, bundle/구현 미승인."
+  },
+  "requirements_identity": "84d8dc604d543fb92116b25b00198ee43dc1b330466403534c377f1791d6eb18",
+  "baseline": {
+    "head": "2f21ec91990a409ea0d25f351343b50e34b48196",
+    "workspace_checkpoint": "../../../.workflow/dev-validation-log-retention/runs/plan-p5-s5-20261009/before-checkpoint.json",
+    "candidate": "5e6c516d6a85181cccd9153f103276b4fba988339a874af2d7409f7d916576c5",
+    "dirty_input": "기존 tracked dirty와 untracked feature/approval 파일 포함; HEAD만으로 복구/동일성 대체 금지"
+  },
+  "scheduling": {
+    "max_open_child_threads": 4,
+    "max_parallel_writer_workspaces": 2,
+    "workspace_policy": "isolated_when_parallel",
+    "dependency_gate": "integrated_and_validated",
+    "on_unavailable_isolation": "serial_with_disclosure",
+    "default_mutation_owner_per_physical_workspace": 1,
+    "initial_independent_frontier": [
+      "DVL-01",
+      "DVL-03",
+      "DVL-08"
+    ],
+    "initial_parallel_candidates": [
+      [
+        "DVL-03",
+        "DVL-08"
+      ],
+      [
+        "DVL-03",
+        "DVL-01"
+      ]
+    ],
+    "runtime_namespace_policy": "개별 isolated root/home/data/sockets/provider port만 shared claims 허용. import shared harness는 read-only; 코드 lease/host workspace smoke 없이는 writer 병렬 금지",
+    "illustrative_frontiers": [
+      "01/03/08;03+08 추천",
+      "01 뒤02,03 뒤04/05,08 pass+03 뒤09",
+      "05 뒤06,04 뒤11",
+      "06 뒤07",
+      "07+11 뒤12,07+09 뒤10",
+      "10+12 뒤14",
+      "02+04+07+10+12+14 뒤13"
+    ],
+    "note": "frontiers는 고정 wave barrier가 아니다. 한 ticket 통합/검증 event마다 재계산하고 resource 충돌은 depends_on과 별도로 처리"
+  },
+  "resource_notes": {
+    "dev-validation:harness": "01/02/13 registry 수정 exclusive;08/09/10/12/14 사용 shared",
+    "metadata:schema": "append-only version migration/Repository API shared semantic resource",
+    "backend:composition": "service.py 및 backend lifecycle 접합부 serialization",
+    "omp-bridge:public-tools": "bridge tool schema/safety/event surface semantic conflict",
+    "important-log:schema": "schema/statistics/retention interface",
+    "important-log:catalog": "active UUID/write/delete/read lease state",
+    "omp-runtime:scripted-provider": "shared는 각각 전용 loopback port/home/data/socket/credential-free 환경을 확인한 경우만; 동일instance를 공유하지 않음",
+    "integration-workspace": "Root만 통합/freeze; reviewer/test writer 진행 중 candidate 변경 금지",
+    "log-contract:v1": "수정 exclusive·소비 shared. 변경 시 version/digest·영향 소비자 재검증",
+    "summary-compat:contract": "08 validator/projection/recheck판정도구·포트 선행독립freeze;09 adapter계약은exclusive이나판정tool쓰기권한없음. 변경은Root08follow-up 독립재동결/재검증;14제품record검증기는별도.",
+    "ui:status-model": "07 상태 조회/TUI 및14 호환 사건·반복 알림 방지의 serialization",
+    "summary-compat:policy": "08만 src/workbench/contracts/summary_compat_policy_v1.json의 비실행 JSON core bytes 생성/독립freeze.09/14/13 동일bytes shared 읽기;dev overlay별도.변경Root08follow-up재동결·dependent재판정.제품이개발tools/records에의존하지 않음."
+  },
+  "budget_policy": {
+    "operating_estimates": {
+      "initial_total_child_calls": 52,
+      "worker_initial": 13,
+      "independent_test_designer": 14,
+      "fresh_reviewer": 14,
+      "oracle_reserve": 2,
+      "correction_reserve": 9,
+      "origin": "Root planning estimate; workflow-contract §8",
+      "note": "52=13+14+14+2+9.12분리/validator 검토 반영. 사용자 ceiling 아님."
+    },
+    "explicit_user_limits": [],
+    "host_limits": {
+      "open_slots_observed": 5,
+      "inherited_child_limit": 4
+    },
+    "authorization_note": "2분/10분은 제품 개발 runner 목표이지 개발/call hard ceiling 아님. 유료 모델/actual raw delete/commit/deploy 권한 없음"
+  },
+  "runtime_prerequisites": [
+    {
+      "id": "Q-01",
+      "ticket": "DVL-08",
+      "gate_items": [
+        "Q01-route",
+        "Q01-tools",
+        "Q01-skill",
+        "Q01-result",
+        "Q01-context",
+        "Q01-priority",
+        "Q01-recovery",
+        "Q01-origin"
+      ],
+      "critical_assumption": "기존 agent에 확정 skill/부작용 차단/typed 회수/사용자 우선 및 승인 provenance를 요청별로 제공 가능; 실제 enforcement를 공개 API로 request/session/policy epoch에 묶어 원자 확인 가능(현재미검증)",
+      "smallest_decisive_experiment": "credential-free isolated real OMP + scripted provider, one turn/tool-boundary + bound3repetitions + pause/origin case",
+      "on_pass": "원 check/projection 및 제품 adapter 재판정으로09/10 확대;14 제품 record·MODEL-metadata 별도",
+      "on_failed_or_inconclusive": "09/10/14 block;01~07 및disabled11/12 독립",
+      "on_alternative_only": "대안/공유경로 측정 보고·채택 후8개재판정",
+      "validation_contract": "SPEC s5 §8.1. 개발exact/related projection 엄격유지;08canonicalJSONpolicy/recheck freeze·receipt정상뒤실행중위반감시,09actualadapter8개재판정·14제품policy동일성,final46개exact."
+    },
+    {
+      "id": "USER-RAW-ACTIVATION",
+      "ticket": "DVL-14",
+      "note": "개발 gate에서는 isolated sandbox 사용자CLI로 검증. actual user data policy default off until 별도 명시 결정"
+    },
+    {
+      "id": "MODEL-METADATA",
+      "ticket": "DVL-14",
+      "gate_items": [
+        "MODEL-metadata"
+      ],
+      "critical_assumption": "현재 session의 실제 model/thinking/tier·context/tokenizer/enforce output ceiling·reasoning 의미/예산을 모델/네트워크 호출·auth-store open·설정 write 없이 확인 가능(미검증)",
+      "on_unknown": "unknown preflight 차단·MODEL-metadata inconclusive; Q-S3-05 관측 후 대체 규칙 사용자 결정. fake metadata로 pass 금지"
+    }
+  ],
+  "tickets": [
+    {
+      "id": "DVL-01",
+      "path": "tickets/DVL-01.md",
+      "kind": "implementation",
+      "depends_on": [],
+      "dependency_reasons": {},
+      "acceptance_ids": [
+        "DV-AC-01",
+        "DV-AC-02",
+        "DV-AC-04",
+        "DV-AC-05"
+      ],
+      "deliverable": "저장소 전용 두 모드 entrypoint와 fast smoke, 격리·readiness·watchdog·first-failure 보고 계약을 제공한다.",
+      "write_scope_hint": [
+        "tools/dev_validate.py",
+        "tests/dev_validation/**",
+        "tests/integration/cw16_harness.py"
+      ],
+      "resource_claims": [
+        {
+          "resource": "dev-validation:harness",
+          "mode": "exclusive"
+        },
+        {
+          "resource": "omp-runtime:scripted-provider",
+          "mode": "shared"
+        }
+      ],
+      "workspace_requirement": "isolated_if_parallel",
+      "worker": "worker_senior",
+      "routing_hint": {
+        "reason_codes": [
+          "coupled_invariants"
+        ],
+        "evidence_refs": [
+          "SPEC.md §4; 기존 cw16_harness의 isolation/owned cleanup"
+        ]
+      },
+      "base_requirements": {
+        "source_brief": "BRIEF.md@r0.9 (r0.8 approved + agreed delta)",
+        "spec": "SPEC.md@s5",
+        "candidate": "implement에서 현재 dirty/untracked 입력을 포함한 manifest 재확인",
+        "dependency_boundary": "integrated_and_validated"
+      },
+      "service_namespaces": {
+        "project": "전용 temp Git project",
+        "home": "전용 HOME/OMP/XDG, 사용자 인증 미상속",
+        "data_dir": "전용 <run>/<ticket>/<attempt>/data",
+        "sockets": "전용 backend/bridge/outer sockets",
+        "provider": "loopback dynamic port, no remote models",
+        "owned_cleanup": "pid+start-ticks 또는 pidfd; 전용 root 밖 종료 금지"
+      },
+      "required_checks": [
+        "G-DV-01",
+        "G-DV-04"
+      ],
+      "evidence_status": "not_run"
+    },
+    {
+      "id": "DVL-02",
+      "path": "tickets/DVL-02.md",
+      "kind": "implementation",
+      "depends_on": [
+        "DVL-01"
+      ],
+      "dependency_reasons": {
+        "DVL-01": "통합 runner item registry·격리·보고 schema와 fast baseline을 소비"
+      },
+      "acceptance_ids": [
+        "DV-AC-02",
+        "DV-AC-03",
+        "DV-AC-04",
+        "DV-AC-05"
+      ],
+      "deliverable": "precise의 설치 outer/shell·시간 의미·장애 경계를 제공하고 같은 항목의 전후 비용을 비교한다.",
+      "write_scope_hint": [
+        "tools/dev_validate.py",
+        "tests/dev_validation/**",
+        "tests/integration/cw16_harness.py",
+        "tests/integration/live_cw16_compat.py",
+        "tests/integration/live_cw16_flow_policy.py",
+        "tests/integration/live_cw16_fault.py",
+        "tests/integration/test_cw16_runtime_matrix.py"
+      ],
+      "resource_claims": [
+        {
+          "resource": "dev-validation:harness",
+          "mode": "exclusive"
+        },
+        {
+          "resource": "omp-runtime:scripted-provider",
+          "mode": "shared"
+        }
+      ],
+      "workspace_requirement": "isolated_if_parallel",
+      "worker": "worker_senior",
+      "routing_hint": {
+        "reason_codes": [
+          "coupled_invariants"
+        ],
+        "evidence_refs": [
+          "SPEC.md §4/11; C1~C7/SEL1~3 및 60s 점검"
+        ]
+      },
+      "base_requirements": {
+        "source_brief": "BRIEF.md@r0.9 (r0.8 approved + agreed delta)",
+        "spec": "SPEC.md@s5",
+        "candidate": "implement에서 현재 dirty/untracked 입력을 포함한 manifest 재확인",
+        "dependency_boundary": "integrated_and_validated"
+      },
+      "service_namespaces": {
+        "project": "전용 temp Git project",
+        "home": "전용 HOME/OMP/XDG, 사용자 인증 미상속",
+        "data_dir": "전용 <run>/<ticket>/<attempt>/data",
+        "sockets": "전용 backend/bridge/outer sockets",
+        "provider": "loopback dynamic port, no remote models",
+        "owned_cleanup": "pid+start-ticks 또는 pidfd; 전용 root 밖 종료 금지"
+      },
+      "required_checks": [
+        "G-DV-02",
+        "G-DV-03",
+        "G-DV-05"
+      ],
+      "evidence_status": "not_run"
+    },
+    {
+      "id": "DVL-03",
+      "path": "tickets/DVL-03.md",
+      "kind": "contract",
+      "depends_on": [],
+      "dependency_reasons": {},
+      "acceptance_ids": [
+        "LG-AC-05",
+        "LG-AC-06",
+        "LG-AC-11",
+        "LG-AC-18"
+      ],
+      "deliverable": "Source/Subject/Range/Health/Summary JSON v1 및 안전한 SQLite 기본 저장·조회와 영속 제어 계약을 통합한다.",
+      "write_scope_hint": [
+        "src/workbench/contracts/logs_v1.py",
+        "omp_bridge/contract/logs_v1.ts",
+        "src/workbench/storage/important_log/**",
+        "src/workbench/storage/metadata_sqlite/schema.py",
+        "src/workbench/tasks/repository.py",
+        "src/workbench/backend/paths.py",
+        "tests/storage/important_log/**",
+        "tests/tasks/test_repository*.py",
+        "tests/contracts/**"
+      ],
+      "resource_claims": [
+        {
+          "resource": "log-contract:v1",
+          "mode": "exclusive"
+        },
+        {
+          "resource": "metadata:schema",
+          "mode": "exclusive"
+        },
+        {
+          "resource": "important-log:schema",
+          "mode": "exclusive"
+        }
+      ],
+      "workspace_requirement": "isolated_if_parallel",
+      "worker": "worker_senior",
+      "routing_hint": {
+        "reason_codes": [
+          "coupled_invariants"
+        ],
+        "evidence_refs": [
+          "SPEC.md §5/7.1; schema v2・RawLogStore path safety"
+        ]
+      },
+      "base_requirements": {
+        "source_brief": "BRIEF.md@r0.9 (r0.8 approved + agreed delta)",
+        "spec": "SPEC.md@s5",
+        "candidate": "implement에서 현재 dirty/untracked 입력을 포함한 manifest 재확인",
+        "dependency_boundary": "integrated_and_validated"
+      },
+      "service_namespaces": {
+        "project": "전용 temp Git project",
+        "home": "전용 HOME/OMP/XDG, 사용자 인증 미상속",
+        "data_dir": "전용 <run>/<ticket>/<attempt>/data",
+        "sockets": "전용 backend/bridge/outer sockets",
+        "provider": "loopback dynamic port, no remote models",
+        "owned_cleanup": "pid+start-ticks 또는 pidfd; 전용 root 밖 종료 금지"
+      },
+      "required_checks": [
+        "STORE-contract"
+      ],
+      "evidence_status": "not_run"
+    },
+    {
+      "id": "DVL-04",
+      "path": "tickets/DVL-04.md",
+      "kind": "implementation",
+      "depends_on": [
+        "DVL-03"
+      ],
+      "dependency_reasons": {
+        "DVL-03": "통합 SourceRange 및 운영 metadata evidence API/transaction 계약 소비"
+      },
+      "acceptance_ids": [
+        "LG-AC-03"
+      ],
+      "deliverable": "승인 log_contains를 수집 때 exact match하고 운영 metadata에 보존해 raw 유실 후에도 올바르게 판단한다.",
+      "write_scope_hint": [
+        "src/workbench/workflow/run.py",
+        "src/workbench/storage/log_raw/admission.py",
+        "src/workbench/tasks/repository.py",
+        "tests/workflow/test_condition_evidence.py",
+        "tests/workflow/test_run*.py",
+        "tests/storage/test_log_raw.py"
+      ],
+      "resource_claims": [
+        {
+          "resource": "metadata:schema",
+          "mode": "exclusive"
+        },
+        {
+          "resource": "workflow:run-judgment",
+          "mode": "exclusive"
+        },
+        {
+          "resource": "log-contract:v1",
+          "mode": "shared"
+        }
+      ],
+      "workspace_requirement": "isolated_if_parallel",
+      "worker": "worker_senior",
+      "routing_hint": {
+        "reason_codes": [
+          "coupled_invariants"
+        ],
+        "evidence_refs": [
+          "SPEC.md §6; _drain/_analyse/C-D46"
+        ]
+      },
+      "base_requirements": {
+        "source_brief": "BRIEF.md@r0.9 (r0.8 approved + agreed delta)",
+        "spec": "SPEC.md@s5",
+        "candidate": "implement에서 현재 dirty/untracked 입력을 포함한 manifest 재확인",
+        "dependency_boundary": "integrated_and_validated"
+      },
+      "service_namespaces": {
+        "project": "전용 temp Git project",
+        "home": "전용 HOME/OMP/XDG, 사용자 인증 미상속",
+        "data_dir": "전용 <run>/<ticket>/<attempt>/data",
+        "sockets": "전용 backend/bridge/outer sockets",
+        "provider": "loopback dynamic port, no remote models",
+        "owned_cleanup": "pid+start-ticks 또는 pidfd; 전용 root 밖 종료 금지"
+      },
+      "required_checks": [
+        "G-LG-03"
+      ],
+      "evidence_status": "not_run"
+    },
+    {
+      "id": "DVL-05",
+      "path": "tickets/DVL-05.md",
+      "kind": "implementation",
+      "depends_on": [
+        "DVL-03"
+      ],
+      "dependency_reasons": {
+        "DVL-03": "통합 subject/event/request-control 및 private 중요 store API 소비"
+      },
+      "acceptance_ids": [
+        "LG-AC-05",
+        "LG-AC-14",
+        "LG-AC-21",
+        "LG-AC-22"
+      ],
+      "deliverable": "기존 이벤트를 Task/command 중요 기록에 연결하고 core 상태와 별개인 보관·승인 사실을 영속화한다.",
+      "write_scope_hint": [
+        "src/workbench/backend/flow_tasks.py",
+        "src/workbench/backend/flow_terminal.py",
+        "src/workbench/backend/flow.py",
+        "src/workbench/backend/service.py",
+        "src/workbench/storage/important_log/**",
+        "tests/backend/test_important_subjects.py",
+        "tests/backend/test_summary_authority.py",
+        "tests/storage/important_log/**"
+      ],
+      "resource_claims": [
+        {
+          "resource": "flow:subject-lifecycle",
+          "mode": "exclusive"
+        },
+        {
+          "resource": "important-log:schema",
+          "mode": "exclusive"
+        },
+        {
+          "resource": "backend:composition",
+          "mode": "exclusive"
+        },
+        {
+          "resource": "log-contract:v1",
+          "mode": "shared"
+        }
+      ],
+      "workspace_requirement": "isolated_if_parallel",
+      "worker": "worker_senior",
+      "routing_hint": {
+        "reason_codes": [
+          "coupled_invariants"
+        ],
+        "evidence_refs": [
+          "SPEC.md §5/7.2/8.3; task_closed/finished/blocked/held"
+        ]
+      },
+      "base_requirements": {
+        "source_brief": "BRIEF.md@r0.9 (r0.8 approved + agreed delta)",
+        "spec": "SPEC.md@s5",
+        "candidate": "implement에서 현재 dirty/untracked 입력을 포함한 manifest 재확인",
+        "dependency_boundary": "integrated_and_validated"
+      },
+      "service_namespaces": {
+        "project": "전용 temp Git project",
+        "home": "전용 HOME/OMP/XDG, 사용자 인증 미상속",
+        "data_dir": "전용 <run>/<ticket>/<attempt>/data",
+        "sockets": "전용 backend/bridge/outer sockets",
+        "provider": "loopback dynamic port, no remote models",
+        "owned_cleanup": "pid+start-ticks 또는 pidfd; 전용 root 밖 종료 금지"
+      },
+      "required_checks": [
+        "LIFECYCLE"
+      ],
+      "evidence_status": "not_run"
+    },
+    {
+      "id": "DVL-06",
+      "path": "tickets/DVL-06.md",
+      "kind": "implementation",
+      "depends_on": [
+        "DVL-03",
+        "DVL-05"
+      ],
+      "dependency_reasons": {
+        "DVL-03": "통합 중요 SQLite/Health/catalog 계약 소비",
+        "DVL-05": "종결/재활동·ongoing anchor 정보를 pruning/rollover에 사용"
+      },
+      "acceptance_ids": [
+        "LG-AC-09",
+        "LG-AC-10",
+        "LG-AC-11",
+        "LG-AC-12",
+        "LG-AC-15",
+        "LG-AC-17",
+        "LG-AC-23"
+      ],
+      "deliverable": "논리/물리 DB 상태, 활성-only 보존 정리와 crash-safe 전환·archive 보호를 제공한다.",
+      "write_scope_hint": [
+        "src/workbench/storage/important_log/**",
+        "src/workbench/backend/paths.py",
+        "src/workbench/backend/service.py",
+        "tests/storage/important_log/**",
+        "tests/backend/test_important_storage_faults.py"
+      ],
+      "resource_claims": [
+        {
+          "resource": "important-log:schema",
+          "mode": "exclusive"
+        },
+        {
+          "resource": "important-log:catalog",
+          "mode": "exclusive"
+        },
+        {
+          "resource": "backend:composition",
+          "mode": "exclusive"
+        },
+        {
+          "resource": "log-contract:v1",
+          "mode": "shared"
+        }
+      ],
+      "workspace_requirement": "isolated_if_parallel",
+      "worker": "worker_senior",
+      "routing_hint": {
+        "reason_codes": [
+          "coupled_invariants"
+        ],
+        "evidence_refs": [
+          "SPEC.md §7; LG-D08/09/11"
+        ]
+      },
+      "base_requirements": {
+        "source_brief": "BRIEF.md@r0.9 (r0.8 approved + agreed delta)",
+        "spec": "SPEC.md@s5",
+        "candidate": "implement에서 현재 dirty/untracked 입력을 포함한 manifest 재확인",
+        "dependency_boundary": "integrated_and_validated"
+      },
+      "service_namespaces": {
+        "project": "전용 temp Git project",
+        "home": "전용 HOME/OMP/XDG, 사용자 인증 미상속",
+        "data_dir": "전용 <run>/<ticket>/<attempt>/data",
+        "sockets": "전용 backend/bridge/outer sockets",
+        "provider": "loopback dynamic port, no remote models",
+        "owned_cleanup": "pid+start-ticks 또는 pidfd; 전용 root 밖 종료 금지"
+      },
+      "required_checks": [
+        "G-LG-09",
+        "G-LG-10",
+        "G-LG-11",
+        "G-LG-12",
+        "G-LG-15",
+        "G-LG-17"
+      ],
+      "evidence_status": "not_run"
+    },
+    {
+      "id": "DVL-07",
+      "path": "tickets/DVL-07.md",
+      "kind": "implementation",
+      "depends_on": [
+        "DVL-06"
+      ],
+      "dependency_reasons": {
+        "DVL-06": "통합 Health/catalog/rollover/보호 이월 API 및 predecessor lifecycle 소비"
+      },
+      "acceptance_ids": [
+        "LG-AC-13",
+        "LG-AC-16",
+        "LG-AC-17",
+        "LG-AC-20",
+        "LG-AC-21"
+      ],
+      "deliverable": "active/archive readonly 조회와 사용자-only 관리, 실제 복수 DB 경고/재접속 안내를 제공한다.",
+      "write_scope_hint": [
+        "src/workbench/backend/cli.py",
+        "src/workbench/backend/client.py",
+        "src/workbench/backend/ui_server.py",
+        "src/workbench/backend/service.py",
+        "src/workbench/contracts/ui_v1.py",
+        "src/workbench/ui/**",
+        "src/workbench/storage/important_log/**",
+        "omp_bridge/g3/bridge.ts",
+        "omp_bridge/contract/**",
+        "omp_bridge/skills/README.md",
+        "tests/backend/test_logs_cli.py",
+        "tests/bridge/test_logs_readonly.py",
+        "tests/ui/**",
+        "tests/storage/important_log/**"
+      ],
+      "resource_claims": [
+        {
+          "resource": "important-log:catalog",
+          "mode": "exclusive"
+        },
+        {
+          "resource": "backend:composition",
+          "mode": "exclusive"
+        },
+        {
+          "resource": "omp-bridge:public-tools",
+          "mode": "exclusive"
+        },
+        {
+          "resource": "ui:status-contract",
+          "mode": "exclusive"
+        },
+        {
+          "resource": "log-contract:v1",
+          "mode": "exclusive"
+        },
+        {
+          "resource": "important-log:schema",
+          "mode": "exclusive"
+        },
+        {
+          "resource": "ui:status-model",
+          "mode": "exclusive"
+        }
+      ],
+      "workspace_requirement": "isolated_if_parallel",
+      "worker": "worker_senior",
+      "routing_hint": {
+        "reason_codes": [
+          "coupled_invariants"
+        ],
+        "evidence_refs": [
+          "SPEC.md §7.3/10; existing CLI/UI/bridge"
+        ]
+      },
+      "base_requirements": {
+        "source_brief": "BRIEF.md@r0.9 (r0.8 approved + agreed delta)",
+        "spec": "SPEC.md@s5",
+        "candidate": "implement에서 현재 dirty/untracked 입력을 포함한 manifest 재확인",
+        "dependency_boundary": "integrated_and_validated"
+      },
+      "service_namespaces": {
+        "project": "전용 temp Git project",
+        "home": "전용 HOME/OMP/XDG, 사용자 인증 미상속",
+        "data_dir": "전용 <run>/<ticket>/<attempt>/data",
+        "sockets": "전용 backend/bridge/outer sockets",
+        "provider": "loopback dynamic port, no remote models",
+        "owned_cleanup": "pid+start-ticks 또는 pidfd; 전용 root 밖 종료 금지"
+      },
+      "required_checks": [
+        "G-LG-13",
+        "G-LG-16",
+        "G-LG-20",
+        "G-LG-21"
+      ],
+      "evidence_status": "not_run"
+    },
+    {
+      "id": "DVL-08",
+      "path": "tickets/DVL-08.md",
+      "kind": "feasibility",
+      "depends_on": [],
+      "dependency_reasons": {},
+      "acceptance_ids": [
+        "LG-AC-05",
+        "LG-AC-06",
+        "LG-AC-07",
+        "LG-AC-18",
+        "LG-AC-19",
+        "LG-AC-22"
+      ],
+      "deliverable": "실제 설치 OMP의 기존 agent/skill/tools/typed result/priority/provenance 가능성을 작은 격리 실험으로 판별한다. validator 독립 검토·freeze 후 판정,projection재대조/재실행 명령. backend/ipc/contracts directory·import closure projection freeze와 product adapter 재판정 모드. 요청별 실제 guard/epoch 확인 가용성 및 누락·무력화 음성 대조; product-recheck 포트도 판정 전 독립 동결. R3 단일 제품 core policy JSON bytes/version/digest 독립동결; 개발 overlay 분리.",
+      "write_scope_hint": [
+        "tests/backend/live_summary_feasibility.py",
+        "tests/backend/summary_probe_support.py",
+        "tests/backend/test_summary_probe.py",
+        "tools/validate_feature_gate.py",
+        "tools/q01_recheck.py",
+        "tests/backend/test_summary_gate_validator.py",
+        "src/workbench/contracts/summary_compat_policy_v1.json"
+      ],
+      "resource_claims": [
+        {
+          "resource": "dev-validation:harness",
+          "mode": "shared"
+        },
+        {
+          "resource": "omp-runtime:scripted-provider",
+          "mode": "shared"
+        },
+        {
+          "resource": "omp-bridge:public-tools",
+          "mode": "shared"
+        },
+        {
+          "resource": "summary-compat:contract",
+          "mode": "exclusive"
+        },
+        {
+          "resource": "summary-compat:policy",
+          "mode": "exclusive"
+        }
+      ],
+      "workspace_requirement": "isolated_if_parallel",
+      "worker": "worker_senior",
+      "routing_hint": {
+        "reason_codes": [
+          "coupled_invariants"
+        ],
+        "evidence_refs": [
+          "SPEC.md §8.1; BRIEF Q-01/bridge.ts safety boundaries"
+        ]
+      },
+      "base_requirements": {
+        "source_brief": "BRIEF.md@r0.9 (r0.8 approved + agreed delta)",
+        "spec": "SPEC.md@s5",
+        "candidate": "implement에서 현재 dirty/untracked 입력을 포함한 manifest 재확인",
+        "dependency_boundary": "integrated_and_validated"
+      },
+      "service_namespaces": {
+        "project": "전용 temp Git project",
+        "home": "전용 HOME/OMP/XDG, 사용자 인증 미상속",
+        "data_dir": "전용 <run>/<ticket>/<attempt>/data",
+        "sockets": "전용 backend/bridge/outer sockets",
+        "provider": "loopback dynamic port, no remote models",
+        "owned_cleanup": "pid+start-ticks 또는 pidfd; 전용 root 밖 종료 금지"
+      },
+      "required_checks": [
+        "Q01-validator",
+        "Q01-route",
+        "Q01-tools",
+        "Q01-skill",
+        "Q01-result",
+        "Q01-context",
+        "Q01-priority",
+        "Q01-recovery",
+        "Q01-origin"
+      ],
+      "evidence_status": "not_run",
+      "execution_phases": [
+        {
+          "phase": "validator_and_recheck_freeze",
+          "requires": "runtime 판정 전",
+          "evidence": "validator/projection policy/recheck 두 모드 포트/음성 fixture 독립 test_designer+reviewer, bytes digest 동결; backend/ipc/contracts/관련 closure 무효화 음성시험; canonical product JSON policy bytes/digest 동결, 개발 overlay는 core를 약화하지 않음"
+        },
+        {
+          "phase": "runtime_probe",
+          "requires": "freeze",
+          "evidence": "8개 runtime+projection; 유효 request guard 확인과 hook 미작동/stale ack/check-send 교체의 전송0; receipt 정상 뒤 tool event 관측/결과거부·보호를 최소 음성 대조"
+        },
+        {
+          "phase": "integrated_recheck",
+          "requires": "Root통합",
+          "evidence": "통합candidate8개재실행"
+        },
+        {
+          "phase": "product_adapter_recheck",
+          "requires": "08에서 동결한 seam에09 adapter만 주입",
+          "evidence": "09 이후 product모드 실제8개; 판정 tool 수정은 Root08 follow-up 독립 재동결 후 새 관측"
+        }
+      ]
+    },
+    {
+      "id": "DVL-09",
+      "path": "tickets/DVL-09.md",
+      "kind": "implementation",
+      "depends_on": [
+        "DVL-03",
+        "DVL-08"
+      ],
+      "dependency_reasons": {
+        "DVL-03": "통합 SummaryRequest/Result·no-replay typed contracts 소비",
+        "DVL-08": "동결validator/8개runtime+projection;03계약비교·adapter변경후 재판정"
+      },
+      "acceptance_ids": [
+        "LG-AC-05",
+        "LG-AC-06",
+        "LG-AC-18",
+        "LG-AC-19",
+        "LG-AC-22"
+      ],
+      "deliverable": "Q-01 통과 경로를 제품 typed adapter로 연결하고 기존 agent에 내부 skill을 확정 전달한다. probe/03계약 일치·model/context/token budget·선정/usage. 8KiB result와 실제 enforce output token ceiling/동일량 예약. 요청/session/policy 일회성 GuardReceipt·check/send 장벽, 실제 session 모델/thinking/tier·reasoning 포함 예산; 판정 tool은08 동결본 소비만. R1 await한 guard 설정/read-back·request별 실행중 tool event 위반 검출/결과거부. R4 실제 route context 해석 read-back port.",
+      "write_scope_hint": [
+        "omp_bridge/skills/workbench-important-log/SKILL.md",
+        "omp_bridge/skills/README.md",
+        "omp_bridge/g3/bridge.ts",
+        "omp_bridge/contract/logs_v1.ts",
+        "src/workbench/backend/launcher.py",
+        "src/workbench/backend/summary_adapter.py",
+        "tests/backend/test_summary_adapter.py",
+        "tests/backend/test_workbench_skills*.py",
+        "tests/backend/test_omp_isolation*.py",
+        "tests/bridge/test_summary_adapter.py",
+        "tests/contracts/test_summary_envelope_compat.py",
+        "tests/backend/test_summary_input_budget.py"
+      ],
+      "resource_claims": [
+        {
+          "resource": "omp-bridge:public-tools",
+          "mode": "exclusive"
+        },
+        {
+          "resource": "omp:role-skill-filter",
+          "mode": "exclusive"
+        },
+        {
+          "resource": "log-contract:v1",
+          "mode": "exclusive"
+        },
+        {
+          "resource": "dev-validation:harness",
+          "mode": "shared"
+        },
+        {
+          "resource": "summary-compat:contract",
+          "mode": "exclusive"
+        },
+        {
+          "resource": "summary-compat:policy",
+          "mode": "shared"
+        }
+      ],
+      "workspace_requirement": "isolated_if_parallel",
+      "worker": "worker_senior",
+      "routing_hint": {
+        "reason_codes": [
+          "coupled_invariants"
+        ],
+        "evidence_refs": [
+          "SPEC.md §8.1/8.2; current ROLE_SKILL_PATTERNS and isolation"
+        ]
+      },
+      "base_requirements": {
+        "source_brief": "BRIEF.md@r0.9 (r0.8 approved + agreed delta)",
+        "spec": "SPEC.md@s5",
+        "candidate": "implement에서 현재 dirty/untracked 입력을 포함한 manifest 재확인",
+        "dependency_boundary": "integrated_and_validated"
+      },
+      "service_namespaces": {
+        "project": "전용 temp Git project",
+        "home": "전용 HOME/OMP/XDG, 사용자 인증 미상속",
+        "data_dir": "전용 <run>/<ticket>/<attempt>/data",
+        "sockets": "전용 backend/bridge/outer sockets",
+        "provider": "loopback dynamic port, no remote models",
+        "owned_cleanup": "pid+start-ticks 또는 pidfd; 전용 root 밖 종료 금지"
+      },
+      "required_checks": [
+        "G-LG-06",
+        "Q01-contract",
+        "SUMMARY-budget"
+      ],
+      "evidence_status": "not_run",
+      "entry_conditions": [
+        "원runtime check+전체closure projection 대조;변경/불명8개 재실행. adapter 통합뒤 --adapter product에서 재판정",
+        "대안/공유경로 사용자 채택·채택route8개재판정",
+        "actual raw 활성화 별도"
+      ],
+      "stop_conditions": [
+        "공개 route에서 요청별 enforcement 확인·epoch 장벽이 불가능하면 전송0/blocked_adoption; 등록 ack로 우회 금지",
+        "동결 판정 tool 변경 필요 시 Root가08 bounded follow-up으로 독립시험/리뷰·재동결;09 worker의 판정 tool 수정 금지",
+        "사용자 모델/thinking/tier pin 임의 변경 금지; 실제 metadata 관측은14,local gate는 typed port fixture",
+        "guard event 감시는 예방 enforcement/원자성의 대체가 아님; hideBridgeTools fire-and-forget/오류무시 재사용 금지"
+      ]
+    },
+    {
+      "id": "DVL-10",
+      "path": "tickets/DVL-10.md",
+      "kind": "implementation",
+      "depends_on": [
+        "DVL-07",
+        "DVL-09"
+      ],
+      "dependency_reasons": {
+        "DVL-07": "통합 readonly/status/관리 경계와 transitive lifecycle/storage API 소비",
+        "DVL-09": "통과 경로로 구현된 request-level tools guard/skill/typed adapter 소비"
+      },
+      "acceptance_ids": [
+        "LG-AC-05",
+        "LG-AC-07",
+        "LG-AC-08",
+        "LG-AC-14",
+        "LG-AC-18",
+        "LG-AC-19",
+        "LG-AC-22",
+        "LG-AC-23"
+      ],
+      "deliverable": "새 정보 coalesce·승인·pause·storage 장애·late/no replay를 기존 실행보다 낮은 우선순위로 연결한다. 종결사유별 권한·긴급추가호출0·buffer bound. LG-D14 취소/철회 정책 합의 소비;호환 실패 보호는14의제품서비스 포트로 주입(후행14를 local gate supplier로 요구하지 않음). 연속3회 executed+contract-rejected 영속 circuit breaker/원인불명 구분·복구 포트. R2 scripted plumbing pass 뒤 영속 recovery_attempt/새입력 첫계약거부 즉시재보호·episode재발 알림 포트.",
+      "write_scope_hint": [
+        "src/workbench/backend/summary_scheduler.py",
+        "src/workbench/backend/summary_adapter.py",
+        "src/workbench/backend/service.py",
+        "src/workbench/backend/automation.py",
+        "src/workbench/backend/flow_tasks.py",
+        "src/workbench/backend/flow_terminal.py",
+        "src/workbench/tasks/repository.py",
+        "src/workbench/storage/important_log/**",
+        "tests/backend/test_summary_adapter.py",
+        "tests/backend/test_summary_scheduler.py",
+        "tests/backend/test_summary_authorization.py",
+        "tests/backend/test_summary_recovery.py",
+        "tests/backend/test_summary_contract_breaker.py",
+        "tests/backend/test_summary_no_replay.py",
+        "tests/backend/test_summary_priority.py",
+        "tests/backend/test_summary_storage_failures.py",
+        "tests/integration/live_summary_scheduler.py",
+        "src/workbench/storage/metadata_sqlite/schema.py"
+      ],
+      "resource_claims": [
+        {
+          "resource": "backend:composition",
+          "mode": "exclusive"
+        },
+        {
+          "resource": "flow:subject-lifecycle",
+          "mode": "exclusive"
+        },
+        {
+          "resource": "metadata:schema",
+          "mode": "exclusive"
+        },
+        {
+          "resource": "omp-runtime:scripted-provider",
+          "mode": "shared"
+        },
+        {
+          "resource": "log-contract:v1",
+          "mode": "shared"
+        },
+        {
+          "resource": "dev-validation:harness",
+          "mode": "shared"
+        },
+        {
+          "resource": "important-log:schema",
+          "mode": "exclusive"
+        }
+      ],
+      "workspace_requirement": "isolated_if_parallel",
+      "worker": "worker_senior",
+      "routing_hint": {
+        "reason_codes": [
+          "coupled_invariants"
+        ],
+        "evidence_refs": [
+          "SPEC.md §8.3; LG-AC-18/19/22/23"
+        ]
+      },
+      "base_requirements": {
+        "source_brief": "BRIEF.md@r0.9 (r0.8 approved + agreed delta)",
+        "spec": "SPEC.md@s5",
+        "candidate": "implement에서 현재 dirty/untracked 입력을 포함한 manifest 재확인",
+        "dependency_boundary": "integrated_and_validated"
+      },
+      "service_namespaces": {
+        "project": "전용 temp Git project",
+        "home": "전용 HOME/OMP/XDG, 사용자 인증 미상속",
+        "data_dir": "전용 <run>/<ticket>/<attempt>/data",
+        "sockets": "전용 backend/bridge/outer sockets",
+        "provider": "loopback dynamic port, no remote models",
+        "owned_cleanup": "pid+start-ticks 또는 pidfd; 전용 root 밖 종료 금지"
+      },
+      "required_checks": [
+        "G-LG-05",
+        "G-LG-07",
+        "G-LG-08",
+        "G-LG-14",
+        "G-LG-18",
+        "G-LG-19",
+        "G-LG-22",
+        "G-LG-23"
+      ],
+      "evidence_status": "not_run",
+      "entry_conditions": [
+        "원runtime check+backend/ipc/contract closure 대조;변경/불명 product-adapter 8개 재실행. 제품 운영 version-drift 예외를 개발 gate에 적용하지 않음",
+        "대안/공유경로 사용자 채택·채택route8개재판정",
+        "actual raw 활성화 별도"
+      ],
+      "write_scope_exclusions": [
+        "tests/backend/test_summary_probe.py",
+        "tests/backend/test_summary_gate_validator.py"
+      ],
+      "dispatch_scope_check": "R5: backend test allowed는명시파일만. Root가 실제allowed에서08동결판정파일 제외 확인+10통합전후08freeze digest대조. 필요새시험은Root가scope갱신;exclude필드가helper에강제된다고주장금지."
+    },
+    {
+      "id": "DVL-11",
+      "path": "tickets/DVL-11.md",
+      "kind": "implementation",
+      "depends_on": [
+        "DVL-03",
+        "DVL-04"
+      ],
+      "dependency_reasons": {
+        "DVL-03": "통합 SourceRef/Range/RawReadResult 계약 소비",
+        "DVL-04": "수집-before-store 및 durable proof/판정 seam에 맞춘 engine 계약 필요"
+      },
+      "acceptance_ids": [
+        "LG-AC-01",
+        "LG-AC-02",
+        "LG-AC-03",
+        "LG-AC-04"
+      ],
+      "deliverable": "legacy와 별도인 source-framed 100MB×총5 segment store/reader를 기본 비활성 상태로 제공한다.",
+      "write_scope_hint": [
+        "src/workbench/storage/log_raw/segments.py",
+        "src/workbench/storage/log_raw/reader.py",
+        "src/workbench/storage/log_raw/__init__.py",
+        "tests/storage/test_raw_segments.py",
+        "tests/storage/test_raw_reader.py"
+      ],
+      "resource_claims": [
+        {
+          "resource": "raw-log:storage-contract",
+          "mode": "exclusive"
+        },
+        {
+          "resource": "log-contract:v1",
+          "mode": "shared"
+        }
+      ],
+      "workspace_requirement": "isolated_if_parallel",
+      "worker": "worker_senior",
+      "routing_hint": {
+        "reason_codes": [
+          "coupled_invariants"
+        ],
+        "evidence_refs": [
+          "SPEC.md §9; owned raw store and proof interface"
+        ]
+      },
+      "base_requirements": {
+        "source_brief": "BRIEF.md@r0.9 (r0.8 approved + agreed delta)",
+        "spec": "SPEC.md@s5",
+        "candidate": "implement에서 현재 dirty/untracked 입력을 포함한 manifest 재확인",
+        "dependency_boundary": "integrated_and_validated"
+      },
+      "service_namespaces": {
+        "project": "전용 temp Git project",
+        "home": "전용 HOME/OMP/XDG, 사용자 인증 미상속",
+        "data_dir": "전용 <run>/<ticket>/<attempt>/data",
+        "sockets": "전용 backend/bridge/outer sockets",
+        "provider": "loopback dynamic port, no remote models",
+        "owned_cleanup": "pid+start-ticks 또는 pidfd; 전용 root 밖 종료 금지"
+      },
+      "required_checks": [
+        "RAW-engine"
+      ],
+      "evidence_status": "not_run"
+    },
+    {
+      "id": "DVL-12",
+      "path": "tickets/DVL-12.md",
+      "kind": "implementation",
+      "depends_on": [
+        "DVL-07",
+        "DVL-11"
+      ],
+      "dependency_reasons": {
+        "DVL-07": "통합 CLI/readonly agent/status·catalog 및 명시 사용자 관리 경계 소비",
+        "DVL-11": "통합 exact-cap segmented writer/reader와 crash/범위 계약 소비"
+      },
+      "acceptance_ids": [
+        "LG-AC-02",
+        "LG-AC-03",
+        "LG-AC-04",
+        "LG-AC-13"
+      ],
+      "deliverable": "Q01독립 disabled주입·reader/descriptor·출처별조회·legacy별도표시. 기본legacy-stop,activation은14.",
+      "write_scope_hint": [
+        "src/workbench/backend/service.py",
+        "src/workbench/backend/flow_terminal.py",
+        "src/workbench/backend/flow_tasks.py",
+        "src/workbench/backend/cli.py",
+        "src/workbench/workflow/run.py",
+        "src/workbench/backend/paths.py",
+        "src/workbench/storage/log_raw/**",
+        "omp_bridge/g3/bridge.ts",
+        "omp_bridge/skills/to-manager/SKILL.md",
+        "omp_bridge/skills/to-worker/SKILL.md",
+        "tests/backend/test_raw_policy.py",
+        "tests/workflow/test_run*.py",
+        "tests/backend/test_flow_terminal*.py",
+        "tests/bridge/test_logs_readonly.py",
+        "tests/integration/live_raw_policy.py"
+      ],
+      "resource_claims": [
+        {
+          "resource": "backend:composition",
+          "mode": "exclusive"
+        },
+        {
+          "resource": "workflow:run-judgment",
+          "mode": "exclusive"
+        },
+        {
+          "resource": "flow:subject-lifecycle",
+          "mode": "exclusive"
+        },
+        {
+          "resource": "raw-log:storage-contract",
+          "mode": "exclusive"
+        },
+        {
+          "resource": "omp-bridge:public-tools",
+          "mode": "exclusive"
+        },
+        {
+          "resource": "omp:role-skill-filter",
+          "mode": "exclusive"
+        },
+        {
+          "resource": "log-contract:v1",
+          "mode": "exclusive"
+        },
+        {
+          "resource": "dev-validation:harness",
+          "mode": "shared"
+        }
+      ],
+      "workspace_requirement": "isolated_if_parallel",
+      "worker": "worker_senior",
+      "routing_hint": {
+        "reason_codes": [
+          "coupled_invariants"
+        ],
+        "evidence_refs": [
+          "SPEC.md §6/9/10; DONE_INSTRUCTION/log_path and legacy caps"
+        ]
+      },
+      "base_requirements": {
+        "source_brief": "BRIEF.md@r0.9 (r0.8 approved + agreed delta)",
+        "spec": "SPEC.md@s5",
+        "candidate": "implement에서 현재 dirty/untracked 입력을 포함한 manifest 재확인",
+        "dependency_boundary": "integrated_and_validated"
+      },
+      "service_namespaces": {
+        "project": "전용 temp Git project",
+        "home": "전용 HOME/OMP/XDG, 사용자 인증 미상속",
+        "data_dir": "전용 <run>/<ticket>/<attempt>/data",
+        "sockets": "전용 backend/bridge/outer sockets",
+        "provider": "loopback dynamic port, no remote models",
+        "owned_cleanup": "pid+start-ticks 또는 pidfd; 전용 root 밖 종료 금지"
+      },
+      "required_checks": [
+        "G-LG-02",
+        "G-LG-04"
+      ],
+      "evidence_status": "not_run",
+      "stop_conditions": [
+        "자동삭제/activation 구현금지;14용disabled port만",
+        "Q01실패는readonly수락 차단하지 않음"
+      ]
+    },
+    {
+      "id": "DVL-13",
+      "path": "tickets/DVL-13.md",
+      "kind": "integration_verification",
+      "depends_on": [
+        "DVL-02",
+        "DVL-04",
+        "DVL-07",
+        "DVL-10",
+        "DVL-12",
+        "DVL-14"
+      ],
+      "dependency_reasons": {
+        "DVL-02": "fast/precise 비용/격리/실시간 matrix 통합",
+        "DVL-04": "durable condition evidence 독립 근거 통합",
+        "DVL-07": "조회/삭제/종결/경고 통합",
+        "DVL-10": "실제 기존-agent scheduler 및 safety/no replay 통합",
+        "DVL-12": "비활성reader/조회·legacy",
+        "DVL-14": "checkout 제품 근거/metadata·activation·OMP drift/confirmed failure 보호 운영"
+      },
+      "acceptance_ids": [
+        "DV-AC-01",
+        "DV-AC-02",
+        "DV-AC-03",
+        "DV-AC-04",
+        "DV-AC-05",
+        "LG-AC-01",
+        "LG-AC-02",
+        "LG-AC-03",
+        "LG-AC-04",
+        "LG-AC-05",
+        "LG-AC-06",
+        "LG-AC-07",
+        "LG-AC-08",
+        "LG-AC-09",
+        "LG-AC-10",
+        "LG-AC-11",
+        "LG-AC-12",
+        "LG-AC-13",
+        "LG-AC-14",
+        "LG-AC-15",
+        "LG-AC-16",
+        "LG-AC-17",
+        "LG-AC-18",
+        "LG-AC-19",
+        "LG-AC-20",
+        "LG-AC-21",
+        "LG-AC-22",
+        "LG-AC-23"
+      ],
+      "deliverable": "같은 최종 후보에서 개발 runner·proof·중요 로그·raw 정책 전체 수락 및 회귀/범위 audit를 연결한다. precise등록·최종모든gate exact candidate재실행. 실제 MODEL-metadata/no-model-call 확인 포함 총46 gate. R3 DV-registry의 canonical policy digest/closure 판정 동일성, R1~R2 runtime 교차 관측.",
+      "write_scope_hint": [
+        "tests/integration/live_validation_retention.py",
+        "tests/integration/test_validation_retention.py",
+        "docs/features/dev-validation-log-retention/VERIFICATION.md",
+        "docs/features/dev-validation-log-retention/DEVELOPMENT.md",
+        "tools/dev_validate.py",
+        "tests/dev_validation/**",
+        "docs/features/dev-validation-log-retention/FOLLOWUPS.md"
+      ],
+      "resource_claims": [
+        {
+          "resource": "integration-workspace",
+          "mode": "exclusive"
+        },
+        {
+          "resource": "dev-validation:harness",
+          "mode": "exclusive"
+        },
+        {
+          "resource": "omp-runtime:scripted-provider",
+          "mode": "shared"
+        },
+        {
+          "resource": "summary-compat:policy",
+          "mode": "shared"
+        }
+      ],
+      "workspace_requirement": "root_integration_workspace",
+      "worker": "worker_senior",
+      "routing_hint": {
+        "reason_codes": [
+          "coupled_invariants"
+        ],
+        "evidence_refs": [
+          "SPEC.md §11/12; 전체28 AC와 INT-runtime"
+        ]
+      },
+      "base_requirements": {
+        "source_brief": "BRIEF.md@r0.9 (r0.8 approved + agreed delta)",
+        "spec": "SPEC.md@s5",
+        "candidate": "implement에서 현재 dirty/untracked 입력을 포함한 manifest 재확인",
+        "dependency_boundary": "integrated_and_validated"
+      },
+      "service_namespaces": {
+        "project": "전용 temp Git project",
+        "home": "전용 HOME/OMP/XDG, 사용자 인증 미상속",
+        "data_dir": "전용 <run>/<ticket>/<attempt>/data",
+        "sockets": "전용 backend/bridge/outer sockets",
+        "provider": "loopback dynamic port, no remote models",
+        "owned_cleanup": "pid+start-ticks 또는 pidfd; 전용 root 밖 종료 금지"
+      },
+      "required_checks": [
+        "DV-registry",
+        "INT-runtime"
+      ],
+      "evidence_status": "not_run"
+    },
+    {
+      "id": "DVL-14",
+      "path": "tickets/DVL-14.md",
+      "kind": "implementation",
+      "depends_on": [
+        "DVL-10",
+        "DVL-12"
+      ],
+      "dependency_reasons": {
+        "DVL-10": "통합summary authority/no replay·adapter/scheduler",
+        "DVL-12": "통합disabled policy/reader/cohort·legacy"
+      },
+      "acceptance_ids": [
+        "LG-AC-01",
+        "LG-AC-02",
+        "LG-AC-04",
+        "LG-AC-06",
+        "LG-AC-07",
+        "LG-AC-08",
+        "LG-AC-22"
+      ],
+      "deliverable": "Repo checkout 실행형 제품의 summary-compat/실제 model metadata 읽기 전용 관측·명시 최초 activation·OMP version-only 계속 사용과 확인된 문제의 신규 source 보호/수동 verify. 전체 runtime identity와 운영 related-closure 분리,OMP bundled asset 예외·안정 host key,guard 확인불능/계약 circuit 보호·offline 실제 session metadata. R1 tool 위반 보호 연결/R2 plumbing-only record·복구시도 재발 episode/R3 제품 policy==08freeze 대조/R4 route별metadata read-back.",
+      "write_scope_hint": [
+        "src/workbench/backend/summary_compatibility.py",
+        "src/workbench/backend/summary_compat_provider.py",
+        "src/workbench/backend/cli.py",
+        "src/workbench/backend/service.py",
+        "src/workbench/backend/summary_scheduler.py",
+        "src/workbench/contracts/logs_v1.py",
+        "omp_bridge/contract/logs_v1.ts",
+        "src/workbench/storage/log_raw/**",
+        "tests/backend/test_summary_compatibility.py",
+        "tests/backend/test_raw_policy_activation.py",
+        "tests/integration/live_raw_activation.py",
+        "src/workbench/ui/status_workbench/**",
+        "src/workbench/contracts/ui_v1.py",
+        "tests/ui/test_summary_compatibility_status.py",
+        "tests/backend/test_model_metadata.py",
+        "tests/integration/live_model_metadata.py"
+      ],
+      "resource_claims": [
+        {
+          "resource": "backend:composition",
+          "mode": "exclusive"
+        },
+        {
+          "resource": "raw-log:storage-contract",
+          "mode": "exclusive"
+        },
+        {
+          "resource": "log-contract:v1",
+          "mode": "exclusive"
+        },
+        {
+          "resource": "summary-compat:contract",
+          "mode": "exclusive"
+        },
+        {
+          "resource": "dev-validation:harness",
+          "mode": "shared"
+        },
+        {
+          "resource": "omp-runtime:scripted-provider",
+          "mode": "shared"
+        },
+        {
+          "resource": "omp-bridge:public-tools",
+          "mode": "shared"
+        },
+        {
+          "resource": "omp:role-skill-filter",
+          "mode": "shared"
+        },
+        {
+          "resource": "ui:status-model",
+          "mode": "exclusive"
+        },
+        {
+          "resource": "summary-compat:policy",
+          "mode": "shared"
+        }
+      ],
+      "workspace_requirement": "isolated_if_parallel",
+      "worker": "worker_senior",
+      "routing_hint": {
+        "reason_codes": [
+          "coupled_invariants"
+        ],
+        "evidence_refs": [
+          "SPEC.md §8.1/9/13;checkout evidence/model metadata/OMP drift policy"
+        ]
+      },
+      "base_requirements": {
+        "source_brief": "BRIEF.md@r0.9 (r0.8 approved + agreed delta)",
+        "spec": "SPEC.md@s5",
+        "candidate": "implement에서 현재 dirty/untracked 입력을 포함한 manifest 재확인",
+        "dependency_boundary": "integrated_and_validated"
+      },
+      "service_namespaces": {
+        "project": "전용 temp Git project",
+        "home": "전용 HOME/OMP/XDG, 사용자 인증 미상속",
+        "data_dir": "전용 <run>/<ticket>/<attempt>/data",
+        "sockets": "전용 backend/bridge/outer sockets",
+        "provider": "loopback dynamic port, no remote models",
+        "owned_cleanup": "pid+start-ticks 또는 pidfd; 전용 root 밖 종료 금지"
+      },
+      "required_checks": [
+        "G-LG-01",
+        "PRODUCT-evidence",
+        "MODEL-metadata"
+      ],
+      "evidence_status": "not_run",
+      "entry_conditions": [
+        "현재개발Q01 또는재실행/제품adapter8개와route채택",
+        "Q-S2-01/02/04는합의됨;공유경로03만측정후채택·metadata불능fallback은05후결정",
+        "제품validator/runtime/MODEL-metadata는이ticket제공;개발tools/tests/docs/.workflow/PLAN의존금지",
+        "Packaging/독립설치형전환범위밖;checkout runtime copy에서수락",
+        "actual raw활성화별도;sandbox수락만",
+        "요청별 유효 guard 확인 불가능 route는 후속 대안 결정 전 차단;thinking/tier 변경은Q-S3-06 관측 뒤"
+      ]
+    }
+  ],
+  "gate_items": [
+    {
+      "id": "G-DV-01",
+      "owner_ticket": "DVL-01",
+      "acceptance_ids": [
+        "DV-AC-01"
+      ],
+      "requires_tickets": [
+        "DVL-01"
+      ],
+      "required_evidence_level": "fixture",
+      "check": "runner CLI의 fast/precise 선택·목표 초과 계속·목표 대비 표시, required0건 거부",
+      "coverage_scope": "local_behavior; 해당 AC의 교차 ticket 실제 통합은 INT-runtime",
+      "evidence_status": "pending"
+    },
+    {
+      "id": "G-DV-02",
+      "owner_ticket": "DVL-02",
+      "acceptance_ids": [
+        "DV-AC-02"
+      ],
+      "requires_tickets": [
+        "DVL-01",
+        "DVL-02"
+      ],
+      "required_evidence_level": "runtime",
+      "check": "readiness/watchdog predicate와 실제60초 review/65초 detach; fake evidence 구분. 요약300초는 INT-runtime",
+      "coverage_scope": "local_behavior; 해당 AC의 교차 ticket 실제 통합은 INT-runtime",
+      "evidence_status": "pending"
+    },
+    {
+      "id": "G-DV-03",
+      "owner_ticket": "DVL-02",
+      "acceptance_ids": [
+        "DV-AC-03"
+      ],
+      "requires_tickets": [
+        "DVL-01",
+        "DVL-02"
+      ],
+      "required_evidence_level": "runtime",
+      "check": "실제 설치 OMP의 core plain/설치 outer×shell smoke/장애 matrix; missing/격리불가 미검증. 새 중요DB 전체 통합은 INT-runtime",
+      "coverage_scope": "local_behavior; 해당 AC의 교차 ticket 실제 통합은 INT-runtime",
+      "evidence_status": "pending"
+    },
+    {
+      "id": "G-DV-04",
+      "owner_ticket": "DVL-01",
+      "acceptance_ids": [
+        "DV-AC-04"
+      ],
+      "requires_tickets": [
+        "DVL-01"
+      ],
+      "required_evidence_level": "runtime",
+      "check": "실제 runner 결과에 후보 전후/input/host/OMP 전후/tool/mode/item/timing/first-failure와 attempts 연결",
+      "coverage_scope": "local_behavior; 해당 AC의 교차 ticket 실제 통합은 INT-runtime",
+      "evidence_status": "pending"
+    },
+    {
+      "id": "G-DV-05",
+      "owner_ticket": "DVL-02",
+      "acceptance_ids": [
+        "DV-AC-05"
+      ],
+      "requires_tickets": [
+        "DVL-01",
+        "DVL-02"
+      ],
+      "required_evidence_level": "runtime",
+      "check": "같은 항목/candidate/env baseline→after 비용·assertion inventory 유지·검증된 namespace 병렬; 목표 달성 여부 그대로 표시",
+      "coverage_scope": "local_behavior; 해당 AC의 교차 ticket 실제 통합은 INT-runtime",
+      "evidence_status": "pending"
+    },
+    {
+      "id": "G-LG-01",
+      "owner_ticket": "DVL-14",
+      "acceptance_ids": [
+        "LG-AC-01"
+      ],
+      "requires_tickets": [
+        "DVL-03",
+        "DVL-04",
+        "DVL-05",
+        "DVL-06",
+        "DVL-07",
+        "DVL-08",
+        "DVL-09",
+        "DVL-10",
+        "DVL-11",
+        "DVL-12",
+        "DVL-14"
+      ],
+      "required_evidence_level": "runtime",
+      "check": "최초current8pass+metadata+사용자명시activation/legacycap·v2공용100MBx5;운영OMPdrift유지와guard/계약보호신규legacy·진행cohort불변·기존files불변",
+      "coverage_scope": "local_behavior; 해당 AC의 교차 ticket 실제 통합은 INT-runtime",
+      "evidence_status": "pending"
+    },
+    {
+      "id": "G-LG-02",
+      "owner_ticket": "DVL-12",
+      "acceptance_ids": [
+        "LG-AC-02"
+      ],
+      "requires_tickets": [
+        "DVL-03",
+        "DVL-04",
+        "DVL-05",
+        "DVL-06",
+        "DVL-07",
+        "DVL-11",
+        "DVL-12"
+      ],
+      "required_evidence_level": "runtime",
+      "check": "Q01미검증에도disabled reader/descriptor·출처/gaps/status;model/cleanup/activation0;활성mixed는14/INT",
+      "coverage_scope": "local_behavior; 해당 AC의 교차 ticket 실제 통합은 INT-runtime",
+      "evidence_status": "pending"
+    },
+    {
+      "id": "G-LG-03",
+      "owner_ticket": "DVL-04",
+      "acceptance_ids": [
+        "LG-AC-03"
+      ],
+      "requires_tickets": [
+        "DVL-03",
+        "DVL-04"
+      ],
+      "required_evidence_level": "fixture",
+      "check": "split/revision/gap/commit fault에서 durable matcher proof와 result/exit 판단, no-match 불완전 indeterminate; 실제 eviction 결합은 INT-runtime",
+      "coverage_scope": "local_behavior; 해당 AC의 교차 ticket 실제 통합은 INT-runtime",
+      "evidence_status": "pending"
+    },
+    {
+      "id": "G-LG-04",
+      "owner_ticket": "DVL-12",
+      "acceptance_ids": [
+        "LG-AC-04"
+      ],
+      "requires_tickets": [
+        "DVL-03",
+        "DVL-04",
+        "DVL-05",
+        "DVL-06",
+        "DVL-07",
+        "DVL-11",
+        "DVL-12"
+      ],
+      "required_evidence_level": "fixture",
+      "check": "Q01없이legacy hash/cap/별도크기·reader보존",
+      "coverage_scope": "local_behavior; 해당 AC의 교차 ticket 실제 통합은 INT-runtime",
+      "evidence_status": "pending"
+    },
+    {
+      "id": "G-LG-05",
+      "owner_ticket": "DVL-10",
+      "acceptance_ids": [
+        "LG-AC-05"
+      ],
+      "requires_tickets": [
+        "DVL-03",
+        "DVL-05",
+        "DVL-06",
+        "DVL-07",
+        "DVL-08",
+        "DVL-09",
+        "DVL-10"
+      ],
+      "required_evidence_level": "runtime",
+      "check": "Task/command source envelope·facts/interpretations/unknown·bounded DB 저장 및 실제 summary-context 도구 차단/skill/result 경로",
+      "coverage_scope": "local_behavior; 해당 AC의 교차 ticket 실제 통합은 INT-runtime",
+      "evidence_status": "pending"
+    },
+    {
+      "id": "G-LG-06",
+      "owner_ticket": "DVL-09",
+      "acceptance_ids": [
+        "LG-AC-06"
+      ],
+      "requires_tickets": [
+        "DVL-03",
+        "DVL-08",
+        "DVL-09"
+      ],
+      "required_evidence_level": "runtime",
+      "check": "실제 existing-agent adapter가 skill bytes/digest/role filter와 typed source-linked result를 제공하며 새 agent 없음",
+      "coverage_scope": "local_behavior; 해당 AC의 교차 ticket 실제 통합은 INT-runtime",
+      "evidence_status": "pending"
+    },
+    {
+      "id": "G-LG-07",
+      "owner_ticket": "DVL-10",
+      "acceptance_ids": [
+        "LG-AC-07"
+      ],
+      "requires_tickets": [
+        "DVL-03",
+        "DVL-05",
+        "DVL-06",
+        "DVL-07",
+        "DVL-08",
+        "DVL-09",
+        "DVL-10"
+      ],
+      "required_evidence_level": "fixture",
+      "check": "dirty299/300/end/coalesce/no-info/user-priority/pause/health fixture. 합의된 done/report_* 후처리 vs cancelled/approval_retired 수집만;real300초는 INT-runtime",
+      "coverage_scope": "local_behavior; 해당 AC의 교차 ticket 실제 통합은 INT-runtime",
+      "evidence_status": "pending"
+    },
+    {
+      "id": "G-LG-08",
+      "owner_ticket": "DVL-10",
+      "acceptance_ids": [
+        "LG-AC-08"
+      ],
+      "requires_tickets": [
+        "DVL-03",
+        "DVL-05",
+        "DVL-06",
+        "DVL-07",
+        "DVL-08",
+        "DVL-09",
+        "DVL-10"
+      ],
+      "required_evidence_level": "fixture",
+      "check": "일반lag/provider오류·eviction에서host/수집유지·긴급모델호출0/buffer상한,local포트에서계약거부3회/streak유지/정상stored reset·guard즉시보호·no replay. 실제raw admission교차는14/13",
+      "coverage_scope": "local_behavior; 해당 AC의 교차 ticket 실제 통합은 INT-runtime",
+      "evidence_status": "pending"
+    },
+    {
+      "id": "G-LG-09",
+      "owner_ticket": "DVL-06",
+      "acceptance_ids": [
+        "LG-AC-09"
+      ],
+      "requires_tickets": [
+        "DVL-03",
+        "DVL-05",
+        "DVL-06"
+      ],
+      "required_evidence_level": "fixture",
+      "check": "active-only120일/pressure 종결 cleanup 및 운영 metadata/proof 불변",
+      "coverage_scope": "local_behavior; 해당 AC의 교차 ticket 실제 통합은 INT-runtime",
+      "evidence_status": "pending"
+    },
+    {
+      "id": "G-LG-10",
+      "owner_ticket": "DVL-06",
+      "acceptance_ids": [
+        "LG-AC-10"
+      ],
+      "requires_tickets": [
+        "DVL-03",
+        "DVL-05",
+        "DVL-06"
+      ],
+      "required_evidence_level": "fixture",
+      "check": "열린 start/latest 보호와 중간 정리/gap, 정리 불가때 copy-loop 없음",
+      "coverage_scope": "local_behavior; 해당 AC의 교차 ticket 실제 통합은 INT-runtime",
+      "evidence_status": "pending"
+    },
+    {
+      "id": "G-LG-11",
+      "owner_ticket": "DVL-06",
+      "acceptance_ids": [
+        "LG-AC-11"
+      ],
+      "requires_tickets": [
+        "DVL-03",
+        "DVL-05",
+        "DVL-06"
+      ],
+      "required_evidence_level": "fixture",
+      "check": "pre/post main/WAL/SHM/live/freelist/task 통계·후보/cache·쓰기/lock/free 검사 및 physical-only false full 없음",
+      "coverage_scope": "local_behavior; 해당 AC의 교차 ticket 실제 통합은 INT-runtime",
+      "evidence_status": "pending"
+    },
+    {
+      "id": "G-LG-12",
+      "owner_ticket": "DVL-06",
+      "acceptance_ids": [
+        "LG-AC-12"
+      ],
+      "requires_tickets": [
+        "DVL-03",
+        "DVL-05",
+        "DVL-06"
+      ],
+      "required_evidence_level": "fixture",
+      "check": "startup/error/periodic quick_check 및 bounded checkpoint/shrink, busy/incomplete/error가 pass로 바뀌지 않음",
+      "coverage_scope": "local_behavior; 해당 AC의 교차 ticket 실제 통합은 INT-runtime",
+      "evidence_status": "pending"
+    },
+    {
+      "id": "G-LG-13",
+      "owner_ticket": "DVL-07",
+      "acceptance_ids": [
+        "LG-AC-13"
+      ],
+      "requires_tickets": [
+        "DVL-03",
+        "DVL-05",
+        "DVL-06",
+        "DVL-07"
+      ],
+      "required_evidence_level": "fixture",
+      "check": "CLI/agent readonly important 조회·TUI injected delay/error가 model/summary/maintenance를 시작하지 않음; actual adapter 연결은 INT-runtime",
+      "coverage_scope": "local_behavior; 해당 AC의 교차 ticket 실제 통합은 INT-runtime",
+      "evidence_status": "pending"
+    },
+    {
+      "id": "G-LG-14",
+      "owner_ticket": "DVL-10",
+      "acceptance_ids": [
+        "LG-AC-14"
+      ],
+      "requires_tickets": [
+        "DVL-03",
+        "DVL-05",
+        "DVL-06",
+        "DVL-07",
+        "DVL-08",
+        "DVL-09",
+        "DVL-10"
+      ],
+      "required_evidence_level": "fixture",
+      "check": "Taskless direct command ID별 dirty/end/grant/retention 연결, Task 있는 command 중복 요청 없음",
+      "coverage_scope": "local_behavior; 해당 AC의 교차 ticket 실제 통합은 INT-runtime",
+      "evidence_status": "pending"
+    },
+    {
+      "id": "G-LG-15",
+      "owner_ticket": "DVL-06",
+      "acceptance_ids": [
+        "LG-AC-15"
+      ],
+      "requires_tickets": [
+        "DVL-03",
+        "DVL-05",
+        "DVL-06"
+      ],
+      "required_evidence_level": "fixture",
+      "check": "prune 소진→UUID DB 원자 전환·기존 archive/WAL 보존·crash recovery/동시 write·count 사실 제공",
+      "coverage_scope": "local_behavior; 해당 AC의 교차 ticket 실제 통합은 INT-runtime",
+      "evidence_status": "pending"
+    },
+    {
+      "id": "G-LG-16",
+      "owner_ticket": "DVL-07",
+      "acceptance_ids": [
+        "LG-AC-16"
+      ],
+      "requires_tickets": [
+        "DVL-03",
+        "DVL-05",
+        "DVL-06",
+        "DVL-07"
+      ],
+      "required_evidence_level": "fixture",
+      "check": "recount 실제>=2에 상시 warning/start/reattach, ack/restart 미해제, 실제1개만 해제, sidecar 제외",
+      "coverage_scope": "local_behavior; 해당 AC의 교차 ticket 실제 통합은 INT-runtime",
+      "evidence_status": "pending"
+    },
+    {
+      "id": "G-LG-17",
+      "owner_ticket": "DVL-06",
+      "acceptance_ids": [
+        "LG-AC-17"
+      ],
+      "requires_tickets": [
+        "DVL-03",
+        "DVL-05",
+        "DVL-06"
+      ],
+      "required_evidence_level": "fixture",
+      "check": "archive age/cap 자동정리 없음 및 manual cleanup이 유일 삭제경로인 storage invariants",
+      "coverage_scope": "local_behavior; 해당 AC의 교차 ticket 실제 통합은 INT-runtime",
+      "evidence_status": "pending"
+    },
+    {
+      "id": "G-LG-18",
+      "owner_ticket": "DVL-10",
+      "acceptance_ids": [
+        "LG-AC-18"
+      ],
+      "requires_tickets": [
+        "DVL-03",
+        "DVL-05",
+        "DVL-06",
+        "DVL-07",
+        "DVL-08",
+        "DVL-09",
+        "DVL-10"
+      ],
+      "required_evidence_level": "fixture",
+      "check": "재시작·late/duplicate/unknown/lost와executed+rejected range재호출0·last-good보존;contract streak영속/새ID·버전변경reset0·일시오류제외 R2 scripted plumbing-only 복구포트·새입력첫계약거부즉시재보호/recovery_attempt restart영속·oldlate성공reset0;재발episode포트/localfixture,실제알림14/13.",
+      "coverage_scope": "local_behavior; 해당 AC의 교차 ticket 실제 통합은 INT-runtime",
+      "evidence_status": "pending"
+    },
+    {
+      "id": "G-LG-19",
+      "owner_ticket": "DVL-10",
+      "acceptance_ids": [
+        "LG-AC-19"
+      ],
+      "requires_tickets": [
+        "DVL-03",
+        "DVL-05",
+        "DVL-06",
+        "DVL-07",
+        "DVL-08",
+        "DVL-09",
+        "DVL-10"
+      ],
+      "required_evidence_level": "fixture",
+      "check": "pause 신규 전송 없음·허용 전송의 valid late만 저장·자동화 재개 없음",
+      "coverage_scope": "local_behavior; 해당 AC의 교차 ticket 실제 통합은 INT-runtime",
+      "evidence_status": "pending"
+    },
+    {
+      "id": "G-LG-20",
+      "owner_ticket": "DVL-07",
+      "acceptance_ids": [
+        "LG-AC-20"
+      ],
+      "requires_tickets": [
+        "DVL-03",
+        "DVL-05",
+        "DVL-06",
+        "DVL-07"
+      ],
+      "required_evidence_level": "fixture",
+      "check": "active/archive origin 표시·UUID/alias active 삭제 거부·보호 이월/handle/intent crash·explicit delete/recount;checkpoint완료/미완료·readonly dir/sidecar없음·immutable제한·조회파일불변",
+      "coverage_scope": "local_behavior; 해당 AC의 교차 ticket 실제 통합은 INT-runtime",
+      "evidence_status": "pending"
+    },
+    {
+      "id": "G-LG-21",
+      "owner_ticket": "DVL-07",
+      "acceptance_ids": [
+        "LG-AC-21"
+      ],
+      "requires_tickets": [
+        "DVL-03",
+        "DVL-05",
+        "DVL-06",
+        "DVL-07"
+      ],
+      "required_evidence_level": "fixture",
+      "check": "core closed 시각/reason vs unclosed/unknown·CLI archival close·same-subject 활동 보호·core status/exit 불변",
+      "coverage_scope": "local_behavior; 해당 AC의 교차 ticket 실제 통합은 INT-runtime",
+      "evidence_status": "pending"
+    },
+    {
+      "id": "G-LG-22",
+      "owner_ticket": "DVL-10",
+      "acceptance_ids": [
+        "LG-AC-22"
+      ],
+      "requires_tickets": [
+        "DVL-03",
+        "DVL-05",
+        "DVL-06",
+        "DVL-07",
+        "DVL-08",
+        "DVL-09",
+        "DVL-10"
+      ],
+      "required_evidence_level": "runtime",
+      "check": "Task 승인/활성/합의종료후처리·cancelled/approval_retired 새호출0·유효late저장,직접실행 command 종료요약뒤만료·최신pause/revoke",
+      "coverage_scope": "local_behavior; 해당 AC의 교차 ticket 실제 통합은 INT-runtime",
+      "evidence_status": "pending"
+    },
+    {
+      "id": "G-LG-23",
+      "owner_ticket": "DVL-10",
+      "acceptance_ids": [
+        "LG-AC-23"
+      ],
+      "requires_tickets": [
+        "DVL-03",
+        "DVL-05",
+        "DVL-06",
+        "DVL-07",
+        "DVL-08",
+        "DVL-09",
+        "DVL-10"
+      ],
+      "required_evidence_level": "fixture",
+      "check": "normal full rollover vs unsafe disk/permission/corruption 신규 summary deferral·arrived storage failure gap·recover-next-cycle/no resume",
+      "coverage_scope": "local_behavior; 해당 AC의 교차 ticket 실제 통합은 INT-runtime",
+      "evidence_status": "pending"
+    },
+    {
+      "id": "Q01-route",
+      "owner_ticket": "DVL-08",
+      "acceptance_ids": [
+        "LG-AC-06"
+      ],
+      "requires_tickets": [
+        "DVL-08"
+      ],
+      "required_evidence_level": "runtime",
+      "check": "기존 허용 agent/parent 실제1turn typed 회수. 새 agent/상주없음, 대안은 adoption 필요",
+      "coverage_scope": "smallest_decisive_experiment",
+      "evidence_status": "pending",
+      "blocks_on_not_passed": [
+        "DVL-09",
+        "DVL-10",
+        "DVL-14"
+      ]
+    },
+    {
+      "id": "Q01-tools",
+      "owner_ticket": "DVL-08",
+      "acceptance_ids": [
+        "LG-AC-05",
+        "LG-AC-06"
+      ],
+      "requires_tickets": [
+        "DVL-08"
+      ],
+      "required_evidence_level": "runtime",
+      "check": "실제request/session/policy enforcement 확인+악성 edit/write/terminal 차단·sentinel 불변. hook 누락/등록만성공미작동/API변형/stale ack/check-send교체 음성은전송0·즉시보호;stub만으로실제APIpass금지 R1 guard설정await/read-back·receipt정상뒤trusted비허용 tool event는결과거부/즉시보호·상위turn오인0;사후감시로예방실패route채택금지.",
+      "coverage_scope": "smallest_decisive_experiment",
+      "evidence_status": "pending",
+      "blocks_on_not_passed": [
+        "DVL-09",
+        "DVL-10",
+        "DVL-14"
+      ]
+    },
+    {
+      "id": "Q01-skill",
+      "owner_ticket": "DVL-08",
+      "acceptance_ids": [
+        "LG-AC-06"
+      ],
+      "requires_tickets": [
+        "DVL-08"
+      ],
+      "required_evidence_level": "runtime",
+      "check": "확정 skill context bytes/digest, role filter와 isolation 실제 관측",
+      "coverage_scope": "smallest_decisive_experiment",
+      "evidence_status": "pending",
+      "blocks_on_not_passed": [
+        "DVL-09",
+        "DVL-10",
+        "DVL-14"
+      ]
+    },
+    {
+      "id": "Q01-result",
+      "owner_ticket": "DVL-08",
+      "acceptance_ids": [
+        "LG-AC-06",
+        "LG-AC-18"
+      ],
+      "requires_tickets": [
+        "DVL-08"
+      ],
+      "required_evidence_level": "runtime",
+      "check": "requestID/subject/revision/range typed 결과 및 wrong/late/duplicate 거부",
+      "coverage_scope": "smallest_decisive_experiment",
+      "evidence_status": "pending",
+      "blocks_on_not_passed": [
+        "DVL-09",
+        "DVL-10",
+        "DVL-14"
+      ]
+    },
+    {
+      "id": "Q01-context",
+      "owner_ticket": "DVL-08",
+      "acceptance_ids": [
+        "LG-AC-06",
+        "LG-AC-07"
+      ],
+      "requires_tickets": [
+        "DVL-08"
+      ],
+      "required_evidence_level": "runtime",
+      "check": "3회transcript/parent4KiB/result8KiB·32KiB body와context preflight,확인된reasoning/visible ceiling 의미·전량예약·1MiB수집bound. 실제모델적합성은별도RM",
+      "coverage_scope": "smallest_decisive_experiment",
+      "evidence_status": "pending",
+      "blocks_on_not_passed": [
+        "DVL-09",
+        "DVL-10",
+        "DVL-14"
+      ]
+    },
+    {
+      "id": "Q01-priority",
+      "owner_ticket": "DVL-08",
+      "acceptance_ids": [
+        "LG-AC-07"
+      ],
+      "requires_tickets": [
+        "DVL-08"
+      ],
+      "required_evidence_level": "runtime",
+      "check": "session/turn/lock 공유·실행중user/due60s/end 최대차단측정;공유미채택blocked_adoption",
+      "coverage_scope": "smallest_decisive_experiment",
+      "evidence_status": "pending",
+      "blocks_on_not_passed": [
+        "DVL-09",
+        "DVL-10",
+        "DVL-14"
+      ]
+    },
+    {
+      "id": "Q01-recovery",
+      "owner_ticket": "DVL-08",
+      "acceptance_ids": [
+        "LG-AC-18",
+        "LG-AC-19"
+      ],
+      "requires_tickets": [
+        "DVL-08"
+      ],
+      "required_evidence_level": "runtime",
+      "check": "pause/restart/disconnect/late 1회, 미실행/실행/불명 대조 능력과 no replay",
+      "coverage_scope": "smallest_decisive_experiment",
+      "evidence_status": "pending",
+      "blocks_on_not_passed": [
+        "DVL-09",
+        "DVL-10",
+        "DVL-14"
+      ]
+    },
+    {
+      "id": "Q01-origin",
+      "owner_ticket": "DVL-08",
+      "acceptance_ids": [
+        "LG-AC-22"
+      ],
+      "requires_tickets": [
+        "DVL-08"
+      ],
+      "required_evidence_level": "runtime",
+      "check": "Task 승인/종료후처리 및 직접 실행 지시 command provenance 확인; 단순user role/무관grant 허가 아님",
+      "coverage_scope": "smallest_decisive_experiment",
+      "evidence_status": "pending",
+      "blocks_on_not_passed": [
+        "DVL-09",
+        "DVL-10",
+        "DVL-14"
+      ]
+    },
+    {
+      "id": "STORE-contract",
+      "owner_ticket": "DVL-03",
+      "acceptance_ids": [
+        "LG-AC-05",
+        "LG-AC-06",
+        "LG-AC-11",
+        "LG-AC-18"
+      ],
+      "requires_tickets": [
+        "DVL-03"
+      ],
+      "required_evidence_level": "fixture",
+      "check": "strict JSON v1/roundtrip, private SQLite/codec/read-only/migration, source/control/evidence ports; 모델 semantics/retention는 후속",
+      "coverage_scope": "shared_contract_only",
+      "evidence_status": "pending"
+    },
+    {
+      "id": "LIFECYCLE",
+      "owner_ticket": "DVL-05",
+      "acceptance_ids": [
+        "LG-AC-05",
+        "LG-AC-14",
+        "LG-AC-21",
+        "LG-AC-22"
+      ],
+      "requires_tickets": [
+        "DVL-03",
+        "DVL-05"
+      ],
+      "required_evidence_level": "fixture",
+      "check": "기존 Subject event를 DB에 복사, closed/actual-end vs unclosed 보호, injectable authority port; 실제 origin은 Q01/DVL-10",
+      "coverage_scope": "local_event_and_authority_contract",
+      "evidence_status": "pending"
+    },
+    {
+      "id": "RAW-engine",
+      "owner_ticket": "DVL-11",
+      "acceptance_ids": [
+        "LG-AC-01",
+        "LG-AC-02",
+        "LG-AC-03",
+        "LG-AC-04"
+      ],
+      "requires_tickets": [
+        "DVL-03",
+        "DVL-04",
+        "DVL-11"
+      ],
+      "required_evidence_level": "fixture",
+      "check": "disabled production engine의 exact total cap/framing/gaps/crash/concurrency/legacy 불변 및 durable proof retained",
+      "coverage_scope": "isolated_engine_only",
+      "evidence_status": "pending"
+    },
+    {
+      "id": "INT-runtime",
+      "owner_ticket": "DVL-13",
+      "acceptance_ids": [
+        "DV-AC-01",
+        "DV-AC-02",
+        "DV-AC-03",
+        "DV-AC-04",
+        "DV-AC-05",
+        "LG-AC-01",
+        "LG-AC-02",
+        "LG-AC-03",
+        "LG-AC-04",
+        "LG-AC-05",
+        "LG-AC-06",
+        "LG-AC-07",
+        "LG-AC-08",
+        "LG-AC-09",
+        "LG-AC-10",
+        "LG-AC-11",
+        "LG-AC-12",
+        "LG-AC-13",
+        "LG-AC-14",
+        "LG-AC-15",
+        "LG-AC-16",
+        "LG-AC-17",
+        "LG-AC-18",
+        "LG-AC-19",
+        "LG-AC-20",
+        "LG-AC-21",
+        "LG-AC-22",
+        "LG-AC-23"
+      ],
+      "requires_tickets": [
+        "DVL-01",
+        "DVL-02",
+        "DVL-03",
+        "DVL-04",
+        "DVL-05",
+        "DVL-06",
+        "DVL-07",
+        "DVL-08",
+        "DVL-09",
+        "DVL-10",
+        "DVL-11",
+        "DVL-12",
+        "DVL-13",
+        "DVL-14"
+      ],
+      "required_evidence_level": "runtime",
+      "check": "same final candidate의 fast/precise + 실제300초 summary,60초 check/65초 detach, scripted real OMP·skill·UI·legacy default/isolated activation·eviction proof·DB rollover/readonly/delete/warning·pause/no replay/storage faults; independent tests/review/regression/scope audit;precise registry·제품독립verify·projection·종결/input/stale/추가호출0/archive readonly",
+      "coverage_scope": "combined_feature_acceptance",
+      "evidence_status": "pending"
+    },
+    {
+      "id": "Q01-validator",
+      "owner_ticket": "DVL-08",
+      "acceptance_ids": [
+        "LG-AC-06"
+      ],
+      "requires_tickets": [
+        "DVL-08"
+      ],
+      "required_evidence_level": "fixture",
+      "check": "판정전validator/projection/recheck probe-local·product seam·음성fixtures 독립test/review/digest freeze;09자기판정tool쓰기없음·변경08follow-up재동결;missing/stale/unknown/fixture-only/passflag거부 R3 canonical제품policy JSON core bytes/version/digest freeze·devoverlay분리/개발제품closure변경동일판정.",
+      "coverage_scope": "local_behavior; final은INT-runtime",
+      "evidence_status": "pending"
+    },
+    {
+      "id": "Q01-contract",
+      "owner_ticket": "DVL-09",
+      "acceptance_ids": [
+        "LG-AC-05",
+        "LG-AC-06"
+      ],
+      "requires_tickets": [
+        "DVL-03",
+        "DVL-08",
+        "DVL-09"
+      ],
+      "required_evidence_level": "fixture",
+      "check": "probe-local/03typed/productadapter golden·음성 동일 의미 및 guard/model epoch포트;09는동결recheck소비,product8개runtime는별도실행",
+      "coverage_scope": "local_behavior; final은INT-runtime",
+      "evidence_status": "pending"
+    },
+    {
+      "id": "SUMMARY-budget",
+      "owner_ticket": "DVL-09",
+      "acceptance_ids": [
+        "LG-AC-05",
+        "LG-AC-07"
+      ],
+      "requires_tickets": [
+        "DVL-03",
+        "DVL-08",
+        "DVL-09"
+      ],
+      "required_evidence_level": "fixture",
+      "check": "현재session model/thinking/tier/context epoch·visible JSON8KiB/모델기반token예산+reasoning ceiling 포함/별도한도·전량예약,필수unknown/변경시send0,사용자pin불변·선정누락usage/미완결거부 R4 route별현재/생성context해석read-back port·전송전변경/불명차단.",
+      "coverage_scope": "local_behavior; final은INT-runtime",
+      "evidence_status": "pending"
+    },
+    {
+      "id": "PRODUCT-evidence",
+      "owner_ticket": "DVL-14",
+      "acceptance_ids": [
+        "LG-AC-01",
+        "LG-AC-06",
+        "LG-AC-07"
+      ],
+      "requires_tickets": [
+        "DVL-03",
+        "DVL-04",
+        "DVL-05",
+        "DVL-06",
+        "DVL-07",
+        "DVL-08",
+        "DVL-09",
+        "DVL-10",
+        "DVL-11",
+        "DVL-12",
+        "DVL-14"
+      ],
+      "required_evidence_level": "runtime",
+      "check": "개발tools/tests/docs/.workflow없는checkout복사본;원exactrecord/전체identity+제품relatedclosure 분리. OMPbundled변경·무관UI/kernel패치는미검증실행유지/verify요구0,관련변경·guard불명즉시보호/send0·신규sourcelegacy/진행cohort유지. 반복3계약거부보호·원인불명구분/명시복구/사건중복알림0·최초activation별도 R1 정상receipt뒤tool event감시/결과거부·확인된tool실행compatfailed. R2 scriptedplumbing/realcontractunknown·복구시도첫재거부즉시보호/새episode알림1회. R3 productpolicy==08freeze digest/closure무효화동일·불일치invalidated.",
+      "coverage_scope": "local_behavior; final은INT-runtime",
+      "evidence_status": "pending"
+    },
+    {
+      "id": "DV-registry",
+      "owner_ticket": "DVL-13",
+      "acceptance_ids": [
+        "DV-AC-01",
+        "DV-AC-03",
+        "DV-AC-04"
+      ],
+      "requires_tickets": [
+        "DVL-01",
+        "DVL-02",
+        "DVL-03",
+        "DVL-04",
+        "DVL-05",
+        "DVL-06",
+        "DVL-07",
+        "DVL-08",
+        "DVL-09",
+        "DVL-10",
+        "DVL-11",
+        "DVL-12",
+        "DVL-13",
+        "DVL-14"
+      ],
+      "required_evidence_level": "runtime",
+      "check": "precise Q01 product-adapter·제품verify/MODEL-metadata·새요약/DB/raw registry 실제실행·negative failure/inconclusive 집계;product runtime 실행허용과pass분리 R3 제품canonicalcore policy version/digest==08freeze·14기록일치,누락/불일치/closure누락거부.",
+      "coverage_scope": "local_behavior; final은INT-runtime",
+      "evidence_status": "pending"
+    },
+    {
+      "id": "MODEL-metadata",
+      "owner_ticket": "DVL-14",
+      "acceptance_ids": [
+        "LG-AC-06",
+        "LG-AC-07"
+      ],
+      "requires_tickets": [
+        "DVL-09",
+        "DVL-10",
+        "DVL-14"
+      ],
+      "required_evidence_level": "runtime",
+      "check": "실행중session의현재model/provider/thinking/tier/context/tokenizer/estimator/enforce ceiling·reasoning 포함/예산 출처 관측·epoch결속. observer/credential-freeverify 네트워크0/auth-store open0/설정쓰기0/모델call0;표/fake값뿐·필수unknown은inconclusive/preflight차단·Q-S3-05/06연계 R4 공유session현재선택 또는 채택격리route의생성context해석read-back 후전송·상속/role출처·epoch확인.",
+      "coverage_scope": "local_behavior; final에서재관측",
+      "evidence_status": "pending",
+      "blocks_on_not_passed": [
+        "DVL-14",
+        "DVL-13"
+      ]
+    }
+  ],
+  "acceptance_trace": [
+    {
+      "acceptance_id": "DV-AC-01",
+      "owner_ticket": "DVL-01",
+      "local_gate": "G-DV-01",
+      "observable_interface": "runner CLI의 fast/precise 선택·목표 초과 계속·목표 대비 표시, required0건 거부",
+      "final_integration_gate": "INT-runtime",
+      "evidence_status": "pending"
+    },
+    {
+      "acceptance_id": "DV-AC-02",
+      "owner_ticket": "DVL-02",
+      "local_gate": "G-DV-02",
+      "observable_interface": "readiness/watchdog predicate와 실제60초 review/65초 detach; fake evidence 구분. 요약300초는 INT-runtime",
+      "final_integration_gate": "INT-runtime",
+      "evidence_status": "pending"
+    },
+    {
+      "acceptance_id": "DV-AC-03",
+      "owner_ticket": "DVL-02",
+      "local_gate": "G-DV-03",
+      "observable_interface": "실제 설치 OMP의 core plain/설치 outer×shell smoke/장애 matrix; missing/격리불가 미검증. 새 중요DB 전체 통합은 INT-runtime",
+      "final_integration_gate": "INT-runtime",
+      "evidence_status": "pending"
+    },
+    {
+      "acceptance_id": "DV-AC-04",
+      "owner_ticket": "DVL-01",
+      "local_gate": "G-DV-04",
+      "observable_interface": "실제 runner 결과에 후보 전후/input/host/OMP 전후/tool/mode/item/timing/first-failure와 attempts 연결",
+      "final_integration_gate": "INT-runtime",
+      "evidence_status": "pending"
+    },
+    {
+      "acceptance_id": "DV-AC-05",
+      "owner_ticket": "DVL-02",
+      "local_gate": "G-DV-05",
+      "observable_interface": "같은 항목/candidate/env baseline→after 비용·assertion inventory 유지·검증된 namespace 병렬; 목표 달성 여부 그대로 표시",
+      "final_integration_gate": "INT-runtime",
+      "evidence_status": "pending"
+    },
+    {
+      "acceptance_id": "LG-AC-01",
+      "owner_ticket": "DVL-14",
+      "local_gate": "G-LG-01",
+      "observable_interface": "첫현재제품record8개·실제metadata·별도activation;OMP drift-only 계속사용,확인된호환실패/제품경계변경시새source legacy·진행중cohort불변·mixed100MB×5",
+      "final_integration_gate": "INT-runtime",
+      "evidence_status": "pending"
+    },
+    {
+      "acceptance_id": "LG-AC-02",
+      "owner_ticket": "DVL-12",
+      "local_gate": "G-LG-02",
+      "observable_interface": "Q01미검증에도disabled reader/descriptor·출처/gaps/status;model/cleanup/activation0;활성mixed는14/INT",
+      "final_integration_gate": "INT-runtime",
+      "evidence_status": "pending"
+    },
+    {
+      "acceptance_id": "LG-AC-03",
+      "owner_ticket": "DVL-04",
+      "local_gate": "G-LG-03",
+      "observable_interface": "split/revision/gap/commit fault에서 durable matcher proof와 result/exit 판단, no-match 불완전 indeterminate; 실제 eviction 결합은 INT-runtime",
+      "final_integration_gate": "INT-runtime",
+      "evidence_status": "pending"
+    },
+    {
+      "acceptance_id": "LG-AC-04",
+      "owner_ticket": "DVL-12",
+      "local_gate": "G-LG-04",
+      "observable_interface": "Q01없이legacy hash/cap/별도크기·reader보존",
+      "final_integration_gate": "INT-runtime",
+      "evidence_status": "pending"
+    },
+    {
+      "acceptance_id": "LG-AC-05",
+      "owner_ticket": "DVL-10",
+      "local_gate": "G-LG-05",
+      "observable_interface": "Task/command source envelope·facts/interpretations/unknown·bounded DB 저장 및 실제 summary-context 도구 차단/skill/result 경로",
+      "final_integration_gate": "INT-runtime",
+      "evidence_status": "pending"
+    },
+    {
+      "acceptance_id": "LG-AC-06",
+      "owner_ticket": "DVL-09",
+      "local_gate": "G-LG-06",
+      "observable_interface": "실제 existing-agent adapter가 skill bytes/digest/role filter와 typed source-linked result를 제공하며 새 agent 없음",
+      "final_integration_gate": "INT-runtime",
+      "evidence_status": "pending"
+    },
+    {
+      "acceptance_id": "LG-AC-07",
+      "owner_ticket": "DVL-10",
+      "local_gate": "G-LG-07",
+      "observable_interface": "dirty299/300/end/coalesce/no-info/user-priority/pause/health fixture. 합의된 done/report_* 후처리 vs cancelled/approval_retired 수집만;real300초는 INT-runtime",
+      "final_integration_gate": "INT-runtime",
+      "evidence_status": "pending"
+    },
+    {
+      "acceptance_id": "LG-AC-08",
+      "owner_ticket": "DVL-10",
+      "local_gate": "G-LG-08",
+      "observable_interface": "lag/error/evicted-range port를 통해 남은 입력/gap을 보존하고 execution/rotation stop 요청 없음; real v2는 INT-runtime;빠른eviction에도긴급추가호출0·buffer/cursor bound",
+      "final_integration_gate": "INT-runtime",
+      "evidence_status": "pending"
+    },
+    {
+      "acceptance_id": "LG-AC-09",
+      "owner_ticket": "DVL-06",
+      "local_gate": "G-LG-09",
+      "observable_interface": "active-only120일/pressure 종결 cleanup 및 운영 metadata/proof 불변",
+      "final_integration_gate": "INT-runtime",
+      "evidence_status": "pending"
+    },
+    {
+      "acceptance_id": "LG-AC-10",
+      "owner_ticket": "DVL-06",
+      "local_gate": "G-LG-10",
+      "observable_interface": "열린 start/latest 보호와 중간 정리/gap, 정리 불가때 copy-loop 없음",
+      "final_integration_gate": "INT-runtime",
+      "evidence_status": "pending"
+    },
+    {
+      "acceptance_id": "LG-AC-11",
+      "owner_ticket": "DVL-06",
+      "local_gate": "G-LG-11",
+      "observable_interface": "pre/post main/WAL/SHM/live/freelist/task 통계·후보/cache·쓰기/lock/free 검사 및 physical-only false full 없음",
+      "final_integration_gate": "INT-runtime",
+      "evidence_status": "pending"
+    },
+    {
+      "acceptance_id": "LG-AC-12",
+      "owner_ticket": "DVL-06",
+      "local_gate": "G-LG-12",
+      "observable_interface": "startup/error/periodic quick_check 및 bounded checkpoint/shrink, busy/incomplete/error가 pass로 바뀌지 않음",
+      "final_integration_gate": "INT-runtime",
+      "evidence_status": "pending"
+    },
+    {
+      "acceptance_id": "LG-AC-13",
+      "owner_ticket": "DVL-07",
+      "local_gate": "G-LG-13",
+      "observable_interface": "CLI/agent readonly important 조회·TUI injected delay/error가 model/summary/maintenance를 시작하지 않음; actual adapter 연결은 INT-runtime",
+      "final_integration_gate": "INT-runtime",
+      "evidence_status": "pending"
+    },
+    {
+      "acceptance_id": "LG-AC-14",
+      "owner_ticket": "DVL-10",
+      "local_gate": "G-LG-14",
+      "observable_interface": "Taskless direct command ID별 dirty/end/grant/retention 연결, Task 있는 command 중복 요청 없음",
+      "final_integration_gate": "INT-runtime",
+      "evidence_status": "pending"
+    },
+    {
+      "acceptance_id": "LG-AC-15",
+      "owner_ticket": "DVL-06",
+      "local_gate": "G-LG-15",
+      "observable_interface": "prune 소진→UUID DB 원자 전환·기존 archive/WAL 보존·crash recovery/동시 write·count 사실 제공",
+      "final_integration_gate": "INT-runtime",
+      "evidence_status": "pending"
+    },
+    {
+      "acceptance_id": "LG-AC-16",
+      "owner_ticket": "DVL-07",
+      "local_gate": "G-LG-16",
+      "observable_interface": "recount 실제>=2에 상시 warning/start/reattach, ack/restart 미해제, 실제1개만 해제, sidecar 제외",
+      "final_integration_gate": "INT-runtime",
+      "evidence_status": "pending"
+    },
+    {
+      "acceptance_id": "LG-AC-17",
+      "owner_ticket": "DVL-06",
+      "local_gate": "G-LG-17",
+      "observable_interface": "archive age/cap 자동정리 없음 및 manual cleanup이 유일 삭제경로인 storage invariants",
+      "final_integration_gate": "INT-runtime",
+      "evidence_status": "pending"
+    },
+    {
+      "acceptance_id": "LG-AC-18",
+      "owner_ticket": "DVL-10",
+      "local_gate": "G-LG-18",
+      "observable_interface": "stored/not_sent/executed_lost/unknown 대조·재시작·신ID/skill/revision 우회 금지·late first valid·last good 보호",
+      "final_integration_gate": "INT-runtime",
+      "evidence_status": "pending"
+    },
+    {
+      "acceptance_id": "LG-AC-19",
+      "owner_ticket": "DVL-10",
+      "local_gate": "G-LG-19",
+      "observable_interface": "pause 신규 전송 없음·허용 전송의 valid late만 저장·자동화 재개 없음",
+      "final_integration_gate": "INT-runtime",
+      "evidence_status": "pending"
+    },
+    {
+      "acceptance_id": "LG-AC-20",
+      "owner_ticket": "DVL-07",
+      "local_gate": "G-LG-20",
+      "observable_interface": "active/archive origin 표시·UUID/alias active 삭제 거부·보호 이월/handle/intent crash·explicit delete/recount;checkpoint완료/미완료·readonly dir/sidecar없음·immutable제한·조회파일불변",
+      "final_integration_gate": "INT-runtime",
+      "evidence_status": "pending"
+    },
+    {
+      "acceptance_id": "LG-AC-21",
+      "owner_ticket": "DVL-07",
+      "local_gate": "G-LG-21",
+      "observable_interface": "core closed 시각/reason vs unclosed/unknown·CLI archival close·same-subject 활동 보호·core status/exit 불변",
+      "final_integration_gate": "INT-runtime",
+      "evidence_status": "pending"
+    },
+    {
+      "acceptance_id": "LG-AC-22",
+      "owner_ticket": "DVL-10",
+      "local_gate": "G-LG-22",
+      "observable_interface": "Task 승인/활성/합의종료후처리·cancelled/approval_retired 새호출0·유효late저장,직접실행 command 종료요약뒤만료·최신pause/revoke",
+      "final_integration_gate": "INT-runtime",
+      "evidence_status": "pending"
+    },
+    {
+      "acceptance_id": "LG-AC-23",
+      "owner_ticket": "DVL-10",
+      "local_gate": "G-LG-23",
+      "observable_interface": "normal full rollover vs unsafe disk/permission/corruption 신규 summary deferral·arrived storage failure gap·recover-next-cycle/no resume",
+      "final_integration_gate": "INT-runtime",
+      "evidence_status": "pending"
+    }
+  ],
+  "verification": {
+    "independent_test_designer_required": true,
+    "fresh_reviewer_required": true,
+    "per_ticket_boundary": "위 local gates를 독립 시험/검토와 통합 candidate에서 검증한 뒤 supplier를 만족시킴; final integration은13",
+    "final_candidate_required": true,
+    "required_runtime_evidence": "Q01+runtime level local gate+INT-runtime; fixtures/static/green status만으로 대체 금지",
+    "paid_models": "not_in_scope; FOLLOWUPS RM01~03 pending",
+    "vm_reboot": "not_in_scope; release TODO",
+    "all_checks_execution": "not_run_during_planning",
+    "scoped_gate_validation": "§8.1 full candidate/closure projection dependency 판정 분리;09 이후 actual product adapter,final46개 exact candidate 재실행",
+    "validator_freeze": "08판정전validator/projection/recheck모드+포트 독립시험/검토freeze;09는판정tool수정불가,Root08follow-up 변경시독립재동결·판정무효화",
+    "model_metadata": "14현재session/model epoch·thinking/tier·reasoning/output/context출처;observer/verify 네트워크0/auth-store open0/설정쓰기0,unknown차단·13registry R4 공유현재session/격리생성context해석 read-back 후전송;부모상속/role출처,생성부터모델call되는route는충족가정금지.",
+    "request_guard": "08실제효력관측+무력화음성,09request/session/policy one-use receipt와check/send장벽,14보호·신규sourcelegacy,13최종runtime. 확인 불가능은blocked_adoption,추가모델call없음. R1 guard설정await/read-back·실행중trusted tool event 위반검출/결과거부·즉시보호·추가모델call0;receipt정상/후속위반음성.",
+    "frozen_judge_write_ownership": "tools/validate_feature_gate.py,tools/q01_recheck.py,tests/backend/summary_probe_support.py,test_summary_probe.py,test_summary_gate_validator.py는08소유. 다른ticket의wildcardscope로수정불가;필요변경Root08follow-up독립test/review freeze. R3 canonical core policy src/workbench/contracts/summary_compat_policy_v1.json도08단일owner/독립freeze.",
+    "canonical_policy": "08 제품JSON core bytes freeze/version/digest 단일소유;dev/product 동일파일읽기.14PRODUCT-evidence/13DV-registry는08동결digest 대조·backend/mailbox/tasks/storage/workflow invalidation동일성,불일치invalidated.",
+    "recovery_attempt": "10 local port/14 runtime:scripted plumbing과실모델계약unverified분리,명시verify뒤새입력정규요청복구시도;첫executed+contract-rejected즉시재보호·재발episode1회알림/restart중복0/no replay.",
+    "dispatch_write_scope": "R5 audit helper excludes없음.10backendtest명시목록allowed만전달/08freeze불변전후대조;wildcardhint그대로전달금지."
+  },
+  "publication": {
+    "local_only": true,
+    "implementation_authorized": false,
+    "raw_rotation_activation_authorized": false,
+    "commit_publish_deploy_authorized": false,
+    "bundle_digest_record": "../../../.workflow/dev-validation-log-retention/runs/plan-p5-s5-20261009/bundle-manifest.json"
+  },
+  "product_policy_decisions": [
+    {
+      "id": "Q-S2-01",
+      "status": "agreed",
+      "decision": "보호/재검증 상태 신규 source legacy-stop·진행중 유지. OMP version-only는Q-S2-04예외",
+      "blocks": [],
+      "source": "BRIEF LG-D13; SPEC§8.1/9/13; decisions.json"
+    },
+    {
+      "id": "Q-S2-02",
+      "status": "agreed",
+      "decision": "cancelled/approval_retired 수집만·새 종료요약 없음·기전송late저장별개",
+      "blocks": [],
+      "source": "BRIEF LG-D14; SPEC§8.3/13"
+    },
+    {
+      "id": "Q-S2-04",
+      "status": "agreed_revised_option",
+      "decision": "OMP update-only 기본실행·반복verify요구/자동verify없음; 실제문제/관련제품변경시수동verify",
+      "blocks": [],
+      "source": "BRIEF DV-D03; SPEC§8.1/13"
+    },
+    {
+      "id": "Q-S2-03",
+      "status": "conditional_pending_measurement_and_user_adoption",
+      "recommendation": "공유경로 차단측정/한계보고/채택후 pass",
+      "blocks": [
+        "DVL-09",
+        "DVL-10",
+        "DVL-14"
+      ],
+      "source": "M5;SPEC§13",
+      "applies_only_when": "session/turn/lock 공유 route가 필요하다고 관측된 경우"
+    },
+    {
+      "id": "Q-S3-05",
+      "status": "conditional_pending_observation_and_user_decision",
+      "recommendation": "metadata unavailable이면unknown차단 유지;대체 상한은관측뒤결정",
+      "blocks": [
+        "DVL-14"
+      ],
+      "source": "N3;SPEC§13",
+      "applies_only_when": "실제 model metadata를 안전하게 얻지 못하여 fallback이 필요한 경우"
+    },
+    {
+      "id": "Q-S3-06",
+      "status": "conditional_pending_observation_and_user_decision",
+      "recommendation": "현재thinking/tier pin 유지,reasoning/visible결과·비용 관측 후 요약만 변경할지 보고",
+      "blocks": [
+        "DVL-14"
+      ],
+      "source": "P4;SPEC§8.2/13;FOLLOWUPS",
+      "applies_only_when": "현재 모델/effort/tier로 안전한 summary budget이 성립하지 않아 변경이 필요한 경우"
+    },
+    {
+      "id": "P1-route-followup",
+      "status": "conditional_pending_observation_and_user_adoption",
+      "recommendation": "guard 확인불가이면안전차단 유지·대안보고;DV-D03을 임의변경하지 않음",
+      "blocks": [
+        "DVL-09",
+        "DVL-10",
+        "DVL-14"
+      ],
+      "source": "P1;SPEC§8.1/13",
+      "applies_only_when": "공개route의요청별효력확인/장벽이 불가능하다고 관측된 경우"
+    }
+  ],
+  "revision_notes": {
+    "supersedes": "p4/s4",
+    "source_review": "ticket-bundle-s4-p4-final-review-04",
+    "stable_ticket_ids": "DVL-01~14와dependency graph·28AC·46gate ID/수준 유지",
+    "source_brief_changed": false,
+    "brief_change": "r0.9 제품 결정/AC 불변,인계 포인터만s5/p5로갱신;승인r0.8/기존합의기록보존",
+    "policy_approval": "이번사용자'그렇게 해'=R1~R3 기술보강·R4~R5착수체크·R6수신기록 반영;bundle/구현 승인아님",
+    "historical_requirements": "p1~p4 requirements bytes 보존/superseded,current= requirements-r0.9-p5.json",
+    "changes": [
+      "R1 guard설정await/read-back·실행중tool event감시/즉시보호",
+      "R2 scripted plumbing-only/recovery_attempt·첫재거부즉시보호/재발episode",
+      "R3 단일productJSON core policy bytes/digest·14/13대조",
+      "R4 route별해석된metadata read-back착수체크",
+      "R5 10backend시험명시목록/Rootauditallowed·08freeze대조",
+      "R6 p4publication/preparedrequest불변+제출record유지·새회신receipt"
+    ]
+  }
+}

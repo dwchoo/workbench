@@ -1,0 +1,24 @@
+{
+  "invocation": "dvl045-fix-01",
+  "outcome": "partial",
+  "disposition": "candidate_ready_independent_fixture_correction_and_verification_pending",
+  "candidate": "5699f65a9e841a478e101c7510eb7e57dfdaf99facd31e257371b9d85dd209d4",
+  "fix": "store.transaction plus nested savepoint atomically copies event entry/stats/lifecycle/seen; all four copy paths. Older unseen flow seq refuses reapplication, persists storage_unknown and reconciles later facts without authority rewind.",
+  "checks": {
+    "targeted_related_passed": 26,
+    "with_independent": {
+      "tests": 32,
+      "exit": 1,
+      "failures": 1,
+      "cause": "Existing independent setup injects seq99 into first actual HandoffJournal record; following actual close seq2 is invalid non-monotonic input and correctly refused."
+    }
+  },
+  "evidence": "/tmp/workbench-dvl-20261009-3l1ViH/dvl05/.workflow/dvl-local/dvl045-fix-01/checks.json",
+  "scope_audit": ".workflow/dev-validation-log-retention/runs/implement-p5-20261009/audit-dvl045-fix-01.json",
+  "first_failures_preserved": true,
+  "independent_modified": false,
+  "production_forward_exception": "withdrawn before final candidate; no test-green authority expansion retained",
+  "graph_update": "AST-only CLI successful; semantic docs deferred, no LLM",
+  "cleanup": "owned temp SQLite directory removed; source/test/graph processes stopped",
+  "next": "Reserved independent author03 validates/corrects only invalid fixture setup, adds real cursor fault-order regression; fresh review02 after complete current checks. No pass before that."
+}

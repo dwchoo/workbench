@@ -1,0 +1,24 @@
+{
+  "invocation": "dvl01-review-02",
+  "outcome": "failed",
+  "candidate": "cb0a8654ee11bd78bbd9e69507ece88d711e356349b55e7f57433a4a2566e52e",
+  "findings": [
+    {
+      "id": "S01-R7",
+      "severity": "medium",
+      "fact": "product CLI native doublefork setsid backend outside driver Popen identity/session; watchdog kills driver beforeSandbox.close; detectednamespace residue notattributed and notcleaned",
+      "paths": [
+        "tools/dev_validate.py:251",
+        "src/workbench/backend/cli.py:62"
+      ],
+      "required": "bounded exact owned cleanup for normal product backend, not namespace-string kill or universalhostile sandbox"
+    }
+  ],
+  "resolved": [
+    "S01-R4",
+    "S01-R5 directhelper",
+    "S01-R6"
+  ],
+  "mode": "readonly source evidence no checks",
+  "next": "independent normalproduct doublefork regression thenboundedrunner ownershipfix"
+}

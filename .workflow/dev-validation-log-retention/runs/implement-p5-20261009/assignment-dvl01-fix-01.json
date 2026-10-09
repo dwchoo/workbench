@@ -1,0 +1,80 @@
+{
+  "feature_id": "dev-validation-log-retention",
+  "ticket_id": "DVL-01",
+  "attempt_id": "01",
+  "invocation": "dvl01-fix-01",
+  "phase": "bounded_runner_watchdog_and_cleanup_correction",
+  "authority": ".workflow/dev-validation-log-retention/runs/implement-p5-20261009/authority.json",
+  "approved_bundle_digest": "78bc55919e57bbf2132d6653780c5c164a2ee1d618422e5232d4cf0d1d667c3e",
+  "actual_workspace": "/tmp/workbench-dvl-20261009-3l1ViH/dvl01",
+  "repository_identity": {
+    "head": "2f21ec91990a409ea0d25f351343b50e34b48196",
+    "input_candidate": "9a9df4268ce5def91ef8ed48481068a53fe6ca01b2c119e5906d665e9fee0309"
+  },
+  "baseline_snapshot": ".workflow/dev-validation-log-retention/runs/implement-p5-20261009/checkpoint-dvl01-fix-01.json",
+  "checkpoint_ref": ".workflow/dev-validation-log-retention/runs/implement-p5-20261009/checkpoint-dvl01-fix-01.json",
+  "mutation_owner": "dvl01-fix-01",
+  "allowed_write_paths": [
+    "tools/dev_validate.py"
+  ],
+  "resource_claims": [
+    {
+      "resource": "dev-validation:harness",
+      "mode": "shared"
+    }
+  ],
+  "acceptance_ids": [
+    "DV-AC-01",
+    "DV-AC-02",
+    "DV-AC-04",
+    "DV-AC-05"
+  ],
+  "relevant_contracts": [
+    "BRIEF",
+    "SPEC§4",
+    "DVL-01",
+    ".codex/workflow-contract.md"
+  ],
+  "operational_outputs": "/tmp/workbench-dvl-20261009-3l1ViH/dvl01/.workflow/dvl-local",
+  "prohibited_paths": [
+    "independent tests/worker tests/harness",
+    "Root/other checkouts/central state/approved bundle",
+    "real OMP and paid model/user data/auth/mux"
+  ],
+  "test_env": "/tmp/workbench-dvl-20261009-3l1ViH/test-py312/bin/python",
+  "configured_model": "gpt-6-sol",
+  "configured_effort": "high (fixed worker_senior role)",
+  "host_observed_model": "unverified",
+  "host_observed_effort": "unverified",
+  "task": "Fix independently reproduced S01-R1/R2/R3 ONLY production runner: use recognizable assertion progress predicate not arbitrary stdout chatter (SPEC§4), parent pipe-holder descendants cleaned before return via owned identity, spawn OSError cleans private namespace and yields bounded classified result/report. Preserve independent failing assertions and first failure records. Run independent8+existing15 targeted tests only, no actualOMP or full suite. All report outputs private operational, explicit cwd+absolute apply paths, no delegation. No scope extension needed; if unavoidable return precise blocker.",
+  "prior_assignment_ref": ".workflow/dev-validation-log-retention/runs/implement-p5-20261009/assignment-dvl01-impl-01.json",
+  "routing": {
+    "planned_role": "worker_senior",
+    "selected_role": "worker_senior",
+    "reason_codes": [
+      "evidenced_cleanup_watchdog_invariants"
+    ],
+    "evidence_refs": [
+      ".workflow/dev-validation-log-retention/runs/implement-p5-20261009/result-dvl01-test-01.json"
+    ]
+  },
+  "generated_outputs": [
+    "tools/dev_validate.py"
+  ],
+  "effective_write_capability": "explicit workdir/absolute paths; hostunrestricted detector-only, reaffirm before edit",
+  "exact_checks": [
+    "G-DV-01",
+    "G-DV-04"
+  ],
+  "reserved_budget": {
+    "implementation": 1,
+    "independent_test": 1,
+    "fresh_review": 1,
+    "finite_run_limit": 64
+  },
+  "stop_conditions": [
+    "scope/authorization expansion",
+    "independent criterion weakened",
+    "user data/auth/mux touched"
+  ]
+}

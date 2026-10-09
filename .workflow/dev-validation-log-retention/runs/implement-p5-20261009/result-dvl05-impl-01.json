@@ -1,0 +1,15 @@
+{
+  "invocation": "dvl05-impl-01",
+  "outcome": "partial",
+  "candidate": "b79d9b404fdb1573087b62305123efac9f1117ef470fbda96c065ef8fa900d2c",
+  "scope_audit": ".workflow/dev-validation-log-retention/runs/implement-p5-20261009/audit-dvl05-impl-01.json",
+  "checks": "final11 direct tests passed0.088s; earlier15 before last delivered predicate; broad priorfailures retained",
+  "remaining": [
+    "experiment workflow separate mailbox delivery outsidecurrenthook",
+    "DVL04 SourceRange collector wiring",
+    "DVL06 activeDB composition",
+    "DVL08 actualorigin"
+  ],
+  "cleanup": "worker finished ownedprocess/socket gone and private tmpfs deleted",
+  "core_state": "unchanged; unknowncapture distinct"
+}

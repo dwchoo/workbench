@@ -1,0 +1,23 @@
+{
+  "invocation": "dvl01-fix-04",
+  "outcome": "complete",
+  "candidate": "64e94b1852ef9fd0e9b0067bbc74f6687803f05653efc78a1ee24b645e581080",
+  "targeted_tests": 3,
+  "passed": 3,
+  "duration": 3.065,
+  "normal_z_test": ".331 seconds pass",
+  "runner_sha256": "461d479cf807154b7dca7628ae8795a0407b438d8330df2152e773c9a59f4190",
+  "observed": [
+    "separate CLI native normal backend adopted Z tracked and exact reaped",
+    "unrelated live helper preserved",
+    "prior subreaper state restored",
+    "namespace removed"
+  ],
+  "independent_changed": false,
+  "cleanup": "owned processes stopped",
+  "not_claimed": [
+    "full suite",
+    "actual OMP fast refresh"
+  ],
+  "scope_audit": ".workflow/dev-validation-log-retention/runs/implement-p5-20261009/audit-dvl01-fix-04.json"
+}

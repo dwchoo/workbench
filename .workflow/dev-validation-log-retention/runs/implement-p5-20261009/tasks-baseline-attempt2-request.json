@@ -1,0 +1,26 @@
+{
+  "root": "/home/dwchoo/ai-exp-assistant",
+  "requirements": "docs/features/dev-validation-log-retention/requirements-r0.9-p5.json",
+  "argv": [
+    "/usr/bin/env",
+    "PYTHONPATH=src",
+    "PYTHONDONTWRITEBYTECODE=1",
+    "/usr/bin/python3",
+    "-m",
+    "unittest",
+    "discover",
+    "-s",
+    "tests/tasks",
+    "-p",
+    "test_repository*.py",
+    "-v"
+  ],
+  "environment": "Python 3.12.3; existing temporary metadata repository unit fixtures; no OMP or provider or user data; preserves timed-out first attempt",
+  "log": ".workflow/dev-validation-log-retention/runs/implement-p5-20261009/tasks-baseline-attempt2.log",
+  "check_id": "tasks-baseline-attempt2",
+  "watch": [],
+  "exclude": [
+    ".workflow/**"
+  ],
+  "timeout": 180
+}

@@ -1,0 +1,2480 @@
+diff --git a/src/workbench/workflow/run.py b/src/workbench/workflow/run.py
+--- a/src/workbench/workflow/run.py
++++ b/src/workbench/workflow/run.py
+@@ -3,6 +3,7 @@
+ from __future__ import annotations
+ 
+ from dataclasses import dataclass
++from datetime import datetime, timezone
+ from hashlib import sha256
+ import inspect
+ import json
+@@ -16,6 +17,7 @@
+ from workbench.contracts.ports_v2 import dispatch_allowed
+ from workbench.contracts.v1 import ActorRole, MessageKind
+ from workbench.ipc.bridge_g3.mailbox import MailboxStatus, TaskMailbox
++from workbench.storage.log_raw.admission import MetadataAdmissionGate
+ from workbench.tasks.repository import AuthorizationError, TaskRepository
+ from workbench.terminal.shell_g2.prototype import ShellChoice
+ from workbench.terminal.shell_persistent.adapter import PersistentShell
+@@ -55,6 +57,56 @@
+     return json.dumps(dict(value), sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()
+ 
+ 
++def _observed_at() -> str:
++    return datetime.now(timezone.utc).isoformat(timespec="microseconds").replace("+00:00", "Z")
++
++
++class _ExactByteMatcher:
++    """Emit disjoint observed ranges, retaining only a possible cross-drain match suffix."""
++
++    def __init__(self, pattern: bytes):
++        self.pattern = pattern
++        self.pending = bytearray()
++        self.offset = 0
++        self.found = False
++
++    def feed(self, data: bytes) -> list[tuple[int, bytes, bool]]:
++        if not data:
++            return []
++        if self.found:
++            start = self.offset
++            self.offset += len(data)
++            return [(start, data, False)]
++        self.pending.extend(data)
++        self.offset += len(data)
++        base = self.offset - len(self.pending)
++        position = self.pending.find(self.pattern)
++        if position >= 0:
++            segments = []
++            if position:
++                segments.append((base, bytes(self.pending[:position]), False))
++            segments.append((base + position, bytes(self.pending[position:position + len(self.pattern)]), True))
++            tail = bytes(self.pending[position + len(self.pattern):])
++            if tail:
++                segments.append((base + position + len(self.pattern), tail, False))
++            self.pending.clear()
++            self.found = True
++            return segments
++        safe = max(0, len(self.pending) - len(self.pattern) + 1)
++        if not safe:
++            return []
++        segment = (base, bytes(self.pending[:safe]), False)
++        del self.pending[:safe]
++        return [segment]
++
++    def finish(self) -> list[tuple[int, bytes, bool]]:
++        if not self.pending:
++            return []
++        segment = (self.offset - len(self.pending), bytes(self.pending), False)
++        self.pending.clear()
++        return [segment]
++
++
+ def _write_json(path: Path, value: Mapping[str, Any]) -> None:
+     temporary = path.with_name(path.name + ".tmp")
+     fd = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+@@ -130,6 +182,44 @@
+     return mailbox.deliver(message, **options)
+ 
+ 
++def _copy_confirmed_message(subject_log: Any, message: Any, receipt: Any, kind: str) -> None:
++    """확인된 mailbox 전달만 복사한다. 미확인/지연은 원문을 추정하지 않는다."""
++    if subject_log is None or receipt.status is not MailboxStatus.OMP_PROCESSED:
++        return
++    subject_log.record_delivery(
++        {"schemaVersion": 1, "kind": "task", "id": message.task_id},
++        message_id=message.message_id, revision=message.revision, kind=kind,
++        content=json.dumps(dict(message.payload), ensure_ascii=False, sort_keys=True, separators=(",", ":")),
++        delivered_at=_observed_at(),
++    )
++
++
++def _copy_confirmed_decision(subject_log: Any, task_id: str, revision: int,
++                             response: Mapping[str, Any]) -> None:
++    """verified_worker_response가 돌려준 결정만 source event로 복사한다."""
++    if subject_log is None:
++        return
++    subject_log.record_delivery(
++        {"schemaVersion": 1, "kind": "task", "id": task_id},
++        message_id=response["response_id"], revision=revision, kind="decision",
++        content=json.dumps(dict(response), ensure_ascii=False, sort_keys=True, separators=(",", ":")),
++        delivered_at=_observed_at(),
++    )
++
++
++def _latch_condition_metadata(gate: MetadataAdmissionGate | None,
++                              outcome: Callable[[str, BaseException | None], None] | None,
++                              exc: Exception) -> None:
++    if outcome is not None:
++        try:
++            outcome("condition_evidence", exc)
++            return
++        except Exception:
++            pass  # 제품 callback 장애도 진행 중인 collector를 중단하지 않는다.
++    if gate is not None:
++        gate.record_metadata_failure("condition_evidence:" + type(exc).__name__)
++
++
+ def classify_worker_request(request: Mapping[str, Any], approved_paths: list[str] | None) -> str:
+     """Advisory classification only; never grants execution authority."""
+     def valid(path: Any) -> bool:
+@@ -186,6 +276,18 @@
+     # missing bytes). A full or failing store never stops the run or its collection.
+     raw_store: Any = None
+     _raw_missing: int = 0
++    metadata_admission: MetadataAdmissionGate | None = None
++    metadata_outcome: Callable[[str, BaseException | None], None] | None = None
++    subject_log: Any = None
++    subject_capture_unknown: bool = False
++    subject_failure: Callable[[], None] | None = None
++    _source_ref: dict[str, Any] | None = None
++    _start_boundary_id: str | None = None
++    _matcher: _ExactByteMatcher | None = None
++    _source_ids: list[str] | None = None
++    _evidence_error: str | None = None
++    _matched_proof_id: str | None = None
++    _observation_finished: bool = False
+ 
+     def _persist(self) -> None:
+         _write_json(self.result_path, self._record)
+@@ -214,10 +316,97 @@
+                 return b""
+             raise
+ 
++    def _metadata_failure(self, exc: Exception) -> None:
++        if self._evidence_error is not None:
++            return
++        self._evidence_error = type(exc).__name__
++        self._record["condition_evidence_error"] = self._evidence_error
++        _latch_condition_metadata(self.metadata_admission, self.metadata_outcome, exc)
++
++    def _copy_message(self, message: Any, receipt: Any, kind: str) -> None:
++        try:
++            _copy_confirmed_message(self.subject_log, message, receipt, kind)
++        except Exception:
++            self.subject_capture_unknown = True
++            if self.subject_failure is not None:
++                self.subject_failure()
++
++    def _copy_decision(self, response: Mapping[str, Any]) -> None:
++        try:
++            _copy_confirmed_decision(self.subject_log, self.task_id, self.revision, response)
++        except Exception:
++            self.subject_capture_unknown = True
++            if self.subject_failure is not None:
++                self.subject_failure()
++
++    def _record_observed(self, segments: list[tuple[int, bytes, bool]]) -> None:
++        if self._source_ref is None or self._evidence_error is not None:
++            return
++        for start, data, matched in segments:
++            try:
++                source_id = self.repository.record_log_source(
++                    {"schemaVersion": 1, "kind": "task", "id": self.task_id},
++                    {"schemaVersion": 1, "source": self._source_ref, "start": start,
++                     "end": start + len(data), "digest": sha256(data).hexdigest()},
++                )
++                assert self._source_ids is not None
++                self._source_ids.append(source_id)
++                if matched:
++                    self._matched_proof_id = self.repository.record_condition_proof(
++                        self.task_id, self.revision, self.run_id,
++                        sha256(self._matcher.pattern).hexdigest(), matched=True,
++                        observation_complete=False, source_id=source_id,
++                        match_start=start, match_end=start + len(data),
++                        full_match_digest=sha256(data).hexdigest(), excerpt=data[:4096],
++                    )
++            except Exception as exc:
++                self._metadata_failure(exc)
++                return
++
++    def _finish_observation(self) -> None:
++        if self._observation_finished or self._matcher is None or self._source_ref is None:
++            return
++        self._observation_finished = True
++        self._record_observed(self._matcher.finish())
++        if self._evidence_error is not None:
++            return
++        try:
++            final_id = str(uuid4())
++            self.repository.record_observation_boundary({
++                "schemaVersion": 1, "eventId": final_id, "source": self._source_ref,
++                "kind": "final_drain", "offset": self._matcher.offset,
++                "observedAt": _observed_at(),
++            })
++            self._record["condition_final_boundary_id"] = final_id
++            if not self._matcher.found:
++                coverage_id = self.repository.record_gapfree_coverage({
++                    "schemaVersion": 1, "coverageId": str(uuid4()), "source": self._source_ref,
++                    "startEventId": self._start_boundary_id, "finalEventId": final_id,
++                    "finalOffset": self._matcher.offset, "sourceIds": self._source_ids,
++                })
++                proof_id = self.repository.record_condition_proof(
++                    self.task_id, self.revision, self.run_id,
++                    sha256(self._matcher.pattern).hexdigest(), matched=False,
++                    observation_complete=True, coverage_id=coverage_id,
++                )
++                self._record["condition_negative_proof_id"] = proof_id
++        except Exception as exc:
++            self._metadata_failure(exc)
++
+     def _drain(self) -> None:
+         data = self.shell.display_bytes()
+         if not data:
+             return
++        if self._matcher is not None:
++            if self._observation_finished:
++                # Bytes after a claimed final drain contradict its negative coverage.
++                # Journal them to invalidate that coverage, but never mint a late match.
++                start = self._matcher.offset
++                self._matcher.offset += len(data)
++                segments = [(start, data, False)]
++            else:
++                segments = self._matcher.feed(data)
++            self._record_observed(segments)
+         if self.raw_store is not None:
+             try:
+                 status = self.raw_store.append(self.run_id, data)
+@@ -269,6 +458,7 @@
+                 return dict(self._record)
+             if life["control_returned"] and life["input_returned"] and life["lifetime"] == "ended":
+                 self._drain()
++                self._finish_observation()
+                 try:
+                     collected_log = self._read_raw()
+                     self._record["raw_log_collected"] = {
+@@ -429,23 +619,55 @@
+             unknowns.append(f"raw log incomplete: {raw_status.get('stored_bytes')} of "
+                             f"{raw_status.get('observed_bytes')} bytes stored (cap {raw_status.get('cap_source')}, "
+                             f"missing {raw_status.get('missing_bytes')})")
+-        if log is None or any(item["source"] == "raw_log" for item in evidence_errors) or not log:
++        condition_digest = sha256(criteria["log_contains"].encode()).hexdigest()
++        condition_proofs: list[dict[str, Any]] = []
++        proof_error = None
++        try:
++            condition_proofs = [proof for proof in self.repository.get_condition_proofs(self.run_id)
++                                if proof["task_id"] == self.task_id
++                                and proof["revision"] == self.revision
++                                and proof["condition_digest"] == condition_digest]
++        except Exception as exc:
++            proof_error = type(exc).__name__
++            unknowns.append("condition proof read failed: " + proof_error)
++        matched_proof = next((p for p in condition_proofs if p["matched"]), None)
++        negative_proof = next((p for p in condition_proofs
++                               if not p["matched"] and p["observation_complete"]), None)
++        instrumented = self._start_boundary_id is not None
++        if self._evidence_error is not None:
++            unknowns.append("condition evidence write failed: " + self._evidence_error)
++        for proof in condition_proofs:
++            if proof.get("invalidation_reason"):
++                unknowns.append("condition coverage invalidated: " + proof["invalidation_reason"])
++        if self._record["exit_status"] != 0:
++            judgment, reasons = "failure", ["nonzero_exit"]
++        elif any(item["source"] == "raw_log" for item in evidence_errors):
++            # A post-collection raw artifact changed or became unreadable. This is distinct
++            # from an append-time quota loss, and the legacy tamper guard remains conservative.
+             judgment, reasons = "indeterminate", ["insufficient_raw_log"]
+-            if log == b"":
+-                unknowns.append("experiment emitted no raw log bytes")
+         elif result_bytes is None or not result_bytes or any(item["source"] == "result_file" for item in evidence_errors):
+             judgment, reasons = "indeterminate", ["missing_or_empty_result_file"]
+             if result_bytes == b"":
+                 unknowns.append("result file is empty")
+-        elif self._record["exit_status"] != 0:
+-            judgment = "failure"
+-            reasons = ["nonzero_exit"]
+         elif self.result_before is not None and self.result_before == result_hash:
+             judgment, reasons = "indeterminate", ["result_provenance_unconfirmed"]
+             unknowns.append("result file is unchanged from before the run")
++        elif criteria["result_contains"].encode() not in result_bytes:
++            judgment, reasons = "failure", ["exit_zero_criteria_failed"]
++        elif instrumented:
++            if (proof_error is not None or (matched_proof is None and negative_proof is None)
++                    or (self._evidence_error is not None and matched_proof is None)
++                    or (matched_proof is not None and negative_proof is not None)):
++                judgment, reasons = "indeterminate", ["condition_observation_incomplete"]
++            elif negative_proof is not None and matched_proof is None:
++                judgment, reasons = "failure", ["exit_zero_criteria_failed"]
++            else:
++                judgment, reasons = "success", ["criteria_met"]
++        elif log is None or any(item["source"] == "raw_log" for item in evidence_errors) or not log:
++            judgment, reasons = "indeterminate", ["insufficient_raw_log"]
+         elif incomplete and criteria["log_contains"].encode() not in log:
+-            judgment, reasons = "indeterminate", ["raw_log_incomplete"]  # the marker may be in the lost bytes
+-        elif criteria["log_contains"].encode() not in log or criteria["result_contains"].encode() not in result_bytes:
++            judgment, reasons = "indeterminate", ["raw_log_incomplete"]
++        elif criteria["log_contains"].encode() not in log:
+             judgment, reasons = "failure", ["exit_zero_criteria_failed"]
+         else:
+             judgment, reasons = "success", ["criteria_met"]
+@@ -460,6 +682,10 @@
+             "result_excerpt": None if result_bytes is None else result_bytes[:1024].decode("utf-8", "replace"),
+             "criteria": criteria, "requires_code_change": requires_code_change,
+             "code_change_reason": code_change_reason,
++            "condition_evidence": {"condition_digest": condition_digest,
++                                   "matched_proof_id": None if matched_proof is None else matched_proof["proof_id"],
++                                   "negative_proof_id": None if negative_proof is None else negative_proof["proof_id"],
++                                   "instrumented": instrumented},
+         }
+         host.update({"judgment": judgment, "reasons": list(reasons)})
+         if self.worker_port is not None:
+@@ -479,6 +705,7 @@
+                 self._record["worker_analysis_request"] = {"message_id": question.message_id,
+                                                            "status": "delivery_error"}
+                 self._analysis_unavailable(f"analysis_delivery_error:{type(exc).__name__}", judgment, reasons)
++            self._copy_message(question, question_receipt, "manager_instruction")
+             self._record["worker_analysis_request"] = {
+                 "message_id": question.message_id, "status": question_receipt.status.value,
+             }
+@@ -500,6 +727,7 @@
+                 self._analysis_unavailable("worker_response_timeout", judgment, reasons)
+             except ValueError:  # identity/linkage of the public response did not verify
+                 self._analysis_unavailable("worker_response_unverified", judgment, reasons)
++            self._copy_decision(response)
+             if ((judgment == "indeterminate" and response["decision"] != "indeterminate")
+                     or (judgment == "failure" and response["decision"] == "success")):
+                 self._record["worker_analysis_response"] = response
+@@ -559,6 +787,7 @@
+         return submitted
+ 
+     def _finish_report(self, receipt: Any) -> dict[str, Any]:
++        self._copy_message(self._report_message, receipt, "report")
+         self._record["report"]["status"] = receipt.status.value
+         self._record["instruction_ended"] = self._report_requires_code_change
+         self._persist()
+@@ -615,14 +844,36 @@
+     def __init__(self, repository: TaskRepository, mailbox: TaskMailbox,
+                  *, worker_port: WorkerRolePort | None = None,
+                  automation_source: Callable[[], Mapping[str, Any]] | None = None,
+-                 raw_store: Any = None):
++                 raw_store: Any = None,
++                 metadata_admission: MetadataAdmissionGate | None = None,
++                 metadata_outcome: Callable[[str, BaseException | None], None] | None = None,
++                 subject_log: Any = None):
+         self.repository = repository
+         self.mailbox = mailbox
+         self.raw_store = raw_store  # CW-19: the project's RawLogStore for the run's raw log (None: a plain file)
++        self.metadata_admission = metadata_admission
++        self.metadata_outcome = metadata_outcome
++        self.subject_log = subject_log
++        self.subject_capture_unknown = False
+         self.worker_port = worker_port
+         self.automation_source = automation_source
+         self._public_mailbox = isinstance(mailbox, TaskMailbox)
+ 
++    def _copy_message(self, message: Any, receipt: Any, kind: str) -> None:
++        try:
++            _copy_confirmed_message(self.subject_log, message, receipt, kind)
++        except Exception:
++            self.subject_capture_unknown = True
++
++    def _copy_decision(self, task_id: str, revision: int, response: Mapping[str, Any]) -> None:
++        try:
++            _copy_confirmed_decision(self.subject_log, task_id, revision, response)
++        except Exception:
++            self.subject_capture_unknown = True
++
++    def _mark_subject_unknown(self) -> None:
++        self.subject_capture_unknown = True
++
+     def route_worker_request(self, request: Mapping[str, Any], *, task_id: str | None = None,
+                              revision: int | None = None) -> dict[str, Any]:
+         """Bind a direct request to durable Task authority; never dispatch it here."""
+@@ -689,6 +940,8 @@
+         """
+         if self._public_mailbox and (self.worker_port is None or self.automation_source is None):
+             raise WorkflowHeld("public OMP execution requires worker-response and current-automation ports")
++        if self.metadata_admission is not None and not self.metadata_admission.automatic_runs_allowed:
++            raise WorkflowHeld("metadata evidence failure holds new automatic work")
+         automation_source = self.automation_source or (lambda: automation)
+         if not dispatch_allowed(dict(automation_source())):
+             raise WorkflowHeld("automation is paused, cancelled, unhealthy, or unapproved")
+@@ -771,6 +1024,7 @@
+             if self.worker_port is not None:
+                 self.worker_port.arm("execute", task_message)
+             receipt = self.mailbox.deliver(task_message)
++            self._copy_message(task_message, receipt, "manager_instruction")
+             record["worker_request"] = {"message_id": task_message.message_id, "status": receipt.status.value}
+             _write_json(result_path, record)
+             if receipt.status is not MailboxStatus.OMP_PROCESSED:
+@@ -781,6 +1035,7 @@
+                     self.worker_port.observe("execute", task_message, receipt),
+                 )
+                 record["worker_execution_decision"] = worker_decision
++                self._copy_decision(task_id, revision, worker_decision)
+                 _write_json(result_path, record)
+                 if worker_decision["decision"] != "execute":
+                     raise WorkflowHeld("worker OMP did not authorize execution")
+@@ -829,6 +1084,19 @@
+             current_automation = _current_authority(
+                 self.repository, task_id, revision, run_id, approval_hash, automation_source,
+             )
++            if self.metadata_admission is not None and not self.metadata_admission.automatic_runs_allowed:
++                raise WorkflowHeld("metadata evidence failure holds new automatic work")
++            source_ref = {"schemaVersion": 1, "sourceKind": "terminal", "collectorEpoch": 1,
++                          "taskId": task_id, "revision": revision, "runId": run_id}
++            start_boundary_id = str(uuid4())
++            try:
++                self.repository.record_observation_boundary({
++                    "schemaVersion": 1, "eventId": start_boundary_id, "source": source_ref,
++                    "kind": "start", "offset": 0, "observedAt": _observed_at(),
++                })
++            except Exception as exc:
++                _latch_condition_metadata(self.metadata_admission, self.metadata_outcome, exc)
++                raise WorkflowHeld("observation start boundary could not be persisted") from exc
+             shell.submit(control, execution["command"], current_automation)
+             self.repository.record_shell_event(run_id, "sent", {
+                 "cwd": str(worktree.path), "commit": worktree.commit,
+@@ -842,7 +1110,12 @@
+                                task_message.message_id, worktree, shell, execution,
+                                record_dir, raw_log, result_path, before, approval_hash, record, {"sent"},
+                                automation_source, self.worker_port, owns_shell=not injected,
+-                               raw_store=self.raw_store)
++                               raw_store=self.raw_store, metadata_admission=self.metadata_admission,
++                               metadata_outcome=self.metadata_outcome, subject_log=self.subject_log,
++                               subject_failure=self._mark_subject_unknown,
++                               _source_ref=source_ref, _start_boundary_id=start_boundary_id,
++                               _matcher=_ExactByteMatcher(execution["criteria"]["log_contains"].encode()),
++                               _source_ids=[])
+         except BaseException as exc:
+             if shell is not None:
+                 _release_shell(shell, not injected)
+@@ -873,6 +1146,7 @@
+                         _current_authority(self.repository, task_id, revision, run_id,
+                                            approval_hash, automation_source)
+                         question_receipt = self.mailbox.deliver(question)
++                        self._copy_message(question, question_receipt, "manager_instruction")
+                         record["preparation_analysis_request"] = {
+                             "message_id": question.message_id, "status": question_receipt.status.value,
+                         }
+@@ -885,6 +1159,7 @@
+                         )
+                         if response["decision"] != "indeterminate":
+                             raise WorkflowHeld("worker preparation judgment conflicts with missing experiment")
++                        self._copy_decision(task_id, revision, response)
+                         report_payload["worker_response"] = response
+                         _current_authority(self.repository, task_id, revision, run_id,
+                                            approval_hash, automation_source)
+@@ -896,6 +1171,7 @@
+                     record["preparation_report"] = {"message_id": report.message_id, "status": "delivery_unknown"}
+                     _write_json(result_path, record)
+                     preparation_receipt = self.mailbox.deliver(report)
++                    self._copy_message(report, preparation_receipt, "report")
+                     record["preparation_report"]["status"] = preparation_receipt.status.value
+                 except BaseException as report_exc:
+                     failed = record.setdefault("preparation_report", {"status": "not_created"})
+diff --git a/src/workbench/backend/service.py b/src/workbench/backend/service.py
+--- a/src/workbench/backend/service.py
++++ b/src/workbench/backend/service.py
+@@ -1748,10 +1748,14 @@
+ 
+     def _make_workflow(self, repository: TaskRepository) -> TaskWorkflow:
+         """Runs on the task-flow runner thread: its own mailbox on the shared bridge."""
++        automation_loop = getattr(self, "automation_loop", None)
+         return TaskWorkflow(repository, TaskMailbox(repository, self.bridge),
+                             worker_port=G3WorkerResponsePort(self.bridge),
+                             automation_source=self._automation_port,
+-                            raw_store=self.raw_logs)  # CW-19 (C-D71 (5)): run raw logs under the project cap
++                            raw_store=self.raw_logs,
++                            metadata_admission=None if automation_loop is None else automation_loop.metadata,
++                            metadata_outcome=self._metadata_event,
++                            subject_log=getattr(self, "subject_log", None))  # DVL-12 activates an owned DB later
+ 
+     def set_automation_status(self, status: dict[str, Any]) -> None:
+         """CW-18 publishes AutomationState/run status here; pushed to the UI as state."""
+diff --git a/src/workbench/backend/flow_tasks.py b/src/workbench/backend/flow_tasks.py
+--- a/src/workbench/backend/flow_tasks.py
++++ b/src/workbench/backend/flow_tasks.py
+@@ -88,6 +88,7 @@
+ 
+ from dataclasses import asdict, dataclass, field, fields, replace
+ import functools
++import json
+ import os
+ from pathlib import Path
+ import threading
+@@ -370,12 +371,17 @@
+                  host_gate: HostGate | None = None,
+                  worker_session: Callable[[], tuple[str, int] | None] = lambda: None,
+                  hold: Callable[[ActorRole], str | None] = lambda _role: None,
+-                 metadata: Callable[[str, BaseException | None], None] = lambda _source, _error: None):
++                 metadata: Callable[[str, BaseException | None], None] = lambda _source, _error: None,
++                 subject_log: Any | None = None):
+         self._repository_factory = repository_factory
+         # CW-19 (C-D71 (3)/(4), C-AC-28): the admission hold for automatic work into a role, and where a ledger
+         # write outcome is reported. Collection of a running experiment never waits on it.
+         self._hold = hold
+         self._metadata = metadata
++        # DVL-05: optional until DVL-06 owns the active important DB. A failed copy
++        # never changes core flow or silently becomes a summary authorization.
++        self._subject_log = subject_log
++        self.subject_capture_unknown = False
+         # C-D70 (4): the worker OMP's current bridge session (session_id, generation), None when not connected.
+         self._worker_session = worker_session
+         # C-D68: one Workbench owner of the host shell (an experiment run or the worker's terminal command).
+@@ -410,6 +416,11 @@
+         self._ledger = HandoffJournal(ledger_path)
+         self.tasks: dict[str, FlowTask] = {}
+         self.notices: list[dict[str, Any]] = []
++        if self._subject_log is not None:
++            try:
++                self._subject_log.reconcile_flow(self._ledger.records)
++            except Exception:
++                self.subject_capture_unknown = True
+         self._load(self._ledger.records)
+         self._ledger.records = []
+ 
+@@ -489,7 +500,7 @@
+ 
+     def _record(self, record: Mapping[str, Any]) -> None:
+         try:
+-            self._ledger.append(record)
++            confirmed = self._ledger.append(record)
+         except OSError as exc:
+             try:
+                 self._metadata("flow_ledger", exc)
+@@ -497,6 +508,46 @@
+                 pass
+             if not self._stop:  # after close() a late runner record is dropped, never raised
+                 raise
++        else:
++            if self._subject_log is not None:
++                try:
++                    self._subject_log.record_flow(confirmed)
++                except Exception:
++                    self.subject_capture_unknown = True
++
++    def _subject_listener(self, outbound: OutboundMessage, inner: Callable | None) -> Callable:
++        """Copy only a confirmed delivered Task message, never arbitrary user dialogue."""
++        copied = False
++
++        def listener(event: str, snapshot: Mapping[str, Any]) -> None:
++            nonlocal copied
++            if inner is not None:
++                inner(event, snapshot)
++            if (copied or event != "delivered" or self._subject_log is None
++                    or outbound.prepare is not None):
++                return
++            message_id = snapshot.get("message_id")
++            if not isinstance(message_id, str):
++                self.subject_capture_unknown = True
++                return
++            if outbound.kind is MessageKind.TASK:
++                source_kind = "task_spec"
++            elif outbound.sender_role is ActorRole.MANAGER:
++                source_kind = "manager_instruction"
++            else:
++                source_kind = "report"
++            try:
++                content = json.dumps(dict(outbound.payload), ensure_ascii=False,
++                                     sort_keys=True, separators=(",", ":"))
++                self._subject_log.record_delivery(
++                    {"schemaVersion": 1, "kind": "task", "id": outbound.task_id},
++                    message_id=message_id, revision=outbound.revision, kind=source_kind,
++                    content=content, delivered_at=_now())
++                copied = True
++            except Exception:
++                self.subject_capture_unknown = True
++
++        return listener
+ 
+     def _save_task(self, task: FlowTask) -> None:
+         self._record({"type": "task", "task": asdict(task)})
+@@ -625,8 +676,11 @@
+                 notices = self._take_notices()
+                 if notices:
+                     decision = replace(decision, result={**decision.result, "notices": notices})
+-                return decision
+-            return self._to_manager(request)
++                return (replace(decision, listener=self._subject_listener(decision.message, decision.listener))
++                        if decision.message is not None else decision)
++            decision = self._to_manager(request)
++            return (replace(decision, listener=self._subject_listener(decision.message, decision.listener))
++                    if decision.message is not None else decision)
+ 
+     def _host_shell_size_error(self, args: Mapping[str, Any]) -> str | None:
+         """C-D69 (5)(b) (stuck-review-01 P3-1): an experiment command checked with the current host shell's path
+@@ -1047,9 +1101,11 @@
+                        "message": record.get("message") or "cancelled by the manager"}
+             # CW-16 fix-02 (P2-1): the notice was never submitted, so keeping it through a pause or a CW-19 hold
+             # and delivering it after the resume is not a replay (R3); dropping it would leave the worker unaware.
+-            queued = self._handoffs.enqueue(OutboundMessage(
++            outbound = OutboundMessage(
+                 task.task_id, revision or cancelled_run["revision"], run_id, ActorRole.MANAGER, ActorRole.WORKER,
+-                MessageKind.QUESTION, payload), origin=f"cancel:{task.task_id}", keep_across_pause=True)
++                MessageKind.QUESTION, payload)
++            queued = self._handoffs.enqueue(outbound, origin=f"cancel:{task.task_id}",
++                                            listener=self._subject_listener(outbound, None), keep_across_pause=True)
+             status = queued.get("status")
+             notice = self._cancel_notice_state() if status == "queued" else f"not_queued:{status}"
+         if run_id is not None:
+@@ -1336,7 +1392,7 @@
+                                        MessageKind.TASK, payload)
+             self._task_message_state[task_id] = "queued"
+         queued = self._handoffs.enqueue(outbound, origin=str(job["origin"]),
+-                                        listener=self._task_message_listener(task_id, run_id),
++                                        listener=self._subject_listener(outbound, self._task_message_listener(task_id, run_id)),
+                                         keep_across_pause=True)  # R3: never submitted -> sent after a resume
+         if queued.get("status") != "queued":
+             with self._lock:
+@@ -1622,10 +1678,11 @@
+                                   "state": event, "message_id": snapshot.get("message_id")})
+ 
+         try:
+-            queued = self._handoffs.enqueue(OutboundMessage(
++            outbound = OutboundMessage(
+                 task_id, revision, run_id, ActorRole.WORKER, ActorRole.MANAGER,
+-                MessageKind.REPORT, payload, in_reply_to_message_id=message_id),
+-                origin=origin, listener=listener)
++                MessageKind.REPORT, payload, in_reply_to_message_id=message_id)
++            queued = self._handoffs.enqueue(outbound, origin=origin,
++                                            listener=self._subject_listener(outbound, listener))
+         except Exception as exc:  # the notices[] entry still tells the manager
+             queued = {"status": "held", "reason": type(exc).__name__}
+         with self._lock:
+diff --git a/src/workbench/backend/flow_terminal.py b/src/workbench/backend/flow_terminal.py
+--- a/src/workbench/backend/flow_terminal.py
++++ b/src/workbench/backend/flow_terminal.py
+@@ -454,8 +454,10 @@
+                  done_target: Callable[[Mapping[str, Any]], str] | None = None,
+                  clock: Callable[[], float] = time.monotonic, check_interval: float = CHECK_INTERVAL,
+                  notice_retry: float = NOTICE_RETRY, tick_interval: float = NOTIFIER_TICK,
+-                 wait_seconds: float = WAIT_SECONDS):
++                 wait_seconds: float = WAIT_SECONDS, subject_log: Any | None = None):
+         self._handoffs = handoffs
++        self._subject_log = subject_log
++        self.subject_capture_unknown = False
+         self._host_shell = host_shell
+         self._gate = gate
+         self._log_root = Path(log_root)
+@@ -499,9 +501,18 @@
+     # -- the journal ----------------------------------------------------------------
+     def _journal(self, record: Mapping[str, Any]) -> None:
+         try:
+-            self._handoffs.record(record)
++            confirmed = self._handoffs.record(record)
+         except (OSError, TypeError, ValueError):
+             pass  # the effect stands; the tool result still says what happened
++        else:
++            if self._subject_log is not None and confirmed.get("type") in ("terminal_started", "terminal_ended"):
++                try:
++                    active = self._active_task() if confirmed["type"] == "terminal_started" else None
++                    revision = (active.revision if active is not None and
++                                active.task_id == confirmed.get("task_id") else None)
++                    self._subject_log.record_terminal(confirmed, revision=revision)
++                except Exception:
++                    self.subject_capture_unknown = True
+ 
+     def start(self) -> None:
+         """The notifier thread (C-D68 (8)); without a ``notify`` port there are no notices."""
+diff --git a/src/workbench/storage/important_log/__init__.py b/src/workbench/storage/important_log/__init__.py
+--- a/src/workbench/storage/important_log/__init__.py
++++ b/src/workbench/storage/important_log/__init__.py
+@@ -1,5 +1,6 @@
+ """Private, bounded SQLite storage for important log entries."""
+ 
+ from .store import ImportantLogStore, ImportantLogStoreError, decode_body, encode_body
++from .lifecycle import SubjectLifecycle
+ 
+-__all__ = ["ImportantLogStore", "ImportantLogStoreError", "decode_body", "encode_body"]
++__all__ = ["ImportantLogStore", "ImportantLogStoreError", "SubjectLifecycle", "decode_body", "encode_body"]
+diff --git a/src/workbench/storage/important_log/lifecycle.py b/src/workbench/storage/important_log/lifecycle.py
+new file mode 100644
+--- /dev/null
++++ b/src/workbench/storage/important_log/lifecycle.py
+@@ -0,0 +1,460 @@
++"""보관 종결과 요약 호출 권한의 제한된 영속 포트.
++
++Flow/terminal journal의 확인된 record만 복사한다. 이 모듈은 모델 호출, core 상태 변경,
++사용자 대화 수집 또는 새 Task 생성을 하지 않는다.
++"""
++
++from __future__ import annotations
++
++from datetime import datetime
++from hashlib import sha256
++from pathlib import Path
++import sqlite3
++from typing import Any, Mapping
++from uuid import UUID, uuid5, NAMESPACE_URL
++
++from workbench.contracts.logs_v1 import canonical_json, parse_source_range, parse_subject_ref
++from .store import ImportantLogStore, ImportantLogStoreError
++
++
++_SCHEMA = """
++CREATE TABLE IF NOT EXISTS subject_lifecycle_v1 (
++    subject_kind TEXT NOT NULL CHECK(subject_kind IN ('task','command')),
++    subject_id TEXT NOT NULL,
++    archival_state TEXT NOT NULL CHECK(archival_state IN ('open','closed')),
++    archival_at TEXT, archival_reason TEXT,
++    core_status TEXT, core_closed_at TEXT, core_closed_reason TEXT,
++    command_end_status TEXT, command_ended_at TEXT,
++    last_activity_at TEXT, event_cursor INTEGER, terminal_cursor INTEGER,
++    grant_ref TEXT, grant_revision INTEGER, prior_grant_ref TEXT,
++    direct_origin_ref TEXT, direct_origin_epoch INTEGER, direct_origin_at TEXT,
++    direct_expired INTEGER NOT NULL DEFAULT 0,
++    storage_unknown INTEGER NOT NULL DEFAULT 0,
++    PRIMARY KEY(subject_kind,subject_id)
++);
++CREATE TABLE IF NOT EXISTS subject_events_v1 (
++    event_key TEXT PRIMARY KEY, subject_kind TEXT NOT NULL, subject_id TEXT NOT NULL,
++    source_id TEXT NOT NULL UNIQUE, entry_id TEXT, event_kind TEXT NOT NULL,
++    observed_at TEXT NOT NULL, payload_sha256 TEXT NOT NULL
++);
++CREATE TABLE IF NOT EXISTS subject_commands_v1 (
++    command_id TEXT PRIMARY KEY, task_id TEXT, revision INTEGER,
++    started_at TEXT NOT NULL, end_status TEXT, ended_at TEXT
++);
++CREATE UNIQUE INDEX IF NOT EXISTS subject_direct_origin_once_v1
++    ON subject_lifecycle_v1(direct_origin_ref) WHERE direct_origin_ref IS NOT NULL;
++"""
++_CLOSE_CALL_REASONS = frozenset({"done", "report_outcome_unknown", "report_not_delivered"})
++_DELIVERY_KINDS = frozenset({"task_spec", "manager_instruction", "worker_instruction", "report", "decision"})
++
++
++class _StaleFlowEvent(ImportantLogStoreError):
++    """A confirmed older event cannot overwrite a newer durable subject cursor."""
++
++
++def _uuid(value: object) -> str:
++    if type(value) is not str:
++        raise ValueError("canonical UUID required")
++    try:
++        if str(UUID(value)) != value:
++            raise ValueError("canonical UUID required")
++    except ValueError as exc:
++        raise ValueError("canonical UUID required") from exc
++    return value
++
++
++def _time(value: object) -> str:
++    if type(value) is not str:
++        raise ValueError("timestamp required")
++    try:
++        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
++        if parsed.utcoffset() is None or parsed.utcoffset().total_seconds() != 0:
++            raise ValueError("UTC timestamp required")
++    except (AttributeError, ValueError) as exc:
++        raise ValueError("UTC timestamp required") from exc
++    # Core HandoffJournal writes +00:00; JSON v1 writes Z. Preserve its precision.
++    if value.endswith("+00:00"):
++        return value[:-6] + "Z"
++    if value.endswith("Z"):
++        return value
++    raise ValueError("UTC timestamp required")
++
++
++def _subject(kind: str, identifier: str) -> dict[str, Any]:
++    return parse_subject_ref({"schemaVersion": 1, "kind": kind, "id": _uuid(identifier)})
++
++
++def _event_key(channel: str, record: Mapping[str, Any]) -> tuple[str, str]:
++    seq = record.get("seq")
++    if type(seq) is not int or seq < 1:
++        raise ValueError("durable journal sequence required")
++    key = f"{channel}:{seq}"
++    return key, str(uuid5(NAMESPACE_URL, "workbench-important-v1:" + key))
++
++
++class SubjectLifecycle:
++    """An explicit existing-DB dependency; no implicit active DB or model authority."""
++
++    def __init__(self, directory: Path, db_uuid: str):
++        self.directory, self.db_uuid = Path(directory), _uuid(db_uuid)
++        self.last_failure: str | None = None
++        with ImportantLogStore.open(self.directory, self.db_uuid) as store:
++            store._connection.executescript(_SCHEMA)
++
++    def _open(self) -> ImportantLogStore:
++        return ImportantLogStore.open(self.directory, self.db_uuid)
++
++    @staticmethod
++    def _ensure(conn: sqlite3.Connection, subject: Mapping[str, Any]) -> None:
++        conn.execute("""INSERT OR IGNORE INTO subject_lifecycle_v1
++            (subject_kind,subject_id,archival_state) VALUES(?,?,'open')""",
++                     (subject["kind"], subject["id"]))
++
++    @staticmethod
++    def _seen(conn: sqlite3.Connection, key: str, subject: Mapping[str, Any], source_id: str,
++              kind: str, at: str, payload: bytes, entry_id: str | None = None) -> bool:
++        digest = sha256(payload).hexdigest()
++        row = conn.execute("SELECT subject_kind,subject_id,event_kind,payload_sha256 FROM subject_events_v1 WHERE event_key=?",
++                           (key,)).fetchone()
++        if row is not None:
++            if (row[0], row[1], row[2], row[3]) != (subject["kind"], subject["id"], kind, digest):
++                raise ImportantLogStoreError("journal event identity changed")
++            return True
++        conn.execute("""INSERT INTO subject_events_v1
++            (event_key,subject_kind,subject_id,source_id,entry_id,event_kind,observed_at,payload_sha256)
++            VALUES(?,?,?,?,?,?,?,?)""",
++                     (key, subject["kind"], subject["id"], source_id, entry_id, kind, at, digest))
++        return False
++
++    def _entry(self, store: ImportantLogStore, subject: dict[str, Any], kind: str, source_kind: str,
++               source_id: str, payload: bytes, facts: list[str], at: str, *, revision: int | None = None) -> str:
++        source: dict[str, Any] = {"schemaVersion": 1, "sourceKind": source_kind, "collectorEpoch": 1}
++        if subject["kind"] == "task":
++            if type(revision) is not int or revision < 1:
++                raise ValueError("Task source revision required")
++            source.update(taskId=subject["id"], revision=revision)
++        else:
++            source["commandId"] = subject["id"]
++        if source_kind == "terminal":
++            raise ValueError("journal events cannot claim terminal output bytes")
++        elif source_kind in ("task_spec", "manager_instruction", "worker_instruction", "report"):
++            source["messageId"] = source_id
++        else:
++            source["eventId"] = source_id
++        span = {"schemaVersion": 1, "source": source, "start": 0, "end": len(payload),
++                "digest": sha256(payload).hexdigest()}
++        body = {"schemaVersion": 1, "facts": facts, "interpretations": [], "unknowns": []}
++        entry_id = str(uuid5(NAMESPACE_URL, "workbench-important-entry-v1:" + source_id))
++        entry = store.make_entry(subject, kind, [span], body, entry_id=entry_id, recorded_at=at)
++        try:
++            store.put_entry(entry)
++        except sqlite3.IntegrityError:
++            if store.get_entry(entry_id) != entry:
++                raise ImportantLogStoreError("existing event entry differs")
++        return entry_id
++
++    def record_flow(self, record: Mapping[str, Any]) -> bool:
++        """Copy a confirmed flow-journal record; false means irrelevant/already copied."""
++        kind = record.get("type")
++        if kind not in ("delegated", "task_closed", "task"):
++            return False
++        if kind == "task":
++            data = record.get("task")
++            if type(data) is not dict or data.get("status") not in ("finished", "blocked", "held"):
++                return False
++            task_id, revision = data.get("task_id"), data.get("revision")
++            status = data["status"]
++        else:
++            task_id, revision = record.get("task_id"), record.get("revision")
++            status = None
++        subject = _subject("task", task_id)
++        key, source_id = _event_key("flow", record)
++        at = _time(record.get("at"))
++        payload = canonical_json(dict(record))
++        stale_event = False
++        with self._open() as store, store.transaction():
++            conn = store._connection
++            self._ensure(conn, subject)
++            if conn.execute("SELECT 1 FROM subject_events_v1 WHERE event_key=?", (key,)).fetchone():
++                self._seen(conn, key, subject, source_id, str(kind), at, payload)
++                return False
++            state = dict(conn.execute("""SELECT * FROM subject_lifecycle_v1
++                WHERE subject_kind='task' AND subject_id=?""", (task_id,)).fetchone())
++            if state["event_cursor"] is not None and record["seq"] <= state["event_cursor"]:
++                # 과거의 미복사 사실은 최신 core 상태/권한을 되감지 않는다.
++                conn.execute("""UPDATE subject_lifecycle_v1 SET storage_unknown=1
++                    WHERE subject_kind='task' AND subject_id=?""", (task_id,))
++                stale_event = True
++            elif kind == "task_closed":
++                reason = record.get("reason")
++                if type(reason) is not str or not reason or len(reason) > 128:
++                    raise ValueError("closed reason required")
++                revision = state.get("grant_revision")
++                facts = [f"task_closed reason={reason}", f"closed_at={at}",
++                         f"event_cursor={record['seq']}", f"prior_grant_ref={state.get('grant_ref') or 'unknown'}"]
++                entry_id = (self._entry(store, subject, "closure", "event", source_id, payload, facts, at,
++                                        revision=revision) if revision is not None else None)
++                conn.execute("""UPDATE subject_lifecycle_v1 SET archival_state='closed',archival_at=?,
++                    archival_reason=?,core_status='closed',core_closed_at=?,core_closed_reason=?,
++                    prior_grant_ref=grant_ref,event_cursor=MAX(COALESCE(event_cursor,0),?),
++                    storage_unknown=MAX(storage_unknown,?)
++                    WHERE subject_kind='task' AND subject_id=?""",
++                             (at, reason, at, reason, record["seq"], int(revision is None), task_id))
++            elif kind == "delegated":
++                if type(revision) is not int or revision < 1:
++                    raise ValueError("delegation revision required")
++                if state["core_status"] == "closed":
++                    raise ImportantLogStoreError("closed core Task cannot acquire a new grant")
++                scope, proceed = _uuid(record.get("scope_decision_id")), _uuid(record.get("proceed_decision_id"))
++                entry_id = self._entry(store, subject, "event", "decision", source_id, payload,
++                                       [f"scope_decision_id={scope}", f"proceed_decision_id={proceed}"], at,
++                                       revision=revision)
++                conn.execute("""UPDATE subject_lifecycle_v1 SET archival_state='open',archival_at=NULL,
++                    archival_reason=NULL,core_status='dispatched',grant_ref=?,grant_revision=?,last_activity_at=?,
++                    event_cursor=MAX(COALESCE(event_cursor,0),?),
++                    storage_unknown=storage_unknown WHERE subject_kind='task' AND subject_id=?""",
++                             (proceed, revision, at, record["seq"], task_id))
++            else:
++                if type(revision) is not int or revision < 1:
++                    raise ValueError("Task status revision required")
++                entry_id = None
++                conn.execute("""UPDATE subject_lifecycle_v1 SET core_status=?,last_activity_at=?,
++                    event_cursor=MAX(COALESCE(event_cursor,0),?) WHERE subject_kind='task' AND subject_id=?""",
++                             (status, at, record["seq"], task_id))
++            if not stale_event:
++                self._seen(conn, key, subject, source_id, str(kind), at, payload, entry_id)
++        if stale_event:
++            raise _StaleFlowEvent("unseen flow event precedes durable subject cursor")
++        return True
++
++    def record_terminal(self, record: Mapping[str, Any], *, revision: int | None = None) -> bool:
++        """Only actual terminal_started/terminal_ended, never a mere run_ended notice."""
++        kind = record.get("type")
++        if kind not in ("terminal_started", "terminal_ended"):
++            return False
++        command_id = _uuid(record.get("command_id"))
++        key, source_id = _event_key("terminal", record)
++        at = _time(record.get("started_at") if kind == "terminal_started" else record.get("ended_at"))
++        payload = canonical_json(dict(record))
++        with self._open() as store, store.transaction():
++            conn = store._connection
++            if kind == "terminal_started":
++                task_id = record.get("task_id")
++                if task_id is not None:
++                    _uuid(task_id)
++                    if type(revision) is not int or revision < 1:
++                        raise ValueError("Task command revision required")
++                subject = _subject("task" if task_id else "command", task_id or command_id)
++                if task_id:
++                    current = conn.execute("""SELECT core_status FROM subject_lifecycle_v1
++                        WHERE subject_kind='task' AND subject_id=?""", (task_id,)).fetchone()
++                    if current is not None and current[0] == "closed":
++                        raise ImportantLogStoreError("closed core Task cannot start a command")
++            else:
++                row = conn.execute("SELECT task_id,revision FROM subject_commands_v1 WHERE command_id=?",
++                                   (command_id,)).fetchone()
++                if row is None:
++                    raise ImportantLogStoreError("terminal end without durable start is unknown")
++                task_id, revision = row[0], row[1]
++                subject = _subject("task" if task_id else "command", task_id or command_id)
++            self._ensure(conn, subject)
++            if conn.execute("SELECT 1 FROM subject_events_v1 WHERE event_key=?", (key,)).fetchone():
++                self._seen(conn, key, subject, source_id, str(kind), at, payload)
++                return False
++            if kind == "terminal_started":
++                facts = [f"command_started={command_id}"]
++                entry_kind = "start"
++                entry_id = self._entry(store, subject, entry_kind, "event", source_id, payload, facts, at,
++                                       revision=revision)
++                conn.execute("""INSERT INTO subject_commands_v1(command_id,task_id,revision,started_at)
++                    VALUES(?,?,?,?)""", (command_id, task_id, revision, at))
++                conn.execute("""UPDATE subject_lifecycle_v1 SET archival_state='open',archival_at=NULL,
++                    archival_reason=NULL,last_activity_at=?,terminal_cursor=? WHERE subject_kind=? AND subject_id=?""",
++                             (at, record["seq"], subject["kind"], subject["id"]))
++            else:
++                status = record.get("status")
++                if status not in ("exited", "unknown"):
++                    raise ValueError("actual terminal end status required")
++                facts = [f"command_end_status={status}", f"command_id={command_id}"]
++                entry_kind = "closure" if task_id is None and status == "exited" else "event"
++                entry_id = self._entry(store, subject, entry_kind, "event", source_id, payload, facts, at,
++                                       revision=revision)
++                conn.execute("UPDATE subject_commands_v1 SET end_status=?,ended_at=? WHERE command_id=?",
++                             (status, at, command_id))
++                if task_id is None:
++                    conn.execute("""UPDATE subject_lifecycle_v1 SET command_end_status=?,command_ended_at=?,
++                        archival_state=?,archival_at=?,archival_reason=?,terminal_cursor=?
++                        WHERE subject_kind='command' AND subject_id=?""",
++                                 (status, at, "closed" if status == "exited" else "open",
++                                  at if status == "exited" else None,
++                                  "actual_end" if status == "exited" else None, record["seq"], command_id))
++            # The journal record is a structured event; actual terminal byte ranges are DVL-04's source.
++            self._seen(conn, key, subject, source_id, str(kind), at, payload, entry_id)
++        return True
++
++    def record_delivery(self, subject: Mapping[str, Any], *, message_id: str, revision: int,
++                        kind: str, content: str, delivered_at: str) -> bool:
++        """Caller supplies a confirmed delivered message ID; no generic chat ingestion."""
++        item = parse_subject_ref(subject)
++        if item["kind"] != "task" or kind not in _DELIVERY_KINDS or type(revision) is not int or revision < 1:
++            raise ValueError("bounded Task delivery required")
++        message_id, at = _uuid(message_id), _time(delivered_at)
++        if type(content) is not str or not content or len(content.encode("utf-8")) > 250_000:
++            raise ValueError("delivered content must be bounded")
++        payload = content.encode("utf-8")
++        key = "message:" + message_id
++        event_kind = f"{kind}@{revision}"
++        with self._open() as store, store.transaction():
++            conn = store._connection
++            self._ensure(conn, item)
++            if conn.execute("SELECT 1 FROM subject_events_v1 WHERE event_key=?", (key,)).fetchone():
++                self._seen(conn, key, item, message_id, event_kind, at, payload)
++                return False
++            entry_id = self._entry(store, item, "event", kind, message_id, payload, [content], at,
++                                   revision=revision)
++            conn.execute("""UPDATE subject_lifecycle_v1 SET archival_state='open',archival_at=NULL,
++                archival_reason=NULL,last_activity_at=? WHERE subject_kind='task' AND subject_id=?
++                AND COALESCE(core_status,'')!='closed'""",
++                         (at, item["id"]))
++            self._seen(conn, key, item, message_id, event_kind, at, payload, entry_id)
++        return True
++
++    def record_terminal_range(self, subject: Mapping[str, Any], source_record_id: str,
++                              span: Mapping[str, Any], *, observed_at: str) -> bool:
++        """DVL-04가 확인한 byte range만 연결한다. 출력 bytes를 재구성하지 않는다."""
++        item = parse_subject_ref(subject)
++        source_record_id, at = _uuid(source_record_id), _time(observed_at)
++        source_range = parse_source_range(span)
++        source = source_range["source"]
++        if source["sourceKind"] != "terminal":
++            raise ValueError("observed terminal SourceRange required")
++        if item["kind"] == "task":
++            if source.get("taskId") != item["id"]:
++                raise ValueError("terminal range must identify its Task")
++        elif source.get("commandId") != item["id"] or "taskId" in source:
++            raise ValueError("Taskless range must identify its command only")
++        payload = canonical_json(source_range)
++        key = "terminal_range:" + source_record_id
++        entry_id = str(uuid5(NAMESPACE_URL, "workbench-important-entry-v1:" + key))
++        body = {"schemaVersion": 1,
++                "facts": [f"terminal range [{source_range['start']},{source_range['end']}) observed"],
++                "interpretations": [], "unknowns": []}
++        with self._open() as store, store.transaction():
++            conn = store._connection
++            if "commandId" in source:
++                command = conn.execute("SELECT task_id,revision FROM subject_commands_v1 WHERE command_id=?",
++                                       (source["commandId"],)).fetchone()
++                expected = (item["id"], source.get("revision")) if item["kind"] == "task" else (None, None)
++                if command is None or tuple(command) != expected:
++                    raise ValueError("terminal range lacks a matching confirmed command start")
++            self._ensure(conn, item)
++            if conn.execute("SELECT 1 FROM subject_events_v1 WHERE event_key=?", (key,)).fetchone():
++                self._seen(conn, key, item, source_record_id, "terminal_range", at, payload)
++                return False
++            entry = store.make_entry(item, "event", [source_range], body, entry_id=entry_id, recorded_at=at)
++            try:
++                store.put_entry(entry)
++            except sqlite3.IntegrityError:
++                if store.get_entry(entry_id) != entry:
++                    raise ImportantLogStoreError("existing terminal range entry differs")
++            self._seen(conn, key, item, source_record_id, "terminal_range", at, payload, entry_id)
++        return True
++
++    def archive_close(self, subject: Mapping[str, Any], *, at: str, user_confirmed: bool) -> None:
++        """DVL-07 CLI-only port; does not touch core status or grant."""
++        item = parse_subject_ref(subject)
++        if user_confirmed is not True:
++            raise ValueError("explicit user archival-close confirmation required")
++        at = _time(at)
++        with self._open() as store:
++            self._ensure(store._connection, item)
++            store._connection.execute("""UPDATE subject_lifecycle_v1 SET archival_state='closed',
++                archival_at=?,archival_reason='user_archival_close' WHERE subject_kind=? AND subject_id=?""",
++                                      (at, item["kind"], item["id"]))
++
++    def record_direct_origin(self, command_id: str, *, event_id: str, epoch: int, observed_at: str,
++                             verified_direct_instruction: bool) -> None:
++        """Fixture-injectable origin port; caller provenance is not inferred from user role."""
++        command_id, event_id, observed_at = _uuid(command_id), _uuid(event_id), _time(observed_at)
++        if verified_direct_instruction is not True or type(epoch) is not int or epoch < 1:
++            raise ValueError("verified direct instruction origin required")
++        with self._open() as store:
++            conn = store._connection
++            started = conn.execute("SELECT started_at FROM subject_commands_v1 WHERE command_id=? AND task_id IS NULL",
++                                   (command_id,)).fetchone()
++            if started is None:
++                raise ValueError("origin can only bind one existing Taskless command")
++            if datetime.fromisoformat(observed_at.replace("Z", "+00:00")) > datetime.fromisoformat(started[0].replace("Z", "+00:00")):
++                raise ValueError("direct instruction must precede command start")
++            row = conn.execute("""SELECT direct_origin_ref,direct_origin_epoch,direct_origin_at FROM subject_lifecycle_v1
++                WHERE subject_kind='command' AND subject_id=?""", (command_id,)).fetchone()
++            if row[0] not in (None, event_id) or (row[0] is not None and (row[1], row[2]) != (epoch, observed_at)):
++                raise ValueError("direct origin cannot be replaced")
++            conn.execute("""UPDATE subject_lifecycle_v1 SET direct_origin_ref=?,direct_origin_epoch=?,direct_origin_at=?
++                WHERE subject_kind='command' AND subject_id=?""", (event_id, epoch, observed_at, command_id))
++
++    def mark_command_end_summary_processed(self, command_id: str) -> None:
++        command_id = _uuid(command_id)
++        with self._open() as store:
++            store._connection.execute("""UPDATE subject_lifecycle_v1 SET direct_expired=1
++                WHERE subject_kind='command' AND subject_id=? AND command_end_status='exited'""", (command_id,))
++
++    def state(self, subject: Mapping[str, Any]) -> dict[str, Any]:
++        item = parse_subject_ref(subject)
++        with self._open() as store:
++            row = store._connection.execute("""SELECT * FROM subject_lifecycle_v1
++                WHERE subject_kind=? AND subject_id=?""", (item["kind"], item["id"])).fetchone()
++            return {} if row is None else dict(row)
++
++    def authority(self, subject: Mapping[str, Any], *, active: bool, paused: bool,
++                  revoked: bool, has_new_input: bool, closing_event: bool = False) -> dict[str, Any]:
++        """Bounded preflight fact only; sending/recheck belongs to DVL-09/10."""
++        item = parse_subject_ref(subject)
++        state = self.state(item)
++        if not state or paused or revoked or not has_new_input or (not closing_event and active is not True):
++            return {"allowed": False, "reason": "inactive_or_unknown"}
++        if state["storage_unknown"]:
++            return {"allowed": False, "reason": "storage_unknown"}
++        if item["kind"] == "task":
++            ref = state["prior_grant_ref"] if closing_event else state["grant_ref"]
++            if not ref or (closing_event and state["core_closed_reason"] not in _CLOSE_CALL_REASONS):
++                return {"allowed": False, "reason": "no_matching_task_grant"}
++            if not closing_event and state["core_status"] == "closed":
++                return {"allowed": False, "reason": "task_closed"}
++            return {"allowed": True, "authorization_ref": ref, "revision": state["grant_revision"]}
++        if not state["direct_origin_ref"] or state["direct_expired"]:
++            return {"allowed": False, "reason": "no_direct_command_origin"}
++        if not closing_event and state["command_end_status"] is not None:
++            return {"allowed": False, "reason": "command_already_ended"}
++        if closing_event and state["command_end_status"] != "exited":
++            return {"allowed": False, "reason": "command_end_unknown"}
++        return {"allowed": True, "authorization_ref": state["direct_origin_ref"],
++                "authorization_epoch": state["direct_origin_epoch"]}
++
++    def reconcile_flow(self, records: list[dict[str, Any]]) -> int:
++        """Restart copies only already-fsynced journal facts; never dispatches or replays."""
++        copied = 0
++        stale: _StaleFlowEvent | None = None
++        # 입력 목록 순서와 무관하게 journal seq 순서를 우선한다. 이미 최신 사실이
++        # 저장된 경우 오래된 미복사 위임은 재적용하지 않고 unknown을 surface한다.
++        ordered = sorted(records, key=lambda record: record.get("seq")
++                         if type(record.get("seq")) is int else -1)
++        for record in ordered:
++            try:
++                if self.record_flow(record):
++                    copied += 1
++            except _StaleFlowEvent as exc:
++                stale = exc
++        if stale is not None:
++            raise stale
++        return copied
++
++    def reconcile_terminal(self, records: list[dict[str, Any]], *, task_revisions: Mapping[str, int]) -> int:
++        copied = 0
++        for record in records:
++            if record.get("type") not in ("terminal_started", "terminal_ended"):
++                continue
++            revision = task_revisions.get(record.get("task_id")) if record.get("type") == "terminal_started" else None
++            if self.record_terminal(record, revision=revision):
++                copied += 1
++        return copied
+diff --git a/src/workbench/storage/important_log/store.py b/src/workbench/storage/important_log/store.py
+--- a/src/workbench/storage/important_log/store.py
++++ b/src/workbench/storage/important_log/store.py
+@@ -3,6 +3,7 @@
+ from __future__ import annotations
+ 
+ from dataclasses import dataclass
++from contextlib import contextmanager
+ from datetime import datetime, timezone
+ import os
+ from pathlib import Path
+@@ -266,6 +267,25 @@
+         if write and self.readonly:
+             raise ImportantLogStoreError("important store is read-only")
+ 
++    @contextmanager
++    def transaction(self):
++        """한 source event의 entry, subject facts, cursor를 함께 확정한다."""
++        self._require_open(write=True)
++        if self._connection.in_transaction:
++            raise ImportantLogStoreError("nested important transaction is not supported")
++        self._connection.execute("BEGIN IMMEDIATE")
++        try:
++            yield
++            self._connection.execute("COMMIT")
++            if self._last_write == "pending":
++                self._last_write = "ok"
++        except BaseException:
++            if self._connection.in_transaction:
++                self._connection.execute("ROLLBACK")
++            if self._last_write == "pending":
++                self._last_write = "error:transaction_rollback"
++            raise
++
+     def make_entry(self, subject: SubjectRef, kind: str, sources: list[SourceRange], body: dict, *, source_gaps: list[dict] | None = None, entry_id: str | None = None, recorded_at: str | None = None) -> ImportantEntry:
+         self._require_open(write=True)
+         encoded = encode_body(body)
+@@ -290,8 +310,11 @@
+         if (item["bodyCodec"], item["decodedBytes"], item["storedBytes"], item["bodySha256"]) != (encoded.codec, encoded.decoded_bytes, encoded.stored_bytes, encoded.checksum):
+             raise ImportantLogStoreError("entry codec metadata disagrees with body")
+         subject = item["subject"]
++        outer_transaction = self._connection.in_transaction
++        # SAVEPOINT는 독립 put에서 commit하고, lifecycle의 외부 transaction 안에서는
++        # entry/stat 쓰기만 확정 대기시킨다.
++        self._connection.execute("SAVEPOINT important_entry_v1")
+         try:
+-            self._connection.execute("BEGIN IMMEDIATE")
+             self._connection.execute(
+                 """INSERT INTO entries(entry_id,subject_kind,subject_id,kind,recorded_at,sources_json,source_gaps_json,
+                    body_codec,decoded_bytes,stored_bytes,body_sha256,body_payload,origin_db_uuid)
+@@ -306,11 +329,11 @@
+                    entry_count=entry_count+1, stored_bytes=stored_bytes+excluded.stored_bytes""",
+                 (subject["kind"], subject["id"], encoded.stored_bytes),
+             )
+-            self._connection.execute("COMMIT")
+-            self._last_write = "ok"
++            self._connection.execute("RELEASE SAVEPOINT important_entry_v1")
++            self._last_write = "pending" if outer_transaction else "ok"
+         except BaseException as exc:
+-            if self._connection.in_transaction:
+-                self._connection.execute("ROLLBACK")
++            self._connection.execute("ROLLBACK TO SAVEPOINT important_entry_v1")
++            self._connection.execute("RELEASE SAVEPOINT important_entry_v1")
+             self._last_write = f"error:{type(exc).__name__}"
+             raise
+         return item
+diff --git a/tests/workflow/test_run.py b/tests/workflow/test_run.py
+--- a/tests/workflow/test_run.py
++++ b/tests/workflow/test_run.py
+@@ -153,7 +153,7 @@
+             ("success", "printf 'PASS\\n'; printf PASS > outcome.txt", "success", 0),
+             ("nonzero", "printf 'ERROR\\n'; printf BAD > outcome.txt; exit 7", "failure", 7),
+             ("criteria_fail", "printf 'WRONG\\n'; printf BAD > outcome.txt", "failure", 0),
+-            ("insufficient", "printf PASS > outcome.txt", "indeterminate", 0),
++            ("complete_negative", "printf PASS > outcome.txt", "failure", 0),
+         )
+         for name, command, expected, exit_status in cases:
+             with self.subTest(case=name):
+@@ -573,7 +573,7 @@
+             "rejected": ("invalid_assistant_response:bad_marker", "success", rejected, None),
+             "timeout": ("worker_response_timeout", "success", timeout, None),
+             "unverified": ("worker_response_unverified", "success", None, "mismatch"),
+-            "conflict": ("worker_judgment_conflicts_with_evidence", "indeterminate", None, None),
++            "conflict": ("worker_judgment_conflicts_with_evidence", "failure", None, None),
+             "delivery_unknown": ("analysis_delivery_unknown", "success", None, "unknown"),
+             "delivery_rejected": ("analysis_delivery_rejected", "success", None, "rejected"),
+         }
+diff --git a/tests/workflow/test_condition_evidence.py b/tests/workflow/test_condition_evidence.py
+new file mode 100644
+--- /dev/null
++++ b/tests/workflow/test_condition_evidence.py
+@@ -0,0 +1,97 @@
++"""DVL-04 fixture-only observation and proof checks (no OMP or model)."""
++
++from hashlib import sha256
++from unittest import TestCase
++from unittest.mock import patch
++
++import test_run as fixture
++from workbench.storage.log_raw.admission import MetadataAdmissionGate
++from workbench.workflow import TaskWorkflow, WorkflowHeld
++from workbench.workflow.run import _ExactByteMatcher
++
++
++class ConditionEvidenceTests(TestCase):
++    setUp = fixture.WorkflowRuntimeTests.setUp
++    approved_task = fixture.WorkflowRuntimeTests.approved_task
++
++    def _start(self, command, name, *, workflow=None):
++        task_id = self.approved_task(command)
++        run = (workflow or self.workflow).start(
++            task_id, 1, worktree_path=self.root / name,
++            artifacts_root=self.artifacts, automation=fixture.AUTOMATION,
++        )
++        self.addCleanup(run.close)
++        return run
++
++    def test_exact_bytes_split_and_long_match_offsets(self):
++        pattern = b"x" * 5000 + b"needle"
++        matcher = _ExactByteMatcher(pattern)
++        segments = []
++        for chunk in (b"pre" + pattern[:2000], pattern[2000:4500], pattern[4500:] + b"post"):
++            segments.extend(matcher.feed(chunk))
++        segments.extend(matcher.finish())
++        self.assertEqual(b"".join(segment[1] for segment in segments), b"pre" + pattern + b"post")
++        self.assertEqual([(s, len(data)) for s, data, matched in segments if matched], [(3, len(pattern))])
++        self.assertEqual([s for s, _, _ in segments], [0, 3, 3 + len(pattern)])
++
++    def test_matched_proof_is_durable_and_raw_append_loss_is_not_collector_gap(self):
++        run = self._start("printf 'PASS\\n'; printf PASS > outcome.txt", "matched-write-loss")
++
++        class FailingRawStore:
++            def append(self, _run_id, _data):
++                raise OSError("fixture raw append unavailable")
++
++        run.raw_store = FailingRawStore()
++        self.assertTrue(run.collect(timeout=8)["exit_confirmed"])
++        proofs = self.repository.get_condition_proofs(run.run_id)
++        self.assertEqual(len(proofs), 1)
++        self.assertEqual(proofs[0]["condition_digest"], sha256(b"PASS").hexdigest())
++        self.assertEqual((proofs[0]["match_start"], proofs[0]["match_end"]), (0, 4))
++        self.assertEqual(proofs[0]["full_match_digest"], sha256(b"PASS").hexdigest())
++        self.assertEqual(run.judge()["worker_judgment"]["judgment"], "success")
++
++    def test_complete_negative_survives_raw_append_loss(self):
++        run = self._start("printf 'WRONG\\n'; printf PASS > outcome.txt", "negative-write-loss")
++
++        class FailingRawStore:
++            def append(self, _run_id, _data):
++                raise OSError("fixture raw append unavailable")
++
++        run.raw_store = FailingRawStore()
++        self.assertTrue(run.collect(timeout=8)["exit_confirmed"])
++        proof = self.repository.get_condition_proofs(run.run_id)[0]
++        self.assertFalse(proof["matched"])
++        self.assertTrue(proof["observation_complete"])
++        self.assertEqual(run.judge()["worker_judgment"]["judgment"], "failure")
++
++    def test_late_collector_gap_invalidates_negative_current_view(self):
++        run = self._start("printf PASS > outcome.txt", "negative-late-gap")
++        self.assertTrue(run.collect(timeout=8)["exit_confirmed"])
++        historical = self.repository.get_condition_proofs(run.run_id)
++        self.assertEqual(len(historical), 1)
++        self.assertEqual(historical[0]["observation_complete"], 1)
++        self.repository.record_log_source(
++            {"schemaVersion": 1, "kind": "task", "id": run.task_id},
++            {"schemaVersion": 1, "source": run._source_ref, "start": 0, "end": 1,
++             "digest": sha256(b"?").hexdigest()}, status="collector_gap",
++        )
++        current = self.repository.get_condition_proofs(run.run_id)
++        self.assertEqual(current[0]["observation_complete"], 0)
++        self.assertEqual(current[0]["invalidation_reason"], "coverage_source_gap")
++        evidence = run.judge()["worker_judgment"]
++        self.assertEqual(evidence["judgment"], "indeterminate")
++        self.assertIn("condition_observation_incomplete", evidence["reasons"])
++
++    def test_proof_write_failure_holds_next_run_but_current_collection_finishes(self):
++        gate = MetadataAdmissionGate()
++        workflow = TaskWorkflow(self.repository, self.mailbox, metadata_admission=gate)
++        run = self._start("printf 'PASS\\n'; printf PASS > outcome.txt", "proof-fault", workflow=workflow)
++        with patch.object(self.repository, "record_condition_proof", side_effect=OSError("fixture metadata fault")):
++            collected = run.collect(timeout=8)
++        self.assertTrue(collected["exit_confirmed"])
++        self.assertFalse(gate.automatic_runs_allowed)
++        self.assertEqual(run.judge()["worker_judgment"]["judgment"], "indeterminate")
++        next_task = self.approved_task("printf PASS > outcome.txt")
++        with self.assertRaises(WorkflowHeld):
++            workflow.start(next_task, 1, worktree_path=self.root / "held-next",
++                           artifacts_root=self.artifacts, automation=fixture.AUTOMATION)
+diff --git a/tests/workflow/test_subject_delivery.py b/tests/workflow/test_subject_delivery.py
+new file mode 100644
+--- /dev/null
++++ b/tests/workflow/test_subject_delivery.py
+@@ -0,0 +1,74 @@
++"""DVL-05: experiment mailbox receipt와 중요 기록의 경계."""
++
++from pathlib import Path
++from types import SimpleNamespace
++import tempfile
++import unittest
++from uuid import uuid4
++
++from workbench.ipc.bridge_g3.mailbox import MailboxStatus
++from workbench.storage.important_log import ImportantLogStore, SubjectLifecycle
++from workbench.workflow.run import _copy_confirmed_decision, _copy_confirmed_message
++from workbench.workflow import TaskWorkflow
++import test_run as fixture
++
++
++class ExperimentDeliveryTests(unittest.TestCase):
++    def setUp(self):
++        self.temp = tempfile.TemporaryDirectory()
++        self.addCleanup(self.temp.cleanup)
++        self.directory = Path(self.temp.name) / "important"
++        with ImportantLogStore.create(self.directory) as store:
++            self.db_uuid = store.db_uuid
++        self.sink = SubjectLifecycle(self.directory, self.db_uuid)
++        self.task_id = str(uuid4())
++        self.subject = {"schemaVersion": 1, "kind": "task", "id": self.task_id}
++
++    def _entries(self):
++        with ImportantLogStore.open(self.directory, self.db_uuid) as store:
++            return store.list_entries(self.subject)
++
++    def test_only_processed_receipt_and_verified_decision_are_idempotent(self):
++        message = SimpleNamespace(task_id=self.task_id, revision=2, message_id=str(uuid4()),
++                                  payload={"stage": "execute", "instruction": "approved run"})
++        for status in (MailboxStatus.DEFERRED, MailboxStatus.UNKNOWN, MailboxStatus.API_RETURNED):
++            _copy_confirmed_message(self.sink, message, SimpleNamespace(status=status), "manager_instruction")
++        self.assertEqual(self._entries(), [])
++        receipt = SimpleNamespace(status=MailboxStatus.OMP_PROCESSED)
++        _copy_confirmed_message(self.sink, message, receipt, "manager_instruction")
++        _copy_confirmed_message(self.sink, message, receipt, "manager_instruction")
++        response = {"response_id": str(uuid4()), "decision": "execute"}
++        _copy_confirmed_decision(self.sink, self.task_id, 2, response)
++        _copy_confirmed_decision(self.sink, self.task_id, 2, response)
++        entries = self._entries()
++        self.assertEqual(len(entries), 2)
++        self.assertEqual({entry["sources"][0]["source"]["sourceKind"] for entry in entries},
++                         {"manager_instruction", "decision"})
++
++
++class ActualExperimentDeliveryTests(unittest.TestCase):
++    setUp = fixture.WorkflowRuntimeTests.setUp
++    approved_task = fixture.WorkflowRuntimeTests.approved_task
++
++    def test_processed_experiment_task_and_report_copy_without_core_result_change(self):
++        directory = self.root / "important"
++        with ImportantLogStore.create(directory) as store:
++            db_uuid = store.db_uuid
++        sink = SubjectLifecycle(directory, db_uuid)
++        workflow = TaskWorkflow(self.repository, self.mailbox, subject_log=sink)
++        task_id = self.approved_task("printf 'PASS\\n'; printf PASS > outcome.txt")
++        run = workflow.start(task_id, 1, worktree_path=self.root / "experiment",
++                             artifacts_root=self.artifacts, automation=fixture.AUTOMATION)
++        self.addCleanup(run.close)
++        self.assertTrue(run.collect(timeout=8)["exit_confirmed"])
++        self.assertEqual(run.judge()["worker_judgment"]["judgment"], "success")
++        self.assertFalse(workflow.subject_capture_unknown)
++        self.assertFalse(run.subject_capture_unknown)
++        with ImportantLogStore.open(directory, db_uuid) as store:
++            entries = store.list_entries({"schemaVersion": 1, "kind": "task", "id": task_id})
++        self.assertEqual({entry["sources"][0]["source"]["sourceKind"] for entry in entries},
++                         {"manager_instruction", "report"})
++
++
++if __name__ == "__main__":
++    unittest.main()
+diff --git a/tests/backend/test_important_subjects.py b/tests/backend/test_important_subjects.py
+new file mode 100644
+--- /dev/null
++++ b/tests/backend/test_important_subjects.py
+@@ -0,0 +1,138 @@
++"""DVL-05: durable journal first, optional important-log copy second."""
++
++from pathlib import Path
++import tempfile
++import unittest
++from uuid import uuid4
++
++from workbench.backend.flow import HandoffJournal, OutboundMessage
++from workbench.backend.flow_tasks import TaskFlow
++from workbench.backend.flow_terminal import HostGate, TerminalService
++from workbench.storage.important_log import ImportantLogStore, SubjectLifecycle
++from workbench.contracts.v1 import ActorRole, MessageKind
++
++
++AT = "2026-10-09T12:00:00Z"
++
++
++class _Handoffs:
++    def __init__(self, path):
++        self.journal = HandoffJournal(path)
++
++    def record(self, record):
++        return self.journal.append(record)
++
++    def close(self):
++        self.journal.close()
++
++
++class _FailingSubject:
++    def reconcile_flow(self, _records):
++        return 0
++
++    def record_flow(self, _record):
++        raise OSError("important DB unavailable")
++
++
++class _ImmediateHandoffs:
++    def __init__(self):
++        self.message_id = str(uuid4())
++
++    def enqueue(self, _outbound, *, origin, listener, **_kwargs):
++        self.origin = origin
++        listener("submitted", {"message_id": self.message_id})
++        listener("delivered", {"message_id": self.message_id})
++        return {"status": "queued"}
++
++
++class ImportantSubjectSeamTests(unittest.TestCase):
++    def setUp(self):
++        self.temp = tempfile.TemporaryDirectory()
++        self.root = Path(self.temp.name)
++        with ImportantLogStore.create(self.root / "important") as store:
++            self.db_uuid = store.db_uuid
++        self.subjects = SubjectLifecycle(self.root / "important", self.db_uuid)
++
++    def tearDown(self):
++        self.temp.cleanup()
++
++    def _flow(self, subject_log):
++        return TaskFlow(self.root / "flow.jsonl", repository_factory=lambda: None,
++                        handoffs=None, omp_idle=lambda _role: True, subject_log=subject_log)
++
++    def test_flow_journal_survives_failed_copy_and_restart_copies_confirmed_fact(self):
++        task_id = str(uuid4())
++        scope_id, proceed_id = str(uuid4()), str(uuid4())
++        flow = self._flow(_FailingSubject())
++        flow._record({"type": "delegated", "task_id": task_id, "revision": 1,
++                      "scope_decision_id": scope_id, "proceed_decision_id": proceed_id})
++        self.assertTrue(flow.subject_capture_unknown)
++        self.assertEqual(self.subjects.state({"schemaVersion": 1, "kind": "task", "id": task_id}), {})
++        flow.close()
++        restored = self._flow(self.subjects)
++        state = self.subjects.state({"schemaVersion": 1, "kind": "task", "id": task_id})
++        self.assertEqual(state["grant_ref"], proceed_id)
++        self.assertEqual(state["event_cursor"], 1)
++        self.assertFalse(restored.subject_capture_unknown)
++        restored.close()
++
++    def test_terminal_journal_copy_keeps_taskless_command_open_when_end_unknown(self):
++        handoffs = _Handoffs(self.root / "terminal.jsonl")
++        terminal = TerminalService(handoffs=handoffs, host_shell=lambda: None, gate=HostGate(),
++                                   log_root=self.root / "logs", automation=lambda: {},
++                                   subject_log=self.subjects)
++        command_id = str(uuid4())
++        terminal._journal({"type": "terminal_started", "command_id": command_id,
++                           "task_id": None, "started_at": AT})
++        terminal._journal({"type": "terminal_ended", "command_id": command_id,
++                           "status": "unknown", "ended_at": AT})
++        self.assertFalse(terminal.subject_capture_unknown)
++        state = self.subjects.state({"schemaVersion": 1, "kind": "command", "id": command_id})
++        self.assertEqual((state["archival_state"], state["command_end_status"]), ("open", "unknown"))
++        handoffs.close()
++
++    def test_delivered_task_payload_is_copied_once_with_message_id_not_chat(self):
++        task_id = str(uuid4())
++        flow = self._flow(self.subjects)
++        flow._record({"type": "delegated", "task_id": task_id, "revision": 1,
++                      "scope_decision_id": str(uuid4()), "proceed_decision_id": str(uuid4())})
++        outbound = OutboundMessage(task_id, 1, str(uuid4()), ActorRole.MANAGER, ActorRole.WORKER,
++                                   MessageKind.TASK, {"goal": "confirmed Task spec", "message": "instruction"})
++        callbacks = []
++        listener = flow._subject_listener(outbound, lambda event, _snapshot: callbacks.append(event))
++        message_id = str(uuid4())
++        listener("created", {"message_id": message_id})
++        listener("submitted", {"message_id": message_id})
++        with ImportantLogStore.open(self.root / "important", self.db_uuid) as store:
++            self.assertEqual(len(store.list_entries({"schemaVersion": 1, "kind": "task", "id": task_id})), 1)
++        listener("delivered", {"message_id": message_id})
++        self.assertEqual(callbacks, ["created", "submitted", "delivered"])
++        self.assertFalse(flow.subject_capture_unknown)
++        subject = {"schemaVersion": 1, "kind": "task", "id": task_id}
++        with ImportantLogStore.open(self.root / "important", self.db_uuid) as store:
++            entries = store.list_entries(subject)
++        self.assertEqual(len(entries), 2)
++        delivered = [entry for entry in entries if entry["sources"][0]["source"].get("messageId") == message_id]
++        self.assertEqual(len(delivered), 1)
++        self.assertNotIn("user dialogue", delivered[0]["body"]["facts"][0])
++        flow.close()
++
++    def test_workbench_report_direct_enqueue_is_copied_only_on_delivery(self):
++        task_id, run_id, original_message_id = str(uuid4()), str(uuid4()), str(uuid4())
++        flow = self._flow(self.subjects)
++        flow._record({"type": "delegated", "task_id": task_id, "revision": 1,
++                      "scope_decision_id": str(uuid4()), "proceed_decision_id": str(uuid4())})
++        handoffs = _ImmediateHandoffs()
++        flow._handoffs = handoffs
++        flow._tell_manager(task_id, 1, run_id, original_message_id,
++                           {"notice": "run_start_failed"}, "confirmed failure", "fixture")
++        with ImportantLogStore.open(self.root / "important", self.db_uuid) as store:
++            entries = store.list_entries({"schemaVersion": 1, "kind": "task", "id": task_id})
++        self.assertEqual(len(entries), 2)
++        self.assertEqual(entries[-1]["sources"][0]["source"]["messageId"], handoffs.message_id)
++        self.assertEqual(handoffs.origin, "fixture")
++        flow.close()
++
++
++if __name__ == "__main__":
++    unittest.main()
+diff --git a/tests/backend/test_condition_evidence_composition.py b/tests/backend/test_condition_evidence_composition.py
+new file mode 100644
+--- /dev/null
++++ b/tests/backend/test_condition_evidence_composition.py
+@@ -0,0 +1,51 @@
++"""DVL-04/05: 실제 backend factory의 포트 전달만 검사한다."""
++
++import threading
++import unittest
++from types import SimpleNamespace
++
++from workbench.app.recovery import AdmissionHold, METADATA_HOLD
++from workbench.backend.service import Backend
++from workbench.storage.log_raw.admission import MetadataAdmissionGate
++from workbench.workflow.run import WorkflowRun
++
++
++class FactoryCompositionTests(unittest.TestCase):
++    def test_shared_gate_and_metadata_fault_callback_hold_new_work(self):
++        backend = Backend.__new__(Backend)
++        gate = MetadataAdmissionGate()
++        backend.automation_loop = SimpleNamespace(metadata=gate)
++        backend.bridge = object()
++        backend.raw_logs = None
++        backend.subject_log = object()  # 주입 포트만; 활성 DB를 만들지 않는다.
++        backend.hold = AdmissionHold()
++        backend._metadata_lock = threading.Lock()
++        backend._metadata_failures = {}
++        workflow = backend._make_workflow(object())
++        self.assertIs(workflow.metadata_admission, gate)
++        self.assertIs(workflow.subject_log, backend.subject_log)
++        workflow.metadata_outcome("condition_evidence", OSError("fixture persistence fault"))
++        self.assertFalse(gate.automatic_runs_allowed)
++        self.assertEqual(backend.hold.reason_for(None), METADATA_HOLD)
++        self.assertIn("condition_evidence", backend._metadata_failures)
++
++    def test_collection_fault_reports_to_shared_backend_port_without_stopping_collector(self):
++        backend = Backend.__new__(Backend)
++        gate = MetadataAdmissionGate()
++        backend.automation_loop = SimpleNamespace(metadata=gate)
++        backend.hold = AdmissionHold()
++        backend._metadata_lock = threading.Lock()
++        backend._metadata_failures = {}
++        run = WorkflowRun.__new__(WorkflowRun)
++        run._evidence_error = None
++        run._record = {}
++        run.metadata_admission = gate
++        run.metadata_outcome = backend._metadata_event
++        run._metadata_failure(OSError("fixture persistence fault"))
++        self.assertEqual(run._evidence_error, "OSError")
++        self.assertFalse(gate.automatic_runs_allowed)
++        self.assertEqual(backend.hold.reason_for(None), METADATA_HOLD)
++
++
++if __name__ == "__main__":
++    unittest.main()
+diff --git a/tests/storage/important_log/test_lifecycle.py b/tests/storage/important_log/test_lifecycle.py
+new file mode 100644
+--- /dev/null
++++ b/tests/storage/important_log/test_lifecycle.py
+@@ -0,0 +1,319 @@
++"""DVL-05: confirmed subject facts, archival state and bounded fixture authority."""
++
++from pathlib import Path
++from hashlib import sha256
++import sqlite3
++import tempfile
++import unittest
++from uuid import uuid4
++
++from workbench.storage.important_log import ImportantLogStore, SubjectLifecycle
++from workbench.storage.important_log.store import ImportantLogStoreError
++
++
++AT = "2026-10-09T12:00:00Z"
++LATER = "2026-10-09T12:01:00Z"
++
++
++class SubjectLifecycleTests(unittest.TestCase):
++    def setUp(self):
++        self.temp = tempfile.TemporaryDirectory()
++        self.root = Path(self.temp.name) / "important"
++        with ImportantLogStore.create(self.root) as store:
++            self.db_uuid = store.db_uuid
++        self.life = SubjectLifecycle(self.root, self.db_uuid)
++
++    def tearDown(self):
++        self.temp.cleanup()
++
++    @staticmethod
++    def subject(kind, identifier):
++        return {"schemaVersion": 1, "kind": kind, "id": identifier}
++
++    def delegated(self, task_id, seq=1):
++        return {"seq": seq, "at": AT, "type": "delegated", "task_id": task_id, "revision": 1,
++                "scope_decision_id": str(uuid4()), "proceed_decision_id": str(uuid4())}
++
++    def test_task_closure_preserves_reason_time_prior_grant_and_no_core_success(self):
++        task_id = str(uuid4())
++        subject = self.subject("task", task_id)
++        delegated = self.delegated(task_id)
++        self.assertTrue(self.life.record_flow(delegated))
++        self.assertFalse(self.life.record_flow(delegated))
++        status = {"seq": 2, "at": AT, "type": "task", "task": {"task_id": task_id,
++                                                                     "revision": 1, "status": "finished"}}
++        self.life.record_flow(status)
++        self.assertEqual(self.life.state(subject)["archival_state"], "open")
++        self.assertTrue(self.life.authority(subject, active=True, paused=False, revoked=False,
++                                            has_new_input=True)["allowed"])
++        closed = {"seq": 3, "at": LATER, "type": "task_closed", "task_id": task_id, "reason": "done"}
++        self.life.record_flow(closed)
++        state = self.life.state(subject)
++        self.assertEqual((state["archival_at"], state["core_closed_reason"], state["event_cursor"]),
++                         (LATER, "done", 3))
++        self.assertEqual(state["prior_grant_ref"], delegated["proceed_decision_id"])
++        self.assertTrue(self.life.authority(subject, active=False, paused=False, revoked=False,
++                                            has_new_input=True, closing_event=True)["allowed"])
++        self.assertFalse(self.life.authority(subject, active=True, paused=True, revoked=False,
++                                             has_new_input=True, closing_event=True)["allowed"])
++        self.assertFalse(self.life.authority(subject, active=True, paused=False, revoked=True,
++                                             has_new_input=True, closing_event=True)["allowed"])
++        self.assertFalse(self.life.authority(subject, active=True, paused=False, revoked=False,
++                                             has_new_input=True)["allowed"])
++        with ImportantLogStore.open(self.root, self.db_uuid) as store:
++            self.assertEqual([entry["kind"] for entry in store.list_entries(subject)], ["event", "closure"])
++        self.assertFalse(self.life.record_flow(closed))
++        self.assertEqual(self.life.reconcile_flow([delegated, status, closed]), 0)
++
++    def test_other_closed_reasons_collect_without_call_permission(self):
++        for index, reason in enumerate(("cancelled", "approval_retired_c_d66", "not_started_before_restart",
++                                        "superseded_by_new_task")):
++            task_id = str(uuid4())
++            subject = self.subject("task", task_id)
++            self.life.record_flow(self.delegated(task_id, seq=100 + 2 * index))
++            self.life.record_flow({"seq": 101 + 2 * index, "at": LATER, "type": "task_closed",
++                                   "task_id": task_id, "reason": reason})
++            self.assertEqual(self.life.state(subject)["archival_state"], "closed")
++            self.assertFalse(self.life.authority(subject, active=False, paused=False, revoked=False,
++                                                 has_new_input=True, closing_event=True)["allowed"])
++
++    def test_taskless_command_actual_end_unknown_direct_origin_and_archival_reactivity(self):
++        command_id = str(uuid4())
++        subject = self.subject("command", command_id)
++        started = {"seq": 1, "at": AT, "type": "terminal_started", "command_id": command_id,
++                   "task_id": None, "started_at": AT}
++        self.life.record_terminal(started)
++        self.assertEqual(self.life.state(subject)["archival_state"], "open")
++        self.assertFalse(self.life.authority(subject, active=True, paused=False, revoked=False,
++                                             has_new_input=True)["allowed"])
++        with self.assertRaises(ValueError):
++            self.life.record_direct_origin(command_id, event_id=str(uuid4()), epoch=1, observed_at=AT,
++                                           verified_direct_instruction=False)
++        origin = str(uuid4())
++        self.life.record_direct_origin(command_id, event_id=origin, epoch=1, observed_at=AT,
++                                       verified_direct_instruction=True)
++        unrelated = str(uuid4())
++        self.life.record_terminal({"seq": 9, "at": AT, "type": "terminal_started",
++                                   "command_id": unrelated, "task_id": None, "started_at": AT})
++        with self.assertRaises(ValueError):
++            self.life.record_direct_origin(unrelated, event_id=str(uuid4()), epoch=1,
++                                           observed_at="2026-10-09T12:00:01Z",
++                                           verified_direct_instruction=True)
++        with self.assertRaises(sqlite3.IntegrityError):
++            self.life.record_direct_origin(unrelated, event_id=origin, epoch=1, observed_at=AT,
++                                           verified_direct_instruction=True)
++        self.assertFalse(self.life.authority(self.subject("command", unrelated), active=True,
++                                             paused=False, revoked=False, has_new_input=True)["allowed"])
++        self.assertTrue(self.life.authority(subject, active=True, paused=False, revoked=False,
++                                            has_new_input=True)["allowed"])
++        unknown = {"seq": 2, "at": LATER, "type": "terminal_ended", "command_id": command_id,
++                   "status": "unknown", "ended_at": LATER}
++        self.life.record_terminal(unknown)
++        self.assertEqual(self.life.state(subject)["archival_state"], "open")
++        self.assertFalse(self.life.authority(subject, active=False, paused=False, revoked=False,
++                                             has_new_input=True, closing_event=True)["allowed"])
++        self.life.archive_close(subject, at=LATER, user_confirmed=True)
++        self.assertEqual(self.life.state(subject)["archival_reason"], "user_archival_close")
++        self.assertFalse(self.life.authority(subject, active=False, paused=False, revoked=False,
++                                             has_new_input=True, closing_event=True)["allowed"])
++
++    def test_task_command_deduplicates_under_task_and_delivery_late_does_not_reopen_closed(self):
++        task_id, command_id, message_id = str(uuid4()), str(uuid4()), str(uuid4())
++        subject = self.subject("task", task_id)
++        self.life.record_flow(self.delegated(task_id))
++        start = {"seq": 1, "at": AT, "type": "terminal_started", "command_id": command_id,
++                 "task_id": task_id, "started_at": AT}
++        self.life.record_terminal(start, revision=1)
++        self.life.record_terminal({"seq": 2, "at": LATER, "type": "terminal_ended", "command_id": command_id,
++                                   "status": "exited", "ended_at": LATER})
++        self.assertEqual(self.life.state(subject)["archival_state"], "open")
++        self.assertEqual(self.life.state(self.subject("command", command_id)), {})
++        self.life.record_flow({"seq": 2, "at": LATER, "type": "task_closed", "task_id": task_id,
++                               "reason": "report_not_delivered"})
++        self.life.record_delivery(subject, message_id=message_id, revision=1, kind="report",
++                                  content="delivered report", delivered_at=LATER)
++        self.assertEqual(self.life.state(subject)["archival_state"], "closed")
++        self.assertFalse(self.life.record_delivery(subject, message_id=message_id, revision=1,
++                                                   kind="report", content="delivered report", delivered_at=LATER))
++        with ImportantLogStore.open(self.root, self.db_uuid) as store:
++            self.assertEqual(len(store.list_entries(subject)), 5)
++
++    def test_actual_command_end_allows_only_its_end_summary_then_expires(self):
++        command_id = str(uuid4())
++        subject = self.subject("command", command_id)
++        self.life.record_terminal({"seq": 31, "at": AT, "type": "terminal_started",
++                                   "command_id": command_id, "task_id": None, "started_at": AT})
++        origin = str(uuid4())
++        self.life.record_direct_origin(command_id, event_id=origin, epoch=2, observed_at=AT,
++                                       verified_direct_instruction=True)
++        self.life.record_terminal({"seq": 32, "at": LATER, "type": "terminal_ended",
++                                   "command_id": command_id, "status": "exited", "ended_at": LATER})
++        state = self.life.state(subject)
++        self.assertEqual((state["archival_state"], state["archival_at"], state["archival_reason"]),
++                         ("closed", LATER, "actual_end"))
++        self.assertFalse(self.life.authority(subject, active=True, paused=False, revoked=False,
++                                             has_new_input=True)["allowed"])
++        self.assertEqual(self.life.authority(subject, active=False, paused=False, revoked=False,
++                                             has_new_input=True, closing_event=True)["authorization_ref"], origin)
++        self.life.mark_command_end_summary_processed(command_id)
++        self.assertFalse(self.life.authority(subject, active=False, paused=False, revoked=False,
++                                             has_new_input=True, closing_event=True)["allowed"])
++
++    def test_user_archival_close_does_not_change_core_or_grant_and_confirmed_activity_reopens(self):
++        task_id = str(uuid4())
++        subject = self.subject("task", task_id)
++        delegated = self.delegated(task_id, seq=41)
++        self.life.record_flow(delegated)
++        self.life.archive_close(subject, at=LATER, user_confirmed=True)
++        before = self.life.state(subject)
++        self.assertEqual(before["archival_state"], "closed")
++        self.assertEqual(before["grant_ref"], delegated["proceed_decision_id"])
++        self.assertEqual(before["core_status"], "dispatched")
++        self.life.record_delivery(subject, message_id=str(uuid4()), revision=1,
++                                  kind="manager_instruction", content="confirmed Task follow-up",
++                                  delivered_at=LATER)
++        after = self.life.state(subject)
++        self.assertEqual(after["archival_state"], "open")
++        self.assertIsNone(after["archival_at"])
++        self.assertEqual(after["core_status"], "dispatched")
++
++    def test_only_supplied_terminal_byte_range_is_linked_without_invented_output(self):
++        command_id = str(uuid4())
++        subject = self.subject("command", command_id)
++        source = {"schemaVersion": 1, "sourceKind": "terminal", "collectorEpoch": 1,
++                  "commandId": command_id}
++        span = {"schemaVersion": 1, "source": source, "start": 0, "end": 3,
++                "digest": sha256(b"abc").hexdigest()}
++        source_record_id = str(uuid4())
++        with self.assertRaisesRegex(ValueError, "confirmed command start"):
++            self.life.record_terminal_range(subject, source_record_id, span, observed_at=AT)
++        self.life.record_terminal({"type": "terminal_started", "command_id": command_id,
++                                   "task_id": None, "started_at": AT, "seq": 1})
++        other = self.subject("command", str(uuid4()))
++        with self.assertRaisesRegex(ValueError, "identify its command"):
++            self.life.record_terminal_range(other, source_record_id, span, observed_at=AT)
++        self.assertTrue(self.life.record_terminal_range(subject, source_record_id, span, observed_at=AT))
++        self.assertFalse(self.life.record_terminal_range(subject, source_record_id, span, observed_at=AT))
++        with ImportantLogStore.open(self.root, self.db_uuid) as store:
++            entries = store.list_entries(subject)
++        self.assertEqual(len(entries), 2)
++        terminal = [entry for entry in entries if entry["sources"][0]["source"]["sourceKind"] == "terminal"]
++        self.assertEqual(len(terminal), 1)
++        self.assertEqual(terminal[0]["sources"], [span])
++        self.assertNotIn("abc", terminal[0]["body"]["facts"][0])
++        self.assertEqual(self.life.state(subject)["archival_state"], "open")
++
++    def test_failed_delegated_cursor_cannot_rewind_finished_on_restart(self):
++        task_id = str(uuid4())
++        subject = self.subject("task", task_id)
++        delegated = self.delegated(task_id)
++        finished = {"seq": 2, "at": LATER, "type": "task", "task": {
++            "task_id": task_id, "revision": 1, "status": "finished"}}
++        closed = {"seq": 3, "at": LATER, "type": "task_closed",
++                  "task_id": task_id, "reason": "done"}
++        with ImportantLogStore.open(self.root, self.db_uuid) as store:
++            store._connection.execute("""CREATE TRIGGER fail_delegated_seen
++                BEFORE INSERT ON subject_events_v1 WHEN NEW.event_kind='delegated'
++                BEGIN SELECT RAISE(ABORT, 'injected cursor failure'); END""")
++        with self.assertRaises(sqlite3.IntegrityError):
++            self.life.record_flow(delegated)
++        with ImportantLogStore.open(self.root, self.db_uuid) as store:
++            self.assertEqual(store.list_entries(subject), [])
++            self.assertEqual(store._connection.execute("SELECT COUNT(*) FROM subject_stats").fetchone()[0], 0)
++            self.assertEqual(store._connection.execute("SELECT COUNT(*) FROM subject_events_v1").fetchone()[0], 0)
++            store._connection.execute("DROP TRIGGER fail_delegated_seen")
++        self.assertEqual(self.life.state(subject), {})
++        self.assertTrue(self.life.record_flow(finished))
++        reopened = SubjectLifecycle(self.root, self.db_uuid)
++        with self.assertRaisesRegex(ImportantLogStoreError, "precedes durable subject cursor"):
++            reopened.reconcile_flow([closed, finished, delegated])
++        state = reopened.state(subject)
++        self.assertEqual((state["core_status"], state["event_cursor"], state["core_closed_reason"]),
++                         ("closed", 3, "done"))
++        self.assertIsNone(state["grant_ref"])
++        self.assertEqual(state["storage_unknown"], 1)
++        self.assertEqual(reopened.authority(subject, active=True, paused=False, revoked=False,
++                                            has_new_input=True)["reason"], "storage_unknown")
++        with ImportantLogStore.open(self.root, self.db_uuid) as store:
++            events = [row[0] for row in store._connection.execute(
++                "SELECT event_key FROM subject_events_v1 ORDER BY event_key")]
++        self.assertEqual(events, ["flow:2", "flow:3"])
++
++    def test_reconcile_flow_orders_unseen_confirmed_events_by_journal_sequence(self):
++        task_id = str(uuid4())
++        subject = self.subject("task", task_id)
++        delegated = self.delegated(task_id)
++        finished = {"seq": 2, "at": AT, "type": "task", "task": {
++            "task_id": task_id, "revision": 1, "status": "finished"}}
++        closed = {"seq": 3, "at": LATER, "type": "task_closed",
++                  "task_id": task_id, "reason": "done"}
++        self.assertEqual(self.life.reconcile_flow([closed, finished, delegated]), 3)
++        state = self.life.state(subject)
++        self.assertEqual((state["core_status"], state["prior_grant_ref"], state["event_cursor"],
++                          state["storage_unknown"]),
++                         ("closed", delegated["proceed_decision_id"], 3, 0))
++
++    def test_older_status_from_other_revision_cannot_override_newer_grant(self):
++        task_id = str(uuid4())
++        subject = self.subject("task", task_id)
++        latest = {**self.delegated(task_id, seq=10), "revision": 2}
++        self.life.record_flow(latest)
++        stale = {"seq": 9, "at": LATER, "type": "task", "task": {
++            "task_id": task_id, "revision": 1, "status": "finished"}}
++        with self.assertRaisesRegex(ImportantLogStoreError, "precedes durable subject cursor"):
++            self.life.record_flow(stale)
++        state = self.life.state(subject)
++        self.assertEqual((state["core_status"], state["grant_revision"], state["event_cursor"],
++                          state["storage_unknown"]), ("dispatched", 2, 10, 1))
++        self.assertEqual(self.life.authority(subject, active=True, paused=False, revoked=False,
++                                             has_new_input=True)["reason"], "storage_unknown")
++
++    def test_failed_subject_update_or_terminal_delivery_cursor_rolls_back_entry(self):
++        task_id = str(uuid4())
++        subject = self.subject("task", task_id)
++        delegated = self.delegated(task_id)
++        with ImportantLogStore.open(self.root, self.db_uuid) as store:
++            store._connection.execute("""CREATE TRIGGER fail_grant_update
++                BEFORE UPDATE ON subject_lifecycle_v1 WHEN NEW.core_status='dispatched'
++                BEGIN SELECT RAISE(ABORT, 'injected grant update failure'); END""")
++        with self.assertRaises(sqlite3.IntegrityError):
++            self.life.record_flow(delegated)
++        with ImportantLogStore.open(self.root, self.db_uuid) as store:
++            self.assertEqual(store.list_entries(subject), [])
++            self.assertEqual(store._connection.execute("SELECT COUNT(*) FROM subject_stats").fetchone()[0], 0)
++            store._connection.execute("DROP TRIGGER fail_grant_update")
++        self.assertEqual(self.life.state(subject), {})
++        self.assertTrue(self.life.record_flow(delegated))
++
++        command_id = str(uuid4())
++        command = self.subject("command", command_id)
++        with ImportantLogStore.open(self.root, self.db_uuid) as store:
++            store._connection.execute("""CREATE TRIGGER fail_terminal_seen
++                BEFORE INSERT ON subject_events_v1 WHEN NEW.event_kind='terminal_started'
++                BEGIN SELECT RAISE(ABORT, 'injected terminal cursor failure'); END""")
++        with self.assertRaises(sqlite3.IntegrityError):
++            self.life.record_terminal({"seq": 1, "type": "terminal_started", "command_id": command_id,
++                                       "task_id": None, "started_at": AT})
++        with ImportantLogStore.open(self.root, self.db_uuid) as store:
++            self.assertEqual(store.list_entries(command), [])
++            self.assertEqual(store._connection.execute("SELECT COUNT(*) FROM subject_commands_v1").fetchone()[0], 0)
++            store._connection.execute("DROP TRIGGER fail_terminal_seen")
++        self.assertEqual(self.life.state(command), {})
++
++        message_id = str(uuid4())
++        with ImportantLogStore.open(self.root, self.db_uuid) as store:
++            store._connection.execute("""CREATE TRIGGER fail_delivery_seen
++                BEFORE INSERT ON subject_events_v1 WHEN NEW.event_kind='report@1'
++                BEGIN SELECT RAISE(ABORT, 'injected delivery cursor failure'); END""")
++        with self.assertRaises(sqlite3.IntegrityError):
++            self.life.record_delivery(subject, message_id=message_id, revision=1, kind="report",
++                                      content="confirmed report", delivered_at=LATER)
++        with ImportantLogStore.open(self.root, self.db_uuid) as store:
++            self.assertEqual(len(store.list_entries(subject)), 1)  # only the successful delegation
++            store._connection.execute("DROP TRIGGER fail_delivery_seen")
++        self.assertTrue(self.life.record_delivery(subject, message_id=message_id, revision=1, kind="report",
++                                                  content="confirmed report", delivered_at=LATER))
++
++
++if __name__ == "__main__":
++    unittest.main()
+diff --git a/tests/storage/important_log/test_store.py b/tests/storage/important_log/test_store.py
+--- a/tests/storage/important_log/test_store.py
++++ b/tests/storage/important_log/test_store.py
+@@ -81,6 +81,22 @@
+         with self.assertRaises(ImportantLogStoreError):
+             ImportantLogStore.open(self.root, db_uuid)
+ 
++    def test_outer_event_transaction_rolls_back_entry_and_stats(self):
++        with ImportantLogStore.create(self.root) as store:
++            subject = {"schemaVersion": 1, "kind": "command", "id": str(uuid4())}
++            entry = store.make_entry(subject, "event", [],
++                                     {"schemaVersion": 1, "facts": ["confirmed"],
++                                      "interpretations": [], "unknowns": []})
++            with self.assertRaisesRegex(RuntimeError, "after entry"):
++                with store.transaction():
++                    store.put_entry(entry)
++                    raise RuntimeError("after entry")
++            self.assertIsNone(store.get_entry(entry["entryId"]))
++            self.assertEqual(store._connection.execute("SELECT COUNT(*) FROM subject_stats").fetchone()[0], 0)
++            with store.transaction():
++                store.put_entry(entry)
++            self.assertEqual(store.get_entry(entry["entryId"]), entry)
++
+     def test_corrupt_blob_and_unsafe_sidecar_fail_closed(self):
+         with ImportantLogStore.create(self.root) as store:
+             subject = {"schemaVersion": 1, "kind": "command", "id": str(uuid4())}
+diff --git a/tests/workflow/test_condition_evidence_independent.py b/tests/workflow/test_condition_evidence_independent.py
+new file mode 100644
+--- /dev/null
++++ b/tests/workflow/test_condition_evidence_independent.py
+@@ -0,0 +1,133 @@
++"""Independent DVL-04 observations through a real temporary Git/Bash run."""
++
++from __future__ import annotations
++
++from hashlib import sha256
++from pathlib import Path
++import unittest
++
++from tests.workflow import test_run as runtime_fixture
++from workbench.storage.log_raw.store import RawLogStore
++from workbench.tasks.repository import TaskRepository
++from workbench.workflow import TaskWorkflow
++from workbench.workflow.run import _ExactByteMatcher
++
++
++class IndependentConditionEvidence(unittest.TestCase):
++    setUp = runtime_fixture.WorkflowRuntimeTests.setUp
++    approved_task = runtime_fixture.WorkflowRuntimeTests.approved_task
++
++    def _run(self, command: str, name: str, *, per_run_limit: int = 0):
++        store = RawLogStore(self.root / f"raw-{name}", per_run_limit=per_run_limit,
++                            project_limit=per_run_limit)
++        self.addCleanup(store.close)
++        workflow = TaskWorkflow(self.repository, self.mailbox, raw_store=store)
++        task = self.approved_task(command)
++        run = workflow.start(task, 1, worktree_path=self.root / name,
++                             artifacts_root=self.artifacts, automation=runtime_fixture.AUTOMATION)
++        self.addCleanup(run.close)
++        return run, store
++
++    def test_overlap_prefix_pattern_is_exact_across_every_chunk_boundary(self) -> None:
++        pattern = b"ABABA"
++        for boundary in range(1, len(pattern)):
++            with self.subTest(boundary=boundary):
++                matcher = _ExactByteMatcher(pattern)
++                observed = []
++                observed.extend(matcher.feed(b"Q" + pattern[:boundary]))
++                observed.extend(matcher.feed(pattern[boundary:] + b"Z"))
++                observed.extend(matcher.finish())
++                self.assertEqual([(offset, data) for offset, data, matched in observed if matched],
++                                 [(1, pattern)])
++                self.assertEqual(b"".join(data for _, data, _ in observed), b"QABABAZ")
++        no_match = _ExactByteMatcher(pattern)
++        negative = no_match.feed(b"ABABXABAB") + no_match.finish()
++        self.assertFalse(any(matched for _, _, matched in negative))
++
++    def test_long_match_proof_committed_before_judge_survives_raw_quota(self) -> None:
++        pattern = "0" * 5000 + "NEEDLE"
++        execution = {"source": str(self.source), "commit": self.commit,
++                     "command": "printf '%05000dNEEDLE' 0; printf PASS > outcome.txt",
++                     "criteria": {"log_contains": pattern, "result_file": "outcome.txt",
++                                  "result_contains": "PASS"},
++                     "environment": {"PATH": "/usr/bin:/bin", "TERM": "xterm"}, "shell": "bash"}
++        task = self.repository.create_task({"goal": "large exact observed pattern", "execution": execution})
++        self.repository.approve_scope(task, 1, {"execution": execution, "paths": ["outcome.txt"]})
++        self.repository.proceed(task, 1, "approved fixture")
++        store = RawLogStore(self.root / "raw-long", per_run_limit=32, project_limit=32)
++        self.addCleanup(store.close)
++        workflow = TaskWorkflow(self.repository, self.mailbox, raw_store=store)
++        run = workflow.start(task, 1, worktree_path=self.root / "long-pattern",
++                             artifacts_root=self.artifacts, automation=runtime_fixture.AUTOMATION)
++        self.addCleanup(run.close)
++        self.assertTrue(run.collect(timeout=8)["exit_confirmed"])
++        status = store.status(run.run_id)
++        self.assertTrue(status.truncated)
++        self.assertLessEqual(status.stored_bytes, 32)
++        proof = self.repository.get_condition_proofs(run.run_id)[0]
++        self.assertEqual((proof["task_id"], proof["revision"], proof["run_id"]), (task, 1, run.run_id))
++        self.assertEqual(proof["condition_digest"], sha256(pattern.encode()).hexdigest())
++        self.assertEqual(proof["match_end"] - proof["match_start"], len(pattern))
++        self.assertEqual(proof["full_match_digest"], sha256(pattern.encode()).hexdigest())
++        self.assertLessEqual(len(proof["excerpt"]), 4096)
++        self.assertEqual(len(self.mailbox.messages), 1, "proof must precede the judgment/report")
++        source = self.repository.get_log_sources({"schemaVersion": 1, "kind": "task", "id": task})
++        self.assertIn(proof["source_id"], {item["source_id"] for item in source})
++        with TaskRepository(self.root / "metadata.sqlite3") as reopened:
++            self.assertEqual(reopened.get_condition_proofs(run.run_id)[0]["proof_id"], proof["proof_id"])
++        judged = run.judge()["worker_judgment"]
++        self.assertEqual((judged["judgment"], judged["condition_evidence"]["matched_proof_id"]),
++                         ("success", proof["proof_id"]))
++
++    def test_raw_zero_quota_negative_requires_current_gapfree_coverage(self) -> None:
++        complete, store = self._run("printf WRONG; printf PASS > outcome.txt", "complete-negative")
++        self.assertTrue(complete.collect(timeout=8)["exit_confirmed"])
++        self.assertEqual(store.status(complete.run_id).stored_bytes, 0)
++        proof = self.repository.get_condition_proofs(complete.run_id)[0]
++        self.assertEqual((proof["matched"], proof["observation_complete"]), (0, 1))
++        # A real observed byte range with an unrelated condition digest is not
++        # evidence for the approved pattern of this Run.
++        other = self.repository.get_log_sources({"schemaVersion": 1, "kind": "task", "id": complete.task_id})[0]
++        self.repository.record_condition_proof(
++            complete.task_id, 1, complete.run_id, sha256(b"different condition").hexdigest(),
++            matched=True, observation_complete=False, source_id=other["source_id"],
++            match_start=other["start"], match_end=other["end"],
++            full_match_digest=other["digest"])
++        self.assertEqual(complete.judge()["worker_judgment"]["judgment"], "failure")
++
++        late, late_store = self._run("printf WRONG; printf PASS > outcome.txt", "late-gap-negative")
++        self.assertTrue(late.collect(timeout=8)["exit_confirmed"])
++        self.assertEqual(late_store.status(late.run_id).stored_bytes, 0)
++        original = self.repository.get_condition_proofs(late.run_id)[0]
++        self.assertTrue(original["observation_complete"])
++        self.repository.record_log_source(
++            {"schemaVersion": 1, "kind": "task", "id": late.task_id},
++            {"schemaVersion": 1, "source": {**late._source_ref, "collectorEpoch": 2}, "start": 0, "end": 1,
++             "digest": sha256(b"?").hexdigest()}, status="collector_gap")
++        current = self.repository.get_condition_proofs(late.run_id)[0]
++        self.assertEqual(current["proof_id"], original["proof_id"])
++        self.assertEqual(current["observation_complete"], 0)
++        judgment = late.judge()["worker_judgment"]
++        self.assertEqual(judgment["judgment"], "indeterminate")
++        self.assertIn("condition_observation_incomplete", judgment["reasons"])
++
++    def test_confirmed_nonzero_exit_and_result_mutation_are_separate_failure_facts(self) -> None:
++        failing, _ = self._run("printf WRONG; printf PASS > outcome.txt; exit 7", "nonzero")
++        self.assertTrue(failing.collect(timeout=8)["exit_confirmed"])
++        self.repository.record_log_source(
++            {"schemaVersion": 1, "kind": "task", "id": failing.task_id},
++            {"schemaVersion": 1, "source": failing._source_ref, "start": 0, "end": 1,
++             "digest": sha256(b"?").hexdigest()}, status="collector_gap")
++        evidence = failing.judge()["worker_judgment"]
++        self.assertEqual((evidence["judgment"], evidence["reasons"]), ("failure", ["nonzero_exit"]))
++        changed, _ = self._run("printf PASS; printf PASS > outcome.txt", "result-mutated")
++        self.assertTrue(changed.collect(timeout=8)["exit_confirmed"])
++        result_file = changed.worktree.path / "outcome.txt"
++        result_file.write_bytes(b"different result")
++        evidence = changed.judge()["worker_judgment"]
++        self.assertEqual(evidence["judgment"], "indeterminate")
++        self.assertIn("result_file", {row["source"] for row in evidence["evidence_errors"]})
++
++
++if __name__ == "__main__":
++    unittest.main()
+diff --git a/tests/workflow/test_subject_delivery_independent.py b/tests/workflow/test_subject_delivery_independent.py
+new file mode 100644
+--- /dev/null
++++ b/tests/workflow/test_subject_delivery_independent.py
+@@ -0,0 +1,97 @@
++"""Independent confirmed-message and verified-decision copy boundaries."""
++
++from __future__ import annotations
++
++from pathlib import Path
++from types import SimpleNamespace
++import tempfile
++import unittest
++from uuid import uuid4
++
++from tests.workflow import test_run as runtime_fixture
++from workbench.ipc.bridge_g3.mailbox import MailboxStatus
++from workbench.storage.important_log import ImportantLogStore, SubjectLifecycle
++from workbench.storage.important_log.store import ImportantLogStoreError
++from workbench.workflow.run import _copy_confirmed_message
++
++
++AT = "2026-10-09T02:03:04Z"
++
++
++class IndependentConfirmedDelivery(unittest.TestCase):
++    def setUp(self) -> None:
++        temporary = tempfile.TemporaryDirectory(prefix="dvl045-delivery-", dir="/dev/shm")
++        self.addCleanup(temporary.cleanup)
++        self.directory = Path(temporary.name) / "important"
++        with ImportantLogStore.create(self.directory) as store:
++            self.db_uuid = store.db_uuid
++        self.sink = SubjectLifecycle(self.directory, self.db_uuid)
++        self.task_id = str(uuid4())
++        self.subject = {"schemaVersion": 1, "kind": "task", "id": self.task_id}
++
++    def entries(self) -> list[dict]:
++        with ImportantLogStore.open(self.directory, self.db_uuid) as store:
++            return store.list_entries(self.subject)
++
++    def test_only_processed_message_is_copied_and_same_physical_id_cannot_change_payload(self) -> None:
++        message = SimpleNamespace(task_id=self.task_id, revision=1, message_id=str(uuid4()),
++                                  payload={"stage": "execute", "instruction": "bounded Task instruction"})
++        for status in (MailboxStatus.DEFERRED, MailboxStatus.UNKNOWN, MailboxStatus.API_RETURNED):
++            _copy_confirmed_message(self.sink, message, SimpleNamespace(status=status), "manager_instruction")
++        self.assertEqual(self.entries(), [])
++        processed = SimpleNamespace(status=MailboxStatus.OMP_PROCESSED)
++        _copy_confirmed_message(self.sink, message, processed, "manager_instruction")
++        first = self.entries()
++        self.assertEqual(len(first), 1)
++        self.assertEqual(first[0]["sources"][0]["source"]["messageId"], message.message_id)
++        self.assertIn("bounded Task instruction", first[0]["body"]["facts"][0])
++        self.assertNotIn("full TaskSpec", str(first))
++        _copy_confirmed_message(self.sink, message, processed, "manager_instruction")
++        self.assertEqual(self.entries(), first)
++        changed = SimpleNamespace(**{**vars(message), "payload": {"stage": "execute", "instruction": "different"}})
++        with self.assertRaises(ImportantLogStoreError):
++            _copy_confirmed_message(self.sink, changed, processed, "manager_instruction")
++        self.assertEqual(self.entries(), first)
++
++    def test_delivery_port_rejects_non_task_chat_and_revision_rebinding(self) -> None:
++        with self.assertRaises(ValueError):
++            self.sink.record_delivery({"schemaVersion": 1, "kind": "command", "id": str(uuid4())},
++                                      message_id=str(uuid4()), revision=1, kind="manager_instruction",
++                                      content="private chat", delivered_at=AT)
++        with self.assertRaises(ValueError):
++            self.sink.record_delivery(self.subject, message_id=str(uuid4()), revision=1,
++                                      kind="generic_user_chat", content="private chat", delivered_at=AT)
++        message_id = str(uuid4())
++        self.assertTrue(self.sink.record_delivery(self.subject, message_id=message_id, revision=1,
++                                                  kind="task_spec", content="delivered approved spec", delivered_at=AT))
++        with self.assertRaises(ImportantLogStoreError):
++            self.sink.record_delivery(self.subject, message_id=message_id, revision=2,
++                                      kind="task_spec", content="delivered approved spec", delivered_at=AT)
++        self.assertEqual(len(self.entries()), 1)
++
++
++class IndependentActualWorkflowDecision(unittest.TestCase):
++    setUp = runtime_fixture.WorkflowRuntimeTests.setUp
++    strict_task = runtime_fixture.WorkflowRuntimeTests.strict_task
++
++    def test_unverified_worker_response_is_not_copied_as_decision(self) -> None:
++        directory = self.root / "important"
++        with ImportantLogStore.create(directory) as store:
++            db_uuid = store.db_uuid
++        sink = SubjectLifecycle(directory, db_uuid)
++        workflow, _mailbox, worker_port, _state, task_id = self.strict_task()
++        workflow.subject_log = sink
++        worker_port.mismatch = True
++        with self.assertRaises(ValueError):
++            workflow.start(task_id, 1, worktree_path=self.root / "rejected-response",
++                           artifacts_root=self.artifacts, automation=runtime_fixture.AUTOMATION,
++                           environment_values={"PATH": "/usr/bin:/bin", "TERM": "xterm", "CW10_SECRET": "fixture"})
++        with ImportantLogStore.open(directory, db_uuid) as store:
++            entries = store.list_entries({"schemaVersion": 1, "kind": "task", "id": task_id})
++        self.assertTrue(entries, "processed instruction should remain a confirmed capture")
++        self.assertNotIn("decision", {entry["sources"][0]["source"]["sourceKind"] for entry in entries})
++        self.assertNotIn("PRIVATE-CW10-CHAT", str(entries))
++
++
++if __name__ == "__main__":
++    unittest.main()
+diff --git a/tests/storage/important_log/test_lifecycle_independent.py b/tests/storage/important_log/test_lifecycle_independent.py
+new file mode 100644
+--- /dev/null
++++ b/tests/storage/important_log/test_lifecycle_independent.py
+@@ -0,0 +1,209 @@
++"""Independent DVL-05 archival and authority boundaries, without model/runtime gates."""
++
++from __future__ import annotations
++
++from pathlib import Path
++import tempfile
++import unittest
++from uuid import uuid4
++
++from workbench.backend.flow_tasks import TaskFlow
++from workbench.storage.important_log import ImportantLogStore, SubjectLifecycle
++from workbench.storage.important_log.store import ImportantLogStoreError
++
++
++EARLY = "2026-10-09T01:00:00Z"
++CLOSED = "2026-10-09T02:00:00Z"
++AGAIN = "2026-10-09T03:00:00Z"
++
++
++class IndependentSubjectLifecycle(unittest.TestCase):
++    def setUp(self) -> None:
++        temporary = tempfile.TemporaryDirectory(prefix="dvl045-life-", dir="/dev/shm")
++        self.addCleanup(temporary.cleanup)
++        self.directory = Path(temporary.name) / "important"
++        with ImportantLogStore.create(self.directory) as store:
++            self.db_uuid = store.db_uuid
++        self.life = SubjectLifecycle(self.directory, self.db_uuid)
++
++    @staticmethod
++    def subject(kind: str, identifier: str) -> dict:
++        return {"schemaVersion": 1, "kind": kind, "id": identifier}
++
++    @staticmethod
++    def delegated(task: str, seq: int) -> dict:
++        return {"seq": seq, "at": EARLY, "type": "delegated", "task_id": task, "revision": 1,
++                "scope_decision_id": str(uuid4()), "proceed_decision_id": str(uuid4())}
++
++    def test_closed_reasons_copy_time_but_only_approved_finish_reasons_have_postprocessing_ref(self) -> None:
++        reasons = ("done", "report_outcome_unknown", "report_not_delivered", "cancelled",
++                   "approval_retired_c_d66", "not_started_before_restart")
++        for index, reason in enumerate(reasons):
++            with self.subTest(reason=reason):
++                task = str(uuid4())
++                owner = self.subject("task", task)
++                grant = self.delegated(task, 10 * index + 1)
++                self.assertTrue(self.life.record_flow(grant))
++                status = {"seq": 10 * index + 2, "at": EARLY, "type": "task",
++                          "task": {"task_id": task, "revision": 1, "status": "finished"}}
++                self.assertTrue(self.life.record_flow(status))
++                self.assertEqual(self.life.state(owner)["archival_state"], "open")
++                close = {"seq": 10 * index + 3, "at": CLOSED, "type": "task_closed",
++                         "task_id": task, "reason": reason}
++                self.assertTrue(self.life.record_flow(close))
++                saved = self.life.state(owner)
++                self.assertEqual((saved["archival_state"], saved["archival_at"],
++                                  saved["core_closed_reason"], saved["event_cursor"]),
++                                 ("closed", CLOSED, reason, close["seq"]))
++                self.assertEqual(saved["prior_grant_ref"], grant["proceed_decision_id"])
++                allowed = self.life.authority(owner, active=False, paused=False, revoked=False,
++                                              has_new_input=True, closing_event=True)
++                self.assertEqual(allowed["allowed"], reason in reasons[:3])
++                self.assertFalse(self.life.authority(owner, active=True, paused=False, revoked=False,
++                                                     has_new_input=True)["allowed"])
++                self.assertFalse(self.life.record_flow(close))
++
++    def test_blocked_held_and_archival_close_do_not_invent_core_success_or_end_trigger(self) -> None:
++        for index, status in enumerate(("blocked", "held")):
++            task = str(uuid4())
++            owner = self.subject("task", task)
++            grant = self.delegated(task, index * 10 + 1)
++            self.life.record_flow(grant)
++            self.life.record_flow({"seq": index * 10 + 2, "at": CLOSED, "type": "task",
++                                   "task": {"task_id": task, "revision": 1, "status": status}})
++            before = self.life.state(owner)
++            self.assertEqual((before["archival_state"], before["core_status"]), ("open", status))
++            self.life.archive_close(owner, at=CLOSED, user_confirmed=True)
++            after = self.life.state(owner)
++            self.assertEqual((after["core_status"], after["grant_ref"], after["core_closed_reason"]),
++                             (status, grant["proceed_decision_id"], None))
++            self.assertFalse(self.life.authority(owner, active=False, paused=False, revoked=False,
++                                                 has_new_input=True, closing_event=True)["allowed"])
++            self.assertTrue(self.life.record_delivery(owner, message_id=str(uuid4()), revision=1,
++                                                      kind="manager_instruction", content="confirmed follow-up",
++                                                      delivered_at=AGAIN))
++            self.assertEqual((self.life.state(owner)["archival_state"],
++                              self.life.state(owner)["core_status"]), ("open", status))
++
++    def test_taskless_unknown_command_needs_verified_bound_origin_and_actual_end(self) -> None:
++        first, other = str(uuid4()), str(uuid4())
++        for seq, command in ((1, first), (2, other)):
++            self.life.record_terminal({"seq": seq, "type": "terminal_started", "at": EARLY,
++                                       "command_id": command, "task_id": None, "started_at": EARLY})
++        owner, stranger = self.subject("command", first), self.subject("command", other)
++        self.assertFalse(self.life.authority(owner, active=True, paused=False, revoked=False,
++                                             has_new_input=True)["allowed"])
++        origin = str(uuid4())
++        with self.assertRaises(ValueError):
++            self.life.record_direct_origin(first, event_id=origin, epoch=1, observed_at=EARLY,
++                                           verified_direct_instruction=False)
++        self.life.record_direct_origin(first, event_id=origin, epoch=1, observed_at=EARLY,
++                                       verified_direct_instruction=True)
++        self.assertEqual(self.life.authority(owner, active=True, paused=False, revoked=False,
++                                             has_new_input=True)["authorization_ref"], origin)
++        self.assertFalse(self.life.authority(stranger, active=True, paused=False, revoked=False,
++                                             has_new_input=True)["allowed"])
++        self.assertFalse(self.life.authority(owner, active=True, paused=True, revoked=False,
++                                             has_new_input=True)["allowed"])
++        self.assertFalse(self.life.authority(owner, active=True, paused=False, revoked=True,
++                                             has_new_input=True)["allowed"])
++        self.life.record_terminal({"seq": 3, "type": "terminal_ended", "at": CLOSED,
++                                   "command_id": first, "status": "unknown", "ended_at": CLOSED})
++        self.assertEqual(self.life.state(owner)["archival_state"], "open")
++        self.assertFalse(self.life.authority(owner, active=False, paused=False, revoked=False,
++                                             has_new_input=True, closing_event=True)["allowed"])
++        self.life.record_terminal({"seq": 4, "type": "terminal_ended", "at": CLOSED,
++                                   "command_id": other, "status": "exited", "ended_at": CLOSED})
++        self.assertEqual(self.life.state(stranger)["archival_state"], "closed")
++        self.assertFalse(self.life.authority(stranger, active=False, paused=False, revoked=False,
++                                             has_new_input=True, closing_event=True)["allowed"])
++
++    def test_reopen_reconciles_only_confirmed_journal_rows_without_replay(self) -> None:
++        task = str(uuid4())
++        owner = self.subject("task", task)
++        grant = self.delegated(task, 1)
++        close = {"seq": 2, "at": CLOSED, "type": "task_closed", "task_id": task,
++                 "reason": "report_not_delivered"}
++        self.assertEqual(self.life.reconcile_flow([grant, close]), 2)
++        with ImportantLogStore.open(self.directory, self.db_uuid) as store:
++            before = [entry["entryId"] for entry in store.list_entries(owner)]
++        reopened = SubjectLifecycle(self.directory, self.db_uuid)
++        self.assertEqual(reopened.reconcile_flow([grant, close]), 0)
++        self.assertEqual(reopened.state(owner)["core_closed_reason"], "report_not_delivered")
++        with ImportantLogStore.open(self.directory, self.db_uuid) as store:
++            self.assertEqual([entry["entryId"] for entry in store.list_entries(owner)], before)
++        changed = {**close, "reason": "done"}
++        with self.assertRaises(ImportantLogStoreError):
++            reopened.reconcile_flow([changed])
++        self.assertEqual(reopened.state(owner)["core_closed_reason"], "report_not_delivered")
++
++    def test_task_command_is_one_task_subject_until_core_close(self) -> None:
++        task, command = str(uuid4()), str(uuid4())
++        owner = self.subject("task", task)
++        self.life.record_flow(self.delegated(task, 1))
++        self.life.record_terminal({"seq": 1, "at": EARLY, "type": "terminal_started",
++                                   "command_id": command, "task_id": task, "started_at": EARLY}, revision=1)
++        self.life.record_terminal({"seq": 2, "at": CLOSED, "type": "terminal_ended",
++                                   "command_id": command, "status": "exited", "ended_at": CLOSED})
++        self.assertEqual(self.life.state(self.subject("command", command)), {})
++        self.assertEqual(self.life.state(owner)["archival_state"], "open")
++        with ImportantLogStore.open(self.directory, self.db_uuid) as store:
++            self.assertEqual(store.list_entries(self.subject("command", command)), [])
++            self.assertEqual(len(store.list_entries(owner)), 3)
++        self.life.record_flow({"seq": 3, "at": AGAIN, "type": "task_closed",
++                               "task_id": task, "reason": "done"})
++        self.assertEqual((self.life.state(owner)["archival_state"], self.life.state(owner)["archival_at"]),
++                         ("closed", AGAIN))
++
++    def test_confirmed_flow_close_survives_failed_important_copy_and_restart_reconciles_once(self) -> None:
++        task = str(uuid4())
++        owner = self.subject("task", task)
++        journal = self.directory.parent / "flow.jsonl"
++
++        class FailCloseCopy:
++            def __init__(self, target: SubjectLifecycle):
++                self.target = target
++
++            def reconcile_flow(self, records: list[dict]) -> int:
++                return self.target.reconcile_flow(records)
++
++            def record_flow(self, record: dict) -> bool:
++                if record["type"] == "task_closed":
++                    raise OSError("simulated Important DB copy failure after journal fsync")
++                return self.target.record_flow(record)
++
++        flow = TaskFlow(journal, repository_factory=lambda: None, handoffs=None,
++                        omp_idle=lambda _role: True, subject_log=FailCloseCopy(self.life))
++        try:
++            flow._record(self.delegated(task, 99))
++            flow._record({"type": "task_closed", "task_id": task, "reason": "report_not_delivered"})
++            self.assertTrue(flow.subject_capture_unknown)
++            self.assertEqual(self.life.state(owner)["archival_state"], "open")
++        finally:
++            flow.close()
++
++        confirmed = journal.read_text(encoding="utf-8")
++        self.assertIn('"reason":"report_not_delivered"', confirmed)
++        restarted = TaskFlow(journal, repository_factory=lambda: None, handoffs=None,
++                             omp_idle=lambda _role: True, subject_log=self.life)
++        try:
++            recovered = self.life.state(owner)
++            self.assertEqual((recovered["archival_state"], recovered["core_closed_reason"]),
++                             ("closed", "report_not_delivered"))
++            self.assertFalse(restarted.subject_capture_unknown)
++            with ImportantLogStore.open(self.directory, self.db_uuid) as store:
++                first_ids = [entry["entryId"] for entry in store.list_entries(owner)]
++        finally:
++            restarted.close()
++        reopened = TaskFlow(journal, repository_factory=lambda: None, handoffs=None,
++                            omp_idle=lambda _role: True, subject_log=self.life)
++        try:
++            with ImportantLogStore.open(self.directory, self.db_uuid) as store:
++                self.assertEqual([entry["entryId"] for entry in store.list_entries(owner)], first_ids)
++            self.assertEqual(journal.read_text(encoding="utf-8"), confirmed)
++        finally:
++            reopened.close()
++
++
++if __name__ == "__main__":
++    unittest.main()
+diff --git a/tests/backend/test_condition_evidence_composition_independent.py b/tests/backend/test_condition_evidence_composition_independent.py
+new file mode 100644
+--- /dev/null
++++ b/tests/backend/test_condition_evidence_composition_independent.py
+@@ -0,0 +1,58 @@
++"""Independent DVL-04 C-D46 check across the backend factory and real collector."""
++
++from __future__ import annotations
++
++from types import SimpleNamespace
++import threading
++import unittest
++from unittest.mock import patch
++
++from tests.workflow import test_run as runtime_fixture
++from workbench.app.recovery import AdmissionHold, METADATA_HOLD
++from workbench.backend.service import Backend
++from workbench.storage.log_raw.admission import MetadataAdmissionGate
++from workbench.workflow import TaskWorkflow, WorkflowHeld
++
++
++class IndependentBackendConditionComposition(unittest.TestCase):
++    setUp = runtime_fixture.WorkflowRuntimeTests.setUp
++    approved_task = runtime_fixture.WorkflowRuntimeTests.approved_task
++
++    def test_factory_shared_metadata_fault_holds_next_auto_run_not_active_collection(self) -> None:
++        backend = Backend.__new__(Backend)
++        gate = MetadataAdmissionGate()
++        backend.automation_loop = SimpleNamespace(metadata=gate, paused=lambda: False)
++        backend.bridge = object()  # no OMP connection; local mailbox below is a controlled fixture
++        backend.raw_logs = None
++        backend.subject_log = None
++        backend.hold = AdmissionHold()
++        backend._metadata_lock = threading.Lock()
++        backend._metadata_failures = {}
++        backend._metadata_retry_at = None
++        supplied = backend._make_workflow(self.repository)
++        self.assertIs(supplied.metadata_admission, gate)
++        self.assertIs(supplied.metadata_outcome.__self__, backend)
++        workflow = TaskWorkflow(self.repository, self.mailbox,
++                                metadata_admission=supplied.metadata_admission,
++                                metadata_outcome=supplied.metadata_outcome,
++                                automation_source=lambda: runtime_fixture.AUTOMATION)
++        task = self.approved_task("printf PASS; printf PASS > outcome.txt")
++        run = workflow.start(task, 1, worktree_path=self.root / "active-under-proof-fault",
++                             artifacts_root=self.artifacts, automation=runtime_fixture.AUTOMATION)
++        self.addCleanup(run.close)
++        with patch.object(self.repository, "record_condition_proof", side_effect=OSError("fixture proof disk fault")):
++            collected = run.collect(timeout=8)
++        self.assertTrue(collected["exit_confirmed"], "metadata fault must not stop an ongoing experiment")
++        self.assertFalse(gate.automatic_runs_allowed)
++        self.assertEqual(backend.hold.reason_for(None), METADATA_HOLD)
++        self.assertIn("condition_evidence", backend._metadata_failures)
++        self.assertEqual(run.judge()["worker_judgment"]["judgment"], "indeterminate")
++        next_task = self.approved_task("printf PASS > outcome.txt")
++        with self.assertRaises(WorkflowHeld):
++            workflow.start(next_task, 1, worktree_path=self.root / "new-auto-denied",
++                           artifacts_root=self.artifacts, automation=runtime_fixture.AUTOMATION)
++        self.assertFalse((self.root / "new-auto-denied").exists())
++
++
++if __name__ == "__main__":
++    unittest.main()

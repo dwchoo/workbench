@@ -1,0 +1,153 @@
+{
+  "path": ".workflow/dev-validation-log-retention/runs/implement-p5-20261009/invocations.json",
+  "run_id": "implement-p5-20261009",
+  "limits": {
+    "total": {
+      "operating": {
+        "value": 64,
+        "authority": ".workflow/dev-validation-log-retention/runs/implement-p5-20261009/authority.json",
+        "reason": "14 implementation +16 independent test +16 review +12 corrections +4 Oracle +2 binding calls; finite Root estimate, not user ceiling"
+      }
+    },
+    "role:worker_senior": {
+      "operating": {
+        "value": 32,
+        "authority": ".workflow/dev-validation-log-retention/runs/implement-p5-20261009/authority.json",
+        "reason": "initial implementation, binding and bounded corrections"
+      }
+    },
+    "role:test_designer": {
+      "operating": {
+        "value": 20,
+        "authority": ".workflow/dev-validation-log-retention/runs/implement-p5-20261009/authority.json",
+        "reason": "per-unit independent tests +08 validator freeze and integration"
+      }
+    },
+    "role:reviewer": {
+      "operating": {
+        "value": 20,
+        "authority": ".workflow/dev-validation-log-retention/runs/implement-p5-20261009/authority.json",
+        "reason": "frozen unit reviews/deltas +08 validator freeze"
+      }
+    },
+    "role:oracle": {
+      "operating": {
+        "value": 4,
+        "authority": ".workflow/dev-validation-log-retention/runs/implement-p5-20261009/authority.json",
+        "reason": "concrete blockers only"
+      }
+    },
+    "role:oracle_senior": {
+      "operating": {
+        "value": 4,
+        "authority": ".workflow/dev-validation-log-retention/runs/implement-p5-20261009/authority.json",
+        "reason": "documented deep blockers only"
+      }
+    },
+    "unit:binding": {
+      "operating": {
+        "value": 2,
+        "authority": ".workflow/dev-validation-log-retention/runs/implement-p5-20261009/authority.json",
+        "reason": "two bounded worker binding calls"
+      }
+    },
+    "unit:DVL-01": {
+      "operating": {
+        "value": 8,
+        "authority": ".workflow/dev-validation-log-retention/runs/implement-p5-20261009/authority.json",
+        "reason": "initial writer/test/review + bounded correction and integration"
+      }
+    },
+    "unit:DVL-02": {
+      "operating": {
+        "value": 8,
+        "authority": ".workflow/dev-validation-log-retention/runs/implement-p5-20261009/authority.json",
+        "reason": "initial writer/test/review + bounded correction and integration"
+      }
+    },
+    "unit:DVL-03": {
+      "operating": {
+        "value": 8,
+        "authority": ".workflow/dev-validation-log-retention/runs/implement-p5-20261009/authority.json",
+        "reason": "initial writer/test/review + bounded correction and integration"
+      }
+    },
+    "unit:DVL-04": {
+      "operating": {
+        "value": 8,
+        "authority": ".workflow/dev-validation-log-retention/runs/implement-p5-20261009/authority.json",
+        "reason": "initial writer/test/review + bounded correction and integration"
+      }
+    },
+    "unit:DVL-05": {
+      "operating": {
+        "value": 8,
+        "authority": ".workflow/dev-validation-log-retention/runs/implement-p5-20261009/authority.json",
+        "reason": "initial writer/test/review + bounded correction and integration"
+      }
+    },
+    "unit:DVL-06": {
+      "operating": {
+        "value": 8,
+        "authority": ".workflow/dev-validation-log-retention/runs/implement-p5-20261009/authority.json",
+        "reason": "initial writer/test/review + bounded correction and integration"
+      }
+    },
+    "unit:DVL-07": {
+      "operating": {
+        "value": 8,
+        "authority": ".workflow/dev-validation-log-retention/runs/implement-p5-20261009/authority.json",
+        "reason": "initial writer/test/review + bounded correction and integration"
+      }
+    },
+    "unit:DVL-08": {
+      "operating": {
+        "value": 14,
+        "authority": ".workflow/dev-validation-log-retention/runs/implement-p5-20261009/authority.json",
+        "reason": "initial writer/test/review + bounded correction and integration"
+      }
+    },
+    "unit:DVL-09": {
+      "operating": {
+        "value": 8,
+        "authority": ".workflow/dev-validation-log-retention/runs/implement-p5-20261009/authority.json",
+        "reason": "initial writer/test/review + bounded correction and integration"
+      }
+    },
+    "unit:DVL-10": {
+      "operating": {
+        "value": 8,
+        "authority": ".workflow/dev-validation-log-retention/runs/implement-p5-20261009/authority.json",
+        "reason": "initial writer/test/review + bounded correction and integration"
+      }
+    },
+    "unit:DVL-11": {
+      "operating": {
+        "value": 8,
+        "authority": ".workflow/dev-validation-log-retention/runs/implement-p5-20261009/authority.json",
+        "reason": "initial writer/test/review + bounded correction and integration"
+      }
+    },
+    "unit:DVL-12": {
+      "operating": {
+        "value": 8,
+        "authority": ".workflow/dev-validation-log-retention/runs/implement-p5-20261009/authority.json",
+        "reason": "initial writer/test/review + bounded correction and integration"
+      }
+    },
+    "unit:DVL-13": {
+      "operating": {
+        "value": 10,
+        "authority": ".workflow/dev-validation-log-retention/runs/implement-p5-20261009/authority.json",
+        "reason": "initial writer/test/review + bounded correction and integration"
+      }
+    },
+    "unit:DVL-14": {
+      "operating": {
+        "value": 8,
+        "authority": ".workflow/dev-validation-log-retention/runs/implement-p5-20261009/authority.json",
+        "reason": "initial writer/test/review + bounded correction and integration"
+      }
+    }
+  }
+}

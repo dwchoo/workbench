@@ -17,6 +17,7 @@ Manager OMP·worker OMP·host persistent terminal을 연결하는 작업 환경.
 - Workbench 내부에서 tmux 등 외부 terminal multiplexer를 실행·의존하지 않는다. 외부 tmux·herdr 안에서 실행할 수 있어야 한다.
 - 외부 요청 접수는 실행 승인이 아니다. Manager의 승인 명세와 worker의 실행·결과 보고를 구분한다.
 - 현재 요구사항은 [Core BRIEF](docs/features/core-workbench/BRIEF.md), 용어는 [CONTEXT.md](CONTEXT.md)를 확인한다. 참고 스펙과의 차이는 [대조표](docs/features/core-workbench/SOURCE-RECONCILIATION.md)를 따른다. 초안은 승인이 아니다.
+- 개발용 검증·로그 보관은 [r0.8 승인 기준과 r0.9 운영 합의를 반영한 BRIEF](docs/features/dev-validation-log-retention/BRIEF.md)를 함께 따른다. 정확한 SPEC·PLAN·ticket bundle 승인과 구현 권한은 별도다. 신규 raw 정책의 core C-AC-24·동작 규약 §6 대체는 Q-01 통과 후 사용자의 별도 rotation 활성화 결정부터 적용한다.
 - 실험 위임·worktree·수동 개입은 [제품 동작 규약](docs/features/core-workbench/OPERATING-CONTRACT.md)의 합의와 제안을 구분해 따른다.
 
 <!-- BEGIN CODEX_ORCHESTRATION_WORKFLOW -->

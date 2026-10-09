@@ -1,0 +1,22 @@
+{
+  "feature_id": "dev-validation-log-retention",
+  "ticket_id": "DVL-01",
+  "invocation": "dvl01-test-04",
+  "authority": ".workflow/dev-validation-log-retention/runs/implement-p5-20261009/authority.json",
+  "actual_workspace": "/tmp/workbench-dvl-20261009-3l1ViH/dvl01",
+  "input_candidate": "cb0a8654ee11bd78bbd9e69507ece88d711e356349b55e7f57433a4a2566e52e",
+  "allowed_write_paths": [
+    "tests/dev_validation/test_runner_independent.py",
+    "tests/dev_validation/fixture_items_independent.py"
+  ],
+  "prohibited_paths": [
+    "production/harness/worker fixtures",
+    "Rootcentral/docs/user/realOMP/auth"
+  ],
+  "mutation_owner": "independent author phase",
+  "task": "One phased invocation. Author meaningful bounded negative for source-derived S01R7: normal CLI native doublefork+setsid backend survives driver watchdog; use actualspawn_backend fork path with controlledbootstrap/private data or equivalentnormal doublefork, no actualOMP/model. Ensure readiness beforewatchdog+ownPID/startticks cleanup infinally, preservefail. Also exactownership safety unrelated process not signalled. Onlytwo independentfiles; report milestonehashes+sourcelease released and readonlywaitsamecall forRoot frozenfixedcandidate thenrerunsameaffectedtests once. Do not touch production/testcriteria/source moving tree. Ifcannotstaywaitreportpartialnotnewverification. Setexplicitworkdir/absolutepaths. Source/testchannels fixesR4R5R6 green retained.",
+  "findings": ".workflow/dev-validation-log-retention/runs/implement-p5-20261009/result-dvl01-review-02.json",
+  "test_env": "/tmp/workbench-dvl-20261009-3l1ViH/test-py312/bin/python",
+  "host_observed_model": "unverified",
+  "host_observed_effort": "unverified"
+}

@@ -1,0 +1,20 @@
+{
+  "invocation": "dvl045-review-01",
+  "outcome": "failed",
+  "candidate": "c49aa7e77be1c45a79760410d00bc71a0b06ffe2248e3cdc8e485316b7c2acba",
+  "findings": [
+    {
+      "id": "S045-R1",
+      "severity": "medium",
+      "path": "src/workbench/storage/important_log/lifecycle.py:170",
+      "fact": "record_flow entry, lifecycle UPDATE, and _seen cursor not atomic; transient cursor failure then later finished succeeds. Restart replay of old delegated may roll grant/core_status back to dispatched while already-seen finished skipped.",
+      "basis": "sqlite autocommit ImportantLogStore; put_entry has separate transaction; confirmed journal copy order is not restored on partial durability"
+    }
+  ],
+  "checked": "read-only streaming proof, confirmed delivery and lifecycle source, current independent tests. No new tests/probes/writes.",
+  "downstream_not_claimed": [
+    "real origin/Q01",
+    "active DB composition",
+    "scheduler"
+  ]
+}

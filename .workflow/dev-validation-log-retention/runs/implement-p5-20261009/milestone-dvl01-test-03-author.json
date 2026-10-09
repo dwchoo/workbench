@@ -1,0 +1,30 @@
+{
+  "invocation": "dvl01-test-03",
+  "phase": "author_finished_retest_waiting",
+  "source_writer_lease": "released",
+  "paths": [
+    "tests/dev_validation/test_runner_independent.py",
+    "tests/dev_validation/fixture_items_independent.py"
+  ],
+  "sha256": [
+    "2cb4b464b0a1aba8013f8fea1831ce7f7a2c2f06c610f14677f57e76b7250c34",
+    "105339043f513b443b751dab00e7b284b8d5af1105f41b0f0d843efc73d02d38"
+  ],
+  "production_sha": "e34e07404ac5f4a7b59664e7dadd84333d744e8873a8f7e553fcb849cddb8e95",
+  "first_execution": {
+    "new_tests": 5,
+    "failed": 5,
+    "exit_code": 1,
+    "seconds": 1.515
+  },
+  "fixture_correction": "first fake-zero loader TypeError preserved; corrected actual0 TestCase fixture rerun1 failed; actualunittest exit5/Ran0 vsrunnercollected1/probe_environment insteadcollection",
+  "findings": [
+    "fakefirstsummary/count",
+    "fake skipped=0/fullskip",
+    "fake progress watchdog spoof",
+    "newsession/cwd=/DEVNULL helper survives",
+    "base_enverrornamespaceleak"
+  ],
+  "cleanup": "owned exact PID/startticks descendants terminated, no namespace/socket/process residue",
+  "next": "same call remains running readonly waiting Root fixedcandidate/test lease; no source edits against worker"
+}

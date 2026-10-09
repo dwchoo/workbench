@@ -1,0 +1,72 @@
+{
+  "feature_id": "dev-validation-log-retention",
+  "ticket_id": "DVL-01",
+  "attempt_id": "02",
+  "invocation": "dvl01-review-02",
+  "phase": "fresh_frozen_fast_runner_review",
+  "authority": ".workflow/dev-validation-log-retention/runs/implement-p5-20261009/authority.json",
+  "approved_bundle_digest": "78bc55919e57bbf2132d6653780c5c164a2ee1d618422e5232d4cf0d1d667c3e",
+  "actual_workspace": "/tmp/workbench-dvl-20261009-3l1ViH/dvl01",
+  "repository_identity": {
+    "head": "2f21ec91990a409ea0d25f351343b50e34b48196",
+    "input_candidate": "cb0a8654ee11bd78bbd9e69507ece88d711e356349b55e7f57433a4a2566e52e"
+  },
+  "baseline_snapshot": ".workflow/dev-validation-log-retention/runs/implement-p5-20261009/candidate-dvl01-fix-02-post.json",
+  "checkpoint_ref": ".workflow/dev-validation-log-retention/runs/implement-p5-20261009/checkpoint-dvl01-fix-01.json",
+  "mutation_owner": null,
+  "allowed_write_paths": [],
+  "resource_claims": [
+    {
+      "resource": "dev-validation:harness",
+      "mode": "shared"
+    }
+  ],
+  "acceptance_ids": [
+    "DV-AC-01",
+    "DV-AC-02",
+    "DV-AC-04",
+    "DV-AC-05"
+  ],
+  "relevant_contracts": [
+    "BRIEF",
+    "SPEC§4",
+    "DVL-01",
+    ".codex/workflow-contract.md"
+  ],
+  "operational_outputs": "/tmp/workbench-dvl-20261009-3l1ViH/dvl01/.workflow/dvl-local",
+  "prohibited_paths": [
+    "production/tools/harness/worker tests",
+    "Root/othercheckouts/centralstate/approvedbundle",
+    "real OMP probes until08runtime lease free; paid model/user data/auth/mux"
+  ],
+  "test_env": "/tmp/workbench-dvl-20261009-3l1ViH/test-py312/bin/python",
+  "configured_model": "gpt-6-sol",
+  "configured_effort": "high",
+  "host_observed_model": "unverified",
+  "host_observed_effort": "unverified",
+  "task": "Fresh independent frozen DVL01 review after material R4/R5/R6 fixes. Read-only no tests/probes/model/graphwrites. Review whole 7path unit and structured unittest control channel actual result/progress, binding, normallydetached ownership identity and setup cleanup impact. Existing13independent plus16worker/harness all29pass, raw fake summaries not trusted. Source/tests fixed, exact runner b9ff5fd6e63c5c6daa7ee33d193151780b15920b91a9ba2f7bc74a2e27b7f1ca. Report material defects with concrete requirement and sourcepath, avoid unbounded hostile-test universal sandbox claims. Prior evidence/firstfailures retained. Actual installedOMP currentcandidate smoke is Root integration stage not claimed here. No mutations/delegates.",
+  "prior_assignment_ref": ".workflow/dev-validation-log-retention/runs/implement-p5-20261009/assignment-dvl01-review-01.json",
+  "routing": {
+    "planned_role": "reviewer",
+    "selected_role": "reviewer",
+    "reason_codes": [
+      "fresh_unit_faultfinding"
+    ],
+    "evidence_refs": [
+      ".workflow/dev-validation-log-retention/runs/implement-p5-20261009/result-dvl01-test-01.json",
+      ".workflow/dev-validation-log-retention/runs/implement-p5-20261009/result-dvl01-fix-01.json"
+    ]
+  },
+  "effective_write_capability": "no candidate edits; own operational logs/temp tests only; hostunrestricted explicit workdir",
+  "exact_checks": [
+    "G-DV-01",
+    "G-DV-04"
+  ],
+  "reserved_budget": {
+    "test": 1,
+    "review": 1,
+    "finite_run_limit": 64
+  },
+  "corrected_findings": ".workflow/dev-validation-log-retention/runs/implement-p5-20261009/result-dvl01-review-01.json",
+  "independent_check": ".workflow/dev-validation-log-retention/runs/implement-p5-20261009/result-dvl01-test-03.json"
+}

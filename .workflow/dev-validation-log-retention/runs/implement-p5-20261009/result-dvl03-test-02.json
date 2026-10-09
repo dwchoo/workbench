@@ -1,0 +1,13 @@
+{
+  "invocation": "dvl03-test-02",
+  "outcome": "candidate_ready",
+  "candidate": "43bf0cb5ef00d83dbe96d256b5118c1e49ea5aa3dc6623aac3c6b90b78a91b2c",
+  "host": "/root/dvl08_test final + list_agents completed",
+  "test": "36 relevant Python/actual Node TS fixture tests exit0 in 51.029s",
+  "fixtures_corrected": "existing obsolete complete-without-coverage positive updated to persisted coverage; absence refusal retained",
+  "scope_audit": ".workflow/dev-validation-log-retention/runs/implement-p5-20261009/audit-dvl03-test-02.json",
+  "cleanup": "agent reports no owned sockets/processes",
+  "unknowns": [
+    "actual collector integration requires DVL04"
+  ]
+}

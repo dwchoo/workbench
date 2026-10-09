@@ -1,0 +1,1 @@
+{"changed":["omp_bridge/contract/logs_v1.ts","src/workbench/contracts/logs_v1.py","src/workbench/tasks/repository.py","tests/contracts/test_logs_v1.py","tests/tasks/test_repository_logs.py"],"comparable":true,"index_changed":[],"outside_scope":[]}

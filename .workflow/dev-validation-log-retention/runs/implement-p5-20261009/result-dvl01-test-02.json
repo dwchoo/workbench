@@ -1,0 +1,18 @@
+{
+  "invocation": "dvl01-test-02",
+  "outcome": "complete",
+  "candidate": "7302cd04d6fe7612401546791fb30ded0e13e77331f799f3aaa302b7eee9929b",
+  "tests": {
+    "count": 23,
+    "exit_code": 0,
+    "seconds": 9.254
+  },
+  "behavior": "same independent8 and runner5+harness10 assertions, all3 prior failures passed without test/source edits",
+  "before_after_sha": {
+    "runner": "e34e07404ac5f4a7b59664e7dadd84333d744e8873a8f7e553fcb849cddb8e95",
+    "independent": "ae4dbe0dc7e9c0568a7121ac4c139772ee4023783a331ad328be988f7dee1592",
+    "fixture": "42c935546f14750caf2810cf13ce4456914a4a81f60c079051c5d7754134b15c"
+  },
+  "cleanup": "owned processes/socket/private namespaces absent, realOMP not run",
+  "next": "fresh frozen review pending and exact integrated latest fast runtime"
+}

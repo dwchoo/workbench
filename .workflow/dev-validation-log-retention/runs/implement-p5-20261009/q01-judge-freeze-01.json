@@ -1,0 +1,31 @@
+{
+  "record_type": "q01_judge_freeze",
+  "schema_version": 1,
+  "source_candidate": "3f5b835458a70bd67e46d8dace57c5ed0c87220fc611010f430ad2b5ac5105de",
+  "requirements_identity": "84d8dc604d543fb92116b25b00198ee43dc1b330466403534c377f1791d6eb18",
+  "review": ".workflow/dev-validation-log-retention/runs/implement-p5-20261009/result-dvl08-review-02.json",
+  "independent_test": ".workflow/dev-validation-log-retention/runs/implement-p5-20261009/dvl08-independent-retest03-check.json",
+  "bytes": {
+    "tools/validate_feature_gate.py": "e41018a968a8c3e0fe655a364611d005d6adf7b8c3e90aa3504e53374acef852",
+    "tools/q01_recheck.py": "1315926485db89c64e0190ca1e6ca1b12b082ce31a72436fecf88a12582fa121",
+    "tests/backend/summary_probe_support.py": "0f51e355b90c5fb2641886546ac266d6bac214c439dfb8d66c38e1284865d6c8",
+    "tests/backend/test_summary_probe.py": "0fad554749a411e62589f023da28faafbae6a54952c746bae56328d0510d0f05",
+    "tests/backend/test_summary_gate_validator.py": "bf947e16af1b1d550734b019caddb2bc26f6a5bd8096c6000cd7206315d618dc",
+    "tests/backend/test_summary_gate_validator_independent.py": "fb65d655a5aa7f15c875e6ecf7d71c4b3b9c0764030d2dc1052f55afef325f28",
+    "tests/backend/test_summary_probe_independent.py": "14a2ad3fa100d89cc0cd6c4f1950c16c5d6d8419137bc1f574cd29291d3e3a70",
+    "src/workbench/contracts/summary_compat_policy_v1.json": "6170b336f195a0158de0ced6535a3f5d5463b3a64092b3adcb75ca1486242196"
+  },
+  "canonical_policy": {
+    "path": "src/workbench/contracts/summary_compat_policy_v1.json",
+    "sha256": "6170b336f195a0158de0ced6535a3f5d5463b3a64092b3adcb75ca1486242196"
+  },
+  "runtime_collector": {
+    "path": "tests/backend/live_summary_feasibility.py",
+    "status": "unimplemented; next phase may implement collector only, without changing frozen judge/ports/fixtures",
+    "interface_contract": "fixed prepare_q01_context/collect_q01_observations/close_q01_context protocol and observations schema owned/frozen in tools/q01_recheck.py",
+    "projection_binding": "collector bytes remain development projection input and invalidate old8-item evidence on change",
+    "required_next": "smallest isolated real API experiment; actual collector independent testing/review before final ticket pass"
+  },
+  "runtime_pass": false,
+  "product_route_adopted": false
+}

@@ -1,0 +1,43 @@
+{
+  "schema_version": 1,
+  "request_id": "ticket-bundle-s4-p4-final-review-04",
+  "sender": "claude-wb",
+  "source": "사용자 메시지의 claude-wb→codex-wb 회신",
+  "content_kind": "Root 요약 기록; 원문은 해당 사용자 메시지. 독립 재리뷰를 했다는 주장이 아님.",
+  "verdict": "조건부 진행 (승인 아님)",
+  "reviewed_bundle_digest": "498223bd94337236ff58252ebcbb5502be6f81defab03c0fa3c7b195a97599e4",
+  "reviewed_candidate": "5e6c516d6a85181cccd9153f103276b4fba988339a874af2d7409f7d916576c5",
+  "reviewed_requirements_identity": "eaacb4dba17cf631983c868177dbb45125282fe90062fab9ffde32310de09eca",
+  "prior_request": ".workflow/dev-validation-log-retention/runs/plan-p4-s4-20261009/review-request.json",
+  "prior_dispatch": ".workflow/dev-validation-log-retention/runs/plan-p4-s4-20261009/review-dispatch.json",
+  "findings": {
+    "R1": "실행중 trusted tool event guard 위반 감시·설정 await/read-back",
+    "R2": "scripted plumbing과실모델계약구분·복구시도 첫재거부 즉시보호/새episode",
+    "R3": "단일 canonical policy bytes/digest/개발제품 대조",
+    "R4": "route별현재/생성context 해석 read-back",
+    "R5": "audit exclusion 비강제·명시allowed scope/freeze대조",
+    "R6": "역사적publication/prepared상태와 실제제출/수신기록 분리"
+  },
+  "recommendation": "R1~R3 승인 전에 작게 반영,R4~R6은 구현착수시 보완가능",
+  "new_user_decisions_required": false,
+  "reviewer_claims": {
+    "all_21_file_hashes_and_bundle_match": true,
+    "stale": false,
+    "gate_supplier_errors": 0,
+    "cycles": 0,
+    "acceptance_ids": 28,
+    "gate_items": 46,
+    "fixture": 25,
+    "runtime": 21,
+    "no_writes_tests_probes_models_or_agent_creation": true
+  },
+  "claim_scope": "Claude의p4관측. p5에 대한 외부리뷰/현재 기능pass/승인으로 재사용하지 않음.",
+  "future_decisions": [
+    "Q-S2-03",
+    "Q-S3-05",
+    "Q-S3-06",
+    "guard 확인 불가route 대안"
+  ],
+  "incorporation_authority": ".workflow/dev-validation-log-retention/runs/plan-p5-s5-20261009/authority.json",
+  "approved": false
+}

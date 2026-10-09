@@ -1,0 +1,8 @@
+{
+  "root": "/tmp/workbench-dvl-20261009-3l1ViH/dvl08",
+  "watch": [],
+  "exclude": [
+    ".workflow/**"
+  ],
+  "checkpoint": true
+}

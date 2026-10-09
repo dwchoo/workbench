@@ -1,0 +1,32 @@
+{
+  "invocation": "dvl01-test-01",
+  "outcome": "failed",
+  "candidate_before": "318065f33818285d619b2195768592dd3065e3d6747e8877d91e87a112b1e6e4",
+  "independent_tests": {
+    "count": 8,
+    "passed": 5,
+    "failed": 3,
+    "exit_code": 1,
+    "seconds": 5.108
+  },
+  "regressions": {
+    "count": 15,
+    "exit_code": 0,
+    "seconds": 4.907
+  },
+  "findings": [
+    "S01-R1 predicate-free stdout chatter refreshes idle watchdog and is reported passed",
+    "S01-R2 descendant retaining pipes survives runner return",
+    "S01-R3 Popen OSError leaves private namespace"
+  ],
+  "paths": [
+    "tests/dev_validation/test_runner_independent.py",
+    "tests/dev_validation/fixture_items_independent.py"
+  ],
+  "sha256": [
+    "ae4dbe0dc7e9c0568a7121ac4c139772ee4023783a331ad328be988f7dee1592",
+    "42c935546f14750caf2810cf13ce4456914a4a81f60c079051c5d7754134b15c"
+  ],
+  "cleanup": "test-owned descendant killed by PID/startticks finally; no owned processes/socket remain; real OMP not executed",
+  "next": "bounded production fix preserving failed assertions"
+}

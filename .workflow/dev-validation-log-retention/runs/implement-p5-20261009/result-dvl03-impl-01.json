@@ -1,0 +1,17 @@
+{
+  "invocation": "dvl03-impl-01",
+  "status": "candidate_ready",
+  "candidate": "689282d3f5c1e6077294b11271129a6782ebabbdb4d0b6bffd7d798ad921e681",
+  "checks": {
+    "contracts": 5,
+    "store": 3,
+    "metadata": 3,
+    "repository": 11,
+    "independent_repository": 11,
+    "typescript": "Node24 strip types actual execution/golden canonical cross-language; static typecheck not run",
+    "first_failure": "INCREMENTAL PRAGMA order; fixed and rerun; worker logs report"
+  },
+  "phase": "foundation only; no retention/rotation/model/runtime",
+  "processes": "worker final confirms all subprocess/socket stopped",
+  "scope_audit": ".workflow/dev-validation-log-retention/runs/implement-p5-20261009/audit-dvl03-impl-01.json"
+}

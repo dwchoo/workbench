@@ -1,0 +1,26 @@
+{
+  "phase": "readonly_primary_api_assessment_append",
+  "version": "18.8.6",
+  "prior": ".workflow/dev-validation-log-retention/runs/implement-p5-20261009/q01-next-probe-primary-assessment.json",
+  "sources": [
+    "https://raw.githubusercontent.com/can1357/oh-my-pi/v18.8.6/packages/coding-agent/src/task/index.ts",
+    "https://raw.githubusercontent.com/can1357/oh-my-pi/v18.8.6/packages/coding-agent/src/task/executor.ts"
+  ],
+  "observed_source_facts": [
+    "Task index publicly reexports discoverAgents/getAgent; index SDK exports native task/executor runSubprocess",
+    "runSubprocess accepts exact existingdiscovered AgentDefinition and in-memory session; restrictToolNames plus preloadedPreparedExtensions and mandatory yield",
+    "autoloadSkills can force skill prompt before firstprovider request; keepAlive defaulttrue mustsetfalse for single-turn disposal",
+    "public active tools getter/awaitedsetter is readback not explicit atomicGuardReceipt; before_provider_request payload hook no typedblock return"
+  ],
+  "hypothesis_not_runtime_proof": "Next isolated nativeexecutor experiment using exactexistingexplorer bytes, deterministic parentpublicAPI call, sessionFile null/keepAlivefalse/MCPIRC disabled, forcedskill/input nonce and native strict typedresult; requested public abort-before-fetch/canonical payload barrier mustbeactuallyobserved includingnegative no-send before anyadoption",
+  "unknowns": [
+    "actualcompiledSDKexports",
+    "preparedextensionchildbinding",
+    "atomic guard/readback check-to-send negative",
+    "nonsharing user/due60/endpriority",
+    "directorigin",
+    "actualresolvedsession model metadata/outputbudget"
+  ],
+  "authorization": "Read-only primary source only thisassessment; no paid call/newdefinition/routeadoption/8gate pass",
+  "next_owner": "next bounded08invocation after normalbackendcleanup and compatiblelease; no larger09adapterbeforedecisiveobservation"
+}

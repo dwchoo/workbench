@@ -1,0 +1,35 @@
+{
+  "invocation": "dvl045-fix-01",
+  "cwd": "/tmp/workbench-dvl-20261009-3l1ViH/dvl05",
+  "candidate_source_sha256": {
+    "src/workbench/storage/important_log/lifecycle.py": "c844480d0906198d650359a15e704023487d7e89dec7be0c94b841be19fc56d3",
+    "src/workbench/storage/important_log/store.py": "ac71c0756d8604805813f4a98f7a765040a0c409e72d07d511a7a112b40dc113",
+    "tests/storage/important_log/test_lifecycle.py": "3add4366f6941a31a009f165c93663bd9fdade2408970de8c6d7becd08ba87c5",
+    "tests/storage/important_log/test_store.py": "092453f7bb9856ba6b686ae4642b0a3f82e1991d2e7e611032430e20f36cea07"
+  },
+  "environment": {
+    "python": "/tmp/workbench-dvl-20261009-3l1ViH/test-py312/bin/python",
+    "PYTHONDONTWRITEBYTECODE": "1",
+    "PYTHONPATH": "src:.:tests/workflow",
+    "TMPDIR": "/dev/shm/dvl045-fix-01.zP2wQ1 (owned 0700, removed after checks)"
+  },
+  "checks": [
+    {
+      "command": "python -m unittest tests.storage.important_log.test_store tests.storage.important_log.test_lifecycle tests.storage.important_log.test_store_independent tests.storage.important_log.test_lifecycle_independent tests.workflow.test_subject_delivery tests.workflow.test_subject_delivery_independent",
+      "exit_code": 1,
+      "observed": "32 tests; one failure: test_confirmed_flow_close_survives_failed_important_copy_and_restart_reconciles_once. Its synthetic input seq=99 overrides first journal-generated seq=1; subsequent confirmed close has seq=2 and is fail-closed as older than the durable cursor. No other failures."
+    },
+    {
+      "command": "python -m unittest tests.storage.important_log.test_store tests.storage.important_log.test_lifecycle tests.storage.important_log.test_store_independent tests.workflow.test_subject_delivery tests.workflow.test_subject_delivery_independent",
+      "exit_code": 0,
+      "observed": "26 tests passed in 1.529s"
+    },
+    {
+      "command": "python ast.parse on four attributable files; git diff --check",
+      "exit_code": 0,
+      "observed": "AST_OK 4; git diff --check exit 0 (untracked source is not covered by that Git check)"
+    }
+  ],
+  "graphify": "`env -u GEMINI_API_KEY -u GOOGLE_API_KEY graphify update .` exited 0 in 27.06s. CLI reported code-only re-extraction, 27/27 uncached AST files, 16519 nodes and 41879 edges. It explicitly reported no LLM needed; semantic document changes remain for a separate update.",
+  "cleanup": "Owned tmpfs directory removed; synchronous test processes exited; no related process observed."
+}

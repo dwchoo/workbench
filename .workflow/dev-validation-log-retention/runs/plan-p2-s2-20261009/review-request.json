@@ -1,0 +1,29 @@
+{
+  "schema_version": 1,
+  "record_type": "external-review-request",
+  "request_id": "ticket-bundle-s2-p2-review-02",
+  "target": {
+    "name": "claude-wb",
+    "pane": "w4:p7",
+    "agent_kind": "claude",
+    "session_id": "09935be2-0c32-4a1e-b4df-c5b15a829d53",
+    "model": "unverified",
+    "effort": "unverified"
+  },
+  "scope": "frozen SPEC s2/PLAN p2/14 tickets/45 gates,BRIEF r0.8 unchanged",
+  "mode": "read_only",
+  "authority": "사용자 문서 보강+claude-wb 재리뷰+보고 요청",
+  "bundle_digest": "f0283183ee49252755711033eb8143fecf37adbb142df59904895c7135ed1cf1",
+  "bundle_manifest": ".workflow/dev-validation-log-retention/runs/plan-p2-s2-20261009/bundle-manifest.json",
+  "source_review": "ticket-bundle-s1-p1-review-01",
+  "status": "running_observed",
+  "submission_observation": "Herdr agent_prompted exit0 및 같은 claude session09935be2-0c32-4a1e-b4df-c5b15a829d53 working/state_change_seq208 확인. 새로운 agent 생성 아님.",
+  "return_to": "codex-wb; herdr agent prompt without --wait",
+  "prohibited": [
+    "document/code/state writes",
+    "tests/build/probes/model calls",
+    "approval/implementation",
+    "new agent/pane/workspace",
+    "commit/deploy"
+  ]
+}

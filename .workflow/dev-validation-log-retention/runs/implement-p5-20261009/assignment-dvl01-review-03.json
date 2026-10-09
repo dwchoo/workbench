@@ -1,0 +1,73 @@
+{
+  "feature_id": "dev-validation-log-retention",
+  "ticket_id": "DVL-01",
+  "attempt_id": "03",
+  "invocation": "dvl01-review-03",
+  "phase": "fresh_frozen_complete01after_actualsmoke",
+  "authority": ".workflow/dev-validation-log-retention/runs/implement-p5-20261009/authority.json",
+  "approved_bundle_digest": "78bc55919e57bbf2132d6653780c5c164a2ee1d618422e5232d4cf0d1d667c3e",
+  "actual_workspace": "/tmp/workbench-dvl-20261009-3l1ViH/dvl01",
+  "repository_identity": {
+    "head": "2f21ec91990a409ea0d25f351343b50e34b48196",
+    "input_candidate": "be1fb71086af83bb16926a51371bee85747c4c490f6dad59cf89fd28490aa83a"
+  },
+  "baseline_snapshot": ".workflow/dev-validation-log-retention/runs/implement-p5-20261009/candidate-dvl01-fix-03-post.json",
+  "checkpoint_ref": ".workflow/dev-validation-log-retention/runs/implement-p5-20261009/checkpoint-dvl01-fix-03.json",
+  "mutation_owner": null,
+  "allowed_write_paths": [],
+  "resource_claims": [
+    {
+      "resource": "dev-validation:harness",
+      "mode": "shared"
+    }
+  ],
+  "acceptance_ids": [
+    "DV-AC-01",
+    "DV-AC-02",
+    "DV-AC-04",
+    "DV-AC-05"
+  ],
+  "relevant_contracts": [
+    "BRIEF",
+    "SPEC§4",
+    "DVL-01",
+    ".codex/workflow-contract.md"
+  ],
+  "operational_outputs": "/tmp/workbench-dvl-20261009-3l1ViH/dvl01/.workflow/dvl-local",
+  "prohibited_paths": [
+    "production/tools/harness/worker tests",
+    "Root/othercheckouts/centralstate/approvedbundle",
+    "real OMP probes until08runtime lease free; paid model/user data/auth/mux"
+  ],
+  "test_env": "/tmp/workbench-dvl-20261009-3l1ViH/test-py312/bin/python",
+  "configured_model": "gpt-6-sol",
+  "configured_effort": "high",
+  "host_observed_model": "unverified",
+  "host_observed_effort": "unverified",
+  "task": "Fresh readonly01review coherent7source/tests paths afterR7nativefork/crossExec cleanup correction+15independent/16related31pass and CURRENTinstalledOMPfast80tests exit0/26.229s exactbeforeaftercandidate. Root_actualsmoke no leftovers, no code/modelsettingswrites. Review materialinvariants exactownership rootchain/forkreceipts+subreaper temporary restore + baseline/newdirect-child/starttick/privatepath corroboration/adoption signal/reap and no unrelatedkill, structuredactualsuite/progress/binding, cleanup classification and independentcorrected PIDidentityabsence trueafterreap. Do not run tests/probes/model/graph, no writes/agents. Distinguish controlledactualCLIcrossExec2pass from oldsource firstfailure and fullcurrent31. Finalfeature precise/46gates are downstream notclaimed. Report any actionablematerialfinding with concretefault path vs universalmalicioustest sandbox outofscope, or no-new-material. No sourcelease active fixedcandidate.",
+  "prior_assignment_ref": ".workflow/dev-validation-log-retention/runs/implement-p5-20261009/assignment-dvl01-review-02.json",
+  "routing": {
+    "planned_role": "reviewer",
+    "selected_role": "reviewer",
+    "reason_codes": [
+      "fresh_unit_faultfinding"
+    ],
+    "evidence_refs": [
+      ".workflow/dev-validation-log-retention/runs/implement-p5-20261009/result-dvl01-test-01.json",
+      ".workflow/dev-validation-log-retention/runs/implement-p5-20261009/result-dvl01-fix-01.json"
+    ]
+  },
+  "effective_write_capability": "no candidate edits; own operational logs/temp tests only; hostunrestricted explicit workdir",
+  "exact_checks": [
+    "G-DV-01",
+    "G-DV-04"
+  ],
+  "reserved_budget": {
+    "test": 1,
+    "review": 1,
+    "finite_run_limit": 96
+  },
+  "corrected_findings": ".workflow/dev-validation-log-retention/runs/implement-p5-20261009/result-dvl01-review-02.json",
+  "independent_check": ".workflow/dev-validation-log-retention/runs/implement-p5-20261009/result-dvl01-test-04.json",
+  "runtime_check": ".workflow/dev-validation-log-retention/runs/implement-p5-20261009/dvl01-fast-fixed03-check.json"
+}

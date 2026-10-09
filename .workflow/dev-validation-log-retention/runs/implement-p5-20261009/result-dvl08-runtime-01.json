@@ -1,0 +1,13 @@
+{
+  "invocation": "dvl08-runtime-01",
+  "outcome": "partial_inconclusive",
+  "candidate": "fd89495a13848ac763556c1976f2fdbe3356b7cf7b71a821c8d3f0aae629cfd2",
+  "host": "/root/dvl08 final + list_agents completed",
+  "evidence": "/tmp/workbench-dvl-20261009-3l1ViH/dvl08/.workflow/dvl-local/dvl08-runtime-01-guard.json",
+  "scope_audit": ".workflow/dev-validation-log-retention/runs/implement-p5-20261009/audit-dvl08-runtime-01.json",
+  "cleanup": "child PID gone; loopback provider stopped per worker",
+  "root_adjudication": "readback/provider tool restriction observed; generic start/end without result/error does not establish forbidden tool execution. Correct discriminating probe before route/adoption conclusion.",
+  "Q01_tools": "inconclusive",
+  "other_seven": "not_run",
+  "new_route_authorized": false
+}

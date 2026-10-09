@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "record_type": "approval-integrity-confirmation",
+  "approval": ".workflow/dev-validation-log-retention/runs/approval-s5-p5-20261009/approval.json",
+  "approval_sha256": "7d5c19bf186c3b9cc52c92c03e415feeb8efd36a0d6dd7ebac38eb944c145439",
+  "approved_bundle_digest": "78bc55919e57bbf2132d6653780c5c164a2ee1d618422e5232d4cf0d1d667c3e",
+  "before_candidate": "34e448b25f879f2a1113823dfb3756acd2133096dfaec23e78d9b5334fd1d0b1",
+  "after_candidate": "34e448b25f879f2a1113823dfb3756acd2133096dfaec23e78d9b5334fd1d0b1",
+  "observed_at": "2026-10-09T07:29:22.499087+00:00",
+  "bundle_files_unchanged": 21,
+  "historical_referenced_records_unchanged": true,
+  "prior_state_backup_hash_matches": true,
+  "approved_input_bytes_changed": false,
+  "operational_state_matches_expected_approval_only": true,
+  "private_artifact_modes_confirmed": true,
+  "implementation_started": false,
+  "product_tests_or_probes_run": false,
+  "model_calls_run": false,
+  "agents_created": false,
+  "raw_activation": false,
+  "note": "승인 기록의 구조·해시·상태 정합 확인만 수행. 기능 검증 아님."
+}

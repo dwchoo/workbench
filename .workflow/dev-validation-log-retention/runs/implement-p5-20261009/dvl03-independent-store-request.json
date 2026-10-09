@@ -1,0 +1,28 @@
+{
+  "root": "/tmp/workbench-dvl-20261009-3l1ViH/dvl03",
+  "requirements": "docs/features/dev-validation-log-retention/requirements-r0.9-p5.json",
+  "argv": [
+    "/usr/bin/env",
+    "PYTHONPATH=src",
+    "PYTHONDONTWRITEBYTECODE=1",
+    "TMPDIR=/tmp/workbench-dvl-20261009-3l1ViH/dvl03/.workflow/dvl-local",
+    "/tmp/workbench-dvl-20261009-3l1ViH/test-py312/bin/python",
+    "-m",
+    "unittest",
+    "-v",
+    "tests.contracts.test_logs_v1",
+    "tests.contracts.test_logs_v1_independent",
+    "tests.storage.important_log.test_store",
+    "tests.storage.important_log.test_store_independent",
+    "tests.tasks.test_repository_logs",
+    "tests.tasks.test_repository_logs_independent"
+  ],
+  "environment": "Python3.12.3/Node24; isolated03 temporary units; no OMP/model/auth/retention",
+  "log": "/tmp/workbench-dvl-20261009-3l1ViH/dvl03/.workflow/dvl-local/independent-store-root-check.log",
+  "check_id": "dvl03-independent-store",
+  "watch": [],
+  "exclude": [
+    ".workflow/**"
+  ],
+  "timeout": 90
+}

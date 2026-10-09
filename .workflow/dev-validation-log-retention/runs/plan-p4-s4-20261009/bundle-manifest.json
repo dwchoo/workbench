@@ -1,0 +1,141 @@
+{
+  "schema_version": 1,
+  "record_type": "planning-bundle-manifest",
+  "feature": "dev-validation-log-retention",
+  "created_on": "2026-10-09",
+  "revision": {
+    "brief": "r0.9",
+    "spec": "s4",
+    "plan": "p4",
+    "requirements": "r0.9-plan-p4-draft"
+  },
+  "digest_algorithm": "SHA-256 of JSON.stringify(files), sorted by path (lexicographic ASCII paths), UTF-8, no trailing newline",
+  "bundle_digest": "498223bd94337236ff58252ebcbb5502be6f81defab03c0fa3c7b195a97599e4",
+  "files": [
+    {
+      "path": "AGENTS.md",
+      "sha256": "5cda517bb39d3c54eec4d3201df38b8706c424202e62ffc11a13a2968c8fe97a"
+    },
+    {
+      "path": "docs/features/dev-validation-log-retention/BRIEF.md",
+      "sha256": "30a6efe5f99e59ecab6777a75c7247fca464cbacacc69a204c8c4ac89363f162"
+    },
+    {
+      "path": "docs/features/dev-validation-log-retention/FOLLOWUPS.md",
+      "sha256": "77e0a8e926e2fb84f9b961d9ec2afc15a38cef954352d9086f866e11b9348d9f"
+    },
+    {
+      "path": "docs/features/dev-validation-log-retention/PLAN-REVIEW.md",
+      "sha256": "5610ce0eec62d351aae621e13b7b6b40f88bb21fe4036940982b56e6eaf22d65"
+    },
+    {
+      "path": "docs/features/dev-validation-log-retention/PLAN.json",
+      "sha256": "5abb2a10de8cec8760874c47175857840b1765667ce99c95d58832185835548d"
+    },
+    {
+      "path": "docs/features/dev-validation-log-retention/SPEC.md",
+      "sha256": "30576d54e0e7395047122643755300f60a1c4fa5253f29716fbe27820014b0ee"
+    },
+    {
+      "path": "docs/features/dev-validation-log-retention/requirements-r0.9-p4.json",
+      "sha256": "6873b4e977e8a02bc117e9a0fa2a74cd07706f5113d7d74d9044a63944e5bf96"
+    },
+    {
+      "path": "docs/features/dev-validation-log-retention/tickets/DVL-01.md",
+      "sha256": "10f71190186bd4f6ed2cd3c78e978b12eff9f3629b6c84eea3d25aa1f1087417"
+    },
+    {
+      "path": "docs/features/dev-validation-log-retention/tickets/DVL-02.md",
+      "sha256": "ff0ddea7b563b251679792c9623f6e3c26ca1431284437408796effd7a0dc1c4"
+    },
+    {
+      "path": "docs/features/dev-validation-log-retention/tickets/DVL-03.md",
+      "sha256": "291e378691ac8af12ae69ab2e8aabaf569231665c768515854763af22f989f18"
+    },
+    {
+      "path": "docs/features/dev-validation-log-retention/tickets/DVL-04.md",
+      "sha256": "d21409197ab0aabfdfe3f3e25f956b59a387783a3cf81767608387ece2799f8b"
+    },
+    {
+      "path": "docs/features/dev-validation-log-retention/tickets/DVL-05.md",
+      "sha256": "76c7d04fb532ef478e9b5d7deff74fde7706801941b7e7568662ff20e6da8389"
+    },
+    {
+      "path": "docs/features/dev-validation-log-retention/tickets/DVL-06.md",
+      "sha256": "30f97c925c4a29540ec7fe015a0f644a013faa7d23a371afab4033c02102e030"
+    },
+    {
+      "path": "docs/features/dev-validation-log-retention/tickets/DVL-07.md",
+      "sha256": "e7d55ae914a3e372769a17dd4a76a806c57956ef2e95369c8c310ed900329e5a"
+    },
+    {
+      "path": "docs/features/dev-validation-log-retention/tickets/DVL-08.md",
+      "sha256": "8d894740a4e716fd81b1feec49267f15fb23abccf6e350cc0f27083af3de1198"
+    },
+    {
+      "path": "docs/features/dev-validation-log-retention/tickets/DVL-09.md",
+      "sha256": "6fea6b4e22e09467a31741eba85bc254c62ff2863931c8c24931fb0b828bc8d8"
+    },
+    {
+      "path": "docs/features/dev-validation-log-retention/tickets/DVL-10.md",
+      "sha256": "1c5ed1b9ba5c4803bdcbe419b6d1b686cb03db6dbdd3521898870cb9903d857f"
+    },
+    {
+      "path": "docs/features/dev-validation-log-retention/tickets/DVL-11.md",
+      "sha256": "3243766501efae1162fd780d91dba617ddfd6566e04e6efad42d7c7fad4515a0"
+    },
+    {
+      "path": "docs/features/dev-validation-log-retention/tickets/DVL-12.md",
+      "sha256": "8ceeed622cfbf3215f9b6658c5adb8d9062dd8e4e747783ae9250cdd4eb38801"
+    },
+    {
+      "path": "docs/features/dev-validation-log-retention/tickets/DVL-13.md",
+      "sha256": "d6169fefcd55c869f62a231896e7a67c5a73c75e5f8db6135856b8a0dfc15aba"
+    },
+    {
+      "path": "docs/features/dev-validation-log-retention/tickets/DVL-14.md",
+      "sha256": "6c664ff7cc639291b9ac2fb3d8837dcb0905eed01f27692c203f927d64ec9e0f"
+    }
+  ],
+  "workspace": {
+    "before_candidate": "28256ddda8ec71d935328baaa7a02436fc302e0127a69cfe360e52cda96b66df",
+    "candidate": "5e6c516d6a85181cccd9153f103276b4fba988339a874af2d7409f7d916576c5",
+    "before_checkpoint": ".workflow/dev-validation-log-retention/runs/plan-p4-s4-20261009/before-checkpoint.json",
+    "published_manifest": {
+      "path": ".workflow/dev-validation-log-retention/runs/plan-p4-s4-20261009/published-manifest.json",
+      "sha256": "7594b128a871a010e20dd9ffcda4d462040ffc66877cf1a4c3c46d166f0bea27"
+    }
+  },
+  "validation": {
+    "record": {
+      "path": ".workflow/dev-validation-log-retention/runs/plan-p4-s4-20261009/validation-final.json",
+      "sha256": "47736aa71139902d018531767fae5e2d3ca8c27e08c4bdf393f89aa8b36013ec"
+    },
+    "scope_audit": {
+      "path": ".workflow/dev-validation-log-retention/runs/plan-p4-s4-20261009/scope-audit.json",
+      "sha256": "64c266767a09f169460e5276fd7d9ee14ce64b1a208a0d8a8f0798e705ba798b"
+    },
+    "structural_only": true
+  },
+  "authority": {
+    "source_baseline_approval": ".workflow/dev-validation-log-retention/runs/approval-r0.8/approval.json",
+    "baseline_brief_snapshot": ".workflow/dev-validation-log-retention/runs/plan-p3-s3-20261009/source/BRIEF-r0.8.md",
+    "operating_decisions": {
+      "path": ".workflow/dev-validation-log-retention/runs/plan-p3-s3-20261009/decisions.json",
+      "sha256": "6be1a8506a74d8b398179d7e04cf446f02499cc625dfbc225c40b93c8b74c15c"
+    },
+    "revision_request": "그렇게 해",
+    "bundle_approval": null,
+    "implementation_authorized": false,
+    "raw_activation_authorized": false,
+    "technical_revision": {
+      "path": ".workflow/dev-validation-log-retention/runs/plan-p4-s4-20261009/authority.json",
+      "sha256": "915237c6be795a8b578fb5636e5336822b7fbadcdce83944b67061f98bf217cf"
+    }
+  },
+  "source_review": {
+    "path": ".workflow/dev-validation-log-retention/runs/plan-p4-s4-20261009/received-review.json",
+    "sha256": "da45d915d31b35af25cdd380c761a68106610fcfe951fc3e3ed3453a64eddcff"
+  },
+  "note": "Claude s3/p3 P1~P9 technical reinforcements; AGENTS pointer is authorized and included as21st bundle file. Historical p3 request/publication unchanged; receipt is a new record. No p4 external review requested, no approval, no implementation/tests/probes/models. Full graph/runtime pending."
+}

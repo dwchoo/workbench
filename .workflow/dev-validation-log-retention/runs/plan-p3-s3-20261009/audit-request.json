@@ -1,0 +1,13 @@
+{
+  "before": "/home/dwchoo/ai-exp-assistant/.workflow/dev-validation-log-retention/runs/plan-p3-s3-20261009/before-checkpoint.json",
+  "after": "/home/dwchoo/ai-exp-assistant/.workflow/dev-validation-log-retention/runs/plan-p3-s3-20261009/published-manifest.json",
+  "allowed": [
+    "docs/features/dev-validation-log-retention/BRIEF.md",
+    "docs/features/dev-validation-log-retention/SPEC.md",
+    "docs/features/dev-validation-log-retention/PLAN.json",
+    "docs/features/dev-validation-log-retention/requirements-r0.9-p3.json",
+    "docs/features/dev-validation-log-retention/tickets/*.md",
+    "docs/features/dev-validation-log-retention/PLAN-REVIEW.md",
+    "docs/features/dev-validation-log-retention/FOLLOWUPS.md"
+  ]
+}

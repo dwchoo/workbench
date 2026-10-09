@@ -1,0 +1,21 @@
+{
+  "invocation": "dvl03-review-02",
+  "candidate": "43bf0cb5ef00d83dbe96d256b5118c1e49ea5aa3dc6623aac3c6b90b78a91b2c",
+  "status": "changes_required_bounded_delta",
+  "findings": [
+    {
+      "id": "S03-R6",
+      "severity": "high",
+      "disposition": "accepted",
+      "requirement": "sourceKind-specific physical stream identity; structured per-message/event streams distinct under same run provenance; terminal cannot change extra message/event aliases to bypass noReplay"
+    },
+    {
+      "id": "S03-R7",
+      "severity": "high",
+      "disposition": "accepted",
+      "requirement": "proof commit must refuse old complete coverage after newly journaled collector gap; no-match failure only presently gapfree witness"
+    }
+  ],
+  "host": "reviewer completed read-only/no subprocess",
+  "next": "bounded production correction+independent regressions+delta review"
+}

@@ -1,0 +1,23 @@
+{
+  "invocation": "dvl08-runtime-02",
+  "outcome": "partial_discriminating_evidence",
+  "evidence": "/tmp/workbench-dvl-20261009-3l1ViH/dvl08/.workflow/dvl-local/dvl08-runtime-02-guard.json",
+  "source": "/tmp/workbench-dvl-20261009-3l1ViH/dvl08/tests/backend/live_summary_feasibility.py",
+  "scope_audit": ".workflow/dev-validation-log-retention/runs/implement-p5-20261009/audit-dvl08-runtime-02.json",
+  "host": "worker final/completed; now reassigned to distinct03 workspace",
+  "observations": {
+    "allowed_read": "tool_call + normal result; positive channel calibration",
+    "forbidden_write_edit_bash": "event.isError=true exact Tool NAME not found; inactive lookup before hook; sentinel unchanged",
+    "prevention": "fresh fixture turn inactive registered tool lookup",
+    "cleanup": "child/provider stopped port closed"
+  },
+  "classification_correction": "initial second report wrongly read result.isError; source corrected to event.isError, offline only, original inconclusive report preserved",
+  "unknowns": [
+    "existing product agent route",
+    "atomic guard readback check->send",
+    "receipt bound actual session/turn epoch+policy+nonce",
+    "restoration and typed return",
+    "seven other Q01 runtime requirements"
+  ],
+  "all8_pass": false
+}

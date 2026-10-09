@@ -1,0 +1,25 @@
+{
+  "invocation": "dvl08-runtime-05",
+  "outcome": "partial",
+  "candidate": "4ddc4f220d32daa674983281179ec386d873b987fde1176429dfee7d69e375b8",
+  "scope_audit": ".workflow/dev-validation-log-retention/runs/implement-p5-20261009/audit-dvl08-runtime-05.json",
+  "evidence": "/tmp/workbench-dvl-20261009-3l1ViH/dvl08/.workflow/dvl-local/dvl08-runtime-05-child.json",
+  "observations": {
+    "existing_agent": "explorer exact bytes",
+    "child": "created DvlExplorer/sub/parentId Main",
+    "guard": "awaited set/readback read+yield before child provider; advertised catalog same",
+    "inactive_mutation": "write/edit/bash native eventIsError Tool not found, sentinel unchanged",
+    "result": "native strict status valid/data nonce exact",
+    "parent_raw_marker_absent": true
+  },
+  "reporting_correction": "original strict_typed_data_observed=false assumed native valid boolean; native actual status='valid' proves predicate error. Original evidence unchanged; source predicate corrected, no rerun.",
+  "cleanup": "parent/provider stopped; remaining_owned[]",
+  "not_proven": [
+    "atomic guard receipt+send",
+    "deterministic product dispatch",
+    "all8 gates",
+    "priority",
+    "origin",
+    "skill context and repeated context budget"
+  ]
+}

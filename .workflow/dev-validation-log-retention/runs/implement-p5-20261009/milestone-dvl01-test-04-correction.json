@@ -1,0 +1,18 @@
+{
+  "invocation": "dvl01-test-04",
+  "phase": "author_correction_sourcelease_released",
+  "reviewer_failure": "S01R7 originalnormaldoublefork surviveddriver watchdog",
+  "fixture_correction": "ReadyPID/ticks verified beforewatchdog; postcleanupPIDexistence requirement false afterreap. Only equalityremoved; alivefalse/exactreceipt/namespaceRemoved/unrelatedalive/watchdogassertionspreserved",
+  "cross_exec": "actualseparatePython subprocess invokesnativecli.spawn_backend; controlledbootstrap noOMP",
+  "observed": {
+    "count": 2,
+    "exit_code": 0,
+    "duration": 2.589,
+    "statement": "currentproductioncrossExecpatch alreadypresent; no falseold-failureclaim"
+  },
+  "independent_hash": "1d047b1d6bd95dc3faaf8fd87fe20d22c04f5c5199fda1686a9fa40b24d2d7e6",
+  "fixture_hash": "e9b1f2e95ccbb75115d25cf5f89c10b3c418c60d2f3b4c41d82d0b15f7eaa908",
+  "lease_chronology": "worker initiallease release, Rootreadonlyholdfeedback raced with previouslydeliveredcrossExeccontinuation; worker supplementalcode completed beforeauthorcorrection, immediatelystopped on Root hold. Testauthorbaseline hashesverified priorwrites. No concurrent writes tosamefile or tests weakened; no broadsource rollback",
+  "cleanup": "ownedexactbackendandunrelated finallystopped/tmp/socketempty",
+  "full_retest": "31pending frozenpostgraph Rootlease"
+}

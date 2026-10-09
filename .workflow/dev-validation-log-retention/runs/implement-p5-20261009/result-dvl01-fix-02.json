@@ -1,0 +1,13 @@
+{
+  "invocation": "dvl01-fix-02",
+  "outcome": "candidate_ready",
+  "candidate": "cb0a8654ee11bd78bbd9e69507ece88d711e356349b55e7f57433a4a2566e52e",
+  "scope_audit": ".workflow/dev-validation-log-retention/runs/implement-p5-20261009/audit-dvl01-fix-02.json",
+  "checks": "worker controlled28 passed plus5 focused; independent retest pending; actualOMP notrun",
+  "changed_paths": [
+    "tools/dev_validate.py",
+    "tests/dev_validation/test_runner.py"
+  ],
+  "cleanup": "worker finished: testprocesses stopped; independent test hashes unchanged",
+  "scope_disposition": "only extra generated graphify-out/cache/last_query_stamp from required graphify query; retained notproduction and Root graph regeneration pending"
+}

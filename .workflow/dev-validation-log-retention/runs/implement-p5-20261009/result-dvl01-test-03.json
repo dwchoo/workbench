@@ -1,0 +1,18 @@
+{
+  "invocation": "dvl01-test-03",
+  "phase": "independent_same_call_author_and_frozen_retest",
+  "outcome": "complete",
+  "candidate": "cb0a8654ee11bd78bbd9e69507ece88d711e356349b55e7f57433a4a2566e52e",
+  "tests": {
+    "count": 29,
+    "independent": 13,
+    "exit_code": 0,
+    "duration_seconds": 9.953,
+    "log": "/tmp/workbench-dvl-20261009-3l1ViH/dvl01/.workflow/dvl-local/dvl01-test-03-retest.log",
+    "sha256": "c6f3143c8c126c2133079d47f36084a8e155a37d91cae73a0671309c962cf8a1"
+  },
+  "prior_failure": ".workflow/dev-validation-log-retention/runs/implement-p5-20261009/milestone-dvl01-test-03-author.json",
+  "cleanup": "noownedprocess/socket/namespace, exactdetached PID checks pass",
+  "unchanged": "source/independent bytes unchanged",
+  "not_verified": "actualOMP fast/precise"
+}

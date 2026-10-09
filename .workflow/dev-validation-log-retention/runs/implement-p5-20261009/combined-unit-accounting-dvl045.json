@@ -1,0 +1,14 @@
+{
+  "invocations": [
+    "dvl045-test-01",
+    "dvl045-review-01"
+  ],
+  "unit_primary": "DVL-05",
+  "combined_scope": [
+    "DVL-04",
+    "DVL-05"
+  ],
+  "reason": "Strictledger v1 oneunitbucket percall; coherentcombinedverification chargedonce to primaryunit05 and total/role, noresetprior04/05usage",
+  "failed_preflights": "combinedunit+extrabuckets invalid_request rejected no ledger mutation; staleexpectedrev prevented transition; host assignment NOTstarted untilvalidreserve",
+  "actual_revision": 196
+}

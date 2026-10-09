@@ -1,0 +1,1246 @@
+diff --git a/tests/backend/live_summary_feasibility.py b/tests/backend/live_summary_feasibility.py
+--- a/tests/backend/live_summary_feasibility.py
++++ b/tests/backend/live_summary_feasibility.py
+@@ -1,18 +1,1236 @@
+-"""Probe-local runtime port, intentionally unavailable before judge freeze.
++"""Fixture-only OMP guard feasibility probe; not a product Q01 adapter.
+ 
+-Runtime implementation is a separate DVL-08 phase. A missing observation here
+-cannot be promoted by the Q01 judge.
++Run directly for one isolated scripted-provider turn. The Q01 port remains
++unavailable until a product route proves request-scoped guard/readback/send.
+ """
+ from __future__ import annotations
+ 
++from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
++from hashlib import sha256
++import json
++import os
++from pathlib import Path
++import pwd
++import selectors
++import shutil
++import signal
++import subprocess
++import sys
++import tempfile
++import threading
++import time
++from typing import Any
++
++
++OMP = Path("/home/dwchoo/.local/bin/omp")
++EVIDENCE = Path(__file__).resolve().parents[2] / ".workflow/dvl-local/dvl08-runtime-02-guard.json"
++CHILD_EVIDENCE = Path(__file__).resolve().parents[2] / ".workflow/dvl-local/dvl08-runtime-05-child.json"
++NATIVE_EVIDENCE = Path(__file__).resolve().parents[2] / ".workflow/dvl-local/dvl08-runtime-06-native.json"
++NATIVE_CHILD_EVIDENCE = Path(__file__).resolve().parents[2] / ".workflow/dvl-local/dvl08-runtime-07-native-child.json"
++GUARD_BARRIER_EVIDENCE = Path(__file__).resolve().parents[2] / ".workflow/dvl-local/dvl08-runtime-08-guard-barrier.json"
++EXPLORER = Path(__file__).resolve().parents[2] / "omp_bridge/agents/explorer.md"
++EXTENSION = r'''
++import fs from "node:fs";
++const log = (name: string, fields: Record<string, unknown> = {}) =>
++  fs.appendFileSync(process.env.DVL08_EVENTS!, JSON.stringify({name, ...fields}) + "\n");
++export default function (pi: any): void {
++  let ready = false;
++  let epoch = 0;
++  const nonce = process.env.DVL08_NONCE!;
++  pi.on("before_agent_start", async () => {
++    try {
++      const before = pi.getActiveTools?.();
++      log("active_before", {tools: before, set_available: typeof pi.setActiveTools === "function"});
++      if (!Array.isArray(before) || typeof pi.setActiveTools !== "function") return;
++      await pi.setActiveTools(["read"]);
++      const after = pi.getActiveTools?.();
++      ready = Array.isArray(after) && after.length === 1 && after[0] === "read";
++      epoch++;
++      log("guard_readback", {ready, epoch, tools: after});
++    } catch (error) { log("guard_error", {type: error?.constructor?.name ?? "unknown"}); }
++  });
++  pi.on("before_provider_request", () => log("provider_request_hook", {ready, epoch}));
++  pi.on("tool_call", (event: any) => {
++    const tool = String(event?.toolName ?? "unknown");
++    const block = !ready || tool !== "read";
++    log("tool_call", {tool, block, ready, epoch, nonce_present: nonce.length > 0});
++    if (block) return {block: true, reason: "DVL08 isolated guard rejects mutation"};
++  });
++  pi.on("tool_execution_start", (event: any) => log("tool_execution_start", {tool: event?.toolName}));
++  pi.on("tool_execution_end", (event: any) => {
++    const result = event?.result;
++    const error = event?.error;
++    const content = result?.content;
++    log("tool_execution_end", {
++      tool: event?.toolName,
++      event_keys: event && typeof event === "object" ? Object.keys(event).sort() : [],
++      event_is_error: event?.isError === true,
++      result_present: result !== undefined,
++      result_is_error: typeof result?.isError === "boolean" ? result.isError : null,
++      result_content: Array.isArray(content) ? content.filter((part: any) => part?.type === "text")
++        .map((part: any) => String(part.text ?? "").slice(0, 200)).slice(0, 2) : [],
++      error_present: error !== undefined,
++      error_type: error?.constructor?.name ?? null,
++      error_text: error === undefined ? null : String(error).slice(0, 200),
++    });
++  });
++  pi.on("agent_end", () => log("agent_end", {epoch}));
++}
++'''
++
++CHILD_EXTENSION = r'''
++import fs from "node:fs";
++const log = (name: string, fields: Record<string, unknown> = {}) =>
++  fs.appendFileSync(process.env.DVL08_EVENTS!, JSON.stringify({name, pid: process.pid, ...fields}) + "\n");
++const identity = (ctx: any) => ({kind: ctx?.agent?.kind ?? null, id: ctx?.agent?.id ?? null,
++  name: ctx?.agent?.name ?? null, parentId: ctx?.agent?.parentId ?? null,
++  session: ctx?.sessionManager?.getSessionFile?.() ?? null});
++export default function (pi: any): void {
++  pi.on("before_subagent_spawn", (event: any, ctx: any) => {
++    log("spawn", {agent: event?.agent, invocationKind: event?.invocationKind,
++      spawnKey: event?.spawnKey ?? null, identity: identity(ctx)});
++  });
++  pi.on("before_agent_start", async (_event: any, ctx: any) => {
++    const who = identity(ctx);
++    if (who.kind !== "sub") {log("parent_start", {identity: who}); return;}
++    try {
++      const before = pi.getActiveTools?.();
++      log("child_active_before", {identity: who, tools: before});
++      await pi.setActiveTools(["read", "yield"]);
++      const after = pi.getActiveTools?.();
++      log("child_guard_readback", {identity: who, tools: after,
++        ready: Array.isArray(after) && after.length === 2 && after[0] === "read" && after[1] === "yield"});
++    } catch (error) {log("child_guard_error", {identity: who, type: error?.constructor?.name ?? "unknown"});}
++  });
++  pi.on("before_provider_request", (event: any, ctx: any) => {
++    const who = identity(ctx);
++    const tools = Array.isArray(event?.payload?.tools) ? event.payload.tools.map((t: any) => t?.function?.name ?? t?.name) : null;
++    log("provider_boundary", {identity: who, tools});
++  });
++  pi.on("tool_call", (event: any, ctx: any) => {
++    const who = identity(ctx); const tool = String(event?.toolName ?? "unknown");
++    log("tool_call", {identity: who, tool});
++    if (who.kind === "sub" && tool !== "read" && tool !== "yield")
++      return {block: true, reason: "DVL08 child fixture guard"};
++  });
++  pi.on("tool_execution_start", (event: any, ctx: any) =>
++    log("tool_execution_start", {identity: identity(ctx), tool: event?.toolName}));
++  pi.on("tool_execution_end", (event: any, ctx: any) => {
++    const result = event?.result; const detail = result?.details;
++    const rows = Array.isArray(detail?.results) ? detail.results.slice(0, 1).map((row: any) => ({
++      id: row?.id ?? null, agent: row?.agent ?? null, agentSource: row?.agentSource ?? null,
++      exitCode: row?.exitCode ?? null, structuredOutput: row?.structuredOutput ?? null,
++      outputBytes: typeof row?.output === "string" ? Buffer.byteLength(row.output) : null,
++    })) : [];
++    const content = result?.content;
++    log("tool_execution_end", {identity: identity(ctx), tool: event?.toolName,
++      eventIsError: event?.isError === true, resultIsError: result?.isError === true,
++      resultContent: Array.isArray(content) ? content.filter((part: any) => part?.type === "text")
++        .map((part: any) => String(part.text ?? "").slice(0, 200)).slice(0, 2) : [],
++      detailKeys: detail && typeof detail === "object" ? Object.keys(detail).sort().slice(0, 20) : [],
++      rows});
++  });
++  pi.on("agent_end", (_event: any, ctx: any) => log("agent_end", {identity: identity(ctx)}));
++}
++'''
++
++NATIVE_INVENTORY_EXTENSION = r'''
++import fs from "node:fs";
++const log = (name: string, fields: Record<string, unknown> = {}) =>
++  fs.appendFileSync(process.env.DVL08_EVENTS!, JSON.stringify({name, ...fields}) + "\n");
++export default function (pi: any): void {
++  const sdk = pi.pi ?? {};
++  log("sdk_exports", {runSubprocess: typeof sdk.runSubprocess,
++    discoverAgents: typeof sdk.discoverAgents, getAgent: typeof sdk.getAgent,
++    taskTool: typeof sdk.TaskTool, exportCount: Object.keys(sdk).length});
++  pi.on("before_agent_start", async (_event: any, ctx: any) => {
++    log("before_agent_start", {abortAvailable: typeof ctx?.abort === "function"});
++    ctx?.abort?.(); // Inventory only. No parent model turn or inferred child definition.
++  });
++  pi.on("before_provider_request", () => log("provider_request_unexpected"));
++}
++'''
++
++NATIVE_CHILD_EXTENSION = r'''
++import fs from "node:fs";
++import crypto from "node:crypto";
++const log = (name: string, fields: Record<string, unknown> = {}) =>
++  fs.appendFileSync(process.env.DVL08_EVENTS!, JSON.stringify({name, pid: process.pid, ...fields}) + "\n");
++const identity = (ctx: any) => ({kind: ctx?.agent?.kind ?? null, id: ctx?.agent?.id ?? null,
++  name: ctx?.agent?.name ?? null, session: ctx?.sessionManager?.getSessionFile?.() ?? null});
++let phase = "setup";
++let negativeAbort: AbortController | null = null;
++function childExtension(childPi: any): void {
++  let ready = false;
++  const childPhase = phase;
++  childPi.on("before_agent_start", async (_event: any, ctx: any) => {
++    const before = childPi.getActiveTools?.();
++    await childPi.setActiveTools(["read", "yield"]);
++    const after = childPi.getActiveTools?.();
++    ready = Array.isArray(after) && after.length === 2 && after[0] === "read" && after[1] === "yield";
++    log("child_readback", {phase: childPhase, identity: identity(ctx), before, after, ready});
++    if (!ready) ctx?.abort?.();
++  });
++  childPi.on("before_provider_request", (event: any, ctx: any) => {
++    const names = Array.isArray(event?.payload?.tools)
++      ? event.payload.tools.map((tool: any) => tool?.function?.name ?? tool?.name) : null;
++    log("child_provider_boundary", {phase: childPhase, identity: identity(ctx), ready, tools: names});
++    if (!ready || childPhase === "negative") {
++      log("child_guard_invalidated", {phase: childPhase, reason: ready ? "fixture_epoch_invalidated" : "not_ready"});
++      negativeAbort?.abort();
++      ctx?.abort?.();
++    }
++  });
++  childPi.on("tool_call", (event: any, ctx: any) => {
++    const tool = String(event?.toolName ?? "unknown");
++    const block = !ready || (tool !== "read" && tool !== "yield");
++    log("child_tool_call", {phase: childPhase, identity: identity(ctx), tool, block});
++    if (block) return {block: true, reason: "DVL08 isolated native child guard"};
++  });
++  childPi.on("tool_execution_start", (event: any, ctx: any) =>
++    log("child_tool_start", {phase: childPhase, identity: identity(ctx), tool: event?.toolName}));
++  childPi.on("tool_execution_end", (event: any, ctx: any) => {
++    const content = event?.result?.content;
++    const first = Array.isArray(content) ? content.find((part: any) => part?.type === "text")?.text : null;
++    log("child_tool_end", {phase: childPhase, identity: identity(ctx), tool: event?.toolName,
++      eventIsError: event?.isError === true, resultIsError: event?.result?.isError === true,
++      contentBytes: typeof first === "string" ? Buffer.byteLength(first) : null,
++      errorText: event?.isError === true ? String(first ?? "").slice(0, 120) : null});
++  });
++  childPi.on("agent_end", (_event: any, ctx: any) => log("child_end", {phase: childPhase, identity: identity(ctx)}));
++}
++export default function (pi: any): void {
++  let launched = false;
++  pi.on("before_agent_start", async (_event: any, ctx: any) => {
++    if (launched || ctx?.agent?.kind === "sub") return;
++    launched = true;
++    try {
++      const sdk = pi.pi;
++      const project = process.env.DVL08_PROJECT!;
++      const home = process.env.HOME!;
++      const discovery = await sdk.discoverAgents(project, home);
++      const explorer = sdk.getAgent(discovery.agents, "explorer");
++      log("discovered", {searchedDirs: discovery.searchedDirs,
++        explorer: explorer ? {name: explorer.name, source: explorer.source, tools: explorer.tools,
++          model: explorer.model} : null});
++      if (!explorer || explorer.name !== "explorer" || explorer.source !== "user") {
++        log("setup_failure", {reason: "exact_existing_explorer_not_discovered"});
++        return;
++      }
++      const schema = {type: "object", additionalProperties: false,
++        required: ["schemaVersion", "nonce", "observed"],
++        properties: {schemaVersion: {const: 1}, nonce: {const: process.env.DVL08_NONCE},
++          observed: {type: "boolean", const: true}}};
++      const prepared = {path: process.env.DVL08_NATIVE_EXT!, resolvedPath: process.env.DVL08_NATIVE_EXT!,
++        factory: childExtension, error: null};
++      const common = {cwd: project, agent: explorer, task: `Read only ${process.env.DVL08_SOURCE}; ` +
++        "return the requested typed fixture flags via native yield. No writes or shell.",
++        assignment: "One exact private descriptor read, then typed yield only.", index: 0,
++        modelOverride: "dvl08-local/scripted", modelRole: "smol", outputSchema: schema,
++        outputSchemaMode: "strict", enableIrc: false, enableMCP: false, enableLsp: false,
++        restrictToolNames: true, sessionFile: null, persistArtifacts: false,
++        keepAlive: false, preloadedPreparedExtensions: [prepared]};
++      phase = "positive";
++      const positive = await sdk.runSubprocess({...common, id: crypto.randomUUID()});
++      log("native_result", {phase, agent: positive?.agent, source: positive?.agentSource,
++        exitCode: positive?.exitCode, requests: positive?.requests, aborted: positive?.aborted,
++        structuredOutput: positive?.structuredOutput ?? null,
++        outputBytes: typeof positive?.output === "string" ? Buffer.byteLength(positive.output) : null});
++      phase = "negative";
++      negativeAbort = new AbortController();
++      const negative = await sdk.runSubprocess({...common, id: crypto.randomUUID(),
++        signal: negativeAbort.signal});
++      log("native_result", {phase, agent: negative?.agent, source: negative?.agentSource,
++        exitCode: negative?.exitCode, requests: negative?.requests, aborted: negative?.aborted,
++        structuredOutput: negative?.structuredOutput ?? null,
++        outputBytes: typeof negative?.output === "string" ? Buffer.byteLength(negative.output) : null});
++    } catch (error) {
++      log("native_error", {phase, type: error?.constructor?.name ?? "unknown",
++        message: String(error).slice(0, 200)});
++    } finally {
++      ctx?.abort?.(); // Parent never sends a model/provider request.
++    }
++  });
++  pi.on("before_provider_request", () => log("parent_provider_unexpected"));
++}
++'''
++
++GUARD_BARRIER_EXTENSION = r'''
++import fs from "node:fs";
++import crypto from "node:crypto";
++const log = (name: string, fields: Record<string, unknown> = {}) =>
++  fs.appendFileSync(process.env.DVL08_EVENTS!, JSON.stringify({name, pid: process.pid, ...fields}) + "\n");
++function inertChild(childPi: any): void {
++  log("inert_child_factory_registered");
++  childPi.on("before_agent_start", () => log("inert_child_before_agent_start"));
++  childPi.on("before_provider_request", () => log("inert_child_provider_hook"));
++}
++export default function (pi: any): void {
++  let launched = false;
++  pi.on("before_agent_start", async (_event: any, ctx: any) => {
++    if (launched || ctx?.agent?.kind === "sub") return;
++    launched = true;
++    try {
++      const sdk = pi.pi;
++      const project = process.env.DVL08_PROJECT!;
++      const discovery = await sdk.discoverAgents(project, process.env.HOME!);
++      const explorer = sdk.getAgent(discovery.agents, "explorer");
++      log("discovered", {agent: explorer?.name ?? null, source: explorer?.source ?? null});
++      if (!explorer || explorer.name !== "explorer" || explorer.source !== "user") {
++        log("setup_failure", {reason: "exact_existing_explorer_not_discovered"});
++        return;
++      }
++      const schema = {type: "object", additionalProperties: false,
++        required: ["schemaVersion", "nonce"], properties: {
++          schemaVersion: {const: 1}, nonce: {const: process.env.DVL08_NONCE}}};
++      const common = {cwd: project, agent: explorer, task: "Return the isolated typed fixture flag. No tools except yield.",
++        assignment: "One typed fixture response only.", index: 0,
++        modelOverride: "dvl08-local/scripted", modelRole: "smol", outputSchema: schema,
++        outputSchemaMode: "strict", enableIrc: false, enableMCP: false, enableLsp: false,
++        restrictToolNames: true, sessionFile: null, persistArtifacts: false, keepAlive: false,
++        maxRuntimeMs: 6000};
++      for (const phase of ["missing", "inert"]) {
++        const prepared = phase === "inert" ? [{path: process.env.DVL08_BARRIER_EXT!,
++          resolvedPath: process.env.DVL08_BARRIER_EXT!, factory: inertChild, error: null}] : [];
++        log("phase_begin", {phase});
++        try {
++          const result = await sdk.runSubprocess({...common, id: crypto.randomUUID(),
++            preloadedPreparedExtensions: prepared});
++          log("native_result", {phase, agent: result?.agent, agentSource: result?.agentSource,
++            exitCode: result?.exitCode, requests: result?.requests, aborted: result?.aborted,
++            structuredStatus: result?.structuredOutput?.status ?? null});
++        } catch (error) {
++          log("native_error", {phase, type: error?.constructor?.name ?? "unknown",
++            message: String(error).slice(0, 160)});
++        }
++        log("phase_end", {phase});
++      }
++    } finally {
++      ctx?.abort?.(); // Parent never makes a provider request.
++    }
++  });
++  pi.on("before_provider_request", () => log("parent_provider_unexpected"));
++}
++'''
++
+ 
+ def prepare_q01_context(context: dict) -> dict:
+-    raise ValueError("runtime_probe_not_implemented")
++    raise ValueError("product_adapter_unavailable: request_guard_and_atomic_send_unverified")
+ 
+ 
+ def collect_q01_observations(prepared: dict) -> dict:
+-    raise ValueError("runtime_probe_not_implemented")
++    raise ValueError("product_adapter_unavailable")
+ 
+ 
+ def close_q01_context(prepared: dict) -> None:
+-    pass
++    return None
++
++
++def _ticks(pid: int) -> int | None:
++    try:
++        return int(Path(f"/proc/{pid}/stat").read_bytes().rsplit(b") ", 1)[1].split()[19])
++    except (OSError, ValueError, IndexError):
++        return None
++
++
++def _env(root: Path) -> dict[str, str]:
++    user = pwd.getpwuid(os.getuid()).pw_name
++    home = root / "home"
++    assert home.resolve().is_relative_to(root.resolve())
++    return {
++        "HOME": str(home), "USER": user, "LOGNAME": user, "PATH": "/usr/bin:/bin",
++        "LANG": "C.UTF-8", "TERM": "xterm-256color", "TMPDIR": str(root / "tmp"),
++        "PI_CODING_AGENT_DIR": str(root / "profile"),
++        "XDG_CONFIG_HOME": str(home / ".config"),
++        "XDG_DATA_HOME": str(home / ".local/share"),
++        "XDG_STATE_HOME": str(home / ".local/state"),
++        "XDG_CACHE_HOME": str(home / ".cache"),
++        "XDG_RUNTIME_DIR": str(root / "run"),
++        "DVL08_EVENTS": str(root / "events.jsonl"), "DVL08_NONCE": root.name,
++        "HTTP_PROXY": "http://127.0.0.1:1", "HTTPS_PROXY": "http://127.0.0.1:1",
++        "ALL_PROXY": "http://127.0.0.1:1", "http_proxy": "http://127.0.0.1:1",
++        "https_proxy": "http://127.0.0.1:1", "all_proxy": "http://127.0.0.1:1",
++        "NO_PROXY": "127.0.0.1", "no_proxy": "127.0.0.1",
++    }
++
++
++def run_guard_feasibility() -> dict[str, Any]:
++    version = subprocess.run([str(OMP), "--version"], capture_output=True, text=True,
++                             timeout=5, check=True).stdout.strip()
++    if version != "omp/18.8.6":
++        return {"result": "inconclusive", "reason": "version_mismatch", "version": version}
++    with tempfile.TemporaryDirectory(prefix="dvl08-guard-") as temporary:
++        root = Path(temporary)
++        root.chmod(0o700)
++        for name in ("home", "profile", "project", "tmp", "run"):
++            (root / name).mkdir(mode=0o700)
++        profile, project = root / "profile", root / "project"
++        (profile / "agent.db").write_bytes(b"")
++        (profile / "agent.db").chmod(0o600)
++        sentinel, edit_target, bash_target = (project / name for name in
++                                               ("sentinel.txt", "edit.txt", "bash.txt"))
++        sentinel.write_text("SAFE\n")
++        edit_target.write_text("SAFE\n")
++        (root / "guard.ts").write_text(EXTENSION)
++        (root / "config.yml").write_text("# isolated probe\n")
++        requests: list[dict[str, Any]] = []
++        lock = threading.Lock()
++
++        class Handler(BaseHTTPRequestHandler):
++            def do_POST(self) -> None:
++                raw = self.rfile.read(int(self.headers.get("Content-Length", "0")))
++                try:
++                    request = json.loads(raw)
++                except ValueError:
++                    self.send_error(400)
++                    return
++                selected = [t.get("function", {}).get("name") for t in request.get("tools", [])]
++                feedback = [
++                    {"tool_call_id": message.get("tool_call_id"),
++                     "content": str(message.get("content", ""))[:300]}
++                    for message in request.get("messages", [])
++                    if isinstance(message, dict) and message.get("role") == "tool"
++                ]
++                with lock:
++                    index = len(requests) + 1
++                    requests.append({"index": index, "path": self.path,
++                                     "selected_tools": selected, "tool_feedback": feedback})
++                if index == 1:
++                    calls = [
++                        ("read", {"path": str(sentinel)}),
++                        ("write", {"path": str(sentinel), "content": "MUTATED\n"}),
++                        ("edit", {"path": str(edit_target), "oldText": "SAFE", "newText": "MUTATED"}),
++                        ("bash", {"command": f"printf MUTATED > {bash_target}"}),
++                    ]
++                    delta = {"role": "assistant", "tool_calls": [
++                        {"index": i, "id": f"dvl08-hostile-{i}", "type": "function",
++                         "function": {"name": name, "arguments": json.dumps(args)}}
++                        for i, (name, args) in enumerate(calls)]}
++                    finish = "tool_calls"
++                else:
++                    delta, finish = {"role": "assistant", "content": "Fixture complete."}, "stop"
++                frames = [
++                    {"id": "dvl08", "object": "chat.completion.chunk", "created": 0,
++                     "model": "scripted", "choices": [{"index": 0, "delta": delta, "finish_reason": None}]},
++                    {"id": "dvl08", "object": "chat.completion.chunk", "created": 0,
++                     "model": "scripted", "choices": [{"index": 0, "delta": {}, "finish_reason": finish}],
++                     "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2}},
++                ]
++                data = b"".join(f"data: {json.dumps(frame)}\n\n".encode() for frame in frames)
++                data += b"data: [DONE]\n\n"
++                try:
++                    self.send_response(200)
++                    self.send_header("Content-Type", "text/event-stream")
++                    self.send_header("Content-Length", str(len(data)))
++                    self.end_headers()
++                    self.wfile.write(data)
++                except (BrokenPipeError, ConnectionResetError):
++                    pass
++
++            def log_message(self, *_args: object) -> None:
++                pass
++
++        provider = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
++        provider.daemon_threads = True
++        provider_thread = threading.Thread(target=provider.serve_forever, daemon=True)
++        provider_thread.start()
++        (profile / "models.yml").write_text(
++            "providers:\n  dvl08-local:\n"
++            f"    baseUrl: http://127.0.0.1:{provider.server_port}/v1\n"
++            "    api: openai-completions\n    auth: none\n    models:\n"
++            "      - id: scripted\n        name: DVL08 scripted fixture\n"
++            "        contextWindow: 32768\n        maxTokens: 1024\n")
++        argv = [str(OMP), "--print", "--model", "dvl08-local/scripted",
++                "--no-session", "--no-pty", "--no-skills", "--no-rules", "--no-title",
++                "--no-extensions", "--extension", str(root / "guard.ts"),
++                "--tools=read,edit,write,bash", "--auto-approve", "--max-time=25",
++                "--cwd", str(project), "--session-dir", str(root / "sessions"),
++                "--config", str(root / "config.yml"), "Run the isolated scripted fixture."]
++        child: subprocess.Popen[bytes] | None = None
++        child_ticks: int | None = None
++        output = b""
++        cleanup = {"child_stopped": False, "provider_stopped": False}
++        try:
++            child = subprocess.Popen(argv, cwd=project, env=_env(root), stdin=subprocess.DEVNULL,
++                                     stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
++                                     start_new_session=True)
++            child_ticks = _ticks(child.pid)
++            try:
++                output, _ = child.communicate(timeout=35)
++            except subprocess.TimeoutExpired:
++                if child_ticks is not None and _ticks(child.pid) == child_ticks:
++                    os.killpg(child.pid, signal.SIGTERM)
++                try:
++                    output, _ = child.communicate(timeout=3)
++                except subprocess.TimeoutExpired:
++                    if child_ticks is not None and _ticks(child.pid) == child_ticks:
++                        os.killpg(child.pid, signal.SIGKILL)
++                    output, _ = child.communicate(timeout=3)
++            event_path = root / "events.jsonl"
++            events = [json.loads(line) for line in event_path.read_text().splitlines()] if event_path.exists() else []
++            blocked = {e.get("tool") for e in events if e.get("name") == "tool_call" and e.get("block") is True}
++            executed = {e.get("tool") for e in events if e.get("name") == "tool_execution_start"}
++            ends = {e.get("tool"): e for e in events if e.get("name") == "tool_execution_end"}
++            read_hook = any(e.get("name") == "tool_call" and e.get("tool") == "read"
++                            and e.get("block") is False for e in events)
++            read_ok = read_hook and ends.get("read", {}).get("event_is_error") is False
++            hostile = {"write", "edit", "bash"}
++            hostile_error = all(
++                tool in ends and ends[tool].get("event_is_error") is True and
++                ends[tool].get("result_content") == [f"Tool {tool} not found"]
++                for tool in hostile
++            )
++            unchanged = sentinel.read_text() == "SAFE\n" and edit_target.read_text() == "SAFE\n" and not bash_target.exists()
++            readback = any(e.get("name") == "guard_readback" and e.get("ready") is True
++                           and e.get("tools") == ["read"] for e in events)
++            if readback and read_ok and hostile_error and unchanged and not blocked:
++                result = "inactive_lookup_rejected"
++            elif readback and read_ok and blocked == hostile and hostile_error and unchanged:
++                result = "tool_call_guard_blocked"
++            else:
++                result = "inconclusive"
++            return {
++                "result": result, "omp_version": version, "provider_port": provider.server_port,
++                "provider_requests": requests, "extension_events": events,
++                "allowed_read_hook_observed": read_hook, "allowed_read_result_ok": read_ok,
++                "hostile_end_errors_observed": hostile_error,
++                "blocked_tool_call_hooks": sorted(str(x) for x in blocked),
++                "tool_execution_start_names": sorted(str(x) for x in executed),
++                "sentinel_unchanged": sentinel.read_text() == "SAFE\n",
++                "edit_unchanged": edit_target.read_text() == "SAFE\n",
++                "bash_target_absent": not bash_target.exists(),
++                "child_pid": child.pid, "child_start_ticks": child_ticks,
++                "child_exit": child.returncode, "output_bytes_drained": len(output),
++                "output_discarded": True, "guard_epoch_nonce_atomic_send": "unknown",
++                "product_route": "unavailable", "cleanup": cleanup,
++            }
++        finally:
++            if child is not None and child.poll() is None:
++                if child_ticks is not None and _ticks(child.pid) == child_ticks:
++                    os.killpg(child.pid, signal.SIGKILL)
++                child.communicate(timeout=3)
++            cleanup["child_stopped"] = child is None or child.poll() is not None
++            provider.shutdown()
++            provider.server_close()
++            provider_thread.join(timeout=3)
++            cleanup["provider_stopped"] = not provider_thread.is_alive()
++
++
++def _owned_processes(root: Path) -> dict[int, int]:
++    """Only identities whose command line or cwd names this unique probe root."""
++    found: dict[int, int] = {}
++    needle = str(root).encode()
++    for entry in Path("/proc").iterdir():
++        if not entry.name.isdigit():
++            continue
++        pid = int(entry.name)
++        try:
++            command = (entry / "cmdline").read_bytes()
++            cwd = os.readlink(entry / "cwd").encode()
++        except OSError:
++            continue
++        if needle in command or needle in cwd:
++            ticks = _ticks(pid)
++            if ticks is not None:
++                found[pid] = ticks
++    return found
++
++
++def _kill_owned(pid: int, ticks: int, signum: int) -> bool:
++    try:
++        descriptor = os.pidfd_open(pid)
++    except OSError:
++        return False
++    try:
++        if _ticks(pid) != ticks:
++            return False
++        signal.pidfd_send_signal(descriptor, signum)
++        return True
++    except OSError:
++        return False
++    finally:
++        os.close(descriptor)
++
++
++def _drain_owned(child: subprocess.Popen[bytes], root: Path, *, timeout: float = 40) -> dict[str, Any]:
++    """Drain while running, retain only a bounded tail, then stop exact owned identities."""
++    selector = selectors.DefaultSelector()
++    tail = bytearray()
++    total = 0
++    timed_out = False
++    started = time.monotonic()
++    try:
++        assert child.stdout is not None and child.stderr is not None
++        for pipe in (child.stdout, child.stderr):
++            os.set_blocking(pipe.fileno(), False)
++            selector.register(pipe, selectors.EVENT_READ)
++        while selector.get_map() or child.poll() is None:
++            for key, _ in selector.select(0.2):
++                chunk = os.read(key.fileobj.fileno(), 65536)
++                if not chunk:
++                    selector.unregister(key.fileobj)
++                    continue
++                total += len(chunk)
++                tail.extend(chunk)
++                if len(tail) > 8192:
++                    del tail[:-8192]
++            if time.monotonic() - started > timeout:
++                timed_out = True
++                break
++        if timed_out:
++            for pid, ticks in _owned_processes(root).items():
++                _kill_owned(pid, ticks, signal.SIGTERM)
++            try:
++                child.wait(timeout=3)
++            except subprocess.TimeoutExpired:
++                for pid, ticks in _owned_processes(root).items():
++                    _kill_owned(pid, ticks, signal.SIGKILL)
++        try:
++            child.wait(timeout=3)
++        except subprocess.TimeoutExpired:
++            timed_out = True
++    finally:
++        selector.close()
++        for pipe in (child.stdout, child.stderr):
++            if pipe is not None:
++                pipe.close()
++    return {"exit": child.poll(), "timed_out": timed_out, "output_bytes_drained": total,
++            "output_tail_bounded": tail.decode("utf-8", "replace")[-1000:]}
++
++
++def run_existing_task_child_feasibility() -> dict[str, Any]:
++    """One existing explorer task child; fixture observations only, never Q01 adoption."""
++    version = subprocess.run([str(OMP), "--version"], capture_output=True, text=True,
++                             timeout=5, check=True).stdout.strip()
++    if version != "omp/18.8.6":
++        return {"result": "inconclusive", "reason": "version_mismatch", "version": version}
++    with tempfile.TemporaryDirectory(prefix="dvl08-child-") as temporary:
++        root = Path(temporary)
++        root.chmod(0o700)
++        for name in ("home", "profile", "project", "tmp", "run", "sessions"):
++            (root / name).mkdir(mode=0o700)
++        profile, project = root / "profile", root / "project"
++        (profile / "agent.db").write_bytes(b"")
++        (profile / "agent.db").chmod(0o600)
++        # OMP task agent discovery uses the isolated HOME, not the profile directory.
++        agents = root / "home" / ".omp" / "agent" / "agents"
++        agents.mkdir(parents=True, mode=0o700)
++        for private_dir in (agents.parent.parent, agents.parent, agents):
++            private_dir.chmod(0o700)
++        copied_agent = agents / "explorer.md"
++        shutil.copyfile(EXPLORER, copied_agent)
++        copied_agent.chmod(0o600)
++        agent_digest = sha256(EXPLORER.read_bytes()).hexdigest()
++        assert sha256(copied_agent.read_bytes()).hexdigest() == agent_digest
++        nonce = sha256(root.name.encode()).hexdigest()[:20]
++        raw_marker = "PRIVATE_RAW_" + sha256((nonce + "raw").encode()).hexdigest()[:20]
++        source = project / "input.txt"
++        source.write_text(raw_marker + "\n")
++        source.chmod(0o600)
++        sentinel = project / "sentinel.txt"
++        sentinel.write_text("SAFE\n")
++        sentinel.chmod(0o600)
++        (root / "child-probe.ts").write_text(CHILD_EXTENSION)
++        (root / "config.yml").write_text(json.dumps({
++            "async": {"enabled": False}, "task": {"batch": True, "speculativeLaunch": False},
++            "modelRoles": {key: "dvl08-local/scripted" for key in
++                           ("default", "smol", "task", "tiny", "slow", "plan", "memory", "commit")},
++        }))
++        requests: list[dict[str, Any]] = []
++        lock = threading.Lock()
++        calls = {"task": 0, "child_turns": 0}
++        schema = {"type": "object", "additionalProperties": False,
++                  "required": ["schemaVersion", "nonce", "observed"],
++                  "properties": {"schemaVersion": {"const": 1}, "nonce": {"const": nonce},
++                                 "observed": {"type": "boolean", "const": True}}}
++
++        class Handler(BaseHTTPRequestHandler):
++            def do_POST(self) -> None:
++                try:
++                    length = int(self.headers.get("Content-Length", "0"))
++                    if not 0 < length <= 1_000_000:
++                        self.send_error(413)
++                        return
++                    raw = self.rfile.read(length)
++                    request = json.loads(raw)
++                except (ValueError, OSError):
++                    self.send_error(400)
++                    return
++                advertised = request.get("tools") or []
++                names = [tool.get("function", {}).get("name") for tool in advertised]
++                event_path = root / "events.jsonl"
++                boundaries = [json.loads(line) for line in event_path.read_text().splitlines()
++                              if line.strip()] if event_path.exists() else []
++                matching = [event for event in boundaries if event.get("name") == "provider_boundary"
++                            and event.get("tools") == names]
++                kind = (matching[-1].get("identity") or {}).get("kind") if matching else None
++                role = "child" if kind == "sub" else "parent" if kind == "main" else "unknown"
++                yield_function = next((tool.get("function", {}) for tool in advertised
++                                       if tool.get("function", {}).get("name") == "yield"), None)
++                messages = request.get("messages") or []
++                row = {"role": role, "boundary_identity": matching[-1].get("identity") if matching else None,
++                       "tools": names, "yield_parameters": yield_function.get("parameters") if yield_function else None,
++                       "message_count": len(messages),
++                       "payload_bytes": len(raw), "contains_raw_marker": raw_marker.encode() in raw,
++                       "contains_descriptor_path": str(source).encode() in raw,
++                       "tool_feedback": [str(message.get("content", ""))[:160] for message in messages
++                                         if isinstance(message, dict) and message.get("role") == "tool"][-4:]}
++                with lock:
++                    requests.append(row)
++                    if role == "parent" and calls["task"] == 0:
++                        calls["task"] += 1
++                        task = {"context": "One read-only fixture observation. No user data or remote provider.",
++                                "tasks": [{"name": "DvlExplorer", "agent": "explorer",
++                                           "task": f"Read only {source}; report only the requested typed fixture flags.",
++                                           "solutionSpace": "one exact read-only file, path given",
++                                           "outputSchema": schema, "schemaMode": "strict"}]}
++                        commands = [("task", task)]
++                    elif role == "child":
++                        calls["child_turns"] += 1
++                        if calls["child_turns"] == 1:
++                            commands = [("read", {"path": str(source)}),
++                                        ("write", {"path": str(sentinel), "content": "MUTATED\n"}),
++                                        ("edit", {"path": str(sentinel), "oldText": "SAFE", "newText": "MUTATED"}),
++                                        ("bash", {"command": f"printf MUTATED > {sentinel}"})]
++                        else:
++                            commands = [("yield", {"data": {"schemaVersion": 1, "nonce": nonce,
++                                                              "observed": True}})]
++                    else:
++                        commands = []
++                if commands:
++                    delta = {"role": "assistant", "tool_calls": [
++                        {"index": index, "id": f"dvl08-{role}-{calls['task']}-{calls['child_turns']}-{index}",
++                         "type": "function", "function": {"name": name, "arguments": json.dumps(args)}}
++                        for index, (name, args) in enumerate(commands)]}
++                    finish = "tool_calls"
++                else:
++                    delta, finish = {"role": "assistant", "content": "Fixture parent done."}, "stop"
++                frames = [
++                    {"id": "dvl08-child", "object": "chat.completion.chunk", "created": 0,
++                     "model": "scripted", "choices": [{"index": 0, "delta": delta, "finish_reason": None}]},
++                    {"id": "dvl08-child", "object": "chat.completion.chunk", "created": 0,
++                     "model": "scripted", "choices": [{"index": 0, "delta": {}, "finish_reason": finish}],
++                     "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2}},
++                ]
++                body = b"".join(f"data: {json.dumps(frame)}\n\n".encode() for frame in frames) + b"data: [DONE]\n\n"
++                try:
++                    self.send_response(200)
++                    self.send_header("Content-Type", "text/event-stream")
++                    self.send_header("Content-Length", str(len(body)))
++                    self.end_headers()
++                    self.wfile.write(body)
++                except (BrokenPipeError, ConnectionResetError):
++                    pass
++
++            def log_message(self, *_args: object) -> None:
++                pass
++
++        provider = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
++        provider.daemon_threads = True
++        provider_thread = threading.Thread(target=provider.serve_forever, daemon=True)
++        provider_thread.start()
++        (profile / "models.yml").write_text(
++            "providers:\n  dvl08-local:\n"
++            f"    baseUrl: http://127.0.0.1:{provider.server_port}/v1\n"
++            "    api: openai-completions\n    auth: none\n    models:\n"
++            "      - id: scripted\n        name: DVL08 scripted fixture\n"
++            "        contextWindow: 32768\n        maxTokens: 1024\n")
++        argv = [str(OMP), "--print", "--model", "dvl08-local/scripted", "--smol", "dvl08-local/scripted",
++                "--no-session", "--no-pty", "--no-skills", "--no-rules", "--no-title",
++                "--no-extensions", "--extension", str(root / "child-probe.ts"),
++                "--tools=task,read", "--auto-approve", "--max-time=30",
++                "--cwd", str(project), "--session-dir", str(root / "sessions"),
++                "--config", str(root / "config.yml"),
++                f"Use the existing explorer task agent for descriptor {source}. Return its result."]
++        child: subprocess.Popen[bytes] | None = None
++        drained: dict[str, Any] = {}
++        cleanup = {"parent_stopped": False, "provider_stopped": False, "remaining_owned": []}
++        try:
++            child = subprocess.Popen(argv, cwd=project, env=_env(root), stdin=subprocess.DEVNULL,
++                                     stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True)
++            parent_ticks = _ticks(child.pid)
++            drained = _drain_owned(child, root)
++            event_path = root / "events.jsonl"
++            events = [json.loads(line) for line in event_path.read_text().splitlines()] if event_path.exists() else []
++            child_events = [event for event in events if (event.get("identity") or {}).get("kind") == "sub"]
++            child_ids = sorted({(event.get("identity") or {}).get("id") for event in child_events
++                                if (event.get("identity") or {}).get("id")})
++            guard = next((event for event in child_events if event.get("name") == "child_guard_readback"), None)
++            boundary = next((event for event in child_events if event.get("name") == "provider_boundary"), None)
++            boundary_index = events.index(boundary) if boundary in events else None
++            guard_index = events.index(guard) if guard in events else None
++            task_end = [event for event in events if event.get("name") == "tool_execution_end"
++                        and event.get("tool") == "task"]
++            structured = task_end[-1].get("rows", [{}])[0].get("structuredOutput") if task_end and task_end[-1].get("rows") else None
++            parent_requests = [row for row in requests if row["role"] == "parent"]
++            child_requests = [row for row in requests if row["role"] == "child"]
++            return {"result": "fixture_observed" if child_ids and guard and boundary and task_end else "inconclusive",
++                    "omp_version": version, "agent_definition_sha256": agent_digest,
++                    "existing_agent": "explorer", "parent_request_count": len(parent_requests),
++                    "child_request_count": len(child_requests), "task_call_count": calls["task"],
++                    "provider_requests": requests[:8], "extension_events": events[:80],
++                    "child_ids": child_ids, "guard_before_first_child_provider": bool(
++                        guard and guard.get("ready") and guard_index is not None
++                        and boundary_index is not None and guard_index < boundary_index),
++                    "child_provider_tools": child_requests[0]["tools"] if child_requests else None,
++                    "structured_output": structured, "strict_typed_data_observed": bool(
++                        isinstance(structured, dict) and structured.get("data") ==
++                        {"schemaVersion": 1, "nonce": nonce, "observed": True}
++                        and structured.get("status") == "valid"),
++                    "parent_input_raw_marker_absent": all(not row["contains_raw_marker"] for row in parent_requests),
++                    "parent_message_count_delta": (parent_requests[-1]["message_count"] - parent_requests[0]["message_count"])
++                    if len(parent_requests) >= 2 else None,
++                    "sentinel_unchanged": sentinel.read_text() == "SAFE\n", "drain": drained,
++                    "parent_pid": child.pid, "parent_start_ticks": parent_ticks,
++                    "guard_receipt_atomic_send": "unknown", "deterministic_product_dispatch": "unknown",
++                    "shared_session_lock": "unknown", "product_route_adopted": False,
++                    "all_q01_pass": False, "cleanup": cleanup}
++        finally:
++            if child is not None and child.poll() is None:
++                for pid, ticks in _owned_processes(root).items():
++                    _kill_owned(pid, ticks, signal.SIGKILL)
++                try:
++                    child.wait(timeout=3)
++                except subprocess.TimeoutExpired:
++                    pass
++            cleanup["parent_stopped"] = child is None or child.poll() is not None
++            provider.shutdown()
++            provider.server_close()
++            provider_thread.join(timeout=3)
++            cleanup["provider_stopped"] = not provider_thread.is_alive()
++            cleanup["remaining_owned"] = sorted(_owned_processes(root))
++
++
++def run_native_sdk_export_inventory() -> dict[str, Any]:
++    """One bounded installed-OMP lifecycle; no direct completion or child run on missing public discovery."""
++    version = subprocess.run([str(OMP), "--version"], capture_output=True, text=True,
++                             timeout=5, check=True).stdout.strip()
++    if version != "omp/18.8.6":
++        return {"result": "inconclusive", "reason": "version_mismatch", "omp_version": version}
++    with tempfile.TemporaryDirectory(prefix="dvl08-native-") as temporary:
++        root = Path(temporary)
++        root.chmod(0o700)
++        for name in ("home", "profile", "project", "tmp", "run", "sessions"):
++            (root / name).mkdir(mode=0o700)
++        profile, project = root / "profile", root / "project"
++        (profile / "agent.db").write_bytes(b"")
++        (profile / "agent.db").chmod(0o600)
++        agents = root / "home" / ".omp" / "agent" / "agents"
++        agents.mkdir(parents=True, mode=0o700)
++        for private_dir in (agents.parent.parent, agents.parent, agents):
++            private_dir.chmod(0o700)
++        copied_agent = agents / "explorer.md"
++        shutil.copyfile(EXPLORER, copied_agent)
++        copied_agent.chmod(0o600)
++        agent_digest = sha256(EXPLORER.read_bytes()).hexdigest()
++        assert sha256(copied_agent.read_bytes()).hexdigest() == agent_digest
++        (root / "native-inventory.ts").write_text(NATIVE_INVENTORY_EXTENSION)
++        (root / "config.yml").write_text(json.dumps({
++            "async": {"enabled": False}, "task": {"batch": False, "speculativeLaunch": False},
++            "modelRoles": {key: "dvl08-local/scripted" for key in
++                           ("default", "smol", "task", "tiny", "slow", "plan", "memory", "commit")},
++        }))
++        requests: list[dict[str, Any]] = []
++
++        class Handler(BaseHTTPRequestHandler):
++            def do_POST(self) -> None:
++                size = int(self.headers.get("Content-Length", "0"))
++                if size < 0 or size > 1_000_000:
++                    self.send_error(413)
++                    return
++                raw = self.rfile.read(size)
++                requests.append({"bytes": len(raw), "path": self.path})
++                frame = {"id": "dvl08-inventory", "object": "chat.completion.chunk", "created": 0,
++                         "model": "scripted", "choices": [{"index": 0,
++                         "delta": {"role": "assistant", "content": "Inventory only."}, "finish_reason": "stop"}]}
++                body = f"data: {json.dumps(frame)}\n\ndata: [DONE]\n\n".encode()
++                try:
++                    self.send_response(200)
++                    self.send_header("Content-Type", "text/event-stream")
++                    self.send_header("Content-Length", str(len(body)))
++                    self.end_headers()
++                    self.wfile.write(body)
++                except (BrokenPipeError, ConnectionResetError):
++                    pass
++
++            def log_message(self, *_args: object) -> None:
++                pass
++
++        provider = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
++        provider.daemon_threads = True
++        provider_thread = threading.Thread(target=provider.serve_forever, daemon=True)
++        provider_thread.start()
++        (profile / "models.yml").write_text(
++            "providers:\n  dvl08-local:\n"
++            f"    baseUrl: http://127.0.0.1:{provider.server_port}/v1\n"
++            "    api: openai-completions\n    auth: none\n    models:\n"
++            "      - id: scripted\n        name: DVL08 scripted fixture\n"
++            "        contextWindow: 32768\n        maxTokens: 1024\n")
++        argv = [str(OMP), "--print", "--model", "dvl08-local/scripted",
++                "--no-session", "--no-pty", "--no-skills", "--no-rules", "--no-title",
++                "--no-extensions", "--extension", str(root / "native-inventory.ts"),
++                "--no-tools", "--auto-approve", "--max-time=15", "--cwd", str(project),
++                "--session-dir", str(root / "sessions"), "--config", str(root / "config.yml"),
++                "Inspect the isolated fixture SDK exports only."]
++        child: subprocess.Popen[bytes] | None = None
++        cleanup = {"parent_stopped": False, "provider_stopped": False, "remaining_owned": []}
++        try:
++            child = subprocess.Popen(argv, cwd=project, env=_env(root), stdin=subprocess.DEVNULL,
++                                     stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True)
++            start_ticks = _ticks(child.pid)
++            drained = _drain_owned(child, root, timeout=25)
++            event_path = root / "events.jsonl"
++            events = [json.loads(line) for line in event_path.read_text().splitlines()
++                      if line.strip()] if event_path.exists() else []
++            exported = next((event for event in events if event.get("name") == "sdk_exports"), None)
++            return {"result": "api_inventory_observed" if exported is not None else "inconclusive",
++                    "omp_version": version, "explorer_definition_sha256": agent_digest,
++                    "sdk_exports": exported, "extension_events": events[:12],
++                    "provider_request_count": len(requests), "provider_requests": requests[:4],
++                    "native_executor_invoked": False, "child_created": False,
++                    "guard_receipt_atomic_send": "unknown", "all_q01_pass": False,
++                    "parent_pid": child.pid, "parent_start_ticks": start_ticks,
++                    "drain": drained, "cleanup": cleanup}
++        finally:
++            if child is not None and child.poll() is None:
++                for pid, ticks in _owned_processes(root).items():
++                    _kill_owned(pid, ticks, signal.SIGKILL)
++                try:
++                    child.wait(timeout=3)
++                except subprocess.TimeoutExpired:
++                    pass
++            cleanup["parent_stopped"] = child is None or child.poll() is not None
++            provider.shutdown()
++            provider.server_close()
++            provider_thread.join(timeout=3)
++            cleanup["provider_stopped"] = not provider_thread.is_alive()
++            cleanup["remaining_owned"] = sorted(_owned_processes(root))
++
++
++def run_native_executor_child_feasibility() -> dict[str, Any]:
++    """One OMP lifecycle, exact existing explorer, deterministic public executor; fixture only."""
++    version = subprocess.run([str(OMP), "--version"], capture_output=True, text=True,
++                             timeout=5, check=True).stdout.strip()
++    if version != "omp/18.8.6":
++        return {"result": "inconclusive", "reason": "version_mismatch", "omp_version": version}
++    with tempfile.TemporaryDirectory(prefix="dvl08-native-child-") as temporary:
++        root = Path(temporary)
++        root.chmod(0o700)
++        for name in ("home", "profile", "project", "tmp", "run", "sessions"):
++            (root / name).mkdir(mode=0o700)
++        profile, project = root / "profile", root / "project"
++        (profile / "agent.db").write_bytes(b"")
++        (profile / "agent.db").chmod(0o600)
++        agents = root / "home" / ".omp" / "agent" / "agents"
++        agents.mkdir(parents=True, mode=0o700)
++        for private_dir in (agents.parent.parent, agents.parent, agents):
++            private_dir.chmod(0o700)
++        copied_agent = agents / "explorer.md"
++        shutil.copyfile(EXPLORER, copied_agent)
++        copied_agent.chmod(0o600)
++        agent_digest = sha256(EXPLORER.read_bytes()).hexdigest()
++        assert sha256(copied_agent.read_bytes()).hexdigest() == agent_digest
++        source = project / "input.txt"
++        raw_marker = "PRIVATE_RAW_" + sha256(root.name.encode()).hexdigest()[:20]
++        source.write_text(raw_marker + "\n")
++        source.chmod(0o600)
++        sentinel = project / "sentinel.txt"
++        sentinel.write_text("SAFE\n")
++        sentinel.chmod(0o600)
++        bash_target = project / "bash-target.txt"
++        extension = root / "native-child.ts"
++        extension.write_text(NATIVE_CHILD_EXTENSION)
++        (root / "config.yml").write_text(json.dumps({
++            "async": {"enabled": False}, "task": {"batch": False, "speculativeLaunch": False},
++            "modelRoles": {key: "dvl08-local/scripted" for key in
++                           ("default", "smol", "task", "tiny", "slow", "plan", "memory", "commit")},
++        }))
++        requests: list[dict[str, Any]] = []
++        lock = threading.Lock()
++        calls = {"positive": 0, "negative": 0, "parent": 0, "unknown": 0}
++
++        class Handler(BaseHTTPRequestHandler):
++            def do_POST(self) -> None:
++                try:
++                    length = int(self.headers.get("Content-Length", "0"))
++                    if not 0 < length <= 1_000_000:
++                        self.send_error(413)
++                        return
++                    raw = self.rfile.read(length)
++                    request = json.loads(raw)
++                except (ValueError, OSError):
++                    self.send_error(400)
++                    return
++                names = [tool.get("function", {}).get("name") for tool in request.get("tools") or []]
++                event_path = root / "events.jsonl"
++                events = [json.loads(line) for line in event_path.read_text().splitlines()
++                          if line.strip()] if event_path.exists() else []
++                boundary = next((event for event in reversed(events)
++                                 if event.get("name") == "child_provider_boundary"), None)
++                phase = boundary.get("phase") if boundary else "unknown"
++                if phase not in calls:
++                    phase = "unknown"
++                with lock:
++                    calls[phase] += 1
++                    ordinal = calls[phase]
++                    requests.append({"phase": phase, "ordinal": ordinal, "tools": names,
++                                     "identity": boundary.get("identity") if boundary else None,
++                                     "contains_raw_marker": raw_marker.encode() in raw,
++                                     "contains_descriptor_path": str(source).encode() in raw,
++                                     "message_count": len(request.get("messages") or []),
++                                     "payload_bytes": len(raw)})
++                if phase == "positive" and ordinal == 1:
++                    commands = [("read", {"path": str(source)}),
++                                ("write", {"path": str(sentinel), "content": "MUTATED\n"}),
++                                ("edit", {"path": str(sentinel), "oldText": "SAFE", "newText": "MUTATED"}),
++                                ("bash", {"command": f"printf MUTATED > {bash_target}"})]
++                elif phase == "positive" and ordinal <= 3:
++                    commands = [("yield", {"data": {"schemaVersion": 1, "nonce": root.name,
++                                                    "observed": True}})]
++                else:
++                    commands = []
++                if commands:
++                    delta = {"role": "assistant", "tool_calls": [
++                        {"index": index, "id": f"dvl08-native-{phase}-{ordinal}-{index}",
++                         "type": "function", "function": {"name": name, "arguments": json.dumps(args)}}
++                        for index, (name, args) in enumerate(commands)]}
++                    finish = "tool_calls"
++                else:
++                    delta, finish = {"role": "assistant", "content": "Fixture stopped."}, "stop"
++                frames = [
++                    {"id": "dvl08-native", "object": "chat.completion.chunk", "created": 0,
++                     "model": "scripted", "choices": [{"index": 0, "delta": delta, "finish_reason": None}]},
++                    {"id": "dvl08-native", "object": "chat.completion.chunk", "created": 0,
++                     "model": "scripted", "choices": [{"index": 0, "delta": {}, "finish_reason": finish}],
++                     "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2}},
++                ]
++                body = b"".join(f"data: {json.dumps(frame)}\n\n".encode() for frame in frames) + b"data: [DONE]\n\n"
++                try:
++                    self.send_response(200)
++                    self.send_header("Content-Type", "text/event-stream")
++                    self.send_header("Content-Length", str(len(body)))
++                    self.end_headers()
++                    self.wfile.write(body)
++                except (BrokenPipeError, ConnectionResetError):
++                    pass
++
++            def log_message(self, *_args: object) -> None:
++                pass
++
++        provider = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
++        provider.daemon_threads = True
++        provider_thread = threading.Thread(target=provider.serve_forever, daemon=True)
++        provider_thread.start()
++        (profile / "models.yml").write_text(
++            "providers:\n  dvl08-local:\n"
++            f"    baseUrl: http://127.0.0.1:{provider.server_port}/v1\n"
++            "    api: openai-completions\n    auth: none\n    models:\n"
++            "      - id: scripted\n        name: DVL08 scripted fixture\n"
++            "        contextWindow: 32768\n        maxTokens: 1024\n")
++        argv = [str(OMP), "--print", "--model", "dvl08-local/scripted", "--smol", "dvl08-local/scripted",
++                "--no-session", "--no-pty", "--no-skills", "--no-rules", "--no-title",
++                "--no-extensions", "--extension", str(extension), "--no-tools", "--auto-approve",
++                "--max-time=45", "--cwd", str(project), "--session-dir", str(root / "sessions"),
++                "--config", str(root / "config.yml"), "Run the isolated native executor fixture only."]
++        env = _env(root)
++        env.update(DVL08_PROJECT=str(project), DVL08_SOURCE=str(source), DVL08_NATIVE_EXT=str(extension))
++        child: subprocess.Popen[bytes] | None = None
++        cleanup = {"parent_stopped": False, "provider_stopped": False, "remaining_owned": []}
++        try:
++            child = subprocess.Popen(argv, cwd=project, env=env, stdin=subprocess.DEVNULL,
++                                     stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True)
++            start_ticks = _ticks(child.pid)
++            drained = _drain_owned(child, root, timeout=55)
++            event_path = root / "events.jsonl"
++            events = [json.loads(line) for line in event_path.read_text().splitlines()
++                      if line.strip()] if event_path.exists() else []
++            result_events = [event for event in events if event.get("name") == "native_result"]
++            positive = next((event for event in result_events if event.get("phase") == "positive"), None)
++            negative = next((event for event in result_events if event.get("phase") == "negative"), None)
++            typed = positive.get("structuredOutput") if positive else None
++            readbacks = [event for event in events if event.get("name") == "child_readback"]
++            return {"result": "native_child_observed" if positive else "inconclusive",
++                    "omp_version": version, "explorer_definition_sha256": agent_digest,
++                    "provider_port": provider.server_port, "provider_requests": requests[:12],
++                    "provider_request_counts": calls, "events": events[:100],
++                    "positive_result": positive, "negative_result": negative,
++                    "readbacks": readbacks,
++                    "strict_typed_data_observed": isinstance(typed, dict) and typed.get("status") == "valid"
++                    and typed.get("data") == {"schemaVersion": 1, "nonce": root.name, "observed": True},
++                    "negative_zero_send": negative is not None and calls["negative"] == 0,
++                    "sentinel_unchanged": sentinel.read_text() == "SAFE\n",
++                    "bash_target_absent": not bash_target.exists(),
++                    "parent_provider_zero": calls["parent"] == 0 and calls["unknown"] == 0,
++                    "guard_receipt_atomic_send": "unknown", "product_route_adopted": False,
++                    "all_q01_pass": False, "parent_pid": child.pid, "parent_start_ticks": start_ticks,
++                    "drain": drained, "cleanup": cleanup}
++        finally:
++            if child is not None and child.poll() is None:
++                for pid, ticks in _owned_processes(root).items():
++                    _kill_owned(pid, ticks, signal.SIGKILL)
++                try:
++                    child.wait(timeout=3)
++                except subprocess.TimeoutExpired:
++                    pass
++            cleanup["parent_stopped"] = child is None or child.poll() is not None
++            provider.shutdown()
++            provider.server_close()
++            provider_thread.join(timeout=3)
++            cleanup["provider_stopped"] = not provider_thread.is_alive()
++            cleanup["remaining_owned"] = sorted(_owned_processes(root))
++
++
++def run_native_guard_barrier_negative() -> dict[str, Any]:
++    """One installed-OMP lifecycle: missing/inert child guard versus actual POST."""
++    version = subprocess.run([str(OMP), "--version"], capture_output=True, text=True,
++                             timeout=5, check=True).stdout.strip()
++    if version != "omp/18.8.6":
++        return {"result": "inconclusive", "reason": "version_mismatch", "omp_version": version}
++    with tempfile.TemporaryDirectory(prefix="dvl08-barrier-") as temporary:
++        root = Path(temporary)
++        root.chmod(0o700)
++        for name in ("home", "profile", "project", "tmp", "run", "sessions"):
++            (root / name).mkdir(mode=0o700)
++        profile, project = root / "profile", root / "project"
++        (profile / "agent.db").write_bytes(b"")
++        (profile / "agent.db").chmod(0o600)
++        agents = root / "home" / ".omp" / "agent" / "agents"
++        agents.mkdir(parents=True, mode=0o700)
++        for private_dir in (agents.parent.parent, agents.parent, agents):
++            private_dir.chmod(0o700)
++        copied_agent = agents / "explorer.md"
++        shutil.copyfile(EXPLORER, copied_agent)
++        copied_agent.chmod(0o600)
++        agent_digest = sha256(EXPLORER.read_bytes()).hexdigest()
++        assert sha256(copied_agent.read_bytes()).hexdigest() == agent_digest
++        extension = root / "barrier.ts"
++        extension.write_text(GUARD_BARRIER_EXTENSION)
++        extension.chmod(0o600)
++        (root / "config.yml").write_text(json.dumps({
++            "async": {"enabled": False}, "task": {"batch": False, "speculativeLaunch": False},
++            "modelRoles": {key: "dvl08-local/scripted" for key in
++                           ("default", "smol", "task", "tiny", "slow", "plan", "memory", "commit")},
++        }))
++        posts: list[dict[str, Any]] = []
++        lock = threading.Lock()
++
++        class Handler(BaseHTTPRequestHandler):
++            def do_POST(self) -> None:
++                try:
++                    length = int(self.headers.get("Content-Length", "0"))
++                    if not 0 < length <= 1_000_000:
++                        self.send_error(413)
++                        return
++                    raw = self.rfile.read(length)
++                    request = json.loads(raw)
++                except (ValueError, OSError):
++                    self.send_error(400)
++                    return
++                event_path = root / "events.jsonl"
++                events = [json.loads(line) for line in event_path.read_text().splitlines()
++                          if line.strip()] if event_path.exists() else []
++                phase_event = next((row for row in reversed(events)
++                                    if row.get("name") == "phase_begin"), None)
++                phase = phase_event.get("phase") if phase_event else "unattributed"
++                names = [tool.get("function", {}).get("name") for tool in request.get("tools") or []]
++                with lock:
++                    posts.append({"phase": phase, "path": self.path, "payload_bytes": length,
++                                  "advertised_tools": names})
++                command = {"index": 0, "id": f"dvl08-barrier-{phase}-{len(posts)}",
++                           "type": "function", "function": {"name": "yield", "arguments": json.dumps({
++                               "data": {"schemaVersion": 1, "nonce": root.name}})}}
++                frames = [
++                    {"id": "dvl08-barrier", "object": "chat.completion.chunk", "created": 0,
++                     "model": "scripted", "choices": [{"index": 0,
++                     "delta": {"role": "assistant", "tool_calls": [command]}, "finish_reason": None}]},
++                    {"id": "dvl08-barrier", "object": "chat.completion.chunk", "created": 0,
++                     "model": "scripted", "choices": [{"index": 0, "delta": {},
++                     "finish_reason": "tool_calls"}],
++                     "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2}},
++                ]
++                body = b"".join(f"data: {json.dumps(frame)}\n\n".encode() for frame in frames)
++                body += b"data: [DONE]\n\n"
++                try:
++                    self.send_response(200)
++                    self.send_header("Content-Type", "text/event-stream")
++                    self.send_header("Content-Length", str(len(body)))
++                    self.end_headers()
++                    self.wfile.write(body)
++                except (BrokenPipeError, ConnectionResetError):
++                    pass
++
++            def log_message(self, *_args: object) -> None:
++                pass
++
++        provider = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
++        provider.daemon_threads = True
++        provider_thread = threading.Thread(target=provider.serve_forever, daemon=True)
++        provider_thread.start()
++        (profile / "models.yml").write_text(
++            "providers:\n  dvl08-local:\n"
++            f"    baseUrl: http://127.0.0.1:{provider.server_port}/v1\n"
++            "    api: openai-completions\n    auth: none\n    models:\n"
++            "      - id: scripted\n        name: DVL08 scripted fixture\n"
++            "        contextWindow: 32768\n        maxTokens: 1024\n")
++        argv = [str(OMP), "--print", "--model", "dvl08-local/scripted", "--smol", "dvl08-local/scripted",
++                "--no-session", "--no-pty", "--no-skills", "--no-rules", "--no-title",
++                "--no-extensions", "--extension", str(extension), "--no-tools", "--auto-approve",
++                "--max-time=25", "--cwd", str(project), "--session-dir", str(root / "sessions"),
++                "--config", str(root / "config.yml"), "Run the isolated native guard absence fixture only."]
++        env = _env(root)
++        env.update(DVL08_PROJECT=str(project), DVL08_BARRIER_EXT=str(extension))
++        child: subprocess.Popen[bytes] | None = None
++        cleanup = {"parent_stopped": False, "provider_stopped": False, "remaining_owned": []}
++        try:
++            child = subprocess.Popen(argv, cwd=project, env=env, stdin=subprocess.DEVNULL,
++                                     stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True)
++            start_ticks = _ticks(child.pid)
++            drained = _drain_owned(child, root, timeout=35)
++            event_path = root / "events.jsonl"
++            events = [json.loads(line) for line in event_path.read_text().splitlines()
++                      if line.strip()] if event_path.exists() else []
++            counts = {phase: sum(row["phase"] == phase for row in posts)
++                      for phase in ("missing", "inert", "unattributed")}
++            result_rows = [row for row in events if row.get("name") == "native_result"]
++            complete = len(result_rows) == 2 and all(row.get("exitCode") == 0 for row in result_rows)
++            return {"result": "guard_confirmation_unavailable" if complete and counts["missing"] > 0
++                    and counts["inert"] > 0 and counts["unattributed"] == 0 else "inconclusive",
++                    "omp_version": version, "explorer_definition_sha256": agent_digest,
++                    "provider_port": provider.server_port, "actual_provider_post_counts": counts,
++                    "actual_provider_posts": posts[:8], "events": events[:40],
++                    "native_results_complete": complete,
++                    "guard_receipt_atomic_send": "not_provided_by_tested_public_executor_options",
++                    "product_route_adopted": False, "all_q01_pass": False,
++                    "parent_pid": child.pid, "parent_start_ticks": start_ticks,
++                    "drain": drained, "cleanup": cleanup}
++        finally:
++            if child is not None and child.poll() is None:
++                for pid, ticks in _owned_processes(root).items():
++                    _kill_owned(pid, ticks, signal.SIGKILL)
++                try:
++                    child.wait(timeout=3)
++                except subprocess.TimeoutExpired:
++                    pass
++            cleanup["parent_stopped"] = child is None or child.poll() is not None
++            provider.shutdown()
++            provider.server_close()
++            provider_thread.join(timeout=3)
++            cleanup["provider_stopped"] = not provider_thread.is_alive()
++            cleanup["remaining_owned"] = sorted(_owned_processes(root))
++
++
++if __name__ == "__main__":
++    native = sys.argv[1:] == ["--native-inventory"]
++    native_child = sys.argv[1:] == ["--native-child"]
++    barrier = sys.argv[1:] == ["--guard-barrier"]
++    evidence = (GUARD_BARRIER_EVIDENCE if barrier else NATIVE_CHILD_EVIDENCE if native_child else
++                NATIVE_EVIDENCE if native else CHILD_EVIDENCE)
++    evidence.parent.mkdir(parents=True, exist_ok=True)
++    evidence.parent.chmod(0o700)
++    report = (run_native_guard_barrier_negative() if barrier else
++              run_native_executor_child_feasibility() if native_child else
++              run_native_sdk_export_inventory() if native else run_existing_task_child_feasibility())
++    evidence.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n")
++    evidence.chmod(0o600)
++    print(json.dumps({"result": report["result"], "evidence": str(evidence),
++                      "cleanup": report.get("cleanup")}))

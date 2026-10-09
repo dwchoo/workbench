@@ -1,0 +1,27 @@
+{
+  "root": "/home/dwchoo/ai-exp-assistant",
+  "requirements": "docs/features/dev-validation-log-retention/requirements-r0.9-p5.json",
+  "argv": [
+    "/usr/bin/env",
+    "PYTHONPATH=src",
+    "PYTHONDONTWRITEBYTECODE=1",
+    "TMPDIR=/home/dwchoo/ai-exp-assistant/.workflow/dev-validation-log-retention/runs/implement-p5-20261009",
+    "/tmp/workbench-dvl-20261009-3l1ViH/test-py312/bin/python",
+    "-m",
+    "unittest",
+    "discover",
+    "-s",
+    "tests/backend",
+    "-p",
+    "test_summary*.py",
+    "-v"
+  ],
+  "environment": "Root integrated unchanged judge delta; Python3.12.3; independent31fixtures; no realOMP/models/auth; graphify AST-only finished",
+  "log": ".workflow/dev-validation-log-retention/runs/implement-p5-20261009/integrated-judge31.log",
+  "check_id": "dvl08-integrated-judge31",
+  "watch": [],
+  "exclude": [
+    ".workflow/**"
+  ],
+  "timeout": 30
+}

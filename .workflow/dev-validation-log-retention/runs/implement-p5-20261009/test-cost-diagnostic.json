@@ -1,0 +1,20 @@
+{
+  "kind": "test_environment_cost_diagnostic",
+  "candidate": "44b0027c9d42418cd6f165d97e16b6175ed5fa1ec2cfadb3f4ca6c5e7c573ace",
+  "source_changes": false,
+  "old_baseline": {
+    "tests": 22,
+    "seconds": 80.967,
+    "location": "private disk TMPDIR",
+    "reference": ".workflow/dev-validation-log-retention/runs/implement-p5-20261009/environment-observation.json"
+  },
+  "new": {
+    "tests": 22,
+    "seconds": 0.2,
+    "exit_code": 0,
+    "location": "private0700/tmpfs",
+    "reference": ".workflow/dev-validation-log-retention/runs/implement-p5-20261009/core22-private-tmpfs-cost-check.json"
+  },
+  "adjudication": "same22 current core fixture tests all pass with unchanged WAL/FULL product schema; avoids host disk sync latency. Environment acceleration only, not product durability/performance improvement. Physical storage/reboot/runtime acceptance remain real isolated disk, not replaced.",
+  "next": "Use private tmpfs only for non-executable SQLite contract/reopen fixture checks; preserve real disk quota/crash/actual product runtime checks and full suite; reports label env. Do not globally change TMPDIR for launcher/mock executables on noexec mount."
+}

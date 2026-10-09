@@ -1,0 +1,17 @@
+{
+  "invocation": "dvl08-fix-02",
+  "status": "candidate_ready",
+  "candidate": "dca94d7fa092b7848f2d90e621d2b40df4b2b7137f7dabe7928095b242741814",
+  "changed": [
+    "tools/q01_recheck.py",
+    "tests/backend/summary_probe_support.py",
+    "tests/backend/test_summary_probe.py",
+    "src/workbench/contracts/summary_compat_policy_v1.json"
+  ],
+  "policy_sha256": "6170b336f195a0158de0ced6535a3f5d5463b3a64092b3adcb75ca1486242196",
+  "checks": "27 total,25pass/2legacy independent positive expectation fail; worker fixtures pass",
+  "next": "tester fills positive actual sharing/block measurements and adds independent negatives; no contract weakening",
+  "processes": "worker final confirms no subprocess/socket",
+  "scope_audit": ".workflow/dev-validation-log-retention/runs/implement-p5-20261009/audit-dvl08-fix-02.json",
+  "runtime_pass": false
+}

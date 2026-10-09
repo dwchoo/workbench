@@ -1,0 +1,28 @@
+{
+  "record_type": "implementation-environment-observation",
+  "observed_date": "2026-10-09",
+  "system_python": "3.12.3",
+  "test_python": "/tmp/workbench-dvl-20261009-3l1ViH/test-py312/bin/python",
+  "dependencies": {
+    "pyte": "0.8.2",
+    "wcwidth": "0.8.4"
+  },
+  "scope": "private temporary virtualenv only; no user/global environment mutation",
+  "unused_environment": "/tmp/workbench-dvl-20261009-3l1ViH/test-venv uses Python 3.14.7 and is not the selected test runtime",
+  "baseline": {
+    "raw": {
+      "tests": 33,
+      "exit_code": 0,
+      "seconds": 10.368,
+      "acceptance_claim": "regression baseline only; no future feature gate"
+    },
+    "tasks_first_attempt": {
+      "exit_code": -9,
+      "timed_out": true,
+      "timeout_seconds": 60,
+      "classification": "incomplete watchdog result, not product failure or pass",
+      "next": "repeat unchanged baseline with 180-second watchdog and preserve first record"
+    }
+  },
+  "check_stdout_issue": "execution helper completed; the presentation pipeline incorrectly indexed candidate strings as objects; authoritative check files were inspected"
+}

@@ -1,0 +1,17 @@
+{
+  "invocation": "dvl03-test-01",
+  "status": "complete_fixture_tests",
+  "candidate": "b989ceabff7e2c92d1cf1591c0c1294f705f623e0c61bfc15446c7918af54704",
+  "tests": 23,
+  "passed": 23,
+  "failed": 0,
+  "changed": [
+    "tests/contracts/test_logs_v1_independent.py",
+    "tests/storage/important_log/test_store_independent.py",
+    "tests/tasks/test_repository_logs_independent.py"
+  ],
+  "checks": "Python/actual Node24 TS strict golden+negative; SQLite private safety/codec/durability/rollback; operating metadata no replay/migration",
+  "runtime_pass": false,
+  "processes": "test_designer final reports no subprocess/socket",
+  "scope_audit": ".workflow/dev-validation-log-retention/runs/implement-p5-20261009/audit-dvl03-test-01.json"
+}

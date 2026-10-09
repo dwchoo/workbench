@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "bundle_digest": "498223bd94337236ff58252ebcbb5502be6f81defab03c0fa3c7b195a97599e4",
+  "candidate": "5e6c516d6a85181cccd9153f103276b4fba988339a874af2d7409f7d916576c5",
+  "observations": {
+    "all_21_file_hashes_match": true,
+    "record_reference_hashes_match": true,
+    "candidate_confirmation_matches": true,
+    "scope_violations": 0,
+    "index_changes": 0,
+    "acceptance_ids_unchanged": 28,
+    "gate_ids_and_evidence_levels_unchanged": 46,
+    "gate_supplier_errors": 0,
+    "whitespace_diagnostics": 0
+  },
+  "evidence": "Root final tool output: read-only publication integrity/dependency comparison + git whitespace checks, exit 0",
+  "structural_only": true,
+  "product_tests_or_omp_probes_run": false,
+  "model_calls_run": false,
+  "p4_external_review_requested": false,
+  "bundle_approved": false,
+  "implementation_authorized": false
+}

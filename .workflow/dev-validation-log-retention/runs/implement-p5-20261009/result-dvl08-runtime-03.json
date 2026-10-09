@@ -1,0 +1,10 @@
+{
+  "invocation": "dvl08-runtime-03",
+  "outcome": "needs_reroute",
+  "classification": "probe_setup_agent_discovery",
+  "evidence": "/tmp/workbench-dvl-20261009-3l1ViH/dvl08/.workflow/dvl-local/dvl08-runtime-03-child.json",
+  "host": "worker final parent/provider ended no residue",
+  "observation": "parent task call reached actual OMP but searched fake HOME ~/.omp/agent/agents, copied exact existing explorer only profile/agents; child count0",
+  "next": "place exact existing definition in observed fake HOME search path; one bounded child invocation, no new definition/adoption",
+  "all8_pass": false
+}

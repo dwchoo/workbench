@@ -1,0 +1,34 @@
+{
+  "record_type": "verified_phase_integration",
+  "ticket": "DVL-08",
+  "phase": "judge_only",
+  "source_candidate": "3f5b835458a70bd67e46d8dace57c5ed0c87220fc611010f430ad2b5ac5105de",
+  "integrated_candidate": "01d7459beac326c0b264736a7740cd4285a280b8b6d3ed43a51f7cc478dc8b2a",
+  "files": [
+    "tools/validate_feature_gate.py",
+    "tools/q01_recheck.py",
+    "tests/backend/summary_probe_support.py",
+    "tests/backend/live_summary_feasibility.py",
+    "tests/backend/test_summary_probe.py",
+    "tests/backend/test_summary_gate_validator.py",
+    "tests/backend/test_summary_gate_validator_independent.py",
+    "tests/backend/test_summary_probe_independent.py",
+    "src/workbench/contracts/summary_compat_policy_v1.json"
+  ],
+  "all_file_hashes_equal": true,
+  "scope_audit": ".workflow/dev-validation-log-retention/runs/implement-p5-20261009/audit-integrated-judge.json",
+  "outside_scope": [],
+  "preserved_user_changes": true,
+  "check": ".workflow/dev-validation-log-retention/runs/implement-p5-20261009/dvl08-integrated-judge31-check.json",
+  "review": ".workflow/dev-validation-log-retention/runs/implement-p5-20261009/result-dvl08-review-02.json",
+  "freeze": ".workflow/dev-validation-log-retention/runs/implement-p5-20261009/q01-judge-freeze-01.json",
+  "graph_update": {
+    "command": "graphify update .",
+    "exit_code": 0,
+    "mode": "AST-only/no LLM",
+    "nodes": 35460,
+    "edges": 75240,
+    "warning": "initial graph rebuild included historical repository snapshots; graph data/cache are generated local files"
+  },
+  "runtime_pass": false
+}

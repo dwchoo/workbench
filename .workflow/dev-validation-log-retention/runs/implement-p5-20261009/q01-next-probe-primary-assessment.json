@@ -1,0 +1,22 @@
+{
+  "kind": "primary_source_future_probe_assessment",
+  "mode": "read-only; no model calls",
+  "sources": [
+    "https://raw.githubusercontent.com/can1357/oh-my-pi/v18.8.6/packages/coding-agent/src/index.ts",
+    "https://raw.githubusercontent.com/can1357/oh-my-pi/v18.8.6/packages/coding-agent/src/task/executor.ts",
+    "https://raw.githubusercontent.com/can1357/oh-my-pi/v18.8.6/packages/coding-agent/src/extensibility/extensions/types.ts"
+  ],
+  "facts": [
+    "public index exports task/executor; pi.pi exposes public coding-agent exports",
+    "runSubprocess ExecutorOptions existing AgentDefinition, strict outputSchema, skills, detached, in-memory session, persistArtifacts, restrictToolNames, allow noMCP/noIRC, private extensions",
+    "setActiveTools awaited/getActiveTools readback public; no native receipt/epoch/nonce primitive specified in types",
+    "before_provider_request sees payload; return unknown can replace, no explicit block result contract",
+    "InputEvent source interactive/rpc/extension public but before_agent_start already transformed/batched prompt only"
+  ],
+  "inferences": [
+    "Direct public existing-agent executor may remove parent model-selected task and parent turn occupancy while retaining named definition and typed result; currently only hypothesis, no runtime observed",
+    "Public factory existing-agent executor is not TS direct completion or new definition/standing process by itself; actual release/enforcement/isolation/guard/origin still must test",
+    "No absence/global unsupported claim from one source. Guard equivalent barrier needs real negative check-send swap plus epoch/enforcement observation; own promises alone insufficient"
+  ],
+  "next": "Next08 bounded smallest public executor probe if named definition can be resolved exact bytes without unadopted API; no larger adapter before decisive guard/priority observations"
+}

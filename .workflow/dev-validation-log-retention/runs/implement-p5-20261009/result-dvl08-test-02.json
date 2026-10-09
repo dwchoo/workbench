@@ -1,0 +1,15 @@
+{
+  "invocation": "dvl08-test-02",
+  "status": "complete_fixture_tests",
+  "candidate": "7a2ee7041018934e5e674058bea84795ee1738e1945efab1dbb5530c2058f437",
+  "tests": 23,
+  "passed": 23,
+  "failed": 0,
+  "changed": [
+    "tests/backend/test_summary_probe_independent.py"
+  ],
+  "assertion_correction": ".workflow/dev-validation-log-retention/runs/implement-p5-20261009/adjudication-dvl08-test-01.json",
+  "scope_audit": ".workflow/dev-validation-log-retention/runs/implement-p5-20261009/audit-dvl08-test-02.json",
+  "runtime_pass": false,
+  "processes": "test_designer final confirms no subprocess/socket"
+}

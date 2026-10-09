@@ -1,0 +1,15 @@
+{
+  "schema_version": 1,
+  "source": "user: 그렇게 해 (Claude s4/p4 마지막 리뷰 보고 직후)",
+  "accepted_scope": "R1~R3 작은 기술 보강 + R4~R5 구현착수 검증/범위에 연결 + R6 새 수신기록. 계획 문서/ticket/운영기록만",
+  "source_review": "ticket-bundle-s4-p4-final-review-04",
+  "baseline_authority": ".workflow/dev-validation-log-retention/runs/approval-r0.8/approval.json",
+  "operating_decisions": ".workflow/dev-validation-log-retention/runs/plan-p3-s3-20261009/decisions.json",
+  "bundle_approved": false,
+  "implementation_authorized": false,
+  "product_tests_or_probes_authorized": false,
+  "paid_model_authorized": false,
+  "raw_activation_authorized": false,
+  "new_agents_authorized": false,
+  "commit_publish_deploy_authorized": false
+}

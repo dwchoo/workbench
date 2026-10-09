@@ -1,0 +1,11 @@
+{
+  "ticket": "DVL-04",
+  "current_invocation": "dvl04-impl-01",
+  "observed_seam": "BackendService._make_workflow supplies repository/mailbox/worker_port/automation_source/raw_store but not private _metadata_event C-D46 latch",
+  "current_scope": "run.py/admission.py inject optional failure callback/gate; foundation unchanged",
+  "product_hold_status": "not wired/not passed yet",
+  "scope_refresh_intent": "after05 backend:composition lease release, bounded service.py wiring integrated lifecycle plus04 callback preservingC-D46 new auto hold/ongoing unaffected",
+  "concurrency": "no04 service.py writes while05exclusivecomposition writer",
+  "authority": "normal implementation seam scope refresh within approved04/SPEC§6, not newcorecontract or permission",
+  "verification": "independent failure fixture + realcomposition integration assertions afterwiring, final combinedcandidate checks"
+}

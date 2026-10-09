@@ -1,0 +1,29 @@
+{
+  "record_type": "independent-failure-adjudication",
+  "invocation": "dvl08-test-01",
+  "candidate": "0be44f68de9d15e27de43fe8c59e71fe41275636603b3f7204d673c9f8b9074c",
+  "findings": [
+    {
+      "id": "DVL08-policy-minimum",
+      "classification": "implementation defect accepted; independent test has contradictory sequencing",
+      "production_requirement": "reject weakened required core boundaries before new projection baseline acceptance",
+      "test_issue": "same unchanged weakened policy is first expected to return capture, then expected to raise; deterministic capture cannot satisfy both",
+      "test_correction_owner": "test_designer in dvl08-test-02 after production writer stops",
+      "test_correction_scope": "separate legal policy bytes change invalidation from weakened core baseline ValueError rejection; retain both approved guarantees"
+    },
+    {
+      "id": "DVL08-import-alias",
+      "classification": "implementation defect accepted",
+      "production_requirement": "aliased unresolved dynamic imports must invalidate closure",
+      "test_correction": "none; preserve failing assertion"
+    }
+  ],
+  "first_failure_check": ".workflow/dev-validation-log-retention/runs/implement-p5-20261009/dvl08-independent-first-failure-check.json",
+  "runtime_pass": false,
+  "remaining_steps": [
+    "bounded production correction",
+    "independent retest",
+    "fresh frozen reviewer",
+    "freeze only if required phase tests/review pass"
+  ]
+}

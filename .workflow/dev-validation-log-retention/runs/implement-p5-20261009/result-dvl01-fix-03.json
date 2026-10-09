@@ -1,0 +1,11 @@
+{
+  "invocation": "dvl01-fix-03",
+  "outcome": "candidate_ready",
+  "candidate": "be1fb71086af83bb16926a51371bee85747c4c490f6dad59cf89fd28490aa83a",
+  "runner_sha256": "f4194ca4830349d0762330d68f0bdc5bb9e6c5383c16d45fa261132c9e102803",
+  "mechanism": "trustednativefork root-chain receipts + temporary Linuxsubreaper adoption; newdirectchild/baselineexclude/startticks/private-namespacedcorroboration/exactidentitySIGTERM/KILL/reap only; restore priorOSprocessmode",
+  "tests": "29passed BEFOREcrossExecsupplement; direct+crossExec2 currenttargetpass observed independentauthor correction; current31fullpending",
+  "generated_graph": "ASTupdate noAPI cost worker16170nodes/40689edges, notRootintegratedgraph",
+  "cleanup": "workerfinal no owned subprocess/socket",
+  "lease": "worker finished; independent samecall frozen retest nowreadOnly"
+}

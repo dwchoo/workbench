@@ -1,0 +1,67 @@
+{
+  "schema_version": 1,
+  "record_type": "feature-operating-decisions",
+  "feature": "dev-validation-log-retention",
+  "created_on": "2026-10-09",
+  "source_user_message": "1번 A\n2번 A\n3번은 omp의 업데이트 주기가 너무 짧아 그래서 매번 재검증 안내를 주면 사용하는 입장에서 답답해. 기본은 그냥 새 버전에 대해서 동작해보고 문제가 생기거나 우리 프로그램의 업데이트가 필요하면 검증 + 수정으로 하자. 너의 제안의 A와 가까울거 같은데 사용자가 verify해야할거 같아. omp의 업데이트가 너무 잦고 기존의 기능이 거의 바뀌지 않아서 괜찮을거 같아.",
+  "incorporation_request": "반영해줘.",
+  "clarification_accepted_by_incorporation_request": "OMP 버전만 바뀌면 기본 사용 유지. 실제 호환성 문제 또는 관련 제품 변경 때 수동 verify;1A 보호 정책은 그 상태에 적용. 최초 Q01/별도 activation 및 모든 안전 preflight 유지.",
+  "decisions": [
+    {
+      "id": "Q-S2-01",
+      "brief_decision": "LG-D13",
+      "status": "agreed",
+      "value": "보호/재검증 상태에서 신규 source legacy-stop,진행중cohort유지;OMP version-only는DV-D03예외"
+    },
+    {
+      "id": "Q-S2-02",
+      "brief_decision": "LG-D14",
+      "status": "agreed",
+      "value": "취소/승인철회 사실수집만;새종료요약없음;기전송유효late저장별개"
+    },
+    {
+      "id": "Q-S2-04",
+      "brief_decision": "DV-D03",
+      "status": "agreed_revised_option",
+      "value": "OMP update-only 기본실행;반복verify요구/자동verify없음;실제문제/제품경계변경시명시수동verify"
+    },
+    {
+      "id": "Q-S2-03",
+      "status": "conditional_pending_measurement_and_user_adoption",
+      "value": "공유경로가필요할때만 차단측정/실모델한계보고후채택"
+    },
+    {
+      "id": "Q-S3-05",
+      "status": "conditional_pending_observation_and_user_decision",
+      "value": "실제modelmetadata부재시unknown차단;fallback상한은관측후결정"
+    }
+  ],
+  "scope": {
+    "document_revision_authorized": true,
+    "bundle_approved": false,
+    "implementation_authorized": false,
+    "probe_or_model_run_authorized": false,
+    "raw_rotation_activation_authorized": false,
+    "commit_publish_deploy_authorized": false
+  },
+  "baseline_approval": {
+    "path": ".workflow/dev-validation-log-retention/runs/approval-r0.8/approval.json",
+    "brief_revision": "r0.8",
+    "brief_sha256": "9b6632a9688a5c2ca0a3adb2094d4fe1813cb3ca93d4a87dbe4d55663bb9255a"
+  },
+  "prior_review": {
+    "request_id": "ticket-bundle-s2-p2-review-02",
+    "receipt": "user_delivered_report",
+    "verdict": "conditional_proceed_not_approval",
+    "defects": [
+      "N1",
+      "N2",
+      "N3",
+      "N4",
+      "N5",
+      "N6",
+      "N7"
+    ]
+  },
+  "note": "일회성 검증 OMP/local provider는 기존 agent 재사용 검증 수단;일회성 운영 요약 route의 신규 채택은 허가하지 않음. 이번 턴 검증 프로세스/agent 실행 없음."
+}

@@ -1,0 +1,138 @@
+{
+  "schema_version": 1,
+  "record_type": "planning-bundle-manifest",
+  "feature": "dev-validation-log-retention",
+  "created_on": "2026-10-09",
+  "revision": {
+    "brief": "r0.9",
+    "spec": "s5",
+    "plan": "p5",
+    "requirements": "r0.9-plan-p5-draft"
+  },
+  "digest_algorithm": "SHA-256 of JSON.stringify(files), sorted by path (lexicographic ASCII paths), UTF-8, no trailing newline",
+  "bundle_digest": "78bc55919e57bbf2132d6653780c5c164a2ee1d618422e5232d4cf0d1d667c3e",
+  "files": [
+    {
+      "path": "AGENTS.md",
+      "sha256": "5cda517bb39d3c54eec4d3201df38b8706c424202e62ffc11a13a2968c8fe97a"
+    },
+    {
+      "path": "docs/features/dev-validation-log-retention/BRIEF.md",
+      "sha256": "5ba8c47f4e23b6e213d61e81be72bfadd57f4c30bd56a256ffe84d7f736fab46"
+    },
+    {
+      "path": "docs/features/dev-validation-log-retention/FOLLOWUPS.md",
+      "sha256": "510b1675cc5db91f62a51c6c2dbd9ef5d401da6f88a674dad5aa44b94dc73d82"
+    },
+    {
+      "path": "docs/features/dev-validation-log-retention/PLAN-REVIEW.md",
+      "sha256": "bc58fd1fe95b836e24003ba09add385dcad729d571df4465ca668fa275a8209a"
+    },
+    {
+      "path": "docs/features/dev-validation-log-retention/PLAN.json",
+      "sha256": "70d165f8a290bc63d397203f2b43d71b18cb7e65d1e4ab8db227f288d53b3987"
+    },
+    {
+      "path": "docs/features/dev-validation-log-retention/SPEC.md",
+      "sha256": "db8f645d721e8eb4681e0f44e9cdd53fa096f70003c3daf20a80bc6f046b8f6b"
+    },
+    {
+      "path": "docs/features/dev-validation-log-retention/requirements-r0.9-p5.json",
+      "sha256": "d778a6b44c2384a979d4c581e1a8add76d6f13cf39b11b328f9138c2d2c864a2"
+    },
+    {
+      "path": "docs/features/dev-validation-log-retention/tickets/DVL-01.md",
+      "sha256": "cf3035a7d9a3878d86125d5d2b91c35fc00bf268dd5039cc95897a3e6230cc1c"
+    },
+    {
+      "path": "docs/features/dev-validation-log-retention/tickets/DVL-02.md",
+      "sha256": "992b366c939590897449576ff8f656234b1447ea612f294adbce74291a956854"
+    },
+    {
+      "path": "docs/features/dev-validation-log-retention/tickets/DVL-03.md",
+      "sha256": "1201fa90ac94f800a8e5cd01ac5d9d9f6f30232f4bdf6a138b1766d683f9dcaa"
+    },
+    {
+      "path": "docs/features/dev-validation-log-retention/tickets/DVL-04.md",
+      "sha256": "617c22a4a1dedaba5905f9904194d425f93489d26d7ac7a42515bbc3e14ebbcf"
+    },
+    {
+      "path": "docs/features/dev-validation-log-retention/tickets/DVL-05.md",
+      "sha256": "47ebf82345a947d4b7f99884dc52b05ca38bf96e8277b09ac6c1f01f5e163fd5"
+    },
+    {
+      "path": "docs/features/dev-validation-log-retention/tickets/DVL-06.md",
+      "sha256": "1d8f4c86f72b2769c22c18ba3024488cced05c597bb4f81b466fca40fbb79b80"
+    },
+    {
+      "path": "docs/features/dev-validation-log-retention/tickets/DVL-07.md",
+      "sha256": "8c7da07e3042dc99f0dbbb39454ec7e2aaa4fa2d45f278576ecbfa5f0a4b2afd"
+    },
+    {
+      "path": "docs/features/dev-validation-log-retention/tickets/DVL-08.md",
+      "sha256": "94cad44376e10d36fbdae6009b109eb8a694c817255c2e2416df84838021803d"
+    },
+    {
+      "path": "docs/features/dev-validation-log-retention/tickets/DVL-09.md",
+      "sha256": "88fc933f51f9acdc382ca69300e2fc3025eef834613661e9184fcc59436a3f02"
+    },
+    {
+      "path": "docs/features/dev-validation-log-retention/tickets/DVL-10.md",
+      "sha256": "22e2b3a4e7cb9abd2a0fa6d938c4208d10540b2b61f6a9cc457ec5bc2dc46093"
+    },
+    {
+      "path": "docs/features/dev-validation-log-retention/tickets/DVL-11.md",
+      "sha256": "23d94d6e96c2c8fbf1adb1c2d294c794c6e44a9463340e60a66bff97cd62622a"
+    },
+    {
+      "path": "docs/features/dev-validation-log-retention/tickets/DVL-12.md",
+      "sha256": "25ca92116348555841ea85f6ae856fa4cc0a17cd7ed07f5ad654281bff21444c"
+    },
+    {
+      "path": "docs/features/dev-validation-log-retention/tickets/DVL-13.md",
+      "sha256": "43b89b1cd7fab2b196e260ffef9940e29ced6f8bfb4272b745bcf9a74f280f17"
+    },
+    {
+      "path": "docs/features/dev-validation-log-retention/tickets/DVL-14.md",
+      "sha256": "0a8818bb53cdbd3623d0966575b113c678cd2eb3b29a5c79e43a655b837ad015"
+    }
+  ],
+  "workspace": {
+    "before_candidate": "5e6c516d6a85181cccd9153f103276b4fba988339a874af2d7409f7d916576c5",
+    "candidate": "34e448b25f879f2a1113823dfb3756acd2133096dfaec23e78d9b5334fd1d0b1",
+    "before_checkpoint": ".workflow/dev-validation-log-retention/runs/plan-p5-s5-20261009/before-checkpoint.json",
+    "published_manifest": {
+      "path": ".workflow/dev-validation-log-retention/runs/plan-p5-s5-20261009/published-manifest.json",
+      "sha256": "502db1883ce2d376c8ab490bde2086d07e2323591c38e83b90901b5d1aed7d38"
+    }
+  },
+  "validation": {
+    "record": {
+      "path": ".workflow/dev-validation-log-retention/runs/plan-p5-s5-20261009/validation-final.json",
+      "sha256": "44b836e92adee2fe291f5a2effaef9396ac3b583c2fffccc1ff535aca38ad6b6"
+    },
+    "scope_audit": {
+      "path": ".workflow/dev-validation-log-retention/runs/plan-p5-s5-20261009/scope-audit.json",
+      "sha256": "bef84014dc83f0a071029e795c12afb67b59a9975b117f050addc3f885b1aa28"
+    },
+    "structural_only": true
+  },
+  "authority": {
+    "source_baseline_approval": ".workflow/dev-validation-log-retention/runs/approval-r0.8/approval.json",
+    "baseline_brief_snapshot": ".workflow/dev-validation-log-retention/runs/plan-p3-s3-20261009/source/BRIEF-r0.8.md",
+    "operating_decisions": ".workflow/dev-validation-log-retention/runs/plan-p3-s3-20261009/decisions.json",
+    "revision_authority": {
+      "path": ".workflow/dev-validation-log-retention/runs/plan-p5-s5-20261009/authority.json",
+      "sha256": "beedea25ed41aac9942680598ab92da935cb9b1e90e388b4c24a466d9f6a7b13"
+    },
+    "revision_request": "그렇게 해 (s4/p4 최종 리뷰 보고 직후)",
+    "bundle_approval": null,
+    "implementation_authorized": false,
+    "raw_activation_authorized": false
+  },
+  "source_review": {
+    "path": ".workflow/dev-validation-log-retention/runs/plan-p5-s5-20261009/received-review.json",
+    "sha256": "cd629b875cc1421f38b27d09495ff3da7a23841821bf725719f8c2458f49ebad"
+  },
+  "note": "s4/p4 final review is historical/conditional, not p5 approval. R1~R3 technical reinforcement; R4~R5 dispatch checks planned, R6 new receipt. AGENTS unchanged but included as existing bundle input. All runtime/function gates pending. No new external review requested this revision."
+}

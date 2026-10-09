@@ -1,0 +1,74 @@
+{
+  "schema_version": 1,
+  "record_type": "planning-revision-record",
+  "run_id": "plan-p3-s3-20261009",
+  "request": "반영해줘.",
+  "supersedes": ".workflow/dev-validation-log-retention/runs/plan-p2-s2-20261009/planning-record.json",
+  "source_review": "ticket-bundle-s2-p2-review-02",
+  "source_review_receipt": {
+    "path": ".workflow/dev-validation-log-retention/runs/plan-p3-s3-20261009/received-review.json",
+    "sha256": "7fad9936f2917d07952e59a45ac2f74c8ac0a5515ae74d95f898fb3c2da880fa"
+  },
+  "brief": "r0.9",
+  "baseline_brief_approval_preserved": true,
+  "approved_r0_8_snapshot": ".workflow/dev-validation-log-retention/runs/plan-p3-s3-20261009/source/BRIEF-r0.8.md",
+  "operating_decisions": {
+    "path": ".workflow/dev-validation-log-retention/runs/plan-p3-s3-20261009/decisions.json",
+    "sha256": "6be1a8506a74d8b398179d7e04cf446f02499cc625dfbc225c40b93c8b74c15c"
+  },
+  "spec": "s3",
+  "plan": "p3",
+  "ticket_count": 14,
+  "acceptance_count": 28,
+  "gate_count": 46,
+  "bundle_digest": "e63b52dc02fb5ff51a797f91ad2e993f8c3c5fa39e2a2ee499390838d52552d5",
+  "requirements_identity": "6cc983325a85f46d0bb2ee251bd9dac249e9ffa412e046c4818618fd81517f34",
+  "candidate": "28256ddda8ec71d935328baaa7a02436fc302e0127a69cfe360e52cda96b66df",
+  "published_manifest": {
+    "path": ".workflow/dev-validation-log-retention/runs/plan-p3-s3-20261009/published-manifest-final.json",
+    "sha256": "2b186d694db5fb8165d24db86ae5dd16138e6501b1063c58599dbeac7b0a981c"
+  },
+  "checks": [
+    {
+      "kind": "plan_structure",
+      "result": "passed",
+      "exit_code": 0,
+      "evidence": {
+        "path": ".workflow/dev-validation-log-retention/runs/plan-p3-s3-20261009/validation-final.json",
+        "sha256": "7681bc9382ceb0689372b74b84bf67cddcfe76d46938d196493e3cb4fb759538"
+      },
+      "criteria": "AC28/gate46 identity,unique IDs,DAG,gate suppliers owner/transitive predecessors"
+    },
+    {
+      "kind": "scope_audit",
+      "result": "passed",
+      "exit_code": 0,
+      "evidence": {
+        "path": ".workflow/dev-validation-log-retention/runs/plan-p3-s3-20261009/scope-audit-final.json",
+        "sha256": "964eeb45c1df412d1028bce4f8192c2e7e726a2d2adcbad88edac26fc2176bdb"
+      },
+      "criteria": "20 feature planning files only,index_changed/outside_scope empty,comparable"
+    },
+    {
+      "kind": "document_whitespace",
+      "result": "passed",
+      "exit_code": 0,
+      "criteria": "final feature MD/JSON/tickets git diff --no-index --check;tracked git diff --check; normal no-index exit1 with no diagnostic accepted"
+    }
+  ],
+  "not_run": [
+    "product tests",
+    "OMP runtime/probe/model calls",
+    "model metadata discovery",
+    "worktree/agent creation",
+    "external review dispatch"
+  ],
+  "pending_user_decisions": [
+    "conditional Q-S2-03 shared-route blocking acceptance after measurement",
+    "conditional Q-S3-05 fallback after real model metadata unavailable observation"
+  ],
+  "external_review_status": "prior_s2_p2_review_received;new_s3_p3_not_requested",
+  "implementation_authorized": false,
+  "raw_rotation_activation_authorized": false,
+  "note": "Planning-only Root revision; prior invocation accounting not reset. No child or external agent invocation started in this revision. Writer process state not queried; stable snapshot alone is not quiescence proof."
+}

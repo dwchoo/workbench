@@ -1,0 +1,61 @@
+{
+  "schema_version": 1,
+  "record_type": "planning-revision-record",
+  "revision": {
+    "brief": "r0.9",
+    "spec": "s4",
+    "plan": "p4"
+  },
+  "authority": ".workflow/dev-validation-log-retention/runs/plan-p4-s4-20261009/authority.json",
+  "received_review": ".workflow/dev-validation-log-retention/runs/plan-p4-s4-20261009/received-review.json",
+  "source_operating_decisions": ".workflow/dev-validation-log-retention/runs/plan-p3-s3-20261009/decisions.json",
+  "before_candidate": "28256ddda8ec71d935328baaa7a02436fc302e0127a69cfe360e52cda96b66df",
+  "candidate": "5e6c516d6a85181cccd9153f103276b4fba988339a874af2d7409f7d916576c5",
+  "bundle_manifest": ".workflow/dev-validation-log-retention/runs/plan-p4-s4-20261009/bundle-manifest.json",
+  "bundle_digest": "498223bd94337236ff58252ebcbb5502be6f81defab03c0fa3c7b195a97599e4",
+  "published_manifest": {
+    "path": ".workflow/dev-validation-log-retention/runs/plan-p4-s4-20261009/published-manifest.json",
+    "sha256": "7594b128a871a010e20dd9ffcda4d462040ffc66877cf1a4c3c46d166f0bea27"
+  },
+  "requirements_identity": "eaacb4dba17cf631983c868177dbb45125282fe90062fab9ffde32310de09eca",
+  "checks": [
+    {
+      "command": "python3 .agents/skills/to-tickets/scripts/validate_plan.py --input .workflow/dev-validation-log-retention/runs/plan-p4-s4-20261009/validation-request.json --output .workflow/dev-validation-log-retention/runs/plan-p4-s4-20261009/validation-final.json",
+      "cwd": "/home/dwchoo/ai-exp-assistant",
+      "exit_code": 0,
+      "result": "passed_structural_only",
+      "evidence": ".workflow/dev-validation-log-retention/runs/plan-p4-s4-20261009/validation-final.json"
+    },
+    {
+      "command": "evidence.py audit with audit-request.json",
+      "cwd": "/home/dwchoo/ai-exp-assistant",
+      "exit_code": 0,
+      "result": "no_outside_scope_or_index_changes",
+      "evidence": ".workflow/dev-validation-log-retention/runs/plan-p4-s4-20261009/scope-audit.json"
+    },
+    {
+      "command": "git diff --check + git diff --no-index --check /dev/null for21planningfiles",
+      "cwd": "/home/dwchoo/ai-exp-assistant",
+      "exit_code": 0,
+      "result": "no_whitespace_diagnostics",
+      "evidence": "Root tool output; final confirmation recorded separately"
+    }
+  ],
+  "tickets": 14,
+  "gate_items": 46,
+  "all_runtime_gate_evidence": "not_run_pending",
+  "external_review_status": "not_requested_for_s4_p4",
+  "bundle_approved": false,
+  "implementation_started": false,
+  "tests_or_probes_run": false,
+  "model_calls_run": false,
+  "new_agents_created": false,
+  "invocation_accounting": "No child dispatch this revision; retained historical usage not reset/reclassified.",
+  "raw_activation": false,
+  "unknowns": [
+    "Q01 8 items including guard effective confirmation/atomicity",
+    "offline actual session metadata/reasoning budget/output ceiling",
+    "origin API/isolation/herdr/pyte/time targets",
+    "conditional shared route delay/fallback/thinking-tier/guard alternative after observation"
+  ]
+}

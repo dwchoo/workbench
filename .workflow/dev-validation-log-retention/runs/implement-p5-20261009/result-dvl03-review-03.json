@@ -1,0 +1,21 @@
+{
+  "invocation": "dvl03-review-03",
+  "outcome": "changes_required_one_durable_evidence_gap",
+  "candidate": "905a2823bde32355b765217b9a0e3eefb25b751c52c8a240e1f8735d40dc767c",
+  "findings": [
+    {
+      "id": "S03-R8",
+      "severity": "high",
+      "disposition": "accepted",
+      "requirement": "coverage -> complete-negative proof -> delayed same physical collector gap must not remain authoritative complete no-match on read/use; preserve immutable rows, expose conservative invalidated view or enforce verifiable sealing"
+    }
+  ],
+  "nonblocking": [
+    {
+      "id": "S03-AliasTaxonomy",
+      "disposition": "producer taxonomy check in05, not proven blocker or new kind mapping",
+      "reason": "message/event ID namespaces and stable producer identity require actual-source mapping; arbitrary ID-change cannot be resolved by parser alone; preserve current strict either-ID rule pending origin producer tests"
+    }
+  ],
+  "cleanup": "reviewer completed no tests/processes"
+}

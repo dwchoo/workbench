@@ -1,0 +1,26 @@
+{
+  "root": "/home/dwchoo/ai-exp-assistant",
+  "requirements": "docs/features/dev-validation-log-retention/requirements-r0.9-p5.json",
+  "argv": [
+    "/usr/bin/env",
+    "PYTHONPATH=src",
+    "PYTHONDONTWRITEBYTECODE=1",
+    "python3",
+    "-m",
+    "unittest",
+    "discover",
+    "-s",
+    "tests/tasks",
+    "-p",
+    "test_repository*.py",
+    "-v"
+  ],
+  "environment": "current Python; temp-only repository/raw unit fixtures; no OMP/provider/real data access",
+  "log": ".workflow/dev-validation-log-retention/runs/implement-p5-20261009/tasks-baseline.log",
+  "check_id": "tasks-baseline",
+  "watch": [],
+  "exclude": [
+    ".workflow/**"
+  ],
+  "timeout": 60
+}

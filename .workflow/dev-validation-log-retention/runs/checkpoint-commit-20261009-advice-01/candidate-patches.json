@@ -1,0 +1,245 @@
+{
+  "schema_version": 1,
+  "semantics": "Root current file bytes -> isolated candidate, only listed paths. NOT integrated or finally accepted. No commands executed by reading.",
+  "base_head": "2f21ec91990a409ea0d25f351343b50e34b48196",
+  "groups": [
+    {
+      "name": "dvl01",
+      "workspace": "dvl01",
+      "candidate": "8a544e417956263982fea90ffbd08eb6ecdb855ae4857607e0fa7ff7c15fc5b0",
+      "paths": [
+        "tools/dev_validate.py",
+        "tests/dev_validation/test_fast_smoke.py",
+        "tests/dev_validation/test_runner.py",
+        "tests/dev_validation/fixture_items.py",
+        "tests/integration/cw16_harness.py",
+        "tests/dev_validation/test_runner_independent.py",
+        "tests/dev_validation/fixture_items_independent.py"
+      ],
+      "files": [
+        {
+          "path": "tools/dev_validate.py",
+          "base_sha256": null,
+          "candidate_sha256": "461d479cf807154b7dca7628ae8795a0407b438d8330df2152e773c9a59f4190",
+          "mode": "664",
+          "changed": true
+        },
+        {
+          "path": "tests/dev_validation/test_fast_smoke.py",
+          "base_sha256": null,
+          "candidate_sha256": "ed44c3ed4211678daac4231b3cd28cc47554d046ec71dd223a218b3274fda9e8",
+          "mode": "664",
+          "changed": true
+        },
+        {
+          "path": "tests/dev_validation/test_runner.py",
+          "base_sha256": null,
+          "candidate_sha256": "210b3121852a1dca72d65b4cd7e96ad0c80ea4e0ea7a74dcaa9d9a50a8e45f97",
+          "mode": "664",
+          "changed": true
+        },
+        {
+          "path": "tests/dev_validation/fixture_items.py",
+          "base_sha256": null,
+          "candidate_sha256": "9d138ef86ec7dc3a06c662f80885b32094180531e9c607561c3b046565316f6e",
+          "mode": "664",
+          "changed": true
+        },
+        {
+          "path": "tests/integration/cw16_harness.py",
+          "base_sha256": "0f686cfa5b2d92908448f71e51f6234f8c22d0f68fd6f49cc9b54620eee23067",
+          "candidate_sha256": "02ca78e497b254b83fdf3e4222d348984413d4a6f375474108f7d57300fb94f2",
+          "mode": "664",
+          "changed": true
+        },
+        {
+          "path": "tests/dev_validation/test_runner_independent.py",
+          "base_sha256": null,
+          "candidate_sha256": "6191e77ec7739607c69296d1f4be7a86105a59c4acea8cb5090c32d353f0ea05",
+          "mode": "664",
+          "changed": true
+        },
+        {
+          "path": "tests/dev_validation/fixture_items_independent.py",
+          "base_sha256": null,
+          "candidate_sha256": "34521adbee41ae3f275dced255dbde395416d62ffaa96e0df0621228fb7f255e",
+          "mode": "664",
+          "changed": true
+        }
+      ],
+      "patch_sha256": "d56ec29374a04a7a4b4da0cb1e95db94cbfa9bb273043db2264a6cafe6f2c08d"
+    },
+    {
+      "name": "dvl045",
+      "workspace": "dvl05",
+      "candidate": "5699f65a9e841a478e101c7510eb7e57dfdaf99facd31e257371b9d85dd209d4",
+      "paths": [
+        "src/workbench/workflow/run.py",
+        "src/workbench/backend/service.py",
+        "src/workbench/backend/flow_tasks.py",
+        "src/workbench/backend/flow_terminal.py",
+        "src/workbench/storage/important_log/__init__.py",
+        "src/workbench/storage/important_log/lifecycle.py",
+        "src/workbench/storage/important_log/store.py",
+        "tests/workflow/test_run.py",
+        "tests/workflow/test_condition_evidence.py",
+        "tests/workflow/test_subject_delivery.py",
+        "tests/backend/test_important_subjects.py",
+        "tests/backend/test_condition_evidence_composition.py",
+        "tests/storage/important_log/test_lifecycle.py",
+        "tests/storage/important_log/test_store.py",
+        "tests/workflow/test_condition_evidence_independent.py",
+        "tests/workflow/test_subject_delivery_independent.py",
+        "tests/storage/important_log/test_lifecycle_independent.py",
+        "tests/backend/test_condition_evidence_composition_independent.py"
+      ],
+      "files": [
+        {
+          "path": "src/workbench/workflow/run.py",
+          "base_sha256": "4a61aecf049341b5563117ae5d3e61143c9479ef3c48083ac83d62ce9a59f3b3",
+          "candidate_sha256": "af458335911ffd363f30166b8ebd06f179659091ff1ab3f748eccfb014c03c75",
+          "mode": "664",
+          "changed": true
+        },
+        {
+          "path": "src/workbench/backend/service.py",
+          "base_sha256": "7e839f284939d26197c6a2994e229104751af5900d62d1ff8becfb015d842c32",
+          "candidate_sha256": "88658e896938c07d9544a9bf4875a4c85ae24ea274cb773303b2a54d6e6ced9f",
+          "mode": "664",
+          "changed": true
+        },
+        {
+          "path": "src/workbench/backend/flow_tasks.py",
+          "base_sha256": "468a86b0aa30ce4386578971616c320a73e7f752d19d69ed07823fa61a9c96cc",
+          "candidate_sha256": "ce43f47513b620f5f1b42eb448b48f395db6c7a1cf45caa3c370cd7852c7260a",
+          "mode": "664",
+          "changed": true
+        },
+        {
+          "path": "src/workbench/backend/flow_terminal.py",
+          "base_sha256": "695f4d26704896c167805c3d4f7e931683477af8db41f1e37e59bf89019ef87c",
+          "candidate_sha256": "c565fd53f80f9be77b3d20e5ccf05f4718fc7515d0fd99a3fa2b5fba8965e054",
+          "mode": "664",
+          "changed": true
+        },
+        {
+          "path": "src/workbench/storage/important_log/__init__.py",
+          "base_sha256": "d54c04e2bed8636c44922070d8efd8a0940c1730ea49a63346e4fee6240fcf12",
+          "candidate_sha256": "e783b4d5f04c954170dfd90d7ef32b0a0fad2769bfc9086249cd23c9390dd0be",
+          "mode": "664",
+          "changed": true
+        },
+        {
+          "path": "src/workbench/storage/important_log/lifecycle.py",
+          "base_sha256": null,
+          "candidate_sha256": "c844480d0906198d650359a15e704023487d7e89dec7be0c94b841be19fc56d3",
+          "mode": "664",
+          "changed": true
+        },
+        {
+          "path": "src/workbench/storage/important_log/store.py",
+          "base_sha256": "ff90d45996f5b2a3f2fbcee193dbca0d13f86cea7233b3a64e302ea33f493673",
+          "candidate_sha256": "ac71c0756d8604805813f4a98f7a765040a0c409e72d07d511a7a112b40dc113",
+          "mode": "664",
+          "changed": true
+        },
+        {
+          "path": "tests/workflow/test_run.py",
+          "base_sha256": "24a54b3d3cb502041093ffb79f1a280024972d3f4e5d77db437e48f1a8456817",
+          "candidate_sha256": "781340ab7f14b73242652c98febe38149b0efdb2c2206ba3f512f380989d1b2d",
+          "mode": "664",
+          "changed": true
+        },
+        {
+          "path": "tests/workflow/test_condition_evidence.py",
+          "base_sha256": null,
+          "candidate_sha256": "d14ad573116c38663e6890e6346dfba31d34445a10181cac2a1bb6db62f5f783",
+          "mode": "664",
+          "changed": true
+        },
+        {
+          "path": "tests/workflow/test_subject_delivery.py",
+          "base_sha256": null,
+          "candidate_sha256": "eb5b8ea57ca0cddc65fef5be0f9b953eca581888499f9464404cf6a8421de5d4",
+          "mode": "664",
+          "changed": true
+        },
+        {
+          "path": "tests/backend/test_important_subjects.py",
+          "base_sha256": null,
+          "candidate_sha256": "9a342e57bd132463c86f53f1967eacf0ff27fd92a3c91c27fd2803de1f8a6246",
+          "mode": "664",
+          "changed": true
+        },
+        {
+          "path": "tests/backend/test_condition_evidence_composition.py",
+          "base_sha256": null,
+          "candidate_sha256": "4732debab6edc2e6123ea096393b7f9445d70cc2c5229b62ffda1e86278e810d",
+          "mode": "664",
+          "changed": true
+        },
+        {
+          "path": "tests/storage/important_log/test_lifecycle.py",
+          "base_sha256": null,
+          "candidate_sha256": "3add4366f6941a31a009f165c93663bd9fdade2408970de8c6d7becd08ba87c5",
+          "mode": "664",
+          "changed": true
+        },
+        {
+          "path": "tests/storage/important_log/test_store.py",
+          "base_sha256": "4cb1e29fd8f11fc68675d08f66197eae8e29554d981fe9b53102d1a23d8b3683",
+          "candidate_sha256": "092453f7bb9856ba6b686ae4642b0a3f82e1991d2e7e611032430e20f36cea07",
+          "mode": "664",
+          "changed": true
+        },
+        {
+          "path": "tests/workflow/test_condition_evidence_independent.py",
+          "base_sha256": null,
+          "candidate_sha256": "5a04a2f613b0fc709afb92fb4720c1a4cf6ca2bd2454a92c54e354442c25f550",
+          "mode": "664",
+          "changed": true
+        },
+        {
+          "path": "tests/workflow/test_subject_delivery_independent.py",
+          "base_sha256": null,
+          "candidate_sha256": "b9d37fb56520d3a0a0366598e283c16c757fd609500e85c7949b9b936e101aa0",
+          "mode": "664",
+          "changed": true
+        },
+        {
+          "path": "tests/storage/important_log/test_lifecycle_independent.py",
+          "base_sha256": null,
+          "candidate_sha256": "7b6eef7f0775174af3df97fdb346d5952bd3834204c322bd652efcd9c6fb59a5",
+          "mode": "664",
+          "changed": true
+        },
+        {
+          "path": "tests/backend/test_condition_evidence_composition_independent.py",
+          "base_sha256": null,
+          "candidate_sha256": "8763ce15ea9f659e64190f5d6f444e93b31a1342c730453ac50859f83b00745b",
+          "mode": "664",
+          "changed": true
+        }
+      ],
+      "patch_sha256": "a6602c1e7602262c0c269773b231ef8929bafcf43b1f36af6279487d22f7ec8c"
+    },
+    {
+      "name": "dvl08-runtime",
+      "workspace": "dvl08",
+      "candidate": "3f50d497011ad76a05ff524149ae09e04e700c9e1b0ea6976ff33b7efae7fc7d",
+      "paths": [
+        "tests/backend/live_summary_feasibility.py"
+      ],
+      "files": [
+        {
+          "path": "tests/backend/live_summary_feasibility.py",
+          "base_sha256": "d152a102ce62cbce313d82473f970ad075cf03007ad0127752c93cba7d7f63a0",
+          "candidate_sha256": "aaac943ce4b5a52aee0f82d2c3eda74b42b1e8fb62e5f0a184709aca643b2186",
+          "mode": "664",
+          "changed": true
+        }
+      ],
+      "patch_sha256": "6aa31b2c91f21c4a6666e47ddf4dbee553589ca92af10bf76ae66f85f2ace655"
+    }
+  ]
+}

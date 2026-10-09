@@ -1,0 +1,13 @@
+{
+  "invocation": "dvl01-fix-01",
+  "outcome": "candidate_ready",
+  "candidate": "7302cd04d6fe7612401546791fb30ded0e13e77331f799f3aaa302b7eee9929b",
+  "scope_audit": ".workflow/dev-validation-log-retention/runs/implement-p5-20261009/audit-dvl01-fix-01.json",
+  "changed_paths": [
+    "tools/dev_validate.py"
+  ],
+  "tests": "independent8+existing15=23 pass9.401s; diff check pass; no actualOMP",
+  "behavior": "recognizable unittest progress not arbitrary chatter; owned session descendants PID/startticks cleanup; Popen failure classified inconclusive and private namespace removed",
+  "cleanup": "all scoped subprocesses stopped",
+  "next": "independent fixed-candidate retest and fresh review"
+}

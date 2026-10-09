@@ -1,0 +1,240 @@
+{
+  "schema_version": 1,
+  "feature": "dev-validation-log-retention",
+  "phase": "planning",
+  "revision": "r0.9",
+  "approval_status": "baseline_r0.8_approved_operating_delta_agreed_bundle_pending",
+  "approval": {
+    "record": ".workflow/dev-validation-log-retention/runs/approval-r0.8/approval.json",
+    "brief": ".workflow/dev-validation-log-retention/runs/plan-p3-s3-20261009/source/BRIEF-r0.8.md",
+    "sha256": "9b6632a9688a5c2ca0a3adb2094d4fe1813cb3ca93d4a87dbe4d55663bb9255a",
+    "original_brief_path": "docs/features/dev-validation-log-retention/BRIEF.md",
+    "note": "Historical r0.8 approval/hash unchanged;current r0.9 source adds individually agreed operating decisions,not a new entire-bundle approval."
+  },
+  "planning": {
+    "status": "draft_pending_bundle_approval",
+    "spec": {
+      "path": "docs/features/dev-validation-log-retention/SPEC.md",
+      "revision": "s5"
+    },
+    "plan": {
+      "path": "docs/features/dev-validation-log-retention/PLAN.json",
+      "revision": "p5"
+    },
+    "requirements": "docs/features/dev-validation-log-retention/requirements-r0.9-p5.json",
+    "requirements_identity": "84d8dc604d543fb92116b25b00198ee43dc1b330466403534c377f1791d6eb18",
+    "tickets": [
+      "DVL-01",
+      "DVL-02",
+      "DVL-03",
+      "DVL-04",
+      "DVL-05",
+      "DVL-06",
+      "DVL-07",
+      "DVL-08",
+      "DVL-09",
+      "DVL-10",
+      "DVL-11",
+      "DVL-12",
+      "DVL-13",
+      "DVL-14"
+    ],
+    "record": ".workflow/dev-validation-log-retention/runs/plan-p5-s5-20261009/planning-record.json",
+    "bundle_manifest": ".workflow/dev-validation-log-retention/runs/plan-p5-s5-20261009/bundle-manifest.json",
+    "bundle_digest": "78bc55919e57bbf2132d6653780c5c164a2ee1d618422e5232d4cf0d1d667c3e",
+    "validation": ".workflow/dev-validation-log-retention/runs/plan-p5-s5-20261009/validation-final.json",
+    "bundle_approved": false,
+    "prior_external_review_receipt": ".workflow/dev-validation-log-retention/runs/plan-p5-s5-20261009/received-review.json",
+    "external_review_status": "s4_p4_final_received_s5_p5_delta_not_reviewed",
+    "pending_user_decisions": [
+      "conditional Q-S2-03 shared-route delay acceptance after measurement",
+      "conditional Q-S3-05 fallback after actual offline model metadata unavailable",
+      "conditional Q-S3-06 summary thinking/tier change after observations",
+      "conditional guard confirmation unavailable route alternative after observation"
+    ]
+  },
+  "prerequisites": {
+    "Q-01": "not_verified; retain as a prerequisite to automatic summary expansion and raw rotation activation"
+  },
+  "implementation_authorized": false,
+  "raw_rotation_activation_authorized": false,
+  "next": "$implement docs/features/dev-validation-log-retention",
+  "planning_history": [
+    {
+      "status": "bundle_presented_awaiting_approval",
+      "spec": {
+        "path": "docs/features/dev-validation-log-retention/SPEC.md",
+        "revision": "s1"
+      },
+      "plan": {
+        "path": "docs/features/dev-validation-log-retention/PLAN.json",
+        "revision": "p1"
+      },
+      "requirements": "docs/features/dev-validation-log-retention/requirements-r0.8.json",
+      "requirements_identity": "00b17eabf965b4488f88bee4e00e4676efed53a95a1e2d0b2512c6cd04f199b0",
+      "tickets": [
+        "DVL-01",
+        "DVL-02",
+        "DVL-03",
+        "DVL-04",
+        "DVL-05",
+        "DVL-06",
+        "DVL-07",
+        "DVL-08",
+        "DVL-09",
+        "DVL-10",
+        "DVL-11",
+        "DVL-12",
+        "DVL-13"
+      ],
+      "record": ".workflow/dev-validation-log-retention/runs/plan-p1-s1-20261009/planning-record.json",
+      "bundle_manifest": ".workflow/dev-validation-log-retention/runs/plan-p1-s1-20261009/bundle-manifest.json",
+      "bundle_digest": "ae827e4266030935ea70831528f065ab6832f969e37fc627d3d28b978910838d",
+      "bundle_manifest_sha256": "871a0d892919d61512f62c3a3e2bc2a957fddb7f3e2f4799e463a7109516c30a",
+      "validation": ".workflow/dev-validation-log-retention/runs/plan-p1-s1-20261009/validation-published.json",
+      "bundle_approved": false
+    },
+    {
+      "status": "draft_pending_user_decisions_and_external_review",
+      "spec": {
+        "path": "docs/features/dev-validation-log-retention/SPEC.md",
+        "revision": "s2"
+      },
+      "plan": {
+        "path": "docs/features/dev-validation-log-retention/PLAN.json",
+        "revision": "p2"
+      },
+      "requirements": "docs/features/dev-validation-log-retention/requirements-r0.8-p2.json",
+      "requirements_identity": "e8ee94bfa0d2924ec69e873910582c26e6fcbcbc2e7f065a1de0c575f64d683e",
+      "tickets": [
+        "DVL-01",
+        "DVL-02",
+        "DVL-03",
+        "DVL-04",
+        "DVL-05",
+        "DVL-06",
+        "DVL-07",
+        "DVL-08",
+        "DVL-09",
+        "DVL-10",
+        "DVL-11",
+        "DVL-12",
+        "DVL-13",
+        "DVL-14"
+      ],
+      "record": ".workflow/dev-validation-log-retention/runs/plan-p2-s2-20261009/planning-record.json",
+      "bundle_manifest": ".workflow/dev-validation-log-retention/runs/plan-p2-s2-20261009/bundle-manifest.json",
+      "bundle_digest": "f0283183ee49252755711033eb8143fecf37adbb142df59904895c7135ed1cf1",
+      "validation": ".workflow/dev-validation-log-retention/runs/plan-p2-s2-20261009/validation-published.json",
+      "bundle_approved": false,
+      "external_review": ".workflow/dev-validation-log-retention/runs/plan-p2-s2-20261009/review-request.json",
+      "pending_user_decisions": [
+        "Q-S2-01",
+        "Q-S2-02",
+        "conditional Q-S2-03"
+      ],
+      "external_review_receipt": ".workflow/dev-validation-log-retention/runs/plan-p3-s3-20261009/received-review.json",
+      "history_note": "Original s2/p2 running_observed request preserved; user-delivered completion now recorded separately. p2 is superseded,not approved."
+    },
+    {
+      "status": "draft_pending_bundle_review",
+      "spec": {
+        "path": "docs/features/dev-validation-log-retention/SPEC.md",
+        "revision": "s3"
+      },
+      "plan": {
+        "path": "docs/features/dev-validation-log-retention/PLAN.json",
+        "revision": "p3"
+      },
+      "requirements": "docs/features/dev-validation-log-retention/requirements-r0.9-p3.json",
+      "requirements_identity": "6cc983325a85f46d0bb2ee251bd9dac249e9ffa412e046c4818618fd81517f34",
+      "tickets": [
+        "DVL-01",
+        "DVL-02",
+        "DVL-03",
+        "DVL-04",
+        "DVL-05",
+        "DVL-06",
+        "DVL-07",
+        "DVL-08",
+        "DVL-09",
+        "DVL-10",
+        "DVL-11",
+        "DVL-12",
+        "DVL-13",
+        "DVL-14"
+      ],
+      "record": ".workflow/dev-validation-log-retention/runs/plan-p3-s3-20261009/planning-record.json",
+      "bundle_manifest": ".workflow/dev-validation-log-retention/runs/plan-p3-s3-20261009/bundle-manifest.json",
+      "bundle_digest": "e63b52dc02fb5ff51a797f91ad2e993f8c3c5fa39e2a2ee499390838d52552d5",
+      "validation": ".workflow/dev-validation-log-retention/runs/plan-p3-s3-20261009/validation-final.json",
+      "bundle_approved": false,
+      "prior_external_review_receipt": ".workflow/dev-validation-log-retention/runs/plan-p3-s3-20261009/received-review.json",
+      "external_review_status": "running_observed",
+      "pending_user_decisions": [
+        "conditional Q-S2-03 shared-route blocking acceptance after measurement",
+        "conditional Q-S3-05 fallback after real model metadata unavailable observation"
+      ],
+      "external_review": ".workflow/dev-validation-log-retention/runs/plan-p3-s3-20261009/review-request.json",
+      "external_review_receipt": ".workflow/dev-validation-log-retention/runs/plan-p4-s4-20261009/received-review.json",
+      "history_note": "p3 review completed via user-delivered Claude reply; original running_observed request and publication preserved. p3 conditional review is not approval and does not cover p4."
+    },
+    {
+      "status": "draft_pending_bundle_review",
+      "spec": {
+        "path": "docs/features/dev-validation-log-retention/SPEC.md",
+        "revision": "s4"
+      },
+      "plan": {
+        "path": "docs/features/dev-validation-log-retention/PLAN.json",
+        "revision": "p4"
+      },
+      "requirements": "docs/features/dev-validation-log-retention/requirements-r0.9-p4.json",
+      "requirements_identity": "eaacb4dba17cf631983c868177dbb45125282fe90062fab9ffde32310de09eca",
+      "tickets": [
+        "DVL-01",
+        "DVL-02",
+        "DVL-03",
+        "DVL-04",
+        "DVL-05",
+        "DVL-06",
+        "DVL-07",
+        "DVL-08",
+        "DVL-09",
+        "DVL-10",
+        "DVL-11",
+        "DVL-12",
+        "DVL-13",
+        "DVL-14"
+      ],
+      "record": ".workflow/dev-validation-log-retention/runs/plan-p4-s4-20261009/planning-record.json",
+      "bundle_manifest": ".workflow/dev-validation-log-retention/runs/plan-p4-s4-20261009/bundle-manifest.json",
+      "bundle_digest": "498223bd94337236ff58252ebcbb5502be6f81defab03c0fa3c7b195a97599e4",
+      "validation": ".workflow/dev-validation-log-retention/runs/plan-p4-s4-20261009/validation-final.json",
+      "bundle_approved": false,
+      "prior_external_review_receipt": ".workflow/dev-validation-log-retention/runs/plan-p4-s4-20261009/received-review.json",
+      "external_review_status": "running_observed",
+      "pending_user_decisions": [
+        "conditional Q-S2-03 shared-route delay acceptance after measurement",
+        "conditional Q-S3-05 fallback after actual offline model metadata unavailable",
+        "conditional Q-S3-06 summary thinking/tier change after observations",
+        "conditional guard confirmation unavailable route alternative after observation"
+      ],
+      "external_review": ".workflow/dev-validation-log-retention/runs/plan-p4-s4-20261009/review-request.json",
+      "external_review_dispatch": ".workflow/dev-validation-log-retention/runs/plan-p4-s4-20261009/review-dispatch.json",
+      "external_review_receipt": ".workflow/dev-validation-log-retention/runs/plan-p5-s5-20261009/received-review.json",
+      "history_note": "User-delivered final Claude s4/p4 reply received; original prepared request/publication and submitted/running dispatch records retained. Conditional review is not approval and does not cover the p5 delta."
+    }
+  ],
+  "next_action": "s5/p5 작은 기술 보강 완료·정확한 bundle 승인 대기. 새 Claude 의뢰·구현·제품 시험/모델 probe·실제 raw 활성화는 이 반영 요청으로 시작하지 않음.",
+  "current_brief": {
+    "path": "docs/features/dev-validation-log-retention/BRIEF.md",
+    "revision": "r0.9",
+    "sha256": "5ba8c47f4e23b6e213d61e81be72bfadd57f4c30bd56a256ffe84d7f736fab46",
+    "baseline_approval": ".workflow/dev-validation-log-retention/runs/approval-r0.8/approval.json",
+    "delta_decisions": ".workflow/dev-validation-log-retention/runs/plan-p3-s3-20261009/decisions.json",
+    "entire_bundle_approved": false,
+    "pointer_update_authority": ".workflow/dev-validation-log-retention/runs/plan-p5-s5-20261009/authority.json"
+  },
+  "operating_decisions": ".workflow/dev-validation-log-retention/runs/plan-p3-s3-20261009/decisions.json"
+}

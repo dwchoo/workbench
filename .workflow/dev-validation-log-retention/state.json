@@ -1,0 +1,334 @@
+{
+  "schema_version": 1,
+  "feature": "dev-validation-log-retention",
+  "phase": "implementing",
+  "revision": "r0.9",
+  "approval_status": "s5_p5_bundle_approved_implementation_running",
+  "approval": {
+    "record": ".workflow/dev-validation-log-retention/runs/approval-s5-p5-20261009/approval.json",
+    "scope": "exact_s5_p5_ticket_bundle",
+    "revision": {
+      "brief": "r0.9",
+      "spec": "s5",
+      "plan": "p5"
+    },
+    "bundle_manifest": ".workflow/dev-validation-log-retention/runs/plan-p5-s5-20261009/bundle-manifest.json",
+    "bundle_digest": "78bc55919e57bbf2132d6653780c5c164a2ee1d618422e5232d4cf0d1d667c3e",
+    "requirements_identity": "84d8dc604d543fb92116b25b00198ee43dc1b330466403534c377f1791d6eb18",
+    "approved_at": "2026-10-09T07:28:43Z",
+    "note": "정확한 bundle 승인만 기록. 승인 전 발행 bytes/기록 보존; 구현·제품 시험·실제 raw 활성화 권한 없음."
+  },
+  "planning": {
+    "status": "approved_execution_pending",
+    "spec": {
+      "path": "docs/features/dev-validation-log-retention/SPEC.md",
+      "revision": "s5"
+    },
+    "plan": {
+      "path": "docs/features/dev-validation-log-retention/PLAN.json",
+      "revision": "p5"
+    },
+    "requirements": "docs/features/dev-validation-log-retention/requirements-r0.9-p5.json",
+    "requirements_identity": "84d8dc604d543fb92116b25b00198ee43dc1b330466403534c377f1791d6eb18",
+    "tickets": [
+      "DVL-01",
+      "DVL-02",
+      "DVL-03",
+      "DVL-04",
+      "DVL-05",
+      "DVL-06",
+      "DVL-07",
+      "DVL-08",
+      "DVL-09",
+      "DVL-10",
+      "DVL-11",
+      "DVL-12",
+      "DVL-13",
+      "DVL-14"
+    ],
+    "record": ".workflow/dev-validation-log-retention/runs/plan-p5-s5-20261009/planning-record.json",
+    "bundle_manifest": ".workflow/dev-validation-log-retention/runs/plan-p5-s5-20261009/bundle-manifest.json",
+    "bundle_digest": "78bc55919e57bbf2132d6653780c5c164a2ee1d618422e5232d4cf0d1d667c3e",
+    "validation": ".workflow/dev-validation-log-retention/runs/plan-p5-s5-20261009/validation-final.json",
+    "bundle_approved": true,
+    "prior_external_review_receipt": ".workflow/dev-validation-log-retention/runs/plan-p5-s5-20261009/received-review.json",
+    "external_review_status": "s4_p4_final_received_s5_p5_delta_not_reviewed",
+    "pending_user_decisions": [
+      "conditional Q-S2-03 shared-route delay acceptance after measurement",
+      "conditional Q-S3-05 fallback after actual offline model metadata unavailable",
+      "conditional Q-S3-06 summary thinking/tier change after observations",
+      "conditional guard confirmation unavailable route alternative after observation"
+    ],
+    "approval_record": ".workflow/dev-validation-log-retention/runs/approval-s5-p5-20261009/approval.json"
+  },
+  "prerequisites": {
+    "Q-01": "tested native explorer executor does not enforce zero-send when guard extension missing/inert; blocked_adoption for that route. All8 runtime acceptance not passed."
+  },
+  "implementation_authorized": true,
+  "raw_rotation_activation_authorized": false,
+  "next": "implementation continues with authorized ready tickets",
+  "planning_history": [
+    {
+      "status": "bundle_presented_awaiting_approval",
+      "spec": {
+        "path": "docs/features/dev-validation-log-retention/SPEC.md",
+        "revision": "s1"
+      },
+      "plan": {
+        "path": "docs/features/dev-validation-log-retention/PLAN.json",
+        "revision": "p1"
+      },
+      "requirements": "docs/features/dev-validation-log-retention/requirements-r0.8.json",
+      "requirements_identity": "00b17eabf965b4488f88bee4e00e4676efed53a95a1e2d0b2512c6cd04f199b0",
+      "tickets": [
+        "DVL-01",
+        "DVL-02",
+        "DVL-03",
+        "DVL-04",
+        "DVL-05",
+        "DVL-06",
+        "DVL-07",
+        "DVL-08",
+        "DVL-09",
+        "DVL-10",
+        "DVL-11",
+        "DVL-12",
+        "DVL-13"
+      ],
+      "record": ".workflow/dev-validation-log-retention/runs/plan-p1-s1-20261009/planning-record.json",
+      "bundle_manifest": ".workflow/dev-validation-log-retention/runs/plan-p1-s1-20261009/bundle-manifest.json",
+      "bundle_digest": "ae827e4266030935ea70831528f065ab6832f969e37fc627d3d28b978910838d",
+      "bundle_manifest_sha256": "871a0d892919d61512f62c3a3e2bc2a957fddb7f3e2f4799e463a7109516c30a",
+      "validation": ".workflow/dev-validation-log-retention/runs/plan-p1-s1-20261009/validation-published.json",
+      "bundle_approved": false
+    },
+    {
+      "status": "draft_pending_user_decisions_and_external_review",
+      "spec": {
+        "path": "docs/features/dev-validation-log-retention/SPEC.md",
+        "revision": "s2"
+      },
+      "plan": {
+        "path": "docs/features/dev-validation-log-retention/PLAN.json",
+        "revision": "p2"
+      },
+      "requirements": "docs/features/dev-validation-log-retention/requirements-r0.8-p2.json",
+      "requirements_identity": "e8ee94bfa0d2924ec69e873910582c26e6fcbcbc2e7f065a1de0c575f64d683e",
+      "tickets": [
+        "DVL-01",
+        "DVL-02",
+        "DVL-03",
+        "DVL-04",
+        "DVL-05",
+        "DVL-06",
+        "DVL-07",
+        "DVL-08",
+        "DVL-09",
+        "DVL-10",
+        "DVL-11",
+        "DVL-12",
+        "DVL-13",
+        "DVL-14"
+      ],
+      "record": ".workflow/dev-validation-log-retention/runs/plan-p2-s2-20261009/planning-record.json",
+      "bundle_manifest": ".workflow/dev-validation-log-retention/runs/plan-p2-s2-20261009/bundle-manifest.json",
+      "bundle_digest": "f0283183ee49252755711033eb8143fecf37adbb142df59904895c7135ed1cf1",
+      "validation": ".workflow/dev-validation-log-retention/runs/plan-p2-s2-20261009/validation-published.json",
+      "bundle_approved": false,
+      "external_review": ".workflow/dev-validation-log-retention/runs/plan-p2-s2-20261009/review-request.json",
+      "pending_user_decisions": [
+        "Q-S2-01",
+        "Q-S2-02",
+        "conditional Q-S2-03"
+      ],
+      "external_review_receipt": ".workflow/dev-validation-log-retention/runs/plan-p3-s3-20261009/received-review.json",
+      "history_note": "Original s2/p2 running_observed request preserved; user-delivered completion now recorded separately. p2 is superseded,not approved."
+    },
+    {
+      "status": "draft_pending_bundle_review",
+      "spec": {
+        "path": "docs/features/dev-validation-log-retention/SPEC.md",
+        "revision": "s3"
+      },
+      "plan": {
+        "path": "docs/features/dev-validation-log-retention/PLAN.json",
+        "revision": "p3"
+      },
+      "requirements": "docs/features/dev-validation-log-retention/requirements-r0.9-p3.json",
+      "requirements_identity": "6cc983325a85f46d0bb2ee251bd9dac249e9ffa412e046c4818618fd81517f34",
+      "tickets": [
+        "DVL-01",
+        "DVL-02",
+        "DVL-03",
+        "DVL-04",
+        "DVL-05",
+        "DVL-06",
+        "DVL-07",
+        "DVL-08",
+        "DVL-09",
+        "DVL-10",
+        "DVL-11",
+        "DVL-12",
+        "DVL-13",
+        "DVL-14"
+      ],
+      "record": ".workflow/dev-validation-log-retention/runs/plan-p3-s3-20261009/planning-record.json",
+      "bundle_manifest": ".workflow/dev-validation-log-retention/runs/plan-p3-s3-20261009/bundle-manifest.json",
+      "bundle_digest": "e63b52dc02fb5ff51a797f91ad2e993f8c3c5fa39e2a2ee499390838d52552d5",
+      "validation": ".workflow/dev-validation-log-retention/runs/plan-p3-s3-20261009/validation-final.json",
+      "bundle_approved": false,
+      "prior_external_review_receipt": ".workflow/dev-validation-log-retention/runs/plan-p3-s3-20261009/received-review.json",
+      "external_review_status": "running_observed",
+      "pending_user_decisions": [
+        "conditional Q-S2-03 shared-route blocking acceptance after measurement",
+        "conditional Q-S3-05 fallback after real model metadata unavailable observation"
+      ],
+      "external_review": ".workflow/dev-validation-log-retention/runs/plan-p3-s3-20261009/review-request.json",
+      "external_review_receipt": ".workflow/dev-validation-log-retention/runs/plan-p4-s4-20261009/received-review.json",
+      "history_note": "p3 review completed via user-delivered Claude reply; original running_observed request and publication preserved. p3 conditional review is not approval and does not cover p4."
+    },
+    {
+      "status": "draft_pending_bundle_review",
+      "spec": {
+        "path": "docs/features/dev-validation-log-retention/SPEC.md",
+        "revision": "s4"
+      },
+      "plan": {
+        "path": "docs/features/dev-validation-log-retention/PLAN.json",
+        "revision": "p4"
+      },
+      "requirements": "docs/features/dev-validation-log-retention/requirements-r0.9-p4.json",
+      "requirements_identity": "eaacb4dba17cf631983c868177dbb45125282fe90062fab9ffde32310de09eca",
+      "tickets": [
+        "DVL-01",
+        "DVL-02",
+        "DVL-03",
+        "DVL-04",
+        "DVL-05",
+        "DVL-06",
+        "DVL-07",
+        "DVL-08",
+        "DVL-09",
+        "DVL-10",
+        "DVL-11",
+        "DVL-12",
+        "DVL-13",
+        "DVL-14"
+      ],
+      "record": ".workflow/dev-validation-log-retention/runs/plan-p4-s4-20261009/planning-record.json",
+      "bundle_manifest": ".workflow/dev-validation-log-retention/runs/plan-p4-s4-20261009/bundle-manifest.json",
+      "bundle_digest": "498223bd94337236ff58252ebcbb5502be6f81defab03c0fa3c7b195a97599e4",
+      "validation": ".workflow/dev-validation-log-retention/runs/plan-p4-s4-20261009/validation-final.json",
+      "bundle_approved": false,
+      "prior_external_review_receipt": ".workflow/dev-validation-log-retention/runs/plan-p4-s4-20261009/received-review.json",
+      "external_review_status": "running_observed",
+      "pending_user_decisions": [
+        "conditional Q-S2-03 shared-route delay acceptance after measurement",
+        "conditional Q-S3-05 fallback after actual offline model metadata unavailable",
+        "conditional Q-S3-06 summary thinking/tier change after observations",
+        "conditional guard confirmation unavailable route alternative after observation"
+      ],
+      "external_review": ".workflow/dev-validation-log-retention/runs/plan-p4-s4-20261009/review-request.json",
+      "external_review_dispatch": ".workflow/dev-validation-log-retention/runs/plan-p4-s4-20261009/review-dispatch.json",
+      "external_review_receipt": ".workflow/dev-validation-log-retention/runs/plan-p5-s5-20261009/received-review.json",
+      "history_note": "User-delivered final Claude s4/p4 reply received; original prepared request/publication and submitted/running dispatch records retained. Conditional review is not approval and does not cover the p5 delta."
+    }
+  ],
+  "next_action": "사용자에게 기존 native executor의 guard 승인 경계 한계와 대안 검증 범위 결정을 요청한다. 미승인 요약 route/rotation 확대 금지.",
+  "current_brief": {
+    "path": "docs/features/dev-validation-log-retention/BRIEF.md",
+    "revision": "r0.9",
+    "sha256": "5ba8c47f4e23b6e213d61e81be72bfadd57f4c30bd56a256ffe84d7f736fab46",
+    "baseline_approval": ".workflow/dev-validation-log-retention/runs/approval-r0.8/approval.json",
+    "delta_decisions": ".workflow/dev-validation-log-retention/runs/plan-p3-s3-20261009/decisions.json",
+    "entire_bundle_approved": true,
+    "pointer_update_authority": ".workflow/dev-validation-log-retention/runs/plan-p5-s5-20261009/authority.json",
+    "bundle_approval": ".workflow/dev-validation-log-retention/runs/approval-s5-p5-20261009/approval.json"
+  },
+  "operating_decisions": ".workflow/dev-validation-log-retention/runs/plan-p3-s3-20261009/decisions.json",
+  "approval_history": [
+    {
+      "record": ".workflow/dev-validation-log-retention/runs/approval-r0.8/approval.json",
+      "brief": ".workflow/dev-validation-log-retention/runs/plan-p3-s3-20261009/source/BRIEF-r0.8.md",
+      "sha256": "9b6632a9688a5c2ca0a3adb2094d4fe1813cb3ca93d4a87dbe4d55663bb9255a",
+      "original_brief_path": "docs/features/dev-validation-log-retention/BRIEF.md",
+      "note": "Historical r0.8 approval/hash unchanged;current r0.9 source adds individually agreed operating decisions,not a new entire-bundle approval."
+    }
+  ],
+  "implementation_authority": ".workflow/dev-validation-log-retention/runs/implement-p5-20261009/authority.json",
+  "execution": {
+    "run": ".workflow/dev-validation-log-retention/runs/implement-p5-20261009",
+    "ledger": ".workflow/dev-validation-log-retention/runs/implement-p5-20261009/invocations.json",
+    "status": "awaiting_user_route_direction_no_live_assignments",
+    "approved_bundle_digest": "78bc55919e57bbf2132d6653780c5c164a2ee1d618422e5232d4cf0d1d667c3e",
+    "baseline_checkpoint": ".workflow/dev-validation-log-retention/runs/implement-p5-20261009/checkpoint-integration.json",
+    "workspace_base": "/tmp/workbench-dvl-20261009-3l1ViH",
+    "assignments": [],
+    "ticket_statuses": {
+      "DVL-01": "verified candidate81fast26.401s +33independent/related; freshreview no material; Rootintegration pending",
+      "DVL-02": "pending",
+      "DVL-03": "integrated_validated_STORE-contract_fixture",
+      "DVL-04": "coherent candidate S045R1 corrected; independent valid-fixture adjustment and final review pending, not integrated",
+      "DVL-05": "coherent candidate S045R1 corrected; independent valid-fixture adjustment and final review pending, not integrated",
+      "DVL-06": "pending",
+      "DVL-07": "pending",
+      "DVL-08": "blocked_adoption tested nativeexecutor missing/inert guard each actualPOST1; noall8pass",
+      "DVL-09": "pending",
+      "DVL-10": "pending",
+      "DVL-11": "pending",
+      "DVL-12": "pending",
+      "DVL-13": "pending",
+      "DVL-14": "pending"
+    },
+    "model_host_metadata": "unverified",
+    "binding_verified": true,
+    "binding_evidence": ".workflow/dev-validation-log-retention/runs/implement-p5-20261009/binding-observation.json",
+    "ledger_revision": 236,
+    "baseline_checks": {
+      "raw": "33 tests passed in 10.368s",
+      "metadata": "first60s timed out; unchanged attempt2:22 tests passed in80.967s",
+      "evidence": ".workflow/dev-validation-log-retention/runs/implement-p5-20261009/environment-observation.json"
+    },
+    "integrations": {
+      "dvl08_judge": ".workflow/dev-validation-log-retention/runs/implement-p5-20261009/integration-dvl08-judge.json",
+      "dvl03_foundation": ".workflow/dev-validation-log-retention/runs/implement-p5-20261009/integration-dvl03-foundation.json"
+    },
+    "current_integrated_candidate": "44b0027c9d42418cd6f165d97e16b6175ed5fa1ec2cfadb3f4ca6c5e7c573ace",
+    "next_action": "사용자에게 기존 native executor의 guard 승인 경계 한계와 대안 검증 범위 결정을 요청한다. 미승인 요약 route/rotation 확대 금지.",
+    "runtime_probe_pending": {
+      "ticket": "DVL-08",
+      "status": "requires_route_direction_guard_confirmation_unavailable",
+      "last_invocation": "dvl08-runtime-08",
+      "evidence": ".workflow/dev-validation-log-retention/runs/implement-p5-20261009/result-dvl08-runtime-08.json",
+      "affected": [
+        "DVL-09",
+        "DVL-10",
+        "DVL-14",
+        "DVL-13 final"
+      ],
+      "unaffected_work": "01 integration→02, 045 independent correction/review/integration→06+11 then07+12; original scope remains authorized but not started this closure",
+      "suggested_direction": "Explicitly allow minimal isolated one-shot OMP summary-route experiment reusing existing agent definition, no standing process/new definition/paid model; safety contract remains unchanged."
+    },
+    "test_cost_diagnostic": ".workflow/dev-validation-log-retention/runs/implement-p5-20261009/test-cost-diagnostic.json",
+    "reviews": {
+      "dvl01_review02": ".workflow/dev-validation-log-retention/runs/implement-p5-20261009/result-dvl01-review-02.json",
+      "dvl01_review03": ".workflow/dev-validation-log-retention/runs/implement-p5-20261009/result-dvl01-review-03.json",
+      "dvl01_review04": ".workflow/dev-validation-log-retention/runs/implement-p5-20261009/result-dvl01-review-04.json",
+      "dvl045_review01": ".workflow/dev-validation-log-retention/runs/implement-p5-20261009/result-dvl045-review-01.json"
+    },
+    "retained_candidates": {
+      "dvl01": "8a544e417956263982fea90ffbd08eb6ecdb855ae4857607e0fa7ff7c15fc5b0",
+      "dvl045": "5699f65a9e841a478e101c7510eb7e57dfdaf99facd31e257371b9d85dd209d4",
+      "dvl08": "3f50d497011ad76a05ff524149ae09e04e700c9e1b0ea6976ff33b7efae7fc7d"
+    },
+    "retained_candidates_note": "Only dvl01 coherent unit verified; dvl045 needs independent correction/review and dvl08 blocked partial evidence. Candidate digest alone is not pass.",
+    "host_quiescence": "All four existing leaves completed; all source leases released, owned test/OMP/provider processes stopped; reserved4 future calls not dispatched.",
+    "pending_reservations": [
+      "dvl08-test-04",
+      "dvl08-review-04",
+      "dvl045-test-03",
+      "dvl045-review-02"
+    ],
+    "snapshot_before_route_direction": ".workflow/dev-validation-log-retention/runs/implement-p5-20261009/candidate-before-route-decision.json"
+  }
+}

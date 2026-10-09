@@ -1,0 +1,10 @@
+{
+  "invocation": "dvl03-fix-03",
+  "outcome": "candidate_ready",
+  "candidate": "343ae8667699a8a76a1c1bad229a89a9951edcbac261ee284820139a39b39300",
+  "scope_audit": ".workflow/dev-validation-log-retention/runs/implement-p5-20261009/audit-dvl03-fix-03.json",
+  "tests": "worker42 scoped fixtures passed 66.276s (already started full; no repeat), diff/AST pass",
+  "behavior": "consistent read snapshot revalidates old complete proofs, exposes conservative false completeness and sanitized invalidation reason after late contradictory gap/tile; no DML, historical rows/matched truth preserved",
+  "cleanup": "worker final subprocess stopped",
+  "next": "independent targeted tests and frozen delta review, exact integrated check before consumers"
+}

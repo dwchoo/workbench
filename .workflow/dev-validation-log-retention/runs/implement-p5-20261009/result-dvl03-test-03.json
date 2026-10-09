@@ -1,0 +1,14 @@
+{
+  "invocation": "dvl03-test-03",
+  "outcome": "candidate_ready",
+  "candidate": "905a2823bde32355b765217b9a0e3eefb25b751c52c8a240e1f8735d40dc767c",
+  "scope_audit": ".workflow/dev-validation-log-retention/runs/implement-p5-20261009/audit-dvl03-test-03.json",
+  "reported_test": "41 relevant contract/actual Node TS/SQLite fixtures pass exit0 in65.174s",
+  "targeted_test": "3 targeted meaningful regressions exit0",
+  "root_execution": "not repeated isolated suite; fresh frozen review now, exact integrated whole relevant check before dependency advancement",
+  "cleanup": "test_designer final no owned processes/sockets; unrelated backend test process seen, not killed",
+  "unverified": [
+    "actual DVL04 collector",
+    "Root integrated local gate exact candidate"
+  ]
+}

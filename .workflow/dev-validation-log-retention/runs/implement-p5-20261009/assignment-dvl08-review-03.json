@@ -1,0 +1,44 @@
+{
+  "feature_id": "dev-validation-log-retention",
+  "ticket_id": "DVL-08",
+  "invocation": "dvl08-review-03",
+  "phase": "early_readonly_technical_probe_and_existing_route_assessment_NOT_final_review",
+  "authority": ".workflow/dev-validation-log-retention/runs/implement-p5-20261009/authority.json",
+  "approved_bundle_digest": "78bc55919e57bbf2132d6653780c5c164a2ee1d618422e5232d4cf0d1d667c3e",
+  "actual_workspace": "/tmp/workbench-dvl-20261009-3l1ViH/dvl08",
+  "candidate_manifest": ".workflow/dev-validation-log-retention/runs/implement-p5-20261009/candidate-dvl08-runtime-02-post.json",
+  "candidate": "f2d77507c6b5857b8f72730e9fd73eb33b9c8a006275e88afdf83ea7dc3715e7",
+  "allowed_write_paths": [],
+  "mutation_owner": null,
+  "resource_claims": [
+    {
+      "resource": "summary-compat:contract",
+      "mode": "shared"
+    },
+    {
+      "resource": "summary-compat:policy",
+      "mode": "shared"
+    }
+  ],
+  "evidence": [
+    ".workflow/dev-validation-log-retention/runs/implement-p5-20261009/result-dvl08-runtime-01.json",
+    ".workflow/dev-validation-log-retention/runs/implement-p5-20261009/result-dvl08-runtime-02.json",
+    "/tmp/workbench-dvl-20261009-3l1ViH/dvl08/.workflow/dvl-local/dvl08-runtime-02-guard.json"
+  ],
+  "task": "Specific unresolved question: fresh turn lookup prevents inactive tools, but can an existing allowed agent/parent isolated summary turn provide actual turn-bound activeTools/readback+epoch/nonce atomic check->send and typed result without raw transcript accumulation? Read-only current product/installed public API primary docs/source assessment. Inspect probe validity/limits (start/end error vs execution) and identify concrete minimum discriminating observation using allowed existing route, or precise public API adoption boundary. Not a final Q01 review; unknown decisive items remain unknown, no tests/probes/new files/modification. Do not infer unavailable just because current stub unavailable. Product single-use process/TSdirectcompletion are not adopted; testing isolated OMP itself allowed. Leaf no delegation.",
+  "contracts": [
+    "SPEC§8.1 Q01-route/tools/context/priority",
+    "SPEC GuardReceipt and DV-D03",
+    "DVL08",
+    "current bridge/launcher"
+  ],
+  "prohibited": [
+    "tests/probes/model calls/writes",
+    "external application messaging",
+    "any adoption/approval"
+  ],
+  "configured_model": "gpt-6-sol",
+  "configured_effort": "high",
+  "host_observed_model": "unverified",
+  "host_observed_effort": "unverified"
+}

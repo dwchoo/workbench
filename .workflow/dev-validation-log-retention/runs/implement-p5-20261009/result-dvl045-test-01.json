@@ -1,0 +1,32 @@
+{
+  "invocation": "dvl045-test-01",
+  "outcome": "complete",
+  "candidate": "c49aa7e77be1c45a79760410d00bc71a0b06ffe2248e3cdc8e485316b7c2acba",
+  "independent_tests": 14,
+  "related_worker_tests": 20,
+  "unique_tests_passed": 34,
+  "first_attempt": {
+    "exit": 1,
+    "ran": 29,
+    "passed": 27,
+    "import_errors": 2,
+    "cause": "existing workflow modules needed PYTHONPATH=src:tests/workflow, not product assertion failure",
+    "log_sha256": "2067380a9a108e3edf4c571fda28413102653ac58cfcc278ce131b50b653327c"
+  },
+  "affected_retry": {
+    "exit": 0,
+    "ran": 7,
+    "passed": 7,
+    "log_sha256": "1de9ac236ef8f7a94c614a905a7ed059033433312589df4027129dded0e79838"
+  },
+  "production_changed": false,
+  "defects_observed": [],
+  "source_audit": ".workflow/dev-validation-log-retention/runs/implement-p5-20261009/audit-dvl045-test-01.json",
+  "cleanup": "owned SQLite/Git fixture directories removed, no owned socket/process remains",
+  "not_claimed": [
+    "real OMP/model",
+    "Q01",
+    "active DB composition and raw activation",
+    "complete final runtime gates"
+  ]
+}

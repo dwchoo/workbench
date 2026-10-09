@@ -1,0 +1,12 @@
+{
+  "invocation": "dvl01-test-03",
+  "phase": "read_only_retest",
+  "candidate": "cb0a8654ee11bd78bbd9e69507ece88d711e356349b55e7f57433a4a2566e52e",
+  "workspace": "/tmp/workbench-dvl-20261009-3l1ViH/dvl01",
+  "production_writer": "released workerfinal",
+  "lease": "test execution operationaloutputs only; no source/test writes",
+  "independent_hashes": [
+    "2cb4b464b0a1aba8013f8fea1831ce7f7a2c2f06c610f14677f57e76b7250c34",
+    "105339043f513b443b751dab00e7b284b8d5af1105f41b0f0d843efc73d02d38"
+  ]
+}

@@ -1,0 +1,9 @@
+{
+  "invocation": "dvl03-test-04",
+  "outcome": "candidate_ready",
+  "candidate": "235d53b2d1edd1080ddd5641e4684b177c22f67c2813407a0a03abe37fa223a3",
+  "scope_audit": ".workflow/dev-validation-log-retention/runs/implement-p5-20261009/audit-dvl03-test-04.json",
+  "tests": "3 targeted meaningful affected repository regressions exit0 10.198s; late gap/tile/unrelated/reopen/raw-row/noDML/matched preserved",
+  "prior_coverage": "codec/TS/schema from preceding independent41 and worker42; no duplicate whole suite; Root integrated exact check remains required",
+  "cleanup": "test_designer final processes/socket gone"
+}

@@ -1,0 +1,40 @@
+{
+  "schema_version": 1,
+  "policy_id": "workbench-summary-compatibility",
+  "projection_version": 1,
+  "runtime_roots": [
+    "src/workbench/backend",
+    "src/workbench/ipc",
+    "src/workbench/contracts",
+    "omp_bridge"
+  ],
+  "runtime_files": ["pyproject.toml"],
+  "python_closure_roots": [
+    "src/workbench/tasks",
+    "src/workbench/storage",
+    "src/workbench/workflow"
+  ],
+  "include_python_package_initializers": true,
+  "required_seams": [
+    "src/workbench/backend/service.py",
+    "src/workbench/backend/automation.py",
+    "src/workbench/backend/flow_tasks.py",
+    "src/workbench/backend/flow_terminal.py",
+    "src/workbench/ipc/bridge_g3/mailbox.py",
+    "omp_bridge/g3/bridge.ts"
+  ],
+  "unknown_dynamic_import": "invalidate",
+  "workbench_owned_assets": ["omp_bridge/agents", "omp_bridge/skills", "omp_bridge/omp-models.yml"],
+  "omp_owned_assets": "installed_executable_and_bundled_agent_tool_prompt_bytes",
+  "route_identity_fields": [
+    "route", "role", "agent_definition_sha256", "skill_sha256",
+    "resolved_model", "provider", "context_limit_tokens", "harness",
+    "selection_epoch", "source"
+  ],
+  "route_identity_sources": ["omp_readback", "product_adapter_readback"],
+  "stable_host_fields": ["os_family", "architecture", "python_minor"],
+  "volatile_host_fields": ["kernel_release", "python_patch"],
+  "product_runtime_roots": ["src/workbench", "omp_bridge"],
+  "product_runtime_files": ["pyproject.toml"],
+  "development_inputs_excluded_from_product": ["tools", "tests", "docs", ".workflow"]
+}

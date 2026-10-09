@@ -1,0 +1,103 @@
+{
+  "feature_id": "dev-validation-log-retention",
+  "ticket_id": "DVL-03",
+  "attempt_id": "03",
+  "invocation": "dvl03-fix-03",
+  "phase": "durable_proof_late_gap_conservative_read",
+  "approved_bundle_digest": "78bc55919e57bbf2132d6653780c5c164a2ee1d618422e5232d4cf0d1d667c3e",
+  "authority": ".workflow/dev-validation-log-retention/runs/implement-p5-20261009/authority.json",
+  "approval": ".workflow/dev-validation-log-retention/runs/approval-s5-p5-20261009/approval.json",
+  "actual_workspace": "/tmp/workbench-dvl-20261009-3l1ViH/dvl03",
+  "repository_identity": {
+    "head": "2f21ec91990a409ea0d25f351343b50e34b48196",
+    "input_candidate": "905a2823bde32355b765217b9a0e3eefb25b751c52c8a240e1f8735d40dc767c"
+  },
+  "baseline_snapshot": ".workflow/dev-validation-log-retention/runs/implement-p5-20261009/checkpoint-dvl03-fix-03.json",
+  "effective_write_capability": "verified explicit workdir+absolute edits; hostunrestricted detector-only",
+  "acceptance_ids": [
+    "LG-AC-05",
+    "LG-AC-06",
+    "LG-AC-11",
+    "LG-AC-18"
+  ],
+  "relevant_contracts": [
+    "BRIEF r0.9",
+    "SPEC s5",
+    "PLAN p5",
+    "tickets/DVL-03.md",
+    ".codex/workflow-contract.md"
+  ],
+  "allowed_write_paths": [
+    "src/workbench/tasks/repository.py",
+    "tests/tasks/test_repository_logs.py"
+  ],
+  "prohibited_paths": [
+    "approved BRIEF/SPEC/PLAN/tickets/requirements/core bundle/AGENTS",
+    "central .workflow state/approval",
+    "integration checkout/other checkout",
+    "anynewproductagent/standingOMP/paidmodel/authstore"
+  ],
+  "generated_outputs": [
+    "src/workbench/contracts/logs_v1.py",
+    "omp_bridge/contract/logs_v1.ts",
+    "src/workbench/storage/important_log/**",
+    "src/workbench/storage/metadata_sqlite/schema.py",
+    "src/workbench/tasks/repository.py",
+    "src/workbench/backend/paths.py",
+    "tests/storage/important_log/**",
+    "tests/tasks/test_repository*.py",
+    "tests/contracts/**"
+  ],
+  "operational_outputs": "/tmp/workbench-dvl-20261009-3l1ViH/dvl03/.workflow/dvl-local/",
+  "resource_claims": [
+    {
+      "resource": "metadata:schema",
+      "mode": "exclusive"
+    },
+    {
+      "resource": "log-contract:v1",
+      "mode": "shared"
+    }
+  ],
+  "service_namespaces": {
+    "project": "전용 temp Git project",
+    "home": "전용 HOME/OMP/XDG, 사용자 인증 미상속",
+    "data_dir": "전용 <run>/<ticket>/<attempt>/data",
+    "sockets": "전용 backend/bridge/outer sockets",
+    "provider": "loopback dynamic port, no remote models",
+    "owned_cleanup": "pid+start-ticks 또는 pidfd; 전용 root 밖 종료 금지"
+  },
+  "mutation_owner": "dvl03-fix-03",
+  "checkpoint_ref": ".workflow/dev-validation-log-retention/runs/implement-p5-20261009/checkpoint-dvl03-fix-03.json",
+  "exact_checks": [
+    "STORE-contract"
+  ],
+  "reserved_budget": {
+    "implementation": 1,
+    "independent_test": 1,
+    "fresh_review": 1,
+    "finite_run_limit": 64
+  },
+  "stop_conditions": [
+    "scope/authorization change required",
+    "missing public API/core invariant change",
+    "feasibility runtime beforejudgefreeze is prohibited for08"
+  ],
+  "configured_model": "gpt-6-sol",
+  "configured_effort": "high (fixed worker_senior role)",
+  "host_observed_model": "unverified",
+  "host_observed_effort": "unverified",
+  "routing": {
+    "selected_role": "worker_senior",
+    "reason_codes": [
+      "coupled_invariants"
+    ],
+    "evidence_refs": [
+      ".workflow/dev-validation-log-retention/runs/implement-p5-20261009/result-dvl03-review-02.json"
+    ]
+  },
+  "task": "Fix accepted S03-R8 only: coverage -> complete-negative proof -> later same physical collector gap (or late new observed interval contradicting finalOffset) must not be consumed as still complete. Preserve immutable metadata rows; conservative read/use view should revalidate witness in consistent read snapshot without DML, exposing observation_complete false + sanitized invalidation reason when contradicted. Reuse current coverage validator to avoid separate semantics and preserve matched actual byte evidence (matched stays true independently; full-completeness flag must not lie). Reopen durability and unrelated stream isolation. Generic private transactions must not cause core state/readonly write changes. No per-kind ID-field narrowing/new codec/schema/normal source facts rejection. Independent test files untouched. R6 namespace alias concern not proven blocker; future05 producer mapping must keep physical IDs stable.",
+  "prior_assignment_ref": ".workflow/dev-validation-log-retention/runs/implement-p5-20261009/assignment-dvl03-fix-02.json",
+  "findings_ref": ".workflow/dev-validation-log-retention/runs/implement-p5-20261009/result-dvl03-review-03.json",
+  "test_env": "/tmp/workbench-dvl-20261009-3l1ViH/test-py312/bin/python"
+}

@@ -1,0 +1,26 @@
+{
+  "invocation": "dvl08-runtime-06",
+  "workspace": "/tmp/workbench-dvl-20261009-3l1ViH/dvl08",
+  "observed_head": "2f21ec91990a409ea0d25f351343b50e34b48196",
+  "git_dev_inode": "66306:28705559",
+  "index_dev_inode": "66306:28706393",
+  "collector_sha256": "1e7d808201308f0698a0485308863b3bb604334fc85850964d3b282c024cf95f",
+  "policy_digest": "6170b336f195a0158de0ced6535a3f5d5463b3a64092b3adcb75ca1486242196",
+  "frozen_judge_checked": "reported8 match frozenmanifest",
+  "lease": "solecollector sourcewriter; own provider root only; no Roototherworkspacewrites",
+  "resource_overlay": {
+    "purpose": "boundednativeSDKcollector selfcontained stdlib, no sharedcw16harness consumption; DVL01 harness exclusive writer unaffected",
+    "not_claimed": [
+      "dev-validation:harness"
+    ],
+    "claimed": [
+      "omp-runtime:scripted-provider shared uniquens",
+      "omp-bridge:public-tools shared",
+      "summary-compat:contract/policy exclusive nojudgemutations"
+    ],
+    "restrictions": [
+      "cannotimport/change/runcw16harness/devrunner in thisinvocation",
+      "frozenjudge no8gate orchestration run until harness exclusivefree"
+    ]
+  }
+}

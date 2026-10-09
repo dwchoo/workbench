@@ -1,0 +1,87 @@
+{
+  "feature_id": "dev-validation-log-retention",
+  "ticket_id": "DVL-01",
+  "attempt_id": "01",
+  "invocation": "dvl01-impl-01",
+  "phase": "fast_runner_with_real_bounded_scripted_smoke",
+  "approved_bundle_digest": "78bc55919e57bbf2132d6653780c5c164a2ee1d618422e5232d4cf0d1d667c3e",
+  "authority": ".workflow/dev-validation-log-retention/runs/implement-p5-20261009/authority.json",
+  "approval": ".workflow/dev-validation-log-retention/runs/approval-s5-p5-20261009/approval.json",
+  "actual_workspace": "/tmp/workbench-dvl-20261009-3l1ViH/dvl01",
+  "repository_identity": {
+    "head": "2f21ec91990a409ea0d25f351343b50e34b48196",
+    "input_candidate": "01d7459beac326c0b264736a7740cd4285a280b8b6d3ed43a51f7cc478dc8b2a"
+  },
+  "baseline_snapshot": ".workflow/dev-validation-log-retention/runs/implement-p5-20261009/checkpoint-dvl01-impl-01.json",
+  "checkpoint_ref": ".workflow/dev-validation-log-retention/runs/implement-p5-20261009/checkpoint-dvl01-impl-01.json",
+  "mutation_owner": "dvl01-impl-01",
+  "effective_write_capability": "existing same-host actual agent explicit-cwd/absolute-path smoke reused; unrestricted permissions scope detector only; new copy independent git inode verified",
+  "allowed_write_paths": [
+    "tools/dev_validate.py",
+    "tests/dev_validation/**",
+    "tests/integration/cw16_harness.py"
+  ],
+  "acceptance_ids": [
+    "DV-AC-01",
+    "DV-AC-02",
+    "DV-AC-04",
+    "DV-AC-05"
+  ],
+  "relevant_contracts": [
+    "BRIEF r0.9",
+    "SPEC s5",
+    "PLAN p5",
+    "tickets/DVL-01.md",
+    ".codex/workflow-contract.md"
+  ],
+  "resource_claims": [
+    {
+      "resource": "dev-validation:harness",
+      "mode": "exclusive"
+    },
+    {
+      "resource": "omp-runtime:scripted-provider",
+      "mode": "shared"
+    }
+  ],
+  "service_namespaces": {
+    "project": "전용 temp Git project",
+    "home": "전용 HOME/OMP/XDG, 사용자 인증 미상속",
+    "data_dir": "전용 <run>/<ticket>/<attempt>/data",
+    "sockets": "전용 backend/bridge/outer sockets",
+    "provider": "loopback dynamic port, no remote models",
+    "owned_cleanup": "pid+start-ticks 또는 pidfd; 전용 root 밖 종료 금지"
+  },
+  "operational_outputs": "/tmp/workbench-dvl-20261009-3l1ViH/dvl01/.workflow/dvl-local",
+  "prohibited_paths": [
+    "Root/other checkouts",
+    "central .workflow state/approval",
+    "approved bundle/core docs/AGENTS",
+    "new product agents, standing OMP, real models, user auth/user data/multiplexer",
+    "commit/push/deploy"
+  ],
+  "exact_checks": [
+    "G-DV-01",
+    "G-DV-04"
+  ],
+  "configured_model": "gpt-6-sol",
+  "configured_effort": "high",
+  "host_observed_model": "unverified",
+  "host_observed_effort": "unverified",
+  "routing": {
+    "selected_role": "worker_senior",
+    "reason_codes": [
+      "coupled_invariants"
+    ],
+    "evidence_refs": [
+      "SPEC.md §4; 기존 cw16_harness의 isolation/owned cleanup"
+    ]
+  },
+  "reserved_budget": {
+    "implementation": 1,
+    "independent_test": 1,
+    "review": 1
+  },
+  "test_env": "/tmp/workbench-dvl-20261009-3l1ViH/test-py312/bin/python",
+  "task": "Implement DVL01 only. First actual cwd/git/write smoke within this assigned copy confirms binding (reuse existing host smoke, no silent root). Read full relevant skill contracts and SPEC§4/DVL01. Repo-only fast/precise CLI registry; precise future mark not_run, no false full pass. Existing cw16 harness/scripted provider readiness/PID cleanup safely reuse. Smallest actual OMP/bridge/plain Bash smoke before broad runner; no paid calls/auth/store reads. 2min target report only not cutoff. Baseline costs and attempt-chain first failure preservation, watchdog failed/inconclusive not skipped, hostile inherited env cleared. Tests quick focused, no global suite duplication. Return candidate delta/checks/process cleanup. Leaves no delegates. Escalate API unknown precise evidence not fabricated pass."
+}

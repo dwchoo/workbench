@@ -1,0 +1,121 @@
+{
+  "schema_version": 1,
+  "record_type": "planning-bundle-manifest",
+  "feature": "dev-validation-log-retention",
+  "created_on": "2026-10-09",
+  "revision": {
+    "brief": "r0.8",
+    "spec": "s2",
+    "plan": "p2",
+    "requirements": "r0.8-plan-p2-draft"
+  },
+  "digest_algorithm": "SHA-256 of JSON.stringify(files), sorted by path, UTF-8, no trailing newline",
+  "bundle_digest": "f0283183ee49252755711033eb8143fecf37adbb142df59904895c7135ed1cf1",
+  "files": [
+    {
+      "path": "docs/features/dev-validation-log-retention/BRIEF.md",
+      "sha256": "9b6632a9688a5c2ca0a3adb2094d4fe1813cb3ca93d4a87dbe4d55663bb9255a"
+    },
+    {
+      "path": "docs/features/dev-validation-log-retention/FOLLOWUPS.md",
+      "sha256": "71068ebf0fd23dad19033bc1faa03d5819a0ced4c1586a18ac93492b2f4de0b3"
+    },
+    {
+      "path": "docs/features/dev-validation-log-retention/PLAN-REVIEW.md",
+      "sha256": "f5dd71066ed06923bbda343209793cae2628629f617aab5c5c29f535d2f209bf"
+    },
+    {
+      "path": "docs/features/dev-validation-log-retention/PLAN.json",
+      "sha256": "350a4f6548d7e4080e9222f39d5912e78835a76d8d38aba28540aa9a631e5d87"
+    },
+    {
+      "path": "docs/features/dev-validation-log-retention/SPEC.md",
+      "sha256": "68b7ff0ceed82acb0705802289f5e54752fe05f72e2b7a45bf5be41c34b1f5b2"
+    },
+    {
+      "path": "docs/features/dev-validation-log-retention/requirements-r0.8-p2.json",
+      "sha256": "f6074b707b1133851ed3e194d2edadb8bea689f79dff094ce00f598b05471efe"
+    },
+    {
+      "path": "docs/features/dev-validation-log-retention/tickets/DVL-01.md",
+      "sha256": "25a834a915f8e2db242fa99f737565ab75f241cf9eb3a1de1549ddc736a40923"
+    },
+    {
+      "path": "docs/features/dev-validation-log-retention/tickets/DVL-02.md",
+      "sha256": "1c1add4cbaa45f5f8e1ae35d27140d949e5e875345986d8822b0d140d98ba2b5"
+    },
+    {
+      "path": "docs/features/dev-validation-log-retention/tickets/DVL-03.md",
+      "sha256": "c5a97b70035e3a9a608297c2f7b380e453d09ac986621a098ccd6a5cae6cd6ef"
+    },
+    {
+      "path": "docs/features/dev-validation-log-retention/tickets/DVL-04.md",
+      "sha256": "03b1e1749d08c9f74062cf56dd87dfa01d09ccc315fb02a977abc312bfc59912"
+    },
+    {
+      "path": "docs/features/dev-validation-log-retention/tickets/DVL-05.md",
+      "sha256": "d5f04a96a26dad9752678f25968f5704d5c5f6030a76b7c658884537ccfd3d08"
+    },
+    {
+      "path": "docs/features/dev-validation-log-retention/tickets/DVL-06.md",
+      "sha256": "50570c38740ca456ce228bbb6546392cc2979b3f940f792ce62541020145759d"
+    },
+    {
+      "path": "docs/features/dev-validation-log-retention/tickets/DVL-07.md",
+      "sha256": "6b8bd89c91bf9afcdf323341159f1761e699f1615e603c2cd771d5e9f88bc6b3"
+    },
+    {
+      "path": "docs/features/dev-validation-log-retention/tickets/DVL-08.md",
+      "sha256": "cc839937cab3efaab91da60a2769c692f1ef004abb8f5b1a103cf7f19f3cbdd7"
+    },
+    {
+      "path": "docs/features/dev-validation-log-retention/tickets/DVL-09.md",
+      "sha256": "276f52d15b6bf7587001aa6f63bd6e28622764ac8c30945cf5d058f2d37573ed"
+    },
+    {
+      "path": "docs/features/dev-validation-log-retention/tickets/DVL-10.md",
+      "sha256": "5c0541458e71d20e92905568c695679742223ab4d26ce7b159c83029379b75ea"
+    },
+    {
+      "path": "docs/features/dev-validation-log-retention/tickets/DVL-11.md",
+      "sha256": "ff0a6940656b5c9ea6ae9c78b760c0bf1d1400b40470796ebe967ecb45b9fc75"
+    },
+    {
+      "path": "docs/features/dev-validation-log-retention/tickets/DVL-12.md",
+      "sha256": "0d675c5c41626a80db846337b50bdea2251bf9b6ba094d27926823fff231891a"
+    },
+    {
+      "path": "docs/features/dev-validation-log-retention/tickets/DVL-13.md",
+      "sha256": "2a2210c2310cf8daab9484feca286b80a23f6b9c91acb2fc0c639d1dae5847e3"
+    },
+    {
+      "path": "docs/features/dev-validation-log-retention/tickets/DVL-14.md",
+      "sha256": "4ebaba8a5128f17cc1e28b871a4a029a7628c14a48e53469cc8416aaafa28a72"
+    }
+  ],
+  "workspace": {
+    "before_candidate": "9a5a50347b8274678a2323f9fe1551b51b11ff94b77de835ff4a261c3c17e9fc",
+    "candidate": "b6f243d8f60c96e1ed286f7e2a0d723cee1201f5816967912ca9cb4974e1eddc",
+    "before_checkpoint": ".workflow/dev-validation-log-retention/runs/plan-p2-s2-20261009/before-checkpoint.json",
+    "published_manifest": ".workflow/dev-validation-log-retention/runs/plan-p2-s2-20261009/published-manifest.json"
+  },
+  "validation": {
+    "record": {
+      "path": ".workflow/dev-validation-log-retention/runs/plan-p2-s2-20261009/validation-published.json",
+      "sha256": "22f929519d0fe015b5a4ae6abd161a2eac3230bdfb98dc5e17974e4c3d27b64d"
+    },
+    "scope_audit": {
+      "path": ".workflow/dev-validation-log-retention/runs/plan-p2-s2-20261009/scope-audit-published.json",
+      "sha256": "e2d01b27a5844d25cb378b63a9ddeaa13dd372c4950b5a09d57da1e54ad0bc91"
+    },
+    "structural_only": true
+  },
+  "authority": {
+    "source_brief_approval": ".workflow/dev-validation-log-retention/runs/approval-r0.8/approval.json",
+    "revision_request": "사용자: 내용을 보강해서 다시 claude-wb에게 리뷰 받아서 나에게 보고해줘",
+    "bundle_approval": null,
+    "implementation_authorized": false,
+    "raw_activation_authorized": false
+  },
+  "note": "Q-S2-01/02/03 미결정. 구조검증 통과는 product/runtime pass나 승인 아님. p1 기록 보존."
+}

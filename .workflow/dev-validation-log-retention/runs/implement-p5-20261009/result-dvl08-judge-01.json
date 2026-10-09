@@ -1,0 +1,11 @@
+{
+  "invocation": "dvl08-judge-01",
+  "status": "candidate_ready",
+  "candidate": "3f636ec5ffce570351c2dd43cd3e513a192532e2c762b2b14e0c590e35d939c3",
+  "worker_candidate": "6df479df35e29d6d4bfcb814263b23e43ba2271dc87c3bc7cb515ca1451be77b",
+  "candidate_difference": "worker used exclude .workflow rather than Root observation policy .workflow/**; Root recollection is authoritative for assignment evidence",
+  "worker_report": "7 allowed paths added; 9 fixture tests passed; runtime implementation unavailable; no runtime acceptance",
+  "processes": "worker final report confirms no subprocess/socket left; agent turn finished",
+  "phase_complete": "writer phase only; pending independent test/review/freeze",
+  "scope_audit": ".workflow/dev-validation-log-retention/runs/implement-p5-20261009/audit-dvl08-judge-01.json"
+}

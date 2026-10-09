@@ -1,0 +1,15 @@
+{
+  "invocation": "dvl04-impl-01",
+  "outcome": "partial",
+  "changed_paths": [
+    "src/workbench/workflow/run.py",
+    "tests/workflow/test_run.py",
+    "tests/workflow/test_condition_evidence.py"
+  ],
+  "behavior": "pre-raw exact KMP/observed boundaries and durable proofs; current getter view judge; quota/write loss versus post-close tamper; optional C-D46 hold seam",
+  "checks": "targeted9 passed72.7s;new5 passed24.6s;metadata2passed; prior full44 pre-fix6fail preserve; no final whole repetition",
+  "scope_audit": ".workflow/dev-validation-log-retention/runs/implement-p5-20261009/audit-dvl04-impl-01.json",
+  "remaining": "service.py actual composition hold not wired;05exclusivelease, Root serial delta after05lease. Independenttests/freshreview/exactrootcheckpending",
+  "cleanup": "all worker test subprocesses stopped",
+  "graph": "workspace graph absent; Root graph AST update required during integration"
+}

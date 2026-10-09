@@ -1,0 +1,59 @@
+{
+  "feature_id": "dev-validation-log-retention",
+  "ticket_id": "binding",
+  "attempt_id": "binding-01",
+  "invocation": "binding-dvl03-01",
+  "approved_bundle_digest": "78bc55919e57bbf2132d6653780c5c164a2ee1d618422e5232d4cf0d1d667c3e",
+  "actual_workspace": "/tmp/workbench-dvl-20261009-3l1ViH/dvl03",
+  "repository_identity": "copied Git checkout,HEAD2f21ec9, exact dirty-input candidate34e448b25f879f2a1113823dfb3756acd2133096dfaec23e78d9b5334fd1d0b1",
+  "baseline_snapshot": ".workflow/dev-validation-log-retention/runs/implement-p5-20261009/checkpoint-dvl03.json",
+  "effective_write_capability": "danger-full-access shared host; explicit workdir/absolute path binding, detector-only scope, no OS isolation claim",
+  "acceptance_ids": [],
+  "relevant_contracts": [
+    ".codex/workflow-contract.md§5"
+  ],
+  "allowed_write_paths": [
+    ".workflow/binding/marker.json"
+  ],
+  "prohibited_paths": [
+    "all product/test files",
+    "integration checkout",
+    "other worker checkout",
+    "central approvals/state/PLAN"
+  ],
+  "generated_outputs": [
+    ".workflow/binding/marker.json"
+  ],
+  "resource_claims": [],
+  "mutation_owner": "binding-dvl03-01",
+  "checkpoint_ref": ".workflow/dev-validation-log-retention/runs/implement-p5-20261009/checkpoint-dvl03.json",
+  "exact_checks": [
+    "pwd/git top-level with explicit workdir",
+    "apply_patch own absolute scratch marker",
+    "owned loopback socket dynamic bind then close, no processes"
+  ],
+  "reserved_budget": {
+    "total": 1,
+    "role": "worker_senior",
+    "unit": "binding"
+  },
+  "stop_conditions": [
+    "workdir resolves wrong repo",
+    "any write outside assigned scratch"
+  ],
+  "configured_model": "gpt-6-sol (tool role configuration)",
+  "configured_effort": "high (tool role configuration)",
+  "host_observed_model": "unverified",
+  "host_observed_effort": "unverified",
+  "routing": {
+    "planned_role": null,
+    "selected_role": "worker_senior",
+    "reason_codes": [
+      "binding_smoke_before_coupled_implementation"
+    ],
+    "evidence_refs": [
+      "implement§Schedule-ready-frontier",
+      "host-tools worker_senior available"
+    ]
+  }
+}

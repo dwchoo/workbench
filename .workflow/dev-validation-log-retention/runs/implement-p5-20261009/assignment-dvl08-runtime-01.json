@@ -1,0 +1,124 @@
+{
+  "feature_id": "dev-validation-log-retention",
+  "ticket_id": "DVL-08",
+  "attempt_id": "01",
+  "invocation": "dvl08-runtime-01",
+  "phase": "smallest_runtime_feasibility",
+  "approved_bundle_digest": "78bc55919e57bbf2132d6653780c5c164a2ee1d618422e5232d4cf0d1d667c3e",
+  "authority": ".workflow/dev-validation-log-retention/runs/implement-p5-20261009/authority.json",
+  "approval": ".workflow/dev-validation-log-retention/runs/approval-s5-p5-20261009/approval.json",
+  "actual_workspace": "/tmp/workbench-dvl-20261009-3l1ViH/dvl08",
+  "repository_identity": {
+    "head": "2f21ec91990a409ea0d25f351343b50e34b48196",
+    "input_candidate": "01d7459beac326c0b264736a7740cd4285a280b8b6d3ed43a51f7cc478dc8b2a"
+  },
+  "baseline_snapshot": ".workflow/dev-validation-log-retention/runs/implement-p5-20261009/checkpoint-dvl08-runtime-01.json",
+  "effective_write_capability": "verified explicit workdir+absolute edits; hostunrestricted detector-only",
+  "acceptance_ids": [
+    "LG-AC-05",
+    "LG-AC-06",
+    "LG-AC-07",
+    "LG-AC-18",
+    "LG-AC-19",
+    "LG-AC-22"
+  ],
+  "relevant_contracts": [
+    "BRIEF r0.9",
+    "SPEC s5",
+    "PLAN p5",
+    "tickets/DVL-08.md",
+    ".codex/workflow-contract.md"
+  ],
+  "allowed_write_paths": [
+    "tests/backend/live_summary_feasibility.py"
+  ],
+  "prohibited_paths": [
+    "approved BRIEF/SPEC/PLAN/tickets/requirements/core bundle/AGENTS",
+    "central .workflow state/approval",
+    "integration checkout/other checkout",
+    "anynewproductagent/standingOMP/paidmodel/authstore"
+  ],
+  "generated_outputs": [
+    "tests/backend/live_summary_feasibility.py",
+    "tests/backend/summary_probe_support.py",
+    "tests/backend/test_summary_probe.py",
+    "tools/validate_feature_gate.py",
+    "tools/q01_recheck.py",
+    "tests/backend/test_summary_gate_validator.py",
+    "src/workbench/contracts/summary_compat_policy_v1.json"
+  ],
+  "operational_outputs": "/tmp/workbench-dvl-20261009-3l1ViH/dvl08/.workflow/dvl-local/",
+  "resource_claims": [
+    {
+      "resource": "dev-validation:harness",
+      "mode": "shared"
+    },
+    {
+      "resource": "omp-runtime:scripted-provider",
+      "mode": "shared"
+    },
+    {
+      "resource": "omp-bridge:public-tools",
+      "mode": "shared"
+    },
+    {
+      "resource": "summary-compat:contract",
+      "mode": "exclusive"
+    },
+    {
+      "resource": "summary-compat:policy",
+      "mode": "exclusive"
+    }
+  ],
+  "service_namespaces": {
+    "project": "전용 temp Git project",
+    "home": "전용 HOME/OMP/XDG, 사용자 인증 미상속",
+    "data_dir": "전용 <run>/<ticket>/<attempt>/data",
+    "sockets": "전용 backend/bridge/outer sockets",
+    "provider": "loopback dynamic port, no remote models",
+    "owned_cleanup": "pid+start-ticks 또는 pidfd; 전용 root 밖 종료 금지"
+  },
+  "mutation_owner": "dvl08-runtime-01",
+  "checkpoint_ref": ".workflow/dev-validation-log-retention/runs/implement-p5-20261009/checkpoint-dvl08-runtime-01.json",
+  "exact_checks": [
+    "Q01-validator"
+  ],
+  "reserved_budget": {
+    "implementation": 1,
+    "independent_test": 1,
+    "fresh_review": 1,
+    "finite_run_limit": 64
+  },
+  "stop_conditions": [
+    "scope/authorization change required",
+    "missing public API/core invariant change",
+    "feasibility runtime beforejudgefreeze is prohibited for08"
+  ],
+  "configured_model": "gpt-6-sol",
+  "configured_effort": "high (fixed worker_senior role)",
+  "host_observed_model": "unverified",
+  "host_observed_effort": "unverified",
+  "routing": {
+    "planned_role": "worker_senior",
+    "selected_role": "worker_senior",
+    "reason_codes": [
+      "coupled_invariants"
+    ],
+    "evidence_refs": [
+      "SPEC§8.1 independent judge/projection enforcement and OMP compatibility"
+    ]
+  },
+  "task": "inspect public installed APIs then smallest actual isolated credential-free/scripted provider existing-agent tool guard/epoch/atomic check-send experiment; stop affected expansion on failed/inconclusive or adoption need; do not generate all8 passes from static API names; no product newagent/standingprocess",
+  "prior_assignment_ref": ".workflow/dev-validation-log-retention/runs/implement-p5-20261009/assignment-binding-dvl08-01.json",
+  "frozen_judge": ".workflow/dev-validation-log-retention/runs/implement-p5-20261009/q01-judge-freeze-01.json",
+  "prohibited_frozen_files": [
+    "tools/validate_feature_gate.py",
+    "tools/q01_recheck.py",
+    "tests/backend/summary_probe_support.py",
+    "tests/backend/test_summary_probe.py",
+    "tests/backend/test_summary_gate_validator.py",
+    "tests/backend/test_summary_gate_validator_independent.py",
+    "tests/backend/test_summary_probe_independent.py",
+    "src/workbench/contracts/summary_compat_policy_v1.json"
+  ]
+}

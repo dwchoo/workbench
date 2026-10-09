@@ -1,0 +1,15 @@
+{
+  "invocation": "dvl08-runtime-04",
+  "outcome": "needs_reroute",
+  "classification": "probe_child_classifier_and_yield_setup",
+  "evidence": "/tmp/workbench-dvl-20261009-3l1ViH/dvl08/.workflow/dvl-local/dvl08-runtime-04-child.json",
+  "observations": [
+    "exact existing explorer bytes loaded fake HOME path; actual child ctx.agent identity kind=sub/name=explorer/parentId=Main",
+    "pre-first-provider awaited readback and actual catalog read-only observed",
+    "handler selected child only if yield catalog but guard selected read, role was unknown; actual child requests4 erroneously counted0",
+    "task native strict structuredOutput unavailable because no yield"
+  ],
+  "cleanup": "worker final parent/provider stopped residue[]",
+  "next": "fix scripted child classification; preserve existing native yield as permitted typed-result-only tool along with read; one bounded child observation after offline schema calibration, not all8 pass",
+  "all8_pass": false
+}

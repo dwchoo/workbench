@@ -1,0 +1,58 @@
+{
+  "schema_version": 1,
+  "record_type": "planning-revision-record",
+  "run_id": "plan-p2-s2-20261009",
+  "request": "내용을 보강해서 다시 claude-wb에게 리뷰 받아서 나에게 보고해줘",
+  "supersedes": ".workflow/dev-validation-log-retention/runs/plan-p1-s1-20261009/planning-record.json",
+  "source_review": "ticket-bundle-s1-p1-review-01",
+  "brief_unchanged": true,
+  "spec": "s2",
+  "plan": "p2",
+  "ticket_count": 14,
+  "acceptance_count": 28,
+  "gate_count": 45,
+  "bundle_digest": "f0283183ee49252755711033eb8143fecf37adbb142df59904895c7135ed1cf1",
+  "requirements_identity": "e8ee94bfa0d2924ec69e873910582c26e6fcbcbc2e7f065a1de0c575f64d683e",
+  "candidate": "b6f243d8f60c96e1ed286f7e2a0d723cee1201f5816967912ca9cb4974e1eddc",
+  "checks": [
+    {
+      "kind": "plan_structure",
+      "result": "passed",
+      "exit_code": 0,
+      "evidence": {
+        "path": ".workflow/dev-validation-log-retention/runs/plan-p2-s2-20261009/validation-published.json",
+        "sha256": "22f929519d0fe015b5a4ae6abd161a2eac3230bdfb98dc5e17974e4c3d27b64d"
+      }
+    },
+    {
+      "kind": "scope_audit",
+      "result": "passed",
+      "exit_code": 0,
+      "evidence": {
+        "path": ".workflow/dev-validation-log-retention/runs/plan-p2-s2-20261009/scope-audit-published.json",
+        "sha256": "e2d01b27a5844d25cb378b63a9ddeaa13dd372c4950b5a09d57da1e54ad0bc91"
+      },
+      "criteria": "19 feature planning files only,index_changed/outside_scope empty"
+    },
+    {
+      "kind": "document_whitespace",
+      "result": "passed",
+      "exit_code": 0,
+      "criteria": "all feature docs/JSON no diff --check diagnostics;wrapper accepts no-index normal diff exit1"
+    }
+  ],
+  "not_run": [
+    "product tests",
+    "runtime/probe/model calls",
+    "worktree/agent creation"
+  ],
+  "pending_user_decisions": [
+    "Q-S2-01",
+    "Q-S2-02",
+    "conditional Q-S2-03"
+  ],
+  "external_review_request": ".workflow/dev-validation-log-retention/runs/plan-p2-s2-20261009/review-request.json",
+  "external_review_status": "running_observed",
+  "implementation_authorized": false,
+  "raw_rotation_activation_authorized": false
+}

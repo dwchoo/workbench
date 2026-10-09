@@ -1,0 +1,31 @@
+{
+  "invocation": "dvl01-review-04",
+  "outcome": "complete",
+  "candidate": "8a544e417956263982fea90ffbd08eb6ecdb855ae4857607e0fa7ff7c15fc5b0",
+  "findings": [],
+  "review_result": "no new material in frozen R8 correction/affected complete01 scope",
+  "observed": [
+    "new direct owned Z exact-reaped, baseline existing live/Z excluded",
+    "live backend retains private ownership corroboration",
+    "prior subreaper restored in finally",
+    "structured actual suite/progress binding unchanged"
+  ],
+  "scope_limitation": "single-cell standalone validation helper; not a generic multi-tenant subprocess runner",
+  "actual_fast": {
+    "collected_tests": 81,
+    "item_counts": [
+      17,
+      63,
+      1
+    ],
+    "elapsed_seconds": 26.401,
+    "exit": 0,
+    "owned_z_reaped": 3
+  },
+  "metric_correction": "assignment copied prior80 count; current report correctly81 after worker regression added. Earlier80 fixed03 remains historical fact.",
+  "not_claimed": [
+    "precise",
+    "46 final gates"
+  ],
+  "read_only": true
+}

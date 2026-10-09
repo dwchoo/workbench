@@ -1,0 +1,62 @@
+{
+  "schema_version": 1,
+  "record_type": "planning-revision-record",
+  "revision": {
+    "brief": "r0.9",
+    "spec": "s5",
+    "plan": "p5",
+    "requirements": "r0.9-plan-p5-draft"
+  },
+  "authority": ".workflow/dev-validation-log-retention/runs/plan-p5-s5-20261009/authority.json",
+  "received_review": ".workflow/dev-validation-log-retention/runs/plan-p5-s5-20261009/received-review.json",
+  "before_candidate": "5e6c516d6a85181cccd9153f103276b4fba988339a874af2d7409f7d916576c5",
+  "candidate": "34e448b25f879f2a1113823dfb3756acd2133096dfaec23e78d9b5334fd1d0b1",
+  "bundle_manifest": ".workflow/dev-validation-log-retention/runs/plan-p5-s5-20261009/bundle-manifest.json",
+  "bundle_digest": "78bc55919e57bbf2132d6653780c5c164a2ee1d618422e5232d4cf0d1d667c3e",
+  "published_manifest": {
+    "path": ".workflow/dev-validation-log-retention/runs/plan-p5-s5-20261009/published-manifest.json",
+    "sha256": "502db1883ce2d376c8ab490bde2086d07e2323591c38e83b90901b5d1aed7d38"
+  },
+  "requirements_identity": "84d8dc604d543fb92116b25b00198ee43dc1b330466403534c377f1791d6eb18",
+  "validation": ".workflow/dev-validation-log-retention/runs/plan-p5-s5-20261009/validation-final.json",
+  "scope_audit": ".workflow/dev-validation-log-retention/runs/plan-p5-s5-20261009/scope-audit.json",
+  "checks": [
+    {
+      "command": "validate_plan.py --input validation-request.json --output validation-final.json",
+      "cwd": "/home/dwchoo/ai-exp-assistant",
+      "exit_code": 0,
+      "result": "structural_valid_only",
+      "evidence": ".workflow/dev-validation-log-retention/runs/plan-p5-s5-20261009/validation-final.json"
+    },
+    {
+      "command": "evidence.py audit --input audit-request.json --output scope-audit.json",
+      "cwd": "/home/dwchoo/ai-exp-assistant",
+      "exit_code": 0,
+      "result": "outside_scope/index_changes=0",
+      "evidence": ".workflow/dev-validation-log-retention/runs/plan-p5-s5-20261009/scope-audit.json"
+    },
+    {
+      "command": "read-only JSON dependency/AC/gate-level/write-scope owner comparison + git diff whitespace checks",
+      "cwd": "/home/dwchoo/ai-exp-assistant",
+      "exit_code": 0,
+      "result": "14 tickets/46 gates/28 AC unchanged; suppliers/cycles=0;10explicit scope excludes08judges;canonical policy planned08owner only",
+      "evidence": "Root tool output; publication-confirmation.json follows"
+    }
+  ],
+  "all_runtime_gate_evidence": "not_run_pending",
+  "external_review_status": "s4_p4_final_received; s5_p5_delta_not_externally_reviewed",
+  "bundle_approved": false,
+  "implementation_started": false,
+  "product_tests_or_probes_run": false,
+  "model_calls_run": false,
+  "new_agents_created": false,
+  "raw_activation": false,
+  "invocation_accounting": "No child/reviewer dispatch this revision; external existing-session review completion is source receipt. Prior invocation usage not reset or inferred zero.",
+  "pending_observations": [
+    "Q01 tools/enforcement API/atomicity/event provenance",
+    "offline route metadata/output reasoning budget",
+    "direct origin/isolation/herdr/pyte/time targets",
+    "conditional shared delay/fallback/thinking-tier/guard alternative"
+  ],
+  "historical_review_record_policy": "Preserve p4 request=prepared and publication=not_requested as creation-time facts; p4 dispatch=running plus new received-review establishes current completion."
+}

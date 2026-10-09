@@ -1,0 +1,42 @@
+{
+  "invocation": "dvl03-review-01",
+  "candidate": "b989ceabff7e2c92d1cf1591c0c1294f705f623e0c61bfc15446c7918af54704",
+  "status": "changes_required_foundation",
+  "findings": [
+    {
+      "id": "S03-R1",
+      "severity": "high",
+      "disposition": "accepted",
+      "requirement": "stored transition requires atomic result receipt; cannot hide unresolved request without durable result reference"
+    },
+    {
+      "id": "S03-R2",
+      "severity": "high",
+      "disposition": "accepted",
+      "requirement": "physical source interval no-replay independent revision/collector epoch/skill/gap reason; include sourceGaps in reservation; immutable run ownership/revision provenance"
+    },
+    {
+      "id": "S03-R3",
+      "severity": "high",
+      "disposition": "accepted",
+      "requirement": "matched proof requires observed bytes bound to exact run/revision; complete negative requires explicit gapfree observation source/witness, not unbound bool"
+    },
+    {
+      "id": "S03-R4",
+      "severity": "medium",
+      "disposition": "accepted_for_normal_put",
+      "requirement": "normal entry insertion must not silently accept foreign origin UUID; future bounded anchor transfer needs explicit validated import path preserving origin semantics, not generic unchecked insertion"
+    },
+    {
+      "id": "S03-R5",
+      "severity": "medium",
+      "disposition": "accepted",
+      "requirement": "Python/TS same strict Unicode schema; lone surrogate rejected consistently; date normalization/year boundary regression too"
+    }
+  ],
+  "unknowns": [
+    "empty-output complete observation representation must remain explicit; no invented raw bytes or success. Root to reconcile typed witness if existing range contract cannot represent empty coverage."
+  ],
+  "processes": "reviewer final read-only; no tests/probes/processes started",
+  "next": "bounded worker correction; independent targeted negative tests; delta review; integration only after verification"
+}

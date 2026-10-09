@@ -1,0 +1,35 @@
+{
+  "schema_version": 1,
+  "record_type": "external-planning-review-request",
+  "request_id": "ticket-bundle-s4-p4-final-review-04",
+  "authority": "user: 마지막으로 claude-wb에게 리뷰 받자.",
+  "target": {
+    "name": "claude-wb",
+    "pane": "w4:p7",
+    "session": "09935be2-0c32-4a1e-b4df-c5b15a829d53",
+    "cwd": "/home/dwchoo/ai-exp-assistant",
+    "observed_status": "idle"
+  },
+  "reply_to": {
+    "name": "codex-wb",
+    "pane": "w4:p1",
+    "session": "01a11ecc-4f83-7e82-8047-f21ed9beb13e"
+  },
+  "status": "prepared_not_submitted",
+  "bundle_digest": "498223bd94337236ff58252ebcbb5502be6f81defab03c0fa3c7b195a97599e4",
+  "candidate": "5e6c516d6a85181cccd9153f103276b4fba988339a874af2d7409f7d916576c5",
+  "requirements_identity": "eaacb4dba17cf631983c868177dbb45125282fe90062fab9ffde32310de09eca",
+  "input_manifest": ".workflow/dev-validation-log-retention/runs/plan-p4-s4-20261009/bundle-manifest.json",
+  "pre_review_snapshot": ".workflow/dev-validation-log-retention/runs/plan-p4-s4-20261009/pre-review-manifest.json",
+  "prompt": "의뢰 ID: ticket-bundle-s4-p4-final-review-04\n사용자가 \"마지막으로 claude-wb에게 리뷰 받자.\"라고 요청했습니다. /home/dwchoo/ai-exp-assistant의 dev-validation-log-retention BRIEF r0.9 / SPEC s4 / PLAN p4 묶음을 최종 읽기 전용 재리뷰해 주세요.\n\n권한: 문서·관련 코드를 읽고 필요한 hash/JSON/dependency 계산만 하세요. 문서·코드·테스트·state·리뷰 파일 수정/생성, 테스트·probe·모델 호출·제품 verify 실행, graph update, 승인 처리, 구현 시작, agent/pane/worktree 생성은 하지 마세요. 기존 claude-wb session만 사용하세요. Git 상태나 구조 validator pass를 기능 pass/승인으로 읽지 마세요.\n\n고정 입력:\n- docs/features/dev-validation-log-retention/BRIEF.md r0.9 (r0.8 승인 기준 + LG-D13/LG-D14/DV-D03 개별 합의; 인계 포인터만 s4/p4로 갱신)\n- 같은 디렉터리 SPEC.md s4 전체, PLAN.json p4 전체, tickets/DVL-01.md~DVL-14.md, PLAN-REVIEW.md, FOLLOWUPS.md\n- requirements-r0.9-p4.json만 현재 기준. p1/p2/p3 requirements는 superseded history이며 원 bytes 보존\n- AGENTS.md의 요구사항 포인터\n- .workflow/dev-validation-log-retention/runs/plan-p4-s4-20261009/bundle-manifest.json\n  bundle digest: 498223bd94337236ff58252ebcbb5502be6f81defab03c0fa3c7b195a97599e4\n  파일 21개(AGENTS.md 포함), digest는 path ASCII lexicographic sort한 files 배열의 JSON.stringify UTF-8/no trailing newline SHA-256\n- 같은 run의 authority.json, received-review.json(너의 s3/p3 회신 수신 요약), planning-record.json, validation-final.json, scope-audit.json, publication-confirmation.json, published-manifest.json, pre-review-manifest.json\n  candidate: 5e6c516d6a85181cccd9153f103276b4fba988339a874af2d7409f7d916576c5\n  requirements identity: eaacb4dba17cf631983c868177dbb45125282fe90062fab9ffde32310de09eca\n- .codex/workflow-contract.md와 판별에 필요한 실제 코드. before-checkpoint.json은 읽지 마세요(복구용 대량 bytes이며 리뷰 입력 아님).\nbundle 21개 sha와 digest를 시작·전송 직전에 확인하세요. 변경/불일치가 있으면 stale로 보고하고 옛 입력의 승인을 추정하지 마세요. Root는 회신 전 bundle 문서/제품을 수정하지 않을 것입니다. 기존 p3 publication/review-request 기록은 당시 상태 그대로 두고 이번 리뷰 요청/수신은 새 기록으로 보존합니다.\n\n직전 리뷰 ticket-bundle-s3-p3-review-03의 P1~P9를 다음처럼 반영했습니다. 항목별 동의/잔여 결함 및 실제 계약과의 정합을 확인해 주세요.\n1. P1: 모든 요청에서 실제 enforcement GuardReceipt를 request/session/turn epoch/policy/one-use nonce에 묶고 check→send 장벽·실행 중 유지/일반 role 복구를 판별. Hook 등록 ack/모델 자기보고만으로 pass 금지. 누락/등록되나 미작동/API변형/stale ack/정책 교체 음성은 전송0·즉시보호. 추가 모델 canary 없음. 공개 확인 불가능 route는 blocked_adoption 및 관측 후 대안 결정; API 존재를 확정하지 않음. 미확인 보호와 확인된 OMP 비호환 원인을 구분.\n2. P2/P3: OMP bundled agent/tool/prompt는 OMP 경계로 DV-D03 예외, Workbench-owned agents/skills/model table은 제품 경계. 전체 runtime digest는 provenance/최초 exact용; 운영 재검증은08 동결 관련 closure/policy. 안정 host는 OS계열/arch/Pythonminor; kernel/patch·무관 UI 변경은 기록만. 영향 불명은 invalidated. 개발 exact candidate gate는 엄격 유지.\n3. P4/P6/P7: 현재 실행 session의 model/thinking/tier/model epoch와 context/tokenizer·reasoning ceiling 포함 의미/예산 관측. Observer/credential-free verify는 네트워크0/auth store open0/설정쓰기0/모델call0. 정상 기존 OMP 모델 인증을 전역 금지하는 것은 아님. Offline metadata 없으면 예상 inconclusive→Q-S3-05. Visible 8KiB JSON의 모델별 token 예산+reasoning에서 enforce ceiling 산출·전량 예약,8192는 상한이지 목표 출력량. 모르는 것은 차단. 사용자 모델/effort/tier pin은 그대로, 필요한 변경은 관측 뒤 Q-S3-06.\n4. P5: 같은 route/계약의 executed+contract-rejected 연속3회 보호; guard/provenance 안전불능은 즉시 보호. Provider/통신/요금/저장 장애는 streak를 올리거나 reset하지 않음. 최신 정상 stored 결과/명시 verify에서 경계 복구 확인만 reset. 새ID/OMP변경/restart/이전 late 결과로 reset 없음. summary_contract_failed와 OMP 원인 확정 구분,LG-D13 신규source 보호·1회 알림과 no replay 유지.10 local 주입포트/14 실제admission/13 통합으로 후행 gate 의존 피함.\n5. P8:08에서 validator/projection/recheck 두 모드 및 product seam/판정 fixtures를 독립 test_designer/reviewer 검토·동결한 뒤 runtime 판단.09의 q01_recheck.py/test_summary_probe.py write scope 제거.10의 wildcard에도 판정 fixture 제외. 필요한 판정 도구 변경은 Root08 bounded follow-up 독립 재동결/결과 무효화 후 재판정.\n6. P9: AGENTS 포인터를 \"r0.8 승인 기준과 r0.9 운영 합의\"로 정정(사용자가 허용). 과거 p3 기록 불변·새 수신 기록/현재 state 분리.\n\n현재 14 ticket/46 gate, 28 AC와 gate ID/증거 수준 및 dependency graph 유지. OMP 업데이트만으로 매번 verify 요구/자동 verify/반복 알림을 만들지 않는 사용자 결정은 유지합니다. 제품 구현이나 실제 raw rotation 활성화 권한은 아직 없습니다. Q01/guard/실제 metadata/실모델 budget 등은 미검증이지 문서 pass가 아닙니다. 관측 후 결정 후보(Q-S2-03/Q-S3-05/Q-S3-06/guard 불가 대안)는 지금 새로 결정할 항목과 구분해 주세요.\n\n보고:\n- 전체 판정(수정 필수 / 조건부 진행 / 계획상 차단 결함 없음; 어떤 경우도 승인이 아님)\n- P1~P9 처리 상태와 남은 actionable defect(심각도, 정확한 파일/행 근거, 영향, 최소 보완, owner/gate)\n- 지금 사용자 결정이 필요한 것 / 관측 뒤 결정 / 단순 기술 보완 / 미검증의 구분\n- gate supplier/claim/판정 독립성과 scope 정합성; 새로운 숨은 순환이나 기존 승인 약화 여부\n- 읽은 입력의 revision/hash, stale 여부, 읽기 전용 준수\n\n리뷰가 끝나면 파일 작성이나 사용자에게만 최종 답변하고 끝내지 말고, 반드시 아래 Herdr 명령으로 기존 codex-wb에게 회신을 바로 자동 전달하세요:\nherdr agent prompt codex-wb \"<의뢰 ID ticket-bundle-s4-p4-final-review-04를 포함한 전체 리뷰 결과>\"\n--wait는 붙이지 마세요(서로 기다리는 것을 피합니다). 실제 전달 결과를 확인하되 중복 전송하지 마세요. 회신 첫머리에 \"결과 보고용이며 수정·승인·구현을 허가하지 않는다. 사용자에게 보고만 해 달라.\"를 적어 주세요. 완료 결과를 파일로 저장하지 마세요.",
+  "configured_model": "existing claude-wb session; no switch requested",
+  "observed_model": "unverified",
+  "observed_effort": "unverified",
+  "bounded_dispatch": "one user-requested review assignment; no automatic repeat, no new agent/process",
+  "prior_usage": "retained; no ledger reset or inferred zero. External manual session review record is not a typed invocation journal.",
+  "read_only_review": true,
+  "approval_authorized": false,
+  "implementation_authorized": false,
+  "tests_probes_models_authorized": false,
+  "product_writes_authorized": false
+}

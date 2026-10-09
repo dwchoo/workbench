@@ -1,0 +1,28 @@
+{
+  "invocation": "dvl03-fix-01",
+  "status": "candidate_ready",
+  "candidate": "1114f47be9f17516793e7122dfd2dcf3bd1d3a54076654cd963a985236ce3f1c",
+  "changed": [
+    "src/workbench/contracts/logs_v1.py",
+    "omp_bridge/contract/logs_v1.ts",
+    "src/workbench/storage/important_log/store.py",
+    "src/workbench/storage/metadata_sqlite/schema.py",
+    "src/workbench/tasks/repository.py",
+    "tests/contracts/test_logs_v1.py",
+    "tests/storage/important_log/test_store.py",
+    "tests/tasks/test_repository_logs.py"
+  ],
+  "checks": "worker scoped15 pass plus existing repository11 pass; independent12 has1 obsolete complete-without-coverage expectation failure",
+  "new_api": [
+    "parse_observation_boundary/parseObservationBoundary",
+    "parse_observation_coverage/parseObservationCoverage",
+    "ObservationJournal",
+    "record_observation_boundary",
+    "record_gapfree_coverage",
+    "record_condition_proof.coverage_id"
+  ],
+  "processes": "worker final all subprocess/socket stopped",
+  "source_golden_bytes": "unchanged",
+  "scope_audit": ".workflow/dev-validation-log-retention/runs/implement-p5-20261009/audit-dvl03-fix-01.json",
+  "runtime_pass": false
+}

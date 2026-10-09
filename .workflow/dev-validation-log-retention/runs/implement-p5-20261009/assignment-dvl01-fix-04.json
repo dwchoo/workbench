@@ -1,0 +1,91 @@
+{
+  "feature_id": "dev-validation-log-retention",
+  "ticket_id": "DVL-01",
+  "attempt_id": "04",
+  "invocation": "dvl01-fix-04",
+  "phase": "normal_shutdown_adopted_zombie_reap",
+  "authority": ".workflow/dev-validation-log-retention/runs/implement-p5-20261009/authority.json",
+  "approved_bundle_digest": "78bc55919e57bbf2132d6653780c5c164a2ee1d618422e5232d4cf0d1d667c3e",
+  "actual_workspace": "/tmp/workbench-dvl-20261009-3l1ViH/dvl01",
+  "repository_identity": {
+    "head": "2f21ec91990a409ea0d25f351343b50e34b48196",
+    "input_candidate": "be1fb71086af83bb16926a51371bee85747c4c490f6dad59cf89fd28490aa83a"
+  },
+  "baseline_snapshot": ".workflow/dev-validation-log-retention/runs/implement-p5-20261009/checkpoint-dvl01-fix-04.json",
+  "checkpoint_ref": ".workflow/dev-validation-log-retention/runs/implement-p5-20261009/checkpoint-dvl01-fix-04.json",
+  "mutation_owner": "dvl01-fix-04",
+  "allowed_write_paths": [
+    "tools/dev_validate.py",
+    "tests/integration/cw16_harness.py",
+    "tests/dev_validation/test_runner.py",
+    "tests/dev_validation/fixture_items.py",
+    "graphify-out/**"
+  ],
+  "resource_claims": [
+    {
+      "resource": "dev-validation:harness",
+      "mode": "exclusive"
+    }
+  ],
+  "acceptance_ids": [
+    "DV-AC-01",
+    "DV-AC-02",
+    "DV-AC-04",
+    "DV-AC-05"
+  ],
+  "relevant_contracts": [
+    "BRIEF",
+    "SPEC§4",
+    "DVL-01",
+    ".codex/workflow-contract.md"
+  ],
+  "operational_outputs": "/tmp/workbench-dvl-20261009-3l1ViH/dvl01/.workflow/dvl-local",
+  "prohibited_paths": [
+    "tests/dev_validation/test_runner_independent.py",
+    "tests/dev_validation/fixture_items_independent.py",
+    "Root/other checkouts/central state/approved bundle",
+    "real OMP and paid model/user data/auth/mux"
+  ],
+  "test_env": "/tmp/workbench-dvl-20261009-3l1ViH/test-py312/bin/python",
+  "configured_model": "gpt-6-sol",
+  "configured_effort": "high (fixed worker_senior role)",
+  "host_observed_model": "unverified",
+  "host_observed_effort": "unverified",
+  "task": "Fix fresh R8: an actual native cross-exec CLI backend can finish normally before suite end and become adopted Z, while current scans exclude Z and never track it. Preserve live R7 watchdog/cross-exec cleanup and structured-suite ownership/progress. Register or safely track normal owned children before exit, or exact safe adopted-Z ownership/reap, excluding baseline unrelated children; no arbitrary waitpid(-1) or string-only signal/reap. Add worker regression using actual separate Python CLI spawn_backend normal shutdown including completion before first scan; assert exact PID/startTicks reaped, unrelated child remains untouched, runner prior subreaper state restored. Do not change product cli/global behavior or independent test files. Reaffirm explicit workdir and absolute apply paths, sole source writer, no delegation. No actual OMP or full suite before targeted controlled proof. Return candidate, logs, exact cleanup, scope, then release source lease for independent test05; AST-only graph update permitted generated scope. Root owns final actual fast refresh and integration.",
+  "prior_assignment_ref": ".workflow/dev-validation-log-retention/runs/implement-p5-20261009/assignment-dvl01-fix-03.json",
+  "routing": {
+    "planned_role": "worker_senior",
+    "selected_role": "worker_senior",
+    "reason_codes": [
+      "evidenced_result_channel_and_owned_process_invariants"
+    ],
+    "evidence_refs": [
+      ".workflow/dev-validation-log-retention/runs/implement-p5-20261009/result-dvl01-review-03.json"
+    ]
+  },
+  "generated_outputs": [
+    "tools/dev_validate.py",
+    "tests/integration/cw16_harness.py",
+    "tests/dev_validation/test_runner.py",
+    "tests/dev_validation/fixture_items.py"
+  ],
+  "effective_write_capability": "explicit workdir/absolute paths; hostunrestricted detector-only, reaffirm before edit",
+  "exact_checks": [
+    "G-DV-01",
+    "G-DV-04"
+  ],
+  "reserved_budget": {
+    "implementation": 1,
+    "independent_test": 1,
+    "fresh_review": 1,
+    "finite_run_limit": 96
+  },
+  "stop_conditions": [
+    "scope/authorization expansion",
+    "independent criterion weakened",
+    "user data/auth/mux touched"
+  ],
+  "findings": ".workflow/dev-validation-log-retention/runs/implement-p5-20261009/result-dvl01-review-03.json",
+  "independent_author_milestone": ".workflow/dev-validation-log-retention/runs/implement-p5-20261009/milestone-dvl01-test-04-author.json",
+  "ownership": "Independent DVL045 test writer owns separate dvl05 checkout; this worker is sole writer in dvl01 and second source workspace. dvl08 has no source writer."
+}

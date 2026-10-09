@@ -1,0 +1,73 @@
+{
+  "feature_id": "dev-validation-log-retention",
+  "ticket_id": "DVL-01",
+  "attempt_id": "04",
+  "invocation": "dvl01-review-04",
+  "phase": "fresh_frozen_complete01_normal_z_and_actualfast",
+  "authority": ".workflow/dev-validation-log-retention/runs/implement-p5-20261009/authority.json",
+  "approved_bundle_digest": "78bc55919e57bbf2132d6653780c5c164a2ee1d618422e5232d4cf0d1d667c3e",
+  "actual_workspace": "/tmp/workbench-dvl-20261009-3l1ViH/dvl01",
+  "repository_identity": {
+    "head": "2f21ec91990a409ea0d25f351343b50e34b48196",
+    "input_candidate": "8a544e417956263982fea90ffbd08eb6ecdb855ae4857607e0fa7ff7c15fc5b0"
+  },
+  "baseline_snapshot": ".workflow/dev-validation-log-retention/runs/implement-p5-20261009/candidate-dvl01-test-05-post.json",
+  "checkpoint_ref": ".workflow/dev-validation-log-retention/runs/implement-p5-20261009/checkpoint-dvl01-fix-04.json",
+  "mutation_owner": null,
+  "allowed_write_paths": [],
+  "resource_claims": [
+    {
+      "resource": "dev-validation:harness",
+      "mode": "shared"
+    }
+  ],
+  "acceptance_ids": [
+    "DV-AC-01",
+    "DV-AC-02",
+    "DV-AC-04",
+    "DV-AC-05"
+  ],
+  "relevant_contracts": [
+    "BRIEF",
+    "SPEC§4",
+    "DVL-01",
+    ".codex/workflow-contract.md"
+  ],
+  "operational_outputs": "/tmp/workbench-dvl-20261009-3l1ViH/dvl01/.workflow/dvl-local",
+  "prohibited_paths": [
+    "production/tools/harness/worker tests",
+    "Root/othercheckouts/centralstate/approvedbundle",
+    "real OMP probes until08runtime lease free; paid model/user data/auth/mux"
+  ],
+  "test_env": "/tmp/workbench-dvl-20261009-3l1ViH/test-py312/bin/python",
+  "configured_model": "gpt-6-sol",
+  "configured_effort": "high",
+  "host_observed_model": "unverified",
+  "host_observed_effort": "unverified",
+  "task": "Fresh read-only frozen unit01 impact review after R8 normal adopted-Z correction. Independent+worker/harness33 pass, final independent cleanup-only tweak R8 one rerun pass. CURRENT realinstalledOMP/scriptedfast all3items pass exact8a544...beforeafter; actualinstalledplainbash reports owned reapedPids/adoptedZombiePids [2666574,2666898,2667020], namespaceRemoved true. Check R8 exactZreap+baseline live/Z exclude+prior subreaperrestore under normal crossExec beforefirstscan/suiteend, preserve R7 live/watchdog ownership and trusted structured collection/progress. Source-derived actionable defects only, no universal malicious-test OSsandbox. All7unit paths frozen; no writers. No edits/tests/probes/models/graph/agents. PriorR8 reviewer reasoning addressed and actualcleanup now observed; precise/46featuregates are downstream. Report concrete remaining fault or no-new-material; don't rerun unchanged review scope.",
+  "prior_assignment_ref": ".workflow/dev-validation-log-retention/runs/implement-p5-20261009/assignment-dvl01-review-03.json",
+  "routing": {
+    "planned_role": "reviewer",
+    "selected_role": "reviewer",
+    "reason_codes": [
+      "fresh_unit_faultfinding"
+    ],
+    "evidence_refs": [
+      ".workflow/dev-validation-log-retention/runs/implement-p5-20261009/result-dvl01-test-01.json",
+      ".workflow/dev-validation-log-retention/runs/implement-p5-20261009/result-dvl01-fix-01.json"
+    ]
+  },
+  "effective_write_capability": "no candidate edits; own operational logs/temp tests only; hostunrestricted explicit workdir",
+  "exact_checks": [
+    "G-DV-01",
+    "G-DV-04"
+  ],
+  "reserved_budget": {
+    "test": 1,
+    "review": 1,
+    "finite_run_limit": 96
+  },
+  "corrected_findings": ".workflow/dev-validation-log-retention/runs/implement-p5-20261009/result-dvl01-review-03.json",
+  "independent_check": ".workflow/dev-validation-log-retention/runs/implement-p5-20261009/result-dvl01-test-05.json",
+  "runtime_check": ".workflow/dev-validation-log-retention/runs/implement-p5-20261009/dvl01-fast-fixed04-check.json"
+}

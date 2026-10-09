@@ -1,0 +1,35 @@
+{
+  "schema_version": 1,
+  "authority": "Current user explicitly requests a local current-state commit and read-only advice from existing claude-wb; no push/deploy/implementation/route-adoption authority.",
+  "included": "Existing changed source/docs/tests/tools, small workflow authority/ledger/history/evidence, portable isolated-candidate patches and selected runtime evidence.",
+  "excluded_local_only": {
+    "count": 1287,
+    "bytes": 5806596542,
+    "categories": [
+      "Generated graphify-out artifacts",
+      "Large full candidate manifests and recovery snapshots (some hundreds of MB each)"
+    ],
+    "not_deleted": true
+  },
+  "checkpoint_semantics": "WIP recovery checkpoint, not done_verified. Prior checks keep their original candidate identity; changed HEAD/index is not claimed to have passed exact-candidate functional gates.",
+  "evidence": [
+    {
+      "name": "guard-barrier-runtime08.json",
+      "source": "/tmp/workbench-dvl-20261009-3l1ViH/dvl08/.workflow/dvl-local/dvl08-runtime-08-guard-barrier.json",
+      "sha256": "14431f6e14b3e1a666b11a828652e383dd4591315de9fe1e2e14b050fb06a626",
+      "bytes": 2474
+    },
+    {
+      "name": "dvl045-fix-checks.json",
+      "source": "/tmp/workbench-dvl-20261009-3l1ViH/dvl05/.workflow/dvl-local/dvl045-fix-01/checks.json",
+      "sha256": "63316153ad183723d3a6caaa9c87b2f5c49db63c8e28e8325561039adb18ffa5",
+      "bytes": 2492
+    },
+    {
+      "name": "fast-fixed04-report.json",
+      "source": "/tmp/workbench-dvl-20261009-3l1ViH/dvl01/.workflow/dvl-local/fast-final-fixed04/report.json",
+      "sha256": "ed36d42635652aee78db66c43d2828aff2cdb3f44b8b4b511f62f73582d68799",
+      "bytes": 193295
+    }
+  ]
+}

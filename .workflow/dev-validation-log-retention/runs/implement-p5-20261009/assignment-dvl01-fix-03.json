@@ -1,0 +1,90 @@
+{
+  "feature_id": "dev-validation-log-retention",
+  "ticket_id": "DVL-01",
+  "attempt_id": "03",
+  "invocation": "dvl01-fix-03",
+  "phase": "normal_nativefork_backend_owned_cleanup",
+  "authority": ".workflow/dev-validation-log-retention/runs/implement-p5-20261009/authority.json",
+  "approved_bundle_digest": "78bc55919e57bbf2132d6653780c5c164a2ee1d618422e5232d4cf0d1d667c3e",
+  "actual_workspace": "/tmp/workbench-dvl-20261009-3l1ViH/dvl01",
+  "repository_identity": {
+    "head": "2f21ec91990a409ea0d25f351343b50e34b48196",
+    "input_candidate": "810673eb1ebf6f84b73eea76da254822db74ae3ddf99fe799ae074e5e5adca63"
+  },
+  "baseline_snapshot": ".workflow/dev-validation-log-retention/runs/implement-p5-20261009/checkpoint-dvl01-fix-03.json",
+  "checkpoint_ref": ".workflow/dev-validation-log-retention/runs/implement-p5-20261009/checkpoint-dvl01-fix-03.json",
+  "mutation_owner": "dvl01-fix-03",
+  "allowed_write_paths": [
+    "tools/dev_validate.py",
+    "tests/integration/cw16_harness.py",
+    "tests/dev_validation/test_runner.py",
+    "tests/dev_validation/fixture_items.py",
+    "graphify-out/**"
+  ],
+  "resource_claims": [
+    {
+      "resource": "dev-validation:harness",
+      "mode": "exclusive"
+    }
+  ],
+  "acceptance_ids": [
+    "DV-AC-01",
+    "DV-AC-02",
+    "DV-AC-04",
+    "DV-AC-05"
+  ],
+  "relevant_contracts": [
+    "BRIEF",
+    "SPEC§4",
+    "DVL-01",
+    ".codex/workflow-contract.md"
+  ],
+  "operational_outputs": "/tmp/workbench-dvl-20261009-3l1ViH/dvl01/.workflow/dvl-local",
+  "prohibited_paths": [
+    "independent tests/worker tests/harness",
+    "Root/other checkouts/central state/approved bundle",
+    "real OMP and paid model/user data/auth/mux"
+  ],
+  "test_env": "/tmp/workbench-dvl-20261009-3l1ViH/test-py312/bin/python",
+  "configured_model": "gpt-6-sol",
+  "configured_effort": "high (fixed worker_senior role)",
+  "host_observed_model": "unverified",
+  "host_observed_effort": "unverified",
+  "task": "Fix normalactualproduct native doublefork+setsid ownership under watchdog without namespace-stringkill or unrelatedsignal. Read independent actualcli.spawn_backend fixture fail, preserve two independentfiles exactly. Choose bounded exactownership mechanism for normaldescendants (e.g. safe Linuxsubreaper/ancestry+PID/startticks or explicit trustedproductownershipreceipt); dedicatedrunner privateprocess mayneed ownchild adoption afterdriverkill; baselineexistingunrelated helpers excluded. Never use arbitraryuserenviron/authreads or scan/killonlynamespacestring. No productcli/global behaviorchange/newconfig unless actualnecessaryscope reported. Existing structured actualsuite/progress binding unchanged. Own lifecycle must reap ownedgrandchildren and restore any runner-only OSprocessstate safely, not kill user processes. Scope originalrunner/harness/worker tests only, independent modifications prohibited. Author lease released and readonlysameinvocation retest pending. Targeted same14independent+16worker/harness once, maintain firstfailures, no actualOMP/fullsuite beforecontrolledfixverified. Reaffirmsolewriterexplicitcwd/absoluteapply/no delegates. Returnactualcandidatehash/checklog/cleanup and graphASTonly update in allowedgeneratedscope if supported; Rootfinal integrationgraph distinct.",
+  "prior_assignment_ref": ".workflow/dev-validation-log-retention/runs/implement-p5-20261009/assignment-dvl01-fix-02.json",
+  "routing": {
+    "planned_role": "worker_senior",
+    "selected_role": "worker_senior",
+    "reason_codes": [
+      "evidenced_result_channel_and_owned_process_invariants"
+    ],
+    "evidence_refs": [
+      ".workflow/dev-validation-log-retention/runs/implement-p5-20261009/result-dvl01-review-01.json"
+    ]
+  },
+  "generated_outputs": [
+    "tools/dev_validate.py",
+    "tests/integration/cw16_harness.py",
+    "tests/dev_validation/test_runner.py",
+    "tests/dev_validation/fixture_items.py"
+  ],
+  "effective_write_capability": "explicit workdir/absolute paths; hostunrestricted detector-only, reaffirm before edit",
+  "exact_checks": [
+    "G-DV-01",
+    "G-DV-04"
+  ],
+  "reserved_budget": {
+    "implementation": 1,
+    "independent_test": 1,
+    "fresh_review": 1,
+    "finite_run_limit": 96
+  },
+  "stop_conditions": [
+    "scope/authorization expansion",
+    "independent criterion weakened",
+    "user data/auth/mux touched"
+  ],
+  "findings": ".workflow/dev-validation-log-retention/runs/implement-p5-20261009/result-dvl01-review-02.json",
+  "independent_author_milestone": ".workflow/dev-validation-log-retention/runs/implement-p5-20261009/milestone-dvl01-test-04-author.json",
+  "ownership": "independent author source/test lease released, same call read-only waits; production worker sole writer now"
+}

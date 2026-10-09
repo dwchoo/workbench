@@ -1,0 +1,46 @@
+{
+  "feature_id": "dev-validation-log-retention",
+  "ticket_id": "DVL-04+DVL-05",
+  "invocation": "dvl045-test-01",
+  "phase": "independent_coherentproof_and_subjectlifecycle",
+  "authority": ".workflow/dev-validation-log-retention/runs/implement-p5-20261009/authority.json",
+  "approved_bundle_digest": "78bc55919e57bbf2132d6653780c5c164a2ee1d618422e5232d4cf0d1d667c3e",
+  "actual_workspace": "/tmp/workbench-dvl-20261009-3l1ViH/dvl05",
+  "input_candidate": "2ba15087270531692a81305175cd254468b17402e9b121d38af96719617cf9d0",
+  "baseline_snapshot": ".workflow/dev-validation-log-retention/runs/implement-p5-20261009/checkpoint-dvl045-test-01.json",
+  "mutation_owner": "dvl045-test-01:tests only",
+  "allowed_write_paths": [
+    "tests/workflow/test_condition_evidence_independent.py",
+    "tests/workflow/test_subject_delivery_independent.py",
+    "tests/storage/important_log/test_lifecycle_independent.py",
+    "tests/backend/test_condition_evidence_composition_independent.py"
+  ],
+  "resource_claims": [
+    {
+      "resource": "backend:composition",
+      "mode": "shared"
+    },
+    {
+      "resource": "log-contract:v1",
+      "mode": "shared"
+    },
+    {
+      "resource": "important-log:schema",
+      "mode": "shared"
+    },
+    {
+      "resource": "flow:subject-lifecycle",
+      "mode": "shared"
+    }
+  ],
+  "test_env": "/tmp/workbench-dvl-20261009-3l1ViH/test-py312/bin/python",
+  "configured_model": "gpt-6-sol",
+  "configured_effort": "high",
+  "host_observed_model": "unverified",
+  "host_observed_effort": "unverified",
+  "prohibited_paths": [
+    "production/workertests/frozenjudge",
+    "Root/centralstate/approveddocs/userdata/auth/model/realOMP"
+  ],
+  "task": "Independent requirement-derived tests for coherent04/05unit. Read approvedBRIEF/SPEC§5,6,7.2,8.3/tickets04+05 and priorresults; noimplementation assumption. Test pre-raw streamingpattern crossing, quota/raw-write-loss vsobservationgaps/restart/noMatch complete vsindeterminate, exactrunrev/pattern/source-boundproof/current getter invalidation, persistedproof beforejudgment and C-D46 actualBackendServicefactory sharedgate/callback (newautomatic denied/ongoingcollectkeep). Subject closedallreasons times vsfinished/blocked/held protected, reactivity/reopen, archive-close corestatusunchanged, Task commanddedup/taskless actualexitvsunknown, approval/unrelatedgrant/pause/revoke/direct-origin injectableunknowndeny, onlyconfirmeddeliveredmessages/verifieddecisions stableidempotent/range binding, experiment separateCLIworkflow mailbox capture notfullTaskspecclaim, journalcapturefault/restart confirmedreconcile no model. Write ONLYnewindependent files listed, no production/fixes/workertestcriteria changes. Use smalltargetedfaults/clock/thresholds forfixtures but do notreplace actualtemporalruntimegate. ControlledSQLite fixtures canuse own0700/dev/shm temp forspeed but runtimeGit/Bash/executable fixtures normal/tmp; doNOTglobalTMPDIR noexec. Run newindependent+directworker relatedonce scoped, preserve firstfailure cause. No all46/runtime8gatepass unless observed. Return tests counts/loghash/candidate/issues/cleanup/sourceoutside_scope; remainleafno delegates, explicitcwd/absolutepatch. Known activeDBcomposition/actualorigin belongs12/08+10 not claimed completedhere."
+}

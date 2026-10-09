@@ -1,0 +1,89 @@
+{
+  "ticket": "DVL-03",
+  "source_candidate": "235d53b2d1edd1080ddd5641e4684b177c22f67c2813407a0a03abe37fa223a3",
+  "before_candidate": "01d7459beac326c0b264736a7740cd4285a280b8b6d3ed43a51f7cc478dc8b2a",
+  "attributable_paths": [
+    {
+      "path": "omp_bridge/contract/logs_v1.ts",
+      "source_sha": "8265677cc50e1d45dc03498d4decd451b4ca710250b3ce73223bc02364572e89",
+      "before_sha": null
+    },
+    {
+      "path": "src/workbench/backend/paths.py",
+      "source_sha": "43d98f4a7b1203bae8c316ffe70237e60fdd6c4800039f2a6f10f63dc022d141",
+      "before_sha": "a5f4bf91225b35d46fe601bb49e6a6a6cce21e1e5fa9c3a9db8599c0e217c680"
+    },
+    {
+      "path": "src/workbench/contracts/logs_v1.py",
+      "source_sha": "22c8baf98340774af3ea5679a8f5c8386789dc6a7e72e62a893276b07ebe8b25",
+      "before_sha": null
+    },
+    {
+      "path": "src/workbench/storage/important_log/__init__.py",
+      "source_sha": "d54c04e2bed8636c44922070d8efd8a0940c1730ea49a63346e4fee6240fcf12",
+      "before_sha": null
+    },
+    {
+      "path": "src/workbench/storage/important_log/store.py",
+      "source_sha": "ff90d45996f5b2a3f2fbcee193dbca0d13f86cea7233b3a64e302ea33f493673",
+      "before_sha": null
+    },
+    {
+      "path": "src/workbench/storage/metadata_sqlite/schema.py",
+      "source_sha": "ca076d5de427976b55af3b755756fa588936e3e5fc2e28cfd6379a783e1195ab",
+      "before_sha": "831091fc1099c9687b9302bf6357d947c28fbbc500b72c3d1cab4cbb33a01971"
+    },
+    {
+      "path": "src/workbench/tasks/repository.py",
+      "source_sha": "43289eb5787f7a24cdcd4d8c7ed4abedb16c4eec4cc2ed3cb6c2a9b529b6c155",
+      "before_sha": "b69e908bf799690ec7500ea0fe2c9614633e18be7156493f915e5970deea660e"
+    },
+    {
+      "path": "tests/contracts/fixtures/logs-summary-v1.json",
+      "source_sha": "f2032b07e423a28a9ed255299ad9c52728967614e33a509b3ad78b2c10e2cacc",
+      "before_sha": null
+    },
+    {
+      "path": "tests/contracts/test_logs_v1.py",
+      "source_sha": "3efc4ffd1ae9e777cdb1c130b64d9038bc7386355acd120cdf118270bd9e187c",
+      "before_sha": null
+    },
+    {
+      "path": "tests/storage/important_log/test_store.py",
+      "source_sha": "4cb1e29fd8f11fc68675d08f66197eae8e29554d981fe9b53102d1a23d8b3683",
+      "before_sha": null
+    },
+    {
+      "path": "tests/tasks/test_repository.py",
+      "source_sha": "048ac7f86ad3cd9e2a54fdf27a8bfb902051c0627ac79cf4ea2ebd477a675b39",
+      "before_sha": "6c46187be5893c447eff501ed5c0b554c389a44140edcdf51b10243d0be55a5e"
+    },
+    {
+      "path": "tests/tasks/test_repository_logs.py",
+      "source_sha": "2a48ecd04eff6b586542c01dc8050d163bcf691bfff682b99564602233b78b20",
+      "before_sha": null
+    },
+    {
+      "path": "tests/contracts/test_logs_v1_independent.py",
+      "source_sha": "f97fbef4e74efbb7a2546e4255da6401d489b2d5445ec31f41a3465d5843e7a0",
+      "before_sha": null
+    },
+    {
+      "path": "tests/storage/important_log/test_store_independent.py",
+      "source_sha": "f9075079371085086b5a0493820ab5490d4800aa3350259b081f02be17f39854",
+      "before_sha": null
+    },
+    {
+      "path": "tests/tasks/test_repository_logs_independent.py",
+      "source_sha": "706f2be258fd7b67a5c059827682fbeae0636b3a6da5bae4b3c9a43bb502bad2",
+      "before_sha": null
+    }
+  ],
+  "hash_equality_verified": true,
+  "independent_review": ".workflow/dev-validation-log-retention/runs/implement-p5-20261009/result-dvl03-review-04.json",
+  "independent_test": ".workflow/dev-validation-log-retention/runs/implement-p5-20261009/result-dvl03-test-04.json",
+  "current_status": "integrated_source_pending_exact_related_check",
+  "generated_graph": "Root graphify update . AST-only completed; generated graph changes recorded separately",
+  "root_check": ".workflow/dev-validation-log-retention/runs/implement-p5-20261009/dvl03-integrated-foundation-check.json",
+  "product_runtime": "not observed; foundation fixture only"
+}

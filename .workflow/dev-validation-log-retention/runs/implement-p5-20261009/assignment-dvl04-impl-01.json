@@ -1,0 +1,110 @@
+{
+  "feature_id": "dev-validation-log-retention",
+  "ticket_id": "DVL-04",
+  "attempt_id": "01",
+  "invocation": "dvl04-impl-01",
+  "phase": "independent_ready_frontier_implementation",
+  "approved_bundle_digest": "78bc55919e57bbf2132d6653780c5c164a2ee1d618422e5232d4cf0d1d667c3e",
+  "authority": ".workflow/dev-validation-log-retention/runs/implement-p5-20261009/authority.json",
+  "approval": ".workflow/dev-validation-log-retention/runs/approval-s5-p5-20261009/approval.json",
+  "actual_workspace": "/tmp/workbench-dvl-20261009-3l1ViH/dvl03",
+  "repository_identity": {
+    "head": "2f21ec91990a409ea0d25f351343b50e34b48196",
+    "input_candidate": "235d53b2d1edd1080ddd5641e4684b177c22f67c2813407a0a03abe37fa223a3",
+    "dependency_candidate": "44b0027c9d42418cd6f165d97e16b6175ed5fa1ec2cfadb3f4ca6c5e7c573ace",
+    "dependency_bytes": "all15 DVL03 source/test delta hashes equal integrated validated root"
+  },
+  "baseline_snapshot": ".workflow/dev-validation-log-retention/runs/implement-p5-20261009/checkpoint-dvl04-impl-01.json",
+  "checkpoint_ref": ".workflow/dev-validation-log-retention/runs/implement-p5-20261009/checkpoint-dvl04-impl-01.json",
+  "effective_write_capability": "verified explicit workdir/absolute paths, independent git index; unrestricted detector-only; reaffirm before editing",
+  "acceptance_ids": [
+    "LG-AC-03"
+  ],
+  "relevant_contracts": [
+    "BRIEF r0.9",
+    "SPEC s5",
+    "PLAN p5",
+    "tickets/DVL-04.md",
+    ".codex/workflow-contract.md"
+  ],
+  "allowed_write_paths": [
+    "src/workbench/workflow/run.py",
+    "src/workbench/storage/log_raw/admission.py",
+    "src/workbench/tasks/repository.py",
+    "tests/workflow/test_condition_evidence.py",
+    "tests/workflow/test_run*.py",
+    "tests/storage/test_log_raw.py",
+    "graphify-out/**"
+  ],
+  "generated_outputs": [
+    "src/workbench/workflow/run.py",
+    "src/workbench/storage/log_raw/admission.py",
+    "src/workbench/tasks/repository.py",
+    "tests/workflow/test_condition_evidence.py",
+    "tests/workflow/test_run*.py",
+    "tests/storage/test_log_raw.py",
+    "graphify-out/**"
+  ],
+  "prohibited_paths": [
+    "approved BRIEF/SPEC/PLAN/tickets/requirements/core/AGENTS",
+    "Root/other checkout/central state",
+    "logs v1 contract/proof schema without exclusive reroute",
+    "new product agent/standing OMP/paid models/user auth/real raw activation"
+  ],
+  "operational_outputs": "/tmp/workbench-dvl-20261009-3l1ViH/dvl03/.workflow/dvl-local",
+  "resource_claims": [
+    {
+      "resource": "metadata:schema",
+      "mode": "exclusive"
+    },
+    {
+      "resource": "workflow:run-judgment",
+      "mode": "exclusive"
+    },
+    {
+      "resource": "log-contract:v1",
+      "mode": "shared"
+    }
+  ],
+  "service_namespaces": {
+    "project": "전용 temp Git project",
+    "home": "전용 HOME/OMP/XDG, 사용자 인증 미상속",
+    "data_dir": "전용 <run>/<ticket>/<attempt>/data",
+    "sockets": "전용 backend/bridge/outer sockets",
+    "provider": "loopback dynamic port, no remote models",
+    "owned_cleanup": "pid+start-ticks 또는 pidfd; 전용 root 밖 종료 금지"
+  },
+  "mutation_owner": "dvl04-impl-01",
+  "exact_checks": [
+    "G-LG-03"
+  ],
+  "reserved_budget": {
+    "implementation": 1,
+    "independent_test": 1,
+    "fresh_review": 1,
+    "finite_run_limit": 64
+  },
+  "stop_conditions": [
+    "scope/core contract/authority expansion required",
+    "missing API requiring unadopted alternative",
+    "existing user data/auth/socket/mux targeted"
+  ],
+  "configured_model": "gpt-6-sol",
+  "configured_effort": "high (fixed worker_senior role)",
+  "host_observed_model": "unverified",
+  "host_observed_effort": "unverified",
+  "routing": {
+    "planned_role": "worker_senior",
+    "selected_role": "worker_senior",
+    "reason_codes": [
+      "coupled_invariants"
+    ],
+    "evidence_refs": [
+      "SPEC.md §6; _drain/_analyse/C-D46"
+    ]
+  },
+  "dependency_evidence": ".workflow/dev-validation-log-retention/runs/implement-p5-20261009/dvl03-foundation-observed.json",
+  "dependency_independent_review": ".workflow/dev-validation-log-retention/runs/implement-p5-20261009/result-dvl03-review-04.json",
+  "test_env": "/tmp/workbench-dvl-20261009-3l1ViH/test-py312/bin/python",
+  "task": "Implement entire bounded DVL04 approved exact-byte log_contains matcher before raw writer in run drain. Consume immutable03 contracts/repository: persist observation boundaries/coverage before complete no-match; persisted match exact run/revision/range/condition digest excerpt<=4KiB; authoritative proof getter CURRENT completeness view (never raw SQL flag) required after late gap. Commit-before-use, source offsets/gaps/restart conservative, raw quota/write loss different observation gap, C-D46 new auto hold preserving existing run, legacy conservative fallback/result_file/nonzero exit preserved. Core private fixtures only. Contract/schema frozen03 don't change without Root. Targeted worker tests plus relevant run/raw regressions, no realOMP. Source ID namespace needs stable producer identity, no invented successful collector/proof states. All failures preserve and processcleanup. Independent tests/review Root schedules; no delegates. Graphify skill/query if graph exists; after code update AST-only, generated graph separate notintegrated."
+}

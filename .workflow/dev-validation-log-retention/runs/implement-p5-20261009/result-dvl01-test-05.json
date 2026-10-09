@@ -1,0 +1,24 @@
+{
+  "invocation": "dvl01-test-05",
+  "outcome": "complete",
+  "candidate": "8a544e417956263982fea90ffbd08eb6ecdb855ae4857607e0fa7ff7c15fc5b0",
+  "tests": 33,
+  "passed": 33,
+  "duration": 16.431,
+  "first_log_sha256": "56cad4c4a986ce3c5e0008871480e862a097c5519baaf3dc874548f71e19adb6",
+  "author_delta_after_first_check": "failure-path exact waitpid cleanup bounded-loop only; affected newR8 one test rerun passed .378s",
+  "affected_log_sha256": "2bb63f165bb67c67ab4d045de264d62ba4928560ad5562c5b480e527ce0e133c",
+  "observed": [
+    "separate CLI actual spawn_backend native normal backend Z before suite completion",
+    "exact owned PID/startTicks reaped and proc absent",
+    "baseline unrelated live and Z children left untouched by runner",
+    "runner prior subreaper state restored and namespace removed"
+  ],
+  "production_sha256": "461d479cf807154b7dca7628ae8795a0407b438d8330df2152e773c9a59f4190",
+  "scope_audit": ".workflow/dev-validation-log-retention/runs/implement-p5-20261009/audit-dvl01-test-05.json",
+  "cleanup": "test-owned helper children exact-reaped in finally, no namespaces or processes remain",
+  "not_claimed": [
+    "old candidate fail directly reproduced",
+    "actual OMP/fullfast"
+  ]
+}

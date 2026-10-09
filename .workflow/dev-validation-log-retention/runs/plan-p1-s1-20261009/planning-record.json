@@ -1,0 +1,71 @@
+{
+  "schema_version": 1,
+  "record_type": "planning-invocation-record",
+  "feature": "dev-validation-log-retention",
+  "run_id": "plan-p1-s1-20261009",
+  "request": "$to-tickets docs/features/dev-validation-log-retention/BRIEF.md",
+  "model_assignment": "fresh user-selected Sol XHigh/Max라는 skill 전제를 따름; host actual model/effort metadata unverified; switch 없음",
+  "source_approval": ".workflow/dev-validation-log-retention/runs/approval-r0.8/approval.json",
+  "requirements_sha256": "5b639cdecc161d2525196175f8abea1888bd0e17302065b2768625b20ead156e",
+  "requirements_identity": "00b17eabf965b4488f88bee4e00e4676efed53a95a1e2d0b2512c6cd04f199b0",
+  "bundle_manifest": ".workflow/dev-validation-log-retention/runs/plan-p1-s1-20261009/bundle-manifest.json",
+  "bundle_digest": "ae827e4266030935ea70831528f065ab6832f969e37fc627d3d28b978910838d",
+  "candidate": "9a5a50347b8274678a2323f9fe1551b51b11ff94b77de835ff4a261c3c17e9fc",
+  "checks": [
+    {
+      "command": "python3 .agents/skills/to-tickets/scripts/validate_plan.py --input .workflow/dev-validation-log-retention/runs/plan-p1-s1-20261009/validation-request.json --output .workflow/dev-validation-log-retention/runs/plan-p1-s1-20261009/validation-published.json",
+      "cwd": "/home/dwchoo/ai-exp-assistant",
+      "result": "passed",
+      "exit_code": 0,
+      "evidence": {
+        "path": ".workflow/dev-validation-log-retention/runs/plan-p1-s1-20261009/validation-published.json",
+        "sha256": "83dfbb2be41a5f9087328a57503e0e9843d412cc25068252466024660d2a1fba"
+      },
+      "criteria": "13 ticket uniqueness/dependencies/acyclic graph;28 approved AC/40 gate inventory; supplier owner+transitive predecessors; requirements identity. 기능 pass/구현 승인 아님"
+    },
+    {
+      "command": "workspace-evidence snapshot/audit (after-request.json, audit-published-request.json)",
+      "cwd": "/home/dwchoo/ai-exp-assistant",
+      "result": "passed",
+      "exit_code": 0,
+      "evidence": {
+        "path": ".workflow/dev-validation-log-retention/runs/plan-p1-s1-20261009/scope-audit-published.json",
+        "sha256": "6e77619bf7731547cf03810c2dd5704d17852a0c619f3b0c2e6503639dea7bc4"
+      },
+      "criteria": "동일 watch/exclude; stable true/unknowns 없음; 변화는16개 새 planning 문서, outside_scope/index_changed 없음. 이전 사용자 변경 보존"
+    },
+    {
+      "command": "git diff --check 및 모든 feature 파일의 git diff --no-index --check /dev/null",
+      "cwd": "/home/dwchoo/ai-exp-assistant",
+      "result": "passed",
+      "exit_code": 0,
+      "evidence": "현재 도구 결과: whitespace 경고 없음. 초기 생성 EOF 빈줄만 apply_patch로 정리 후 재확인.",
+      "criteria": "tracked/untracked 문서 whitespace 검증"
+    },
+    {
+      "command": "sha256sum feature files / 승인 record hash 대조",
+      "cwd": "/home/dwchoo/ai-exp-assistant",
+      "result": "passed",
+      "exit_code": 0,
+      "evidence": "bundle-manifest.json files 및 기존 승인 record",
+      "criteria": "BRIEF current9b6632... 불변, persisted17 bundle artifacts와 separately stored digest"
+    }
+  ],
+  "verification_not_run": [
+    "제품 unit/integration/runtime tests",
+    "Q-01 scripted OMP/model probe",
+    "fast/precise timing baseline",
+    "paid real-model/VM reboot"
+  ],
+  "deferred_runtime": [
+    "Q01 8개 item",
+    "herdr isolation/pyte availability",
+    "real300s summary/60s check/65s detach 및 목표시간"
+  ],
+  "scope_notes": "SPEC/PLAN/requirements/tickets 추가 및 Root workflow operational 상태 기록만. product/tests/skills/code·core/CONTEXT/AGENTS 기존 bytes 변경 없음.",
+  "agent_accounting": "새 child invocation/agent/pane 없음. 표준 invocation journal은 이 planning run에 생성하지 않음. PLAN budget은 후속 implement의 Root-adjustable 운영 추정.",
+  "validation_history": "placeholder requirements identity를 tool digest로 교정; shared validator pass 이후 scoped gate 계약을 보완하고 현재 결과 재검증. old validation/manifest는 과거 planning candidate 기록이며 current 근거는 published만.",
+  "outcome": "plan_created_awaiting_bundle_approval",
+  "next": "$implement docs/features/dev-validation-log-retention",
+  "authority_boundary": "이 다음 정확한 bundle의 명시적 implement 요청이 승인과 개발 시작을 겸할 수 있음. Q01 대안 채택 및 actual raw deletion activation 권한은 따로 확인."
+}

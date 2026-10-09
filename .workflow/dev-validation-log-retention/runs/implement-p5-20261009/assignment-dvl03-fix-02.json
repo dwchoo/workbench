@@ -1,0 +1,106 @@
+{
+  "feature_id": "dev-validation-log-retention",
+  "ticket_id": "DVL-03",
+  "attempt_id": "02",
+  "invocation": "dvl03-fix-02",
+  "phase": "two_material_identity_witness_corrections",
+  "approved_bundle_digest": "78bc55919e57bbf2132d6653780c5c164a2ee1d618422e5232d4cf0d1d667c3e",
+  "authority": ".workflow/dev-validation-log-retention/runs/implement-p5-20261009/authority.json",
+  "approval": ".workflow/dev-validation-log-retention/runs/approval-s5-p5-20261009/approval.json",
+  "actual_workspace": "/tmp/workbench-dvl-20261009-3l1ViH/dvl03",
+  "repository_identity": {
+    "head": "2f21ec91990a409ea0d25f351343b50e34b48196",
+    "input_candidate": "43bf0cb5ef00d83dbe96d256b5118c1e49ea5aa3dc6623aac3c6b90b78a91b2c"
+  },
+  "baseline_snapshot": ".workflow/dev-validation-log-retention/runs/implement-p5-20261009/checkpoint-dvl03-fix-02.json",
+  "effective_write_capability": "verified explicit workdir+absolute edits; hostunrestricted detector-only",
+  "acceptance_ids": [
+    "LG-AC-05",
+    "LG-AC-06",
+    "LG-AC-11",
+    "LG-AC-18"
+  ],
+  "relevant_contracts": [
+    "BRIEF r0.9",
+    "SPEC s5",
+    "PLAN p5",
+    "tickets/DVL-03.md",
+    ".codex/workflow-contract.md"
+  ],
+  "allowed_write_paths": [
+    "src/workbench/contracts/logs_v1.py",
+    "omp_bridge/contract/logs_v1.ts",
+    "src/workbench/tasks/repository.py",
+    "tests/contracts/test_logs_v1.py",
+    "tests/tasks/test_repository_logs.py"
+  ],
+  "prohibited_paths": [
+    "approved BRIEF/SPEC/PLAN/tickets/requirements/core bundle/AGENTS",
+    "central .workflow state/approval",
+    "integration checkout/other checkout",
+    "anynewproductagent/standingOMP/paidmodel/authstore"
+  ],
+  "generated_outputs": [
+    "src/workbench/contracts/logs_v1.py",
+    "omp_bridge/contract/logs_v1.ts",
+    "src/workbench/storage/important_log/**",
+    "src/workbench/storage/metadata_sqlite/schema.py",
+    "src/workbench/tasks/repository.py",
+    "src/workbench/backend/paths.py",
+    "tests/storage/important_log/**",
+    "tests/tasks/test_repository*.py",
+    "tests/contracts/**"
+  ],
+  "operational_outputs": "/tmp/workbench-dvl-20261009-3l1ViH/dvl03/.workflow/dvl-local/",
+  "resource_claims": [
+    {
+      "resource": "log-contract:v1",
+      "mode": "exclusive"
+    },
+    {
+      "resource": "metadata:schema",
+      "mode": "exclusive"
+    }
+  ],
+  "service_namespaces": {
+    "project": "전용 temp Git project",
+    "home": "전용 HOME/OMP/XDG, 사용자 인증 미상속",
+    "data_dir": "전용 <run>/<ticket>/<attempt>/data",
+    "sockets": "전용 backend/bridge/outer sockets",
+    "provider": "loopback dynamic port, no remote models",
+    "owned_cleanup": "pid+start-ticks 또는 pidfd; 전용 root 밖 종료 금지"
+  },
+  "mutation_owner": "dvl03-fix-02",
+  "checkpoint_ref": ".workflow/dev-validation-log-retention/runs/implement-p5-20261009/checkpoint-dvl03-fix-02.json",
+  "exact_checks": [
+    "STORE-contract"
+  ],
+  "reserved_budget": {
+    "implementation": 1,
+    "independent_test": 1,
+    "fresh_review": 1,
+    "finite_run_limit": 64
+  },
+  "stop_conditions": [
+    "scope/authorization change required",
+    "missing public API/core invariant change",
+    "feasibility runtime beforejudgefreeze is prohibited for08"
+  ],
+  "configured_model": "gpt-6-sol",
+  "configured_effort": "high (fixed worker_senior role)",
+  "host_observed_model": "unverified",
+  "host_observed_effort": "unverified",
+  "routing": {
+    "selected_role": "worker_senior",
+    "reason_codes": [
+      "coupled_invariants"
+    ],
+    "evidence_refs": [
+      ".workflow/dev-validation-log-retention/runs/implement-p5-20261009/result-dvl03-review-02.json"
+    ]
+  },
+  "task": "Fix accepted S03-R6/R7 only. Use sourceKind-specific real physical stream identity, structured message/event offsets distinct but same physical ID cannot evade across revision/epoch/skill. Terminal ID aliases cannot bypass. At complete no-match proof commit verify previously minted coverage still gapfree after later collector gaps; avoid false failure. Add worker regressions in existing owned tests; independent files untouched. Atomic/transactional metadata witness validation; leave core state/noReplay defaults unchanged.",
+  "prior_assignment_ref": ".workflow/dev-validation-log-retention/runs/implement-p5-20261009/assignment-dvl03-fix-01.json",
+  "findings_ref": ".workflow/dev-validation-log-retention/runs/implement-p5-20261009/result-dvl03-review-02.json",
+  "test_env": "/tmp/workbench-dvl-20261009-3l1ViH/test-py312/bin/python"
+}

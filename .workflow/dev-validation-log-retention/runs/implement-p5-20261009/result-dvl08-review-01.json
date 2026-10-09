@@ -1,0 +1,42 @@
+{
+  "invocation": "dvl08-review-01",
+  "candidate": "7a2ee7041018934e5e674058bea84795ee1738e1945efab1dbb5530c2058f437",
+  "status": "changes_required_judge_phase",
+  "findings": [
+    {
+      "id": "J08-R1",
+      "severity": "high",
+      "disposition": "accepted",
+      "requirement": "all adapter/envelope unknowns failclosed",
+      "path": "tools/q01_recheck.py"
+    },
+    {
+      "id": "J08-R2",
+      "severity": "high",
+      "disposition": "accepted",
+      "requirement": "sharing must be observed; shared measured user adoption/nonshared independent delivery; maxblock value observed",
+      "path": "tools/q01_recheck.py"
+    },
+    {
+      "id": "J08-R3",
+      "severity": "high",
+      "disposition": "accepted",
+      "requirement": "Python package initializers are part of relevant import closure",
+      "path": "tests/backend/summary_probe_support.py"
+    },
+    {
+      "id": "J08-R4",
+      "severity": "medium",
+      "disposition": "accepted",
+      "requirement": "prepared resources close for projection/preparation contract/runtime collection failures",
+      "path": "tools/q01_recheck.py"
+    }
+  ],
+  "trust_boundary": {
+    "classification": "runtime evidence responsibility split; not a fixture promotion",
+    "adjudication": "The frozen judge checks approved completeness/types/binding/unknowns; fixed trusted runtime collector must observe actual OMP/backend events and record bounded evidence. Fixture-generated observations only supply Q01-validator fixture checks, never eight Q01 runtime checks. No claim of verified runtime source before real collector implementation, independent checks and review.",
+    "followup": "document fixed port observer obligations, prohibit model self-report/terminal text as runtime source; actual decisive runtime assertions/evidence validated in next DVL08 phase"
+  },
+  "processes": "reviewer final read-only, no subprocess/tests/probes launched",
+  "next": "bounded correction then independent regression/delta review; no runtime phase until freeze"
+}

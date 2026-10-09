@@ -1,0 +1,26 @@
+{
+  "root": "/tmp/workbench-dvl-20261009-3l1ViH/dvl08",
+  "requirements": "docs/features/dev-validation-log-retention/requirements-r0.9-p5.json",
+  "argv": [
+    "/usr/bin/env",
+    "PYTHONPATH=src",
+    "PYTHONDONTWRITEBYTECODE=1",
+    "/tmp/workbench-dvl-20261009-3l1ViH/test-py312/bin/python",
+    "-m",
+    "unittest",
+    "discover",
+    "-s",
+    "tests/backend",
+    "-p",
+    "test_summary*.py",
+    "-v"
+  ],
+  "environment": "Python3.12.3 isolated DVL08 checkout; independent corrected negative fixtures; no OMP/runtime/model/auth",
+  "log": "/tmp/workbench-dvl-20261009-3l1ViH/dvl08/.workflow/dvl-local/independent-retest02.log",
+  "check_id": "dvl08-independent-retest02",
+  "watch": [],
+  "exclude": [
+    ".workflow/**"
+  ],
+  "timeout": 30
+}

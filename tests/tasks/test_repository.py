@@ -338,7 +338,7 @@ class TaskRepositoryTests(unittest.TestCase):
         legacy.close()
 
         self.repository = TaskRepository(self.database)
-        self.assertEqual(self.repository._connection.execute("PRAGMA user_version").fetchone()[0], 2)
+        self.assertEqual(self.repository._connection.execute("PRAGMA user_version").fetchone()[0], 3)
         self.assertEqual(self.repository.get_run_history(run_id), prior_history)
         self.assertIsNone(self.repository.get_current_run(task_id))
         with self.assertRaises(AuthorizationError):

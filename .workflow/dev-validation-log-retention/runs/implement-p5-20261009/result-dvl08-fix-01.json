@@ -1,0 +1,15 @@
+{
+  "invocation": "dvl08-fix-01",
+  "status": "candidate_ready",
+  "candidate": "bd7d15ffbaf66ecce47ad23906755104c24049b323712432fca87e5953f41352",
+  "changed": [
+    "tests/backend/summary_probe_support.py",
+    "tests/backend/test_summary_probe.py"
+  ],
+  "checks": "23 tests:22pass,1error in acknowledged contradictory independent test",
+  "classification": "production corrections implemented; independent retest must confirm",
+  "processes": "worker final confirms no subprocess/socket left",
+  "policy_bytes": "unchanged",
+  "scope_audit": ".workflow/dev-validation-log-retention/runs/implement-p5-20261009/audit-dvl08-fix-01.json",
+  "adjudication": ".workflow/dev-validation-log-retention/runs/implement-p5-20261009/adjudication-dvl08-test-01.json"
+}

@@ -1,0 +1,44 @@
+{
+  "schema_version": 1,
+  "record_type": "external-review-request",
+  "request_id": "ticket-bundle-s3-p3-review-03",
+  "created_on": "2026-10-09",
+  "authority": "사용자: claude-wb에게 재리뷰해서 리뷰를 codex-wb로 전달해 달라고 해.",
+  "reviewer": {
+    "name": "claude-wb",
+    "pane_id": "w4:p7",
+    "agent_session": {
+      "agent": "claude",
+      "kind": "id",
+      "source": "herdr:claude",
+      "value": "09935be2-0c32-4a1e-b4df-c5b15a829d53"
+    },
+    "existing_agent": true,
+    "observed_model": "unverified",
+    "observed_effort": "unverified"
+  },
+  "reply_to": "codex-wb",
+  "reply_policy": "직접 herdr agent prompt --wait 없이 한 번; 수동 전달/반복 polling 없음",
+  "status": "running_observed",
+  "submission": {
+    "exit_code": 0,
+    "observation": "agent_prompted"
+  },
+  "start_observation": {
+    "status": "working",
+    "state_change_seq": 220
+  },
+  "reviewed_bundle": {
+    "manifest": ".workflow/dev-validation-log-retention/runs/plan-p3-s3-20261009/bundle-manifest.json",
+    "digest": "e63b52dc02fb5ff51a797f91ad2e993f8c3c5fa39e2a2ee499390838d52552d5",
+    "candidate": "28256ddda8ec71d935328baaa7a02436fc302e0127a69cfe360e52cda96b66df",
+    "requirements_identity": "6cc983325a85f46d0bb2ee251bd9dac249e9ffa412e046c4818618fd81517f34",
+    "files_verified_current_before_submission": true
+  },
+  "prompt": "의뢰 ID: ticket-bundle-s3-p3-review-03\n사용자가 기존 claude-wb에게 r0.9/s3/p3 재리뷰를 요청하고 결과를 codex-wb로 직접 전달하라고 했다. 기존 agent/session을 그대로 사용해라. 읽기 전용 재리뷰이며 문서/코드/state 수정, 테스트/probe/model 호출, 승인 처리, 구현 시작, graph update, 새 agent/pane/worktree 생성은 하지 마.\n\n대상 /home/dwchoo/ai-exp-assistant/docs/features/dev-validation-log-retention:\nBRIEF.md r0.9, SPEC.md s3, PLAN.json p3, requirements-r0.9-p3.json, PLAN-REVIEW.md, FOLLOWUPS.md, tickets/DVL-01~14.md.\n운영 근거:\n.workflow/dev-validation-log-retention/runs/plan-p3-s3-20261009/bundle-manifest.json\n동일 run의 decisions.json, received-review.json, planning-record.json, validation-final.json, scope-audit-final.json, published-manifest-final.json.\n승인된 r0.8 원본은 같은 run의 source/BRIEF-r0.8.md와 기존 approval-r0.8/approval.json으로 보존했다. before-checkpoint.json은 base64가 큰 복구 자료이므로 열거나 출력하지 말고 필요한 provenance만 다른 기록에서 읽어라.\n\n고정 bundle digest: e63b52dc02fb5ff51a797f91ad2e993f8c3c5fa39e2a2ee499390838d52552d5\ncandidate: 28256ddda8ec71d935328baaa7a02436fc302e0127a69cfe360e52cda96b66df\nrequirements identity: 6cc983325a85f46d0bb2ee251bd9dac249e9ffa412e046c4818618fd81517f34\n20파일/14ticket/28AC/46gate. manifest 알고리즘은 path lexicographic ASCII 정렬 files를 JSON.stringify, UTF-8/no trailing newline SHA-256이다. 실제 파일/hash가 다르면 stale로 보고하고 승인/통과를 추정하지 마. 검토 전후 묶음의 불변을 읽기 전용으로 확인해라.\n\n이전 ticket-bundle-s2-p2-review-02의 N1~N7 보완을 관련 문서/코드/공용 workflow-contract와 대조:\nN1 repo checkout 실행형·runtime identity src/workbench/**, omp_bridge/**, pyproject.toml·tools/tests/docs/.workflow 없는 checkout 복사본 관측·packaging 변경 제외.\nN2 backend/ipc/contracts/omp_bridge/pyproject directory 및 import closure 무효화·lock/mailbox 실행판별/pause/origin 포함·allowlist/validator 선행 동결·09 이후 --adapter product 8개 재판정.\nN3 MODEL-metadata runtime gate(14), 실제 configured modelRoles/채택agent context/tokenizer 또는 검증 estimator/현재context/output ceiling을 no model call·read-only로 관측. 필수unknown은 inconclusive/preflight 차단; fake metadata로 pass 금지.\nN4 아래 사용자 결정 반영. 일회성 검증 OMP/local provider는 기존 agent 재사용의 credential-free 검증 수단이며 운영 요약 route를 새로 허가하지 않음.\nN5 결과 JSON8KiB + 실제 enforce output token ceiling(초기8192 이하)·ceiling 전량 예약/불명차단. 실제 OMP API 가능성은 미검증으로 남음.\nN6 p1/p2 requirements는 superseded history이며 원 bytes 보존; 현 validator/manifest는 requirements-r0.9-p3.json만 사용.\nN7 published-manifest-final의 경로+sha가 bundle manifest와 planning record에 포함됨.\n\n사용자가 확정한 운영 원칙(이전 추천을 다시 미정으로 돌리지 말 것):\n1A/LG-D13: 보호·재검증 상태에서 신규 source만 legacy-stop, 진행 중 cohort 불변.\n2A/LG-D14: cancelled/approval_retired는 사실 수집·기존 정상 요약 보존만, 새 종료 요약 호출 없음. 이미 전송된 유효 late 결과의 저장은 별개.\n3/DV-D03: OMP 업데이트가 잦으므로 OMP version-only는 기본 기존 경로 사용 유지. 매번 차단/verify 요구·반복 안내·자동 verify 없음. 검증 버전과 현재 실행 버전은 분리하고 이전pass를 현재pass로 위장하지 않음. 실제 호환성 문제/관련 제품·skill·route·host·model-config 변경 때 affected 새 요약 보류·1A 적용·사건당1회 알림/상태·명시적 수동 verify, 필요한 수정은 별도 요청 범위. 최초 Q01/별도 raw activation 및 request safety/approval/pause/no replay/preflight 유지. 요약 권한과 raw activation은 별도임.\n즉 원 N4의 업데이트마다 수동verify 전까지 차단하는 추천은 채택하지 않았다.\n남은 사용자 선택은 관측 뒤 조건부 Q-S2-03(공유 route의 실제 차단 시간 수용)와 Q-S3-05(실제 metadata를 못 얻을 때 fallback)뿐이다. bundle 전체 승인/구현/raw 삭제 활성화는 아직 없다.\n\n중점: 남은 모순/빠진 구현 owner·gate supplier·resource claim, 실제 API 전제가 불가능한데 전체pass 가능한 구조, version-drift 예외가 최초 검증/권한/안전/no replay를 우회하는지, metadata 확인이 실제 사용 환경이나 credential-free 격리와 충돌하는지. 기술 보완/새 사용자 결정/미검증 가정을 구분해라. 구조검증 결과만으로 기능 통과를 주장하지 마.\n\n출력: 전체 판정(승인 아님), N1~N7 처리 상태, 남은 actionable finding의 심각도/위치/영향/최소 보완, 사용자 결정이 필요한 항목 vs 관측 뒤 결정, 읽은 입력/hash/stale 여부와 읽기전용 준수.\n\n완료하면 결과 전체를 사용자 수동 전달에 의존하지 않고 즉시 Herdr로 직접 회신:\nHERDR_ENV=1과 현 CLI를 확인하고, 기존 codex-wb를 이름으로 찾아 herdr agent prompt codex-wb '<리뷰 전문>' 를 --wait 없이 한 번만 실행해라.\n회신 첫머리에 [claude-wb → codex-wb 회신], 의뢰 ID ticket-bundle-s3-p3-review-03, '결과 보고용이며 문서 수정·승인·구현을 허가하지 않는다. 사용자에게 보고만 해 달라.'를 넣어라.\n--wait를 사용하지 마(응답 대기 교착 방지). 제출이 불명하면 중복 전송하지 말고 상태만 보고해라. 리뷰 파일은 만들지 마.",
+  "scope": "읽기 전용 재리뷰/자동 회신만. 문서·코드·state 수정/테스트/probe/model 호출/승인/구현/agent 생성 금지. Herdr 직접 회신은 사용자 요청된 전달만 허용.",
+  "note": "기존 외부 agent 요청을 별도 기록; 새 child invocation journal을 만들거나 이전 사용량을 초기화하지 않음. publication 당시 s3_p3_not_requested 기록은 과거 사실로 보존.",
+  "implementation_authorized": false,
+  "bundle_approved": false,
+  "raw_activation_authorized": false
+}

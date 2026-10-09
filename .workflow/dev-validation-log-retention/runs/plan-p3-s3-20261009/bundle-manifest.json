@@ -1,0 +1,133 @@
+{
+  "schema_version": 1,
+  "record_type": "planning-bundle-manifest",
+  "feature": "dev-validation-log-retention",
+  "created_on": "2026-10-09",
+  "revision": {
+    "brief": "r0.9",
+    "spec": "s3",
+    "plan": "p3",
+    "requirements": "r0.9-plan-p3-draft"
+  },
+  "digest_algorithm": "SHA-256 of JSON.stringify(files), sorted by path (lexicographic ASCII paths), UTF-8, no trailing newline",
+  "bundle_digest": "e63b52dc02fb5ff51a797f91ad2e993f8c3c5fa39e2a2ee499390838d52552d5",
+  "files": [
+    {
+      "path": "docs/features/dev-validation-log-retention/BRIEF.md",
+      "sha256": "2f3cfd2eb8b682c7b3bae546df8d014b0358ed12badc2cb86a8b067dc91def08"
+    },
+    {
+      "path": "docs/features/dev-validation-log-retention/FOLLOWUPS.md",
+      "sha256": "d8f13171d0c73248655cf3aa7bf3d3e1b175e2e98c2b5c90fd34bc8986165ada"
+    },
+    {
+      "path": "docs/features/dev-validation-log-retention/PLAN-REVIEW.md",
+      "sha256": "d3bb1ac7ef72eb4658b940bcee4782ff6b212d973cabc9e4c8496537a9bc6b1d"
+    },
+    {
+      "path": "docs/features/dev-validation-log-retention/PLAN.json",
+      "sha256": "37bc1431ebe070ab1995f9c32fcd6e9273aae65211d70d9b7572d21bf64fff6c"
+    },
+    {
+      "path": "docs/features/dev-validation-log-retention/SPEC.md",
+      "sha256": "ec4c23aa4e0dfe852cb0ddb9ab6f1ba8146c62a4c16be742114e3a73afe2fb5e"
+    },
+    {
+      "path": "docs/features/dev-validation-log-retention/requirements-r0.9-p3.json",
+      "sha256": "f669f62c5c00afecab482d8d0437098852d4d22bc6dc9de84d40eedc0babd493"
+    },
+    {
+      "path": "docs/features/dev-validation-log-retention/tickets/DVL-01.md",
+      "sha256": "74a75efb13d523bf06f989382352d8a61c2b79c7eafae647ed5a42d3c042b747"
+    },
+    {
+      "path": "docs/features/dev-validation-log-retention/tickets/DVL-02.md",
+      "sha256": "a4bb9132688b3c45ba01e04b51eb9b553aab20efe648f70b0b333732f961dc1e"
+    },
+    {
+      "path": "docs/features/dev-validation-log-retention/tickets/DVL-03.md",
+      "sha256": "708728a8d6859f65fc6b97887f31e7811034a893fdf3cd9d2b35fec914338839"
+    },
+    {
+      "path": "docs/features/dev-validation-log-retention/tickets/DVL-04.md",
+      "sha256": "0d0cafa23c4977c51a2ad8f96ffd5e001d67df61e14e43a2a11f1b4137743687"
+    },
+    {
+      "path": "docs/features/dev-validation-log-retention/tickets/DVL-05.md",
+      "sha256": "bfec60933f589352690d7008306071e483fe17c796e724e4903347facb1f80ba"
+    },
+    {
+      "path": "docs/features/dev-validation-log-retention/tickets/DVL-06.md",
+      "sha256": "d8552ff99f8c195be73a4d8e4725ee81a7ddd7fedc9a896d465e4007739f3310"
+    },
+    {
+      "path": "docs/features/dev-validation-log-retention/tickets/DVL-07.md",
+      "sha256": "0e9143e1132d4446923fbec6a773ca367f8331364cb9bc4acf91339b3e7e5005"
+    },
+    {
+      "path": "docs/features/dev-validation-log-retention/tickets/DVL-08.md",
+      "sha256": "07eecc1655d0ecaac7f608a40be931e4b5fd15c90cb5c335ef40ae97697fcd1a"
+    },
+    {
+      "path": "docs/features/dev-validation-log-retention/tickets/DVL-09.md",
+      "sha256": "9ac3dd0ae6daed56bc09cab64f86c696eb283e6002d77b2003ceaf33496c038c"
+    },
+    {
+      "path": "docs/features/dev-validation-log-retention/tickets/DVL-10.md",
+      "sha256": "5b2cbd240f4fc9349dcd3afacb3c31f8f2e818df1366480981f11922a258818c"
+    },
+    {
+      "path": "docs/features/dev-validation-log-retention/tickets/DVL-11.md",
+      "sha256": "a2cffddfd8dc2e0ff72b20809023a3f0f0c07ab00e4881b321ee318b3d1672f0"
+    },
+    {
+      "path": "docs/features/dev-validation-log-retention/tickets/DVL-12.md",
+      "sha256": "7e80f5692312dc67408b92b3bea666897281754fa9d33657159b4f472e39e30e"
+    },
+    {
+      "path": "docs/features/dev-validation-log-retention/tickets/DVL-13.md",
+      "sha256": "8b4220b0ac2fb8eeab7415af8cfecff0aab919f45a90c3b3e3bdaedf3501ef4d"
+    },
+    {
+      "path": "docs/features/dev-validation-log-retention/tickets/DVL-14.md",
+      "sha256": "0cf451a08d3e9c9e1569dd08075c32c6bda2ba436c02701e9ec5e97b783f88b6"
+    }
+  ],
+  "workspace": {
+    "before_candidate": "b6f243d8f60c96e1ed286f7e2a0d723cee1201f5816967912ca9cb4974e1eddc",
+    "candidate": "28256ddda8ec71d935328baaa7a02436fc302e0127a69cfe360e52cda96b66df",
+    "before_checkpoint": ".workflow/dev-validation-log-retention/runs/plan-p3-s3-20261009/before-checkpoint.json",
+    "published_manifest": {
+      "path": ".workflow/dev-validation-log-retention/runs/plan-p3-s3-20261009/published-manifest-final.json",
+      "sha256": "2b186d694db5fb8165d24db86ae5dd16138e6501b1063c58599dbeac7b0a981c"
+    }
+  },
+  "validation": {
+    "record": {
+      "path": ".workflow/dev-validation-log-retention/runs/plan-p3-s3-20261009/validation-final.json",
+      "sha256": "7681bc9382ceb0689372b74b84bf67cddcfe76d46938d196493e3cb4fb759538"
+    },
+    "scope_audit": {
+      "path": ".workflow/dev-validation-log-retention/runs/plan-p3-s3-20261009/scope-audit-final.json",
+      "sha256": "964eeb45c1df412d1028bce4f8192c2e7e726a2d2adcbad88edac26fc2176bdb"
+    },
+    "structural_only": true
+  },
+  "authority": {
+    "source_baseline_approval": ".workflow/dev-validation-log-retention/runs/approval-r0.8/approval.json",
+    "baseline_brief_snapshot": ".workflow/dev-validation-log-retention/runs/plan-p3-s3-20261009/source/BRIEF-r0.8.md",
+    "operating_decisions": {
+      "path": ".workflow/dev-validation-log-retention/runs/plan-p3-s3-20261009/decisions.json",
+      "sha256": "6be1a8506a74d8b398179d7e04cf446f02499cc625dfbc225c40b93c8b74c15c"
+    },
+    "revision_request": "반영해줘.",
+    "bundle_approval": null,
+    "implementation_authorized": false,
+    "raw_activation_authorized": false
+  },
+  "source_review": {
+    "path": ".workflow/dev-validation-log-retention/runs/plan-p3-s3-20261009/received-review.json",
+    "sha256": "7fad9936f2917d07952e59a45ac2f74c8ac0a5515ae74d95f898fb3c2da880fa"
+  },
+  "note": "r0.8 approval/history retained;1A/2A/DV-D03 operating principles agreed. Q-S2-03 and Q-S3-05 conditional pending observations. p3 structure pass is not runtime pass or approval; no new external review requested."
+}

@@ -1,0 +1,398 @@
+{
+  "schema_version": 1,
+  "revision": "r0.8-plan-p2-draft",
+  "authority": "승인BRIEF:.workflow/dev-validation-log-retention/runs/approval-r0.8/approval.json;보강권한:사용자 '내용을 보강해서 다시 claude-wb에게 리뷰 받아서 나에게 보고해줘'. 정책/bundle/구현 미승인.",
+  "acceptance_ids": [
+    "DV-AC-01",
+    "DV-AC-02",
+    "DV-AC-03",
+    "DV-AC-04",
+    "DV-AC-05",
+    "LG-AC-01",
+    "LG-AC-02",
+    "LG-AC-03",
+    "LG-AC-04",
+    "LG-AC-05",
+    "LG-AC-06",
+    "LG-AC-07",
+    "LG-AC-08",
+    "LG-AC-09",
+    "LG-AC-10",
+    "LG-AC-11",
+    "LG-AC-12",
+    "LG-AC-13",
+    "LG-AC-14",
+    "LG-AC-15",
+    "LG-AC-16",
+    "LG-AC-17",
+    "LG-AC-18",
+    "LG-AC-19",
+    "LG-AC-20",
+    "LG-AC-21",
+    "LG-AC-22",
+    "LG-AC-23"
+  ],
+  "gate_items": [
+    {
+      "id": "G-DV-01",
+      "acceptance_ids": [
+        "DV-AC-01"
+      ],
+      "required_evidence_level": "fixture"
+    },
+    {
+      "id": "G-DV-02",
+      "acceptance_ids": [
+        "DV-AC-02"
+      ],
+      "required_evidence_level": "runtime"
+    },
+    {
+      "id": "G-DV-03",
+      "acceptance_ids": [
+        "DV-AC-03"
+      ],
+      "required_evidence_level": "runtime"
+    },
+    {
+      "id": "G-DV-04",
+      "acceptance_ids": [
+        "DV-AC-04"
+      ],
+      "required_evidence_level": "runtime"
+    },
+    {
+      "id": "G-DV-05",
+      "acceptance_ids": [
+        "DV-AC-05"
+      ],
+      "required_evidence_level": "runtime"
+    },
+    {
+      "id": "G-LG-01",
+      "acceptance_ids": [
+        "LG-AC-01"
+      ],
+      "required_evidence_level": "runtime"
+    },
+    {
+      "id": "G-LG-02",
+      "acceptance_ids": [
+        "LG-AC-02"
+      ],
+      "required_evidence_level": "runtime"
+    },
+    {
+      "id": "G-LG-03",
+      "acceptance_ids": [
+        "LG-AC-03"
+      ],
+      "required_evidence_level": "fixture"
+    },
+    {
+      "id": "G-LG-04",
+      "acceptance_ids": [
+        "LG-AC-04"
+      ],
+      "required_evidence_level": "fixture"
+    },
+    {
+      "id": "G-LG-05",
+      "acceptance_ids": [
+        "LG-AC-05"
+      ],
+      "required_evidence_level": "runtime"
+    },
+    {
+      "id": "G-LG-06",
+      "acceptance_ids": [
+        "LG-AC-06"
+      ],
+      "required_evidence_level": "runtime"
+    },
+    {
+      "id": "G-LG-07",
+      "acceptance_ids": [
+        "LG-AC-07"
+      ],
+      "required_evidence_level": "fixture"
+    },
+    {
+      "id": "G-LG-08",
+      "acceptance_ids": [
+        "LG-AC-08"
+      ],
+      "required_evidence_level": "fixture"
+    },
+    {
+      "id": "G-LG-09",
+      "acceptance_ids": [
+        "LG-AC-09"
+      ],
+      "required_evidence_level": "fixture"
+    },
+    {
+      "id": "G-LG-10",
+      "acceptance_ids": [
+        "LG-AC-10"
+      ],
+      "required_evidence_level": "fixture"
+    },
+    {
+      "id": "G-LG-11",
+      "acceptance_ids": [
+        "LG-AC-11"
+      ],
+      "required_evidence_level": "fixture"
+    },
+    {
+      "id": "G-LG-12",
+      "acceptance_ids": [
+        "LG-AC-12"
+      ],
+      "required_evidence_level": "fixture"
+    },
+    {
+      "id": "G-LG-13",
+      "acceptance_ids": [
+        "LG-AC-13"
+      ],
+      "required_evidence_level": "fixture"
+    },
+    {
+      "id": "G-LG-14",
+      "acceptance_ids": [
+        "LG-AC-14"
+      ],
+      "required_evidence_level": "fixture"
+    },
+    {
+      "id": "G-LG-15",
+      "acceptance_ids": [
+        "LG-AC-15"
+      ],
+      "required_evidence_level": "fixture"
+    },
+    {
+      "id": "G-LG-16",
+      "acceptance_ids": [
+        "LG-AC-16"
+      ],
+      "required_evidence_level": "fixture"
+    },
+    {
+      "id": "G-LG-17",
+      "acceptance_ids": [
+        "LG-AC-17"
+      ],
+      "required_evidence_level": "fixture"
+    },
+    {
+      "id": "G-LG-18",
+      "acceptance_ids": [
+        "LG-AC-18"
+      ],
+      "required_evidence_level": "fixture"
+    },
+    {
+      "id": "G-LG-19",
+      "acceptance_ids": [
+        "LG-AC-19"
+      ],
+      "required_evidence_level": "fixture"
+    },
+    {
+      "id": "G-LG-20",
+      "acceptance_ids": [
+        "LG-AC-20"
+      ],
+      "required_evidence_level": "fixture"
+    },
+    {
+      "id": "G-LG-21",
+      "acceptance_ids": [
+        "LG-AC-21"
+      ],
+      "required_evidence_level": "fixture"
+    },
+    {
+      "id": "G-LG-22",
+      "acceptance_ids": [
+        "LG-AC-22"
+      ],
+      "required_evidence_level": "runtime"
+    },
+    {
+      "id": "G-LG-23",
+      "acceptance_ids": [
+        "LG-AC-23"
+      ],
+      "required_evidence_level": "fixture"
+    },
+    {
+      "id": "Q01-route",
+      "acceptance_ids": [
+        "LG-AC-06"
+      ],
+      "required_evidence_level": "runtime"
+    },
+    {
+      "id": "Q01-tools",
+      "acceptance_ids": [
+        "LG-AC-05",
+        "LG-AC-06"
+      ],
+      "required_evidence_level": "runtime"
+    },
+    {
+      "id": "Q01-skill",
+      "acceptance_ids": [
+        "LG-AC-06"
+      ],
+      "required_evidence_level": "runtime"
+    },
+    {
+      "id": "Q01-result",
+      "acceptance_ids": [
+        "LG-AC-06",
+        "LG-AC-18"
+      ],
+      "required_evidence_level": "runtime"
+    },
+    {
+      "id": "Q01-context",
+      "acceptance_ids": [
+        "LG-AC-06",
+        "LG-AC-07"
+      ],
+      "required_evidence_level": "runtime"
+    },
+    {
+      "id": "Q01-priority",
+      "acceptance_ids": [
+        "LG-AC-07"
+      ],
+      "required_evidence_level": "runtime"
+    },
+    {
+      "id": "Q01-recovery",
+      "acceptance_ids": [
+        "LG-AC-18",
+        "LG-AC-19"
+      ],
+      "required_evidence_level": "runtime"
+    },
+    {
+      "id": "Q01-origin",
+      "acceptance_ids": [
+        "LG-AC-22"
+      ],
+      "required_evidence_level": "runtime"
+    },
+    {
+      "id": "STORE-contract",
+      "acceptance_ids": [
+        "LG-AC-05",
+        "LG-AC-06",
+        "LG-AC-11",
+        "LG-AC-18"
+      ],
+      "required_evidence_level": "fixture"
+    },
+    {
+      "id": "LIFECYCLE",
+      "acceptance_ids": [
+        "LG-AC-05",
+        "LG-AC-14",
+        "LG-AC-21",
+        "LG-AC-22"
+      ],
+      "required_evidence_level": "fixture"
+    },
+    {
+      "id": "RAW-engine",
+      "acceptance_ids": [
+        "LG-AC-01",
+        "LG-AC-02",
+        "LG-AC-03",
+        "LG-AC-04"
+      ],
+      "required_evidence_level": "fixture"
+    },
+    {
+      "id": "INT-runtime",
+      "acceptance_ids": [
+        "DV-AC-01",
+        "DV-AC-02",
+        "DV-AC-03",
+        "DV-AC-04",
+        "DV-AC-05",
+        "LG-AC-01",
+        "LG-AC-02",
+        "LG-AC-03",
+        "LG-AC-04",
+        "LG-AC-05",
+        "LG-AC-06",
+        "LG-AC-07",
+        "LG-AC-08",
+        "LG-AC-09",
+        "LG-AC-10",
+        "LG-AC-11",
+        "LG-AC-12",
+        "LG-AC-13",
+        "LG-AC-14",
+        "LG-AC-15",
+        "LG-AC-16",
+        "LG-AC-17",
+        "LG-AC-18",
+        "LG-AC-19",
+        "LG-AC-20",
+        "LG-AC-21",
+        "LG-AC-22",
+        "LG-AC-23"
+      ],
+      "required_evidence_level": "runtime"
+    },
+    {
+      "id": "Q01-validator",
+      "acceptance_ids": [
+        "LG-AC-06"
+      ],
+      "required_evidence_level": "fixture"
+    },
+    {
+      "id": "Q01-contract",
+      "acceptance_ids": [
+        "LG-AC-05",
+        "LG-AC-06"
+      ],
+      "required_evidence_level": "fixture"
+    },
+    {
+      "id": "SUMMARY-budget",
+      "acceptance_ids": [
+        "LG-AC-05",
+        "LG-AC-07"
+      ],
+      "required_evidence_level": "fixture"
+    },
+    {
+      "id": "PRODUCT-evidence",
+      "acceptance_ids": [
+        "LG-AC-01",
+        "LG-AC-06",
+        "LG-AC-07"
+      ],
+      "required_evidence_level": "runtime"
+    },
+    {
+      "id": "DV-registry",
+      "acceptance_ids": [
+        "DV-AC-01",
+        "DV-AC-03",
+        "DV-AC-04"
+      ],
+      "required_evidence_level": "runtime"
+    }
+  ]
+}

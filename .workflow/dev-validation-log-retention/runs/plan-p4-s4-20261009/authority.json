@@ -1,0 +1,15 @@
+{
+  "schema_version": 1,
+  "source": "user conversation latest '그렇게 해'",
+  "request": "그렇게 해",
+  "accepted_scope": "직전 추천의6기술보강+AGENTS포인터+리뷰수신기록. 계획문서/tickets/운영기록만 수정",
+  "source_review": "ticket-bundle-s3-p3-review-03",
+  "baseline_operating_decisions": ".workflow/dev-validation-log-retention/runs/plan-p3-s3-20261009/decisions.json",
+  "entire_bundle_approved": false,
+  "implementation_authorized": false,
+  "tests_or_probes_authorized": false,
+  "paid_model_authorized": false,
+  "raw_activation_authorized": false,
+  "commit_publish_deploy_authorized": false,
+  "new_agents_authorized": false
+}

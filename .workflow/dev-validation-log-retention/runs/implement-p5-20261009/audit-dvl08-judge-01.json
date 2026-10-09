@@ -1,0 +1,1 @@
+{"changed":["src/workbench/contracts/summary_compat_policy_v1.json","tests/backend/live_summary_feasibility.py","tests/backend/summary_probe_support.py","tests/backend/test_summary_gate_validator.py","tests/backend/test_summary_probe.py","tools/q01_recheck.py","tools/validate_feature_gate.py"],"comparable":true,"index_changed":[],"outside_scope":[]}

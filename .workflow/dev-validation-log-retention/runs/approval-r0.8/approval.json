@@ -1,0 +1,40 @@
+{
+  "schema_version": 1,
+  "feature": "dev-validation-log-retention",
+  "revision": "r0.8",
+  "recorded_on": "2026-10-09",
+  "user_approval": {
+    "reference": "현재 대화에서 BRIEF r0.8 전체 승인 요청에 바로 이어진 사용자 답변. 플랫폼 message ID는 제공되지 않음.",
+    "quote": "너가 말한대로 승인",
+    "in_response_to": "BRIEF r0.8 전체를 승인한다. Q-01은 선행 기술 검증으로 유지한다.",
+    "scope": "BRIEF r0.8 전체를 downstream planning 기준으로 승인. Q-01은 미검증 선행 기술 검증으로 유지.",
+    "implementation_authorized": false,
+    "model_probe_authorized": false,
+    "raw_rotation_activation_authorized": false
+  },
+  "reviewed_candidate": {
+    "path": "docs/features/dev-validation-log-retention/BRIEF.md",
+    "sha256": "39376fbfa36eced382ce85c5711e4d104e64641eb27cfa56d93374d1956e61e0",
+    "workspace_candidate": "4e3d20b6354b1e065de1c9e272062853309353e177a7587549deed4d5f947da9",
+    "checkpoint": ".workflow/dev-validation-log-retention/runs/approval-r0.8/before-checkpoint.json",
+    "checkpoint_sha256": "34ca59ff564eefb1b736a96b6239819c1d7e1670234e2e2dfcbd0ab259af224c"
+  },
+  "approved_candidate": {
+    "path": "docs/features/dev-validation-log-retention/BRIEF.md",
+    "sha256": "9b6632a9688a5c2ca0a3adb2094d4fe1813cb3ca93d4a87dbe4d55663bb9255a",
+    "workspace_candidate": "22ea893daa0c62fa72b0e629b732961f35b94e1efa58acae916a4910f425bd7b",
+    "manifest": ".workflow/dev-validation-log-retention/runs/approval-r0.8/after-manifest.json",
+    "manifest_sha256": "fedfb616545a175b2b53ed8d1db43e374663f442f4eb54963a3f9a3e1405763b"
+  },
+  "post_approval_changes": {
+    "requirements_changed": false,
+    "brief_changes": "제목·승인 상태·승인 근거 링크·인계 상태의 metadata만 변경.",
+    "related_changes": "LG-D12로 합의한 core BRIEF C-AC-24·OPERATING-CONTRACT §6·AGENTS.md 참조 주석 추가 및 FOLLOWUPS 승인 대기 문구 갱신. 기존 core 승인 문장과 검증 기록 보존.",
+    "raw_policy_effective_when": "Q-01 통과 후 사용자가 별도 rotation 활성화를 결정한 때부터 신규 raw에 적용."
+  },
+  "next": {
+    "session": "fresh user-selected Sol XHigh/Max",
+    "command": "$to-tickets docs/features/dev-validation-log-retention/BRIEF.md",
+    "executed": false
+  }
+}

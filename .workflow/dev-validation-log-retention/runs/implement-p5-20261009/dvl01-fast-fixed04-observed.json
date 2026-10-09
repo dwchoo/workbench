@@ -1,0 +1,34 @@
+{
+  "schema_version": 1,
+  "ticket": "DVL-01",
+  "candidate": "8a544e417956263982fea90ffbd08eb6ecdb855ae4857607e0fa7ff7c15fc5b0",
+  "tests": 81,
+  "fixture_tests": 80,
+  "runtime_tests": 1,
+  "elapsed_seconds": 26.401,
+  "target_seconds": 120,
+  "target_exceeded": false,
+  "current_omp": "18.8.6",
+  "runtime_scope": "plain Bash actual installedOMP/scriptedprovider Koreanpaste/resize/shortshell/pause/shutdown; no60s/65s/outermatrix",
+  "cleanup": "all3 item namespaces removed, actual backend3 adoptedZ exactreaped",
+  "evidence": ".workflow/dev-validation-log-retention/runs/implement-p5-20261009/dvl01-fast-fixed04-check.json",
+  "log_sha256": "1de09ab8ed40cc30753838208792f02152ef7f2ea87931e706fb5dd49e1d1a7e",
+  "items": [
+    {
+      "id": "G-DV-01",
+      "evidence_level": "runtime",
+      "result": "passed",
+      "scope": "local fast runner only; downstream registry precise pending"
+    },
+    {
+      "id": "G-DV-04",
+      "evidence_level": "fixture",
+      "result": "passed",
+      "scope": "local zero/skip/watchdog/cleanup classification and firstfailure regressions"
+    }
+  ],
+  "not_claimed": [
+    "fullfeature final exactcandidate gates",
+    "precise temporal matrix"
+  ]
+}

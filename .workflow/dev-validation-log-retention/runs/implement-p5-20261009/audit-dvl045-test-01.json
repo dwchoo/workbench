@@ -1,0 +1,1 @@
+{"changed":["tests/backend/test_condition_evidence_composition_independent.py","tests/storage/important_log/test_lifecycle_independent.py","tests/workflow/test_condition_evidence_independent.py","tests/workflow/test_subject_delivery_independent.py"],"comparable":true,"index_changed":[],"outside_scope":[]}

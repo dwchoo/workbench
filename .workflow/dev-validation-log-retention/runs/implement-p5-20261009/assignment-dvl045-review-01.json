@@ -1,0 +1,53 @@
+{
+  "feature_id": "dev-validation-log-retention",
+  "ticket_id": "DVL-04+DVL-05",
+  "invocation": "dvl045-review-01",
+  "phase": "fresh_frozen_coherent_proof_and_subject_review",
+  "authority": ".workflow/dev-validation-log-retention/runs/implement-p5-20261009/authority.json",
+  "approved_bundle_digest": "78bc55919e57bbf2132d6653780c5c164a2ee1d618422e5232d4cf0d1d667c3e",
+  "actual_workspace": "/tmp/workbench-dvl-20261009-3l1ViH/dvl05",
+  "repository_identity": {
+    "head": "2f21ec91990a409ea0d25f351343b50e34b48196",
+    "input_candidate": "c49aa7e77be1c45a79760410d00bc71a0b06ffe2248e3cdc8e485316b7c2acba"
+  },
+  "baseline_snapshot": ".workflow/dev-validation-log-retention/runs/implement-p5-20261009/candidate-dvl045-test-01-post.json",
+  "checkpoint_ref": ".workflow/dev-validation-log-retention/runs/implement-p5-20261009/checkpoint-dvl045-test-01.json",
+  "mutation_owner": null,
+  "allowed_write_paths": [],
+  "resource_claims": [
+    {
+      "resource": "backend:composition",
+      "mode": "shared"
+    },
+    {
+      "resource": "log-contract:v1",
+      "mode": "shared"
+    },
+    {
+      "resource": "important-log:schema",
+      "mode": "shared"
+    },
+    {
+      "resource": "flow:subject-lifecycle",
+      "mode": "shared"
+    }
+  ],
+  "configured_model": "gpt-6-sol",
+  "configured_effort": "high",
+  "host_observed_model": "unverified",
+  "host_observed_effort": "unverified",
+  "relevant_contracts": [
+    "BRIEF r0.9",
+    "SPEC s5 §5,6,7.2,8.3",
+    "DVL-04 and DVL-05",
+    "workflow-contract"
+  ],
+  "result_refs": [
+    ".workflow/dev-validation-log-retention/runs/implement-p5-20261009/result-dvl045-compose-01.json",
+    ".workflow/dev-validation-log-retention/runs/implement-p5-20261009/result-dvl045-test-01.json",
+    ".workflow/dev-validation-log-retention/runs/implement-p5-20261009/result-dvl04-impl-01.json",
+    ".workflow/dev-validation-log-retention/runs/implement-p5-20261009/result-dvl05-impl-01.json"
+  ],
+  "task": "Fresh read-only fault-finding of frozen coherent DVL04/05 source and independent tests, prior03 foundation. No edits/tests/probes/models/graph/agents. Verify pre-raw observation exact run/revision/pattern proof, no false failure on observation gap/restart, proof commit/late invalidation and C-D46 actual Backend factory shared hold; capture only confirmed OMP_PROCESSED messages/verified_worker_response decisions stable source ID and duplicate reconciliation, subject lifecycle grants/revoke/pause, closed retention vs finished/blocked/held protection, user-only archival close without core mutation, task-command dedup and actual taskless exit/unknown handling. Full real provenance/activeDB/scheduler are downstream12/08/10 not claimed; injectable ports in scope must fail closed. Regressions in existing core success/unknown/no replay state contract are material. Report concrete actionable faults with line/path vs bounded ports/downstream requirements, or no new material. Independent14+related20 unique34 passed with first setup import error preserved.",
+  "effective_write_capability": "read-only; host unrestricted detector-only. Read exact workspace using explicit cwd; no operational/candidate mutation."
+}

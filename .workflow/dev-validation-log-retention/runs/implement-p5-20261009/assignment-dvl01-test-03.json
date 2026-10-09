@@ -1,0 +1,64 @@
+{
+  "feature_id": "dev-validation-log-retention",
+  "ticket_id": "DVL-01",
+  "attempt_id": "03",
+  "invocation": "dvl01-test-03",
+  "phase": "independent_structured_result_and_detached_helper_negatives",
+  "authority": ".workflow/dev-validation-log-retention/runs/implement-p5-20261009/authority.json",
+  "approved_bundle_digest": "78bc55919e57bbf2132d6653780c5c164a2ee1d618422e5232d4cf0d1d667c3e",
+  "actual_workspace": "/tmp/workbench-dvl-20261009-3l1ViH/dvl01",
+  "repository_identity": {
+    "head": "2f21ec91990a409ea0d25f351343b50e34b48196",
+    "input_candidate": "7302cd04d6fe7612401546791fb30ded0e13e77331f799f3aaa302b7eee9929b"
+  },
+  "baseline_snapshot": ".workflow/dev-validation-log-retention/runs/implement-p5-20261009/checkpoint-dvl01-test-03.json",
+  "checkpoint_ref": ".workflow/dev-validation-log-retention/runs/implement-p5-20261009/checkpoint-dvl01-test-03.json",
+  "mutation_owner": "dvl01-test-03:author_phase_only",
+  "allowed_write_paths": [
+    "tests/dev_validation/test_runner_independent.py",
+    "tests/dev_validation/fixture_items_independent.py"
+  ],
+  "resource_claims": [
+    {
+      "resource": "dev-validation:harness",
+      "mode": "shared"
+    }
+  ],
+  "acceptance_ids": [
+    "DV-AC-01",
+    "DV-AC-02",
+    "DV-AC-04",
+    "DV-AC-05"
+  ],
+  "relevant_contracts": [
+    "BRIEF",
+    "SPEC§4",
+    "DVL-01",
+    ".codex/workflow-contract.md"
+  ],
+  "operational_outputs": "/tmp/workbench-dvl-20261009-3l1ViH/dvl01/.workflow/dvl-local",
+  "prohibited_paths": [
+    "production/tools/harness/worker tests",
+    "Root/othercheckouts/centralstate/approvedbundle",
+    "real OMP probes until08runtime lease free; paid model/user data/auth/mux"
+  ],
+  "test_env": "/tmp/workbench-dvl-20261009-3l1ViH/test-py312/bin/python",
+  "configured_model": "gpt-6-sol",
+  "configured_effort": "high",
+  "host_observed_model": "unverified",
+  "host_observed_effort": "unverified",
+  "task": "One phased independent verification invocation. Author bounded new requirement-derived negative fixtures/tests for S01-R4 fake import-time 'Ran1' followed actual0, misleading skipped=0 vsallskipped, repeated stdout/stderr fake unittest summary/marker not meaningful watchdog advancement; S01-R5 normal helper subprocess start_new_session=True,cwd=/,DEVNULL,namespace-free argv remains owned and must stop; S01-R6 setup/base_env OSError cleans namespace. Modify ONLYexisting two independent files, no production/worker tests. Run new negatives once currentcandidate, preserve failrecords. Send Root author milestone exact hashes and confirm SOURCE WRITER LEASE RELEASED + subprocessesstopped. Keep turn active read-only waiting Root fixed-candidate message, no source/test edits or checks againstmovingcandidate while productionownerworks. Once Root explicitly transfers test-only retest lease on frozenfixedcandidate, rerun same fullindependent+relevant15 once and report final. If cannot maintain bounded wait, report author-only result without inventing verification; Root counts followup separately. Private controlled subprocesses only no actualOMP/userauth/mux/graph/stamp or delegate.",
+  "prior_assignment_ref": ".workflow/dev-validation-log-retention/runs/implement-p5-20261009/assignment-dvl01-test-02.json",
+  "findings": ".workflow/dev-validation-log-retention/runs/implement-p5-20261009/result-dvl01-review-01.json",
+  "effective_write_capability": "explicit own workspace absolute paths; author phase only test files; Root serial ownership transfer must be explicit",
+  "routing": {
+    "selected_role": "test_designer",
+    "planned_role": "test_designer",
+    "reason_codes": [
+      "independent_requirements_negative_tests"
+    ],
+    "evidence_refs": [
+      ".workflow/dev-validation-log-retention/runs/implement-p5-20261009/result-dvl01-review-01.json"
+    ]
+  }
+}

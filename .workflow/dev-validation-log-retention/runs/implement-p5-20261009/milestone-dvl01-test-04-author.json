@@ -1,0 +1,20 @@
+{
+  "invocation": "dvl01-test-04",
+  "phase": "author_milestone_writerreleased_readonlywait",
+  "failure": {
+    "count": 1,
+    "exit_code": 1,
+    "duration_seconds": 1.219,
+    "reason": "owned product double-fork backend survived driver watchdog",
+    "uses_actual": "cli.spawn_backend doublefork+setsid controlledbootstrap"
+  },
+  "hashes": {
+    "independent": "1150b6256c8b51bac0bf1c8a54e0447a33637654e3b5613079ba126b979c832b",
+    "fixture": "880370991d90fd0e8247c38cd657bc0bda44df8e21fb2e5c42231d043bd105e5",
+    "production": "b9ff5fd6e63c5c6daa7ee33d193151780b15920b91a9ba2f7bc74a2e27b7f1ca"
+  },
+  "cleanup": "ownbackend/unrelatedhelper exactidentity finallystopped, no namespace/socket",
+  "prior": "firstsamefailure preserved; assertionorderclarified no productionchange",
+  "retained": "existing13independent+6runner+10harness unchanged",
+  "lease": "source/test writerreleased; samecallreadonlywait"
+}

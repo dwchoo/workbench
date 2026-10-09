@@ -1,0 +1,32 @@
+{
+  "invocation": "dvl08-runtime-08",
+  "outcome": "partial",
+  "disposition": "blocked_adoption_guard_confirmation_unavailable_for_tested_native_executor_route",
+  "candidate": "3f50d497011ad76a05ff524149ae09e04e700c9e1b0ea6976ff33b7efae7fc7d",
+  "observed": {
+    "omp_version": "18.8.6",
+    "existing_agent": "explorer",
+    "existing_definition_sha256": "a226d3d2007fbced80bbe071a7e8f4f9587ee8d9fe96b05000059e5d8366d671",
+    "missing_guard_actual_provider_posts": 1,
+    "inert_guard_actual_provider_posts": 1,
+    "guard_receipt_atomic_send": "not provided by tested public executor options"
+  },
+  "evidence": "/tmp/workbench-dvl-20261009-3l1ViH/dvl08/.workflow/dvl-local/dvl08-runtime-08-guard-barrier.json",
+  "scope_audit": ".workflow/dev-validation-log-retention/runs/implement-p5-20261009/audit-dvl08-runtime-08.json",
+  "cleanup": {
+    "parent_pid": 2670348,
+    "parent_start_ticks": 29374731,
+    "parent_stopped": true,
+    "provider_stopped": true,
+    "remaining_owned": [],
+    "exit": 0
+  },
+  "classification": "Concrete tested route fails required zero-send on unavailable guard; does not establish impossibility of all public routes.",
+  "not_claimed": [
+    "Q01 all8 pass",
+    "product route adoption",
+    "paid or real model call",
+    "actual rotation activation"
+  ],
+  "requires_user_direction": "Alternative one-shot existing-definition OMP summary process or other public caller-controlled request route requires explicit adoption before affected scope expansion."
+}

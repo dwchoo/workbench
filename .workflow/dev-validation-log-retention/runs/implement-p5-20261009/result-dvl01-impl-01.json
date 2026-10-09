@@ -1,0 +1,22 @@
+{
+  "invocation": "dvl01-impl-01",
+  "outcome": "candidate_ready",
+  "workspace": "/tmp/workbench-dvl-20261009-3l1ViH/dvl01",
+  "scope": [
+    "tools/dev_validate.py",
+    "tests/dev_validation/test_fast_smoke.py",
+    "tests/dev_validation/test_runner.py",
+    "tests/dev_validation/fixture_items.py",
+    "tests/integration/cw16_harness.py"
+  ],
+  "reports": [
+    "/tmp/workbench-dvl-20261009-3l1ViH/dvl01/.workflow/dvl-local/fast-05/report.json",
+    "/tmp/workbench-dvl-20261009-3l1ViH/dvl01/.workflow/dvl-local/precise-02/report.json",
+    "/tmp/workbench-dvl-20261009-3l1ViH/dvl01/.workflow/dvl-local/fast-linked-01/report.json"
+  ],
+  "checks": "fast79tests runtime+fixture24.46s exit0, precise future6not_run exit2, first failure linked preserved exit1, unit regression78pass",
+  "cleanup": "worker final namespace removed/no owned process/socket residue",
+  "gaps": [
+    "independent tests/review/Root integration"
+  ]
+}

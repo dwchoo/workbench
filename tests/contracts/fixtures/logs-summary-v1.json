@@ -1,0 +1,78 @@
+{
+  "canonicalSha256": {
+    "request": "09efc4cdfcbcdbc21cc61731f411ab488e6f078d86ad988f143e524dce869b54",
+    "result": "211364e5b7647d6d49abe62575b8d4c2efd823b98baf362b02b8dfac84ca5798"
+  },
+  "request": {
+    "schemaVersion": 1,
+    "requestId": "00000000-0000-0000-0000-000000000003",
+    "subject": {"schemaVersion": 1, "kind": "task", "id": "00000000-0000-0000-0000-000000000001"},
+    "revision": 1,
+    "authorizationRef": "00000000-0000-0000-0000-000000000004",
+    "authorizationEpoch": 1,
+    "inputKey": "2c1e247b81f6c4f21cbf9baf60ba9d547e009699366f96e64324bfcf2c34b893",
+    "skillName": "workbench-important-log",
+    "skillDigest": "9c53c074d7ac6a2728b638ac1f376c5fa9eb8f71603017c3ea638c2fd40548df",
+    "sources": [{
+      "schemaVersion": 1,
+      "source": {
+        "schemaVersion": 1,
+        "sourceKind": "terminal",
+        "collectorEpoch": 1,
+        "taskId": "00000000-0000-0000-0000-000000000001",
+        "revision": 1,
+        "runId": "00000000-0000-0000-0000-000000000002"
+      },
+      "start": 0,
+      "end": 3,
+      "digest": "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+    }],
+    "sourceGaps": [],
+    "priorCumulativeEntryId": null,
+    "dbHealth": {
+      "schemaVersion": 1,
+      "dbUuid": "00000000-0000-0000-0000-000000000005",
+      "measuredAt": "2026-10-09T01:02:03Z",
+      "stale": false,
+      "mainBytes": 1,
+      "walBytes": 2,
+      "shmBytes": 3,
+      "totalBytes": 6,
+      "logicalLiveBytes": 0,
+      "freelistBytes": 0,
+      "subjectStats": [],
+      "cleanupCandidates": null,
+      "lastWrite": null,
+      "lastLock": null,
+      "lastMaintenance": null,
+      "diskFreeBytes": null,
+      "lastQuickCheck": null,
+      "metadataOutsideBudget": true
+    },
+    "requestedAt": "2026-10-09T01:02:03Z"
+  },
+  "result": {
+    "schemaVersion": 1,
+    "requestId": "00000000-0000-0000-0000-000000000003",
+    "inputKey": "2c1e247b81f6c4f21cbf9baf60ba9d547e009699366f96e64324bfcf2c34b893",
+    "skillDigest": "9c53c074d7ac6a2728b638ac1f376c5fa9eb8f71603017c3ea638c2fd40548df",
+    "sources": [{
+      "schemaVersion": 1,
+      "source": {
+        "schemaVersion": 1,
+        "sourceKind": "terminal",
+        "collectorEpoch": 1,
+        "taskId": "00000000-0000-0000-0000-000000000001",
+        "revision": 1,
+        "runId": "00000000-0000-0000-0000-000000000002"
+      },
+      "start": 0,
+      "end": 3,
+      "digest": "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+    }],
+    "facts": ["사실"],
+    "interpretations": [],
+    "unknowns": ["미확인"],
+    "usage": {"schemaVersion": 1, "inputTokens": null, "outputTokens": null, "costUsd": null}
+  }
+}

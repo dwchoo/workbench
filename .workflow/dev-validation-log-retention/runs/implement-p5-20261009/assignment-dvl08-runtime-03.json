@@ -1,0 +1,126 @@
+{
+  "feature_id": "dev-validation-log-retention",
+  "ticket_id": "DVL-08",
+  "attempt_id": "03",
+  "invocation": "dvl08-runtime-03",
+  "phase": "single_existing_task_child_minimum_feasibility",
+  "approved_bundle_digest": "78bc55919e57bbf2132d6653780c5c164a2ee1d618422e5232d4cf0d1d667c3e",
+  "authority": ".workflow/dev-validation-log-retention/runs/implement-p5-20261009/authority.json",
+  "approval": ".workflow/dev-validation-log-retention/runs/approval-s5-p5-20261009/approval.json",
+  "actual_workspace": "/tmp/workbench-dvl-20261009-3l1ViH/dvl08",
+  "repository_identity": {
+    "head": "2f21ec91990a409ea0d25f351343b50e34b48196",
+    "input_candidate": "f2d77507c6b5857b8f72730e9fd73eb33b9c8a006275e88afdf83ea7dc3715e7"
+  },
+  "baseline_snapshot": ".workflow/dev-validation-log-retention/runs/implement-p5-20261009/checkpoint-dvl08-runtime-03.json",
+  "effective_write_capability": "verified explicit workdir+absolute edits; hostunrestricted detector-only",
+  "acceptance_ids": [
+    "LG-AC-05",
+    "LG-AC-06",
+    "LG-AC-07",
+    "LG-AC-18",
+    "LG-AC-19",
+    "LG-AC-22"
+  ],
+  "relevant_contracts": [
+    "BRIEF r0.9",
+    "SPEC s5",
+    "PLAN p5",
+    "tickets/DVL-08.md",
+    ".codex/workflow-contract.md"
+  ],
+  "allowed_write_paths": [
+    "tests/backend/live_summary_feasibility.py"
+  ],
+  "prohibited_paths": [
+    "approved BRIEF/SPEC/PLAN/tickets/requirements/core bundle/AGENTS",
+    "central .workflow state/approval",
+    "integration checkout/other checkout",
+    "anynewproductagent/standingOMP/paidmodel/authstore"
+  ],
+  "generated_outputs": [
+    "tests/backend/live_summary_feasibility.py",
+    "tests/backend/summary_probe_support.py",
+    "tests/backend/test_summary_probe.py",
+    "tools/validate_feature_gate.py",
+    "tools/q01_recheck.py",
+    "tests/backend/test_summary_gate_validator.py",
+    "src/workbench/contracts/summary_compat_policy_v1.json"
+  ],
+  "operational_outputs": "/tmp/workbench-dvl-20261009-3l1ViH/dvl08/.workflow/dvl-local/",
+  "resource_claims": [
+    {
+      "resource": "dev-validation:harness",
+      "mode": "shared"
+    },
+    {
+      "resource": "omp-runtime:scripted-provider",
+      "mode": "shared"
+    },
+    {
+      "resource": "omp-bridge:public-tools",
+      "mode": "shared"
+    },
+    {
+      "resource": "summary-compat:contract",
+      "mode": "exclusive"
+    },
+    {
+      "resource": "summary-compat:policy",
+      "mode": "exclusive"
+    }
+  ],
+  "service_namespaces": {
+    "project": "전용 temp Git project",
+    "home": "전용 HOME/OMP/XDG, 사용자 인증 미상속",
+    "data_dir": "전용 <run>/<ticket>/<attempt>/data",
+    "sockets": "전용 backend/bridge/outer sockets",
+    "provider": "loopback dynamic port, no remote models",
+    "owned_cleanup": "pid+start-ticks 또는 pidfd; 전용 root 밖 종료 금지"
+  },
+  "mutation_owner": "dvl08-runtime-03",
+  "checkpoint_ref": ".workflow/dev-validation-log-retention/runs/implement-p5-20261009/checkpoint-dvl08-runtime-03.json",
+  "exact_checks": [
+    "Q01-validator"
+  ],
+  "reserved_budget": {
+    "implementation": 1,
+    "independent_test": 1,
+    "fresh_review": 1,
+    "finite_run_limit": 64
+  },
+  "stop_conditions": [
+    "scope/authorization change required",
+    "missing public API/core invariant change",
+    "feasibility runtime beforejudgefreeze is prohibited for08"
+  ],
+  "configured_model": "gpt-6-sol",
+  "configured_effort": "high (fixed worker_senior role)",
+  "host_observed_model": "unverified",
+  "host_observed_effort": "unverified",
+  "routing": {
+    "planned_role": "worker_senior",
+    "selected_role": "worker_senior",
+    "reason_codes": [
+      "coupled_invariants"
+    ],
+    "evidence_refs": [
+      "SPEC§8.1 independent judge/projection enforcement and OMP compatibility"
+    ]
+  },
+  "task": "Single bounded isolated scripted parent -> existing named allowed task/explorer child feasibility. Read version-pinned task docs/public API/source, current launcher agents, existing probe before changing only live_summary_feasibility.py. No new agent definition (use existing exact bytes). Observe actual child ctx.agent/session identity; await pre-first-provider tool restriction then actual child catalog vs hostile inactive call; stable request/nonce and epoch provenance; strict outputSchema/structuredOutput actual result not text extraction. Parent input minimal descriptor/path not full raw; measure transcript delta/lock sharing only if APIs allow, do not invent observations. Child payload via context instrumentation is fixture not product adapter adoption. First smallest child call only then stop/report; don't build09 adapter, don't expand all8 absent decisive evidence. If only parent model task selection exposed, deterministic product dispatch remains unknown; document not assume. Ephemeral side completion is not adopted and typed channel absent, do not substitute. All model roles route scripted loopback, noauth/no real model; bounded provider capture, timeout drains, owned PID/startticks cleanup, preserve earlier evidence distinct output path. Resource01exclusive returned after worker final and cleanup; this live harness shared probe currently compatible with03metadata correction. Leaves no delegation.",
+  "prior_assignment_ref": ".workflow/dev-validation-log-retention/runs/implement-p5-20261009/assignment-dvl08-runtime-02.json",
+  "frozen_judge": ".workflow/dev-validation-log-retention/runs/implement-p5-20261009/q01-judge-freeze-01.json",
+  "prohibited_frozen_files": [
+    "tools/validate_feature_gate.py",
+    "tools/q01_recheck.py",
+    "tests/backend/summary_probe_support.py",
+    "tests/backend/test_summary_probe.py",
+    "tests/backend/test_summary_gate_validator.py",
+    "tests/backend/test_summary_gate_validator_independent.py",
+    "tests/backend/test_summary_probe_independent.py",
+    "src/workbench/contracts/summary_compat_policy_v1.json"
+  ],
+  "root_adjudication": "Inactive-tool rejection is observed only fresh fixture. Existing task child is plausible publicly supported route; no route absence proven. Need actual child identity/enforcement/typed output observations before broader implementation.",
+  "technical_assessment": ".workflow/dev-validation-log-retention/runs/implement-p5-20261009/result-dvl08-review-03.json"
+}

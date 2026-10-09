@@ -1,0 +1,14 @@
+{
+  "invocation": "dvl045-compose-01",
+  "outcome": "candidate_ready",
+  "checks": [
+    "3 factory/receipt/idempotent passed0.007s privateSQLitetmpfs",
+    "proof-fault GitBash1 passed3.747s actualtmpdisk",
+    "experimentTask+report1 passed4.455s actualtmpdisk",
+    "diffcheck and ASTgraphupdate exit0"
+  ],
+  "behavior": "Backend factory sharedmetadata gate+metadataevent callback; optionalSubjectLifecycle factorysink, confirmedOMP_PROCESSED/verifiedworkerresponse only stablephysicalID",
+  "not_implemented": "activeDB productcomposition deferred12; deliveredexperimentTask contains instructionnotfullspec; actualOMP/provenance8 stillunknown",
+  "cleanup": "allchild/tmpfs/socket gone workerfinal",
+  "source_candidate": ".workflow/dev-validation-log-retention/runs/implement-p5-20261009/candidate-dvl045-compose-01-post.json"
+}

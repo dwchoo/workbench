@@ -1,0 +1,51 @@
+{
+  "feature_id": "dev-validation-log-retention",
+  "ticket_id": "DVL-01",
+  "attempt_id": "01",
+  "invocation": "dvl01-test-01",
+  "phase": "independent_fast_runner_contract_tests",
+  "authority": ".workflow/dev-validation-log-retention/runs/implement-p5-20261009/authority.json",
+  "approved_bundle_digest": "78bc55919e57bbf2132d6653780c5c164a2ee1d618422e5232d4cf0d1d667c3e",
+  "actual_workspace": "/tmp/workbench-dvl-20261009-3l1ViH/dvl01",
+  "repository_identity": {
+    "head": "2f21ec91990a409ea0d25f351343b50e34b48196",
+    "input_candidate": "318065f33818285d619b2195768592dd3065e3d6747e8877d91e87a112b1e6e4"
+  },
+  "baseline_snapshot": ".workflow/dev-validation-log-retention/runs/implement-p5-20261009/checkpoint-dvl01-test-01.json",
+  "checkpoint_ref": ".workflow/dev-validation-log-retention/runs/implement-p5-20261009/checkpoint-dvl01-test-01.json",
+  "mutation_owner": "dvl01-test-01",
+  "allowed_write_paths": [
+    "tests/dev_validation/test_runner_independent.py",
+    "tests/dev_validation/fixture_items_independent.py"
+  ],
+  "resource_claims": [
+    {
+      "resource": "dev-validation:harness",
+      "mode": "shared"
+    }
+  ],
+  "acceptance_ids": [
+    "DV-AC-01",
+    "DV-AC-02",
+    "DV-AC-04",
+    "DV-AC-05"
+  ],
+  "relevant_contracts": [
+    "BRIEF",
+    "SPEC§4",
+    "DVL-01",
+    ".codex/workflow-contract.md"
+  ],
+  "operational_outputs": "/tmp/workbench-dvl-20261009-3l1ViH/dvl01/.workflow/dvl-local",
+  "prohibited_paths": [
+    "production/tools/harness/worker tests",
+    "Root/othercheckouts/centralstate/approvedbundle",
+    "real OMP probes until08runtime lease free; paid model/user data/auth/mux"
+  ],
+  "test_env": "/tmp/workbench-dvl-20261009-3l1ViH/test-py312/bin/python",
+  "configured_model": "gpt-6-sol",
+  "configured_effort": "high",
+  "host_observed_model": "unverified",
+  "host_observed_effort": "unverified",
+  "task": "Independent requirement-derived runner tests: fast/precise pending distinction, 2/10 min target not cutoff, meaningful collected-count0/fullyskip refusal, watchdog notskip/pass, first failure attempts preserved/stale identity mismatch, hostile inherited env and bounded output/process cleanup, spawn failure cleanup, pipes/descendants/continuous chatter meaningful progress. Controlled subprocess/doubles only, do not modify production or import reimplement oracle. Existing installed OMP smoke currently reported79 in24.46s; don't claim new fullcompatpass; actual isolated smoke will run Root once integrated. Targeted negative fixtures + meaningful relevant existing unit regression once; independent authorship scope exclusively new2files. Scope/capability check explicitworkdir absoluteapplypath, leaves no delegates."
+}

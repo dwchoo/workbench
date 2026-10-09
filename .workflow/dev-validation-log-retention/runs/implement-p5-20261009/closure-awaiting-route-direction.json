@@ -1,0 +1,41 @@
+{
+  "schema_version": 1,
+  "feature": "dev-validation-log-retention",
+  "run": ".workflow/dev-validation-log-retention/runs/implement-p5-20261009",
+  "status": "partial_awaiting_user_route_direction",
+  "authorization_unchanged": true,
+  "all_required_gates_passed": false,
+  "root_candidate": "44b0027c9d42418cd6f165d97e16b6175ed5fa1ec2cfadb3f4ca6c5e7c573ace",
+  "root_snapshot": ".workflow/dev-validation-log-retention/runs/implement-p5-20261009/candidate-before-route-decision.json",
+  "integrated": [
+    "DVL-03 foundation",
+    "DVL-08 frozen independent judge only, not runtime collector"
+  ],
+  "candidate_local_verification": {
+    "DVL01": "81 fast tests26.401s + independent/related33, currentreview no material; pendingintegration",
+    "DVL045": "atomic event copy corrected,26targeted pass; invalid seq99 independent fixture and new cursor-fault regression/review pending",
+    "DVL08": "actual native route missing/inert hook eachPOST1; requiredguard barrier unavailable"
+  },
+  "requires_direction": {
+    "ticket": "DVL-08",
+    "status": "requires_route_direction_guard_confirmation_unavailable",
+    "last_invocation": "dvl08-runtime-08",
+    "evidence": ".workflow/dev-validation-log-retention/runs/implement-p5-20261009/result-dvl08-runtime-08.json",
+    "affected": [
+      "DVL-09",
+      "DVL-10",
+      "DVL-14",
+      "DVL-13 final"
+    ],
+    "unaffected_work": "01 integration→02, 045 independent correction/review/integration→06+11 then07+12; original scope remains authorized but not started this closure",
+    "suggested_direction": "Explicitly allow minimal isolated one-shot OMP summary-route experiment reusing existing agent definition, no standing process/new definition/paid model; safety contract remains unchanged."
+  },
+  "forbidden_mutations_not_done": [
+    "user raw rotation/deletion/DB switch",
+    "paid real-model/VM tests",
+    "new product agent definition or standing OMP",
+    "commit/publish/deploy"
+  ],
+  "ledger_revision": 236,
+  "host_quiescence": "All four existing leaves completed; all source leases released, owned test/OMP/provider processes stopped; reserved4 future calls not dispatched."
+}

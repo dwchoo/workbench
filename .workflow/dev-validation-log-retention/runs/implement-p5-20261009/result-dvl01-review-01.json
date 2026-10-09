@@ -1,0 +1,38 @@
+{
+  "invocation": "dvl01-review-01",
+  "outcome": "failed",
+  "candidate": "7302cd04d6fe7612401546791fb30ded0e13e77331f799f3aaa302b7eee9929b",
+  "mode": "read-only; no tests/probes/writes",
+  "findings": [
+    {
+      "id": "S01-R4",
+      "severity": "medium",
+      "paths": [
+        "tools/dev_validate.py:249-266",
+        "tools/dev_validate.py:225-228"
+      ],
+      "fact": "first stderr summary and skipped count can be emitted by imported test; actual unittest0/fullyskip exit0 may be mislabeled passed; spoofed summary can refresh watchdog",
+      "disposition": "fix with separately collected structured suite result/progress rather than first untrusted text match; preserve actual collected tests"
+    },
+    {
+      "id": "S01-R5",
+      "severity": "medium",
+      "paths": [
+        "tools/dev_validate.py:137-160",
+        "tests/integration/cw16_harness.py:209-243"
+      ],
+      "fact": "descendant starts new session/cwd outside namespace/no namespace argv with DEVNULL may escape existing cleanup detection",
+      "disposition": "add bounded inherited ownership evidence+exact PID/startticks cleanup for normal detached helpers; do not kill unrelated user process; no universal sandbox claim"
+    },
+    {
+      "id": "S01-R6",
+      "severity": "low",
+      "paths": [
+        "tools/dev_validate.py:166-176"
+      ],
+      "fact": "base_env error before spawn try can leak private namespace",
+      "disposition": "same cleanup exception scope"
+    }
+  ],
+  "next": "reserve bounded fix/independent negative fixtures/review; writers04/05 keep isolated leases, no third source writer"
+}

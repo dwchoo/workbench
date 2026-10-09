@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "record_type": "external-review-receipt",
+  "request_id": "ticket-bundle-s2-p2-review-02",
+  "reviewer": "existing claude-wb",
+  "delivery": "user message automatic reply",
+  "verdict": "conditional_proceed_not_approval",
+  "reviewed_bundle_digest": "f0283183ee49252755711033eb8143fecf37adbb142df59904895c7135ed1cf1",
+  "prior_request_record": ".workflow/dev-validation-log-retention/runs/plan-p2-s2-20261009/review-request.json",
+  "prior_status_preserved": "running_observed was historical observation; receipt now completes review, not new model/agent call",
+  "new_defects": [
+    "N1",
+    "N2",
+    "N3",
+    "N4",
+    "N5",
+    "N6",
+    "N7"
+  ],
+  "scope": "report-only receipt; user subsequent decisions+반영해줘 separately authorize document changes",
+  "s3_p3_review_status": "not_requested"
+}

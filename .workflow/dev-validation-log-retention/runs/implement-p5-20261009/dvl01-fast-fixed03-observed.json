@@ -1,0 +1,26 @@
+{
+  "gate_items": [
+    {
+      "id": "G-DV-01",
+      "status": "passed",
+      "evidence_level": "runtime",
+      "acceptance_ids": [
+        "DV-AC-01"
+      ],
+      "evidence": ".workflow/dev-validation-log-retention/runs/implement-p5-20261009/dvl01-fast-fixed03-check.json"
+    },
+    {
+      "id": "G-DV-04",
+      "status": "passed",
+      "evidence_level": "fixture",
+      "acceptance_ids": [
+        "DV-AC-04"
+      ],
+      "evidence": ".workflow/dev-validation-log-retention/runs/implement-p5-20261009/result-dvl01-test-04.json"
+    }
+  ],
+  "candidate": "be1fb71086af83bb16926a51371bee85747c4c490f6dad59cf89fd28490aa83a",
+  "observed": "currentinstalledOMP fast80tests80assertiongroups? actualtests80 fixture79+runtime1; 26.229s stable before=after genericcheck",
+  "precise": "not_run; actual60/65/tmuxherdrmatrix/newfeatures/Q01 all8 remainsunverified",
+  "first_failures": "allrootpriorattempts andfixturecorrection retained notdiscarded; fresh finalcandidate passed current"
+}

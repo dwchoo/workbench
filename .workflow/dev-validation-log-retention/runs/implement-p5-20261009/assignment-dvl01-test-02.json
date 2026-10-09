@@ -1,0 +1,70 @@
+{
+  "feature_id": "dev-validation-log-retention",
+  "ticket_id": "DVL-01",
+  "attempt_id": "02",
+  "invocation": "dvl01-test-02",
+  "phase": "independent_fixed_candidate_retest",
+  "authority": ".workflow/dev-validation-log-retention/runs/implement-p5-20261009/authority.json",
+  "approved_bundle_digest": "78bc55919e57bbf2132d6653780c5c164a2ee1d618422e5232d4cf0d1d667c3e",
+  "actual_workspace": "/tmp/workbench-dvl-20261009-3l1ViH/dvl01",
+  "repository_identity": {
+    "head": "2f21ec91990a409ea0d25f351343b50e34b48196",
+    "input_candidate": "7302cd04d6fe7612401546791fb30ded0e13e77331f799f3aaa302b7eee9929b"
+  },
+  "baseline_snapshot": ".workflow/dev-validation-log-retention/runs/implement-p5-20261009/candidate-dvl01-fix-01-post.json",
+  "checkpoint_ref": ".workflow/dev-validation-log-retention/runs/implement-p5-20261009/checkpoint-dvl01-fix-01.json",
+  "mutation_owner": null,
+  "allowed_write_paths": [],
+  "resource_claims": [
+    {
+      "resource": "dev-validation:harness",
+      "mode": "shared"
+    }
+  ],
+  "acceptance_ids": [
+    "DV-AC-01",
+    "DV-AC-02",
+    "DV-AC-04",
+    "DV-AC-05"
+  ],
+  "relevant_contracts": [
+    "BRIEF",
+    "SPEC§4",
+    "DVL-01",
+    ".codex/workflow-contract.md"
+  ],
+  "operational_outputs": "/tmp/workbench-dvl-20261009-3l1ViH/dvl01/.workflow/dvl-local",
+  "prohibited_paths": [
+    "production/tools/harness/worker tests",
+    "Root/othercheckouts/centralstate/approvedbundle",
+    "real OMP probes until08runtime lease free; paid model/user data/auth/mux"
+  ],
+  "test_env": "/tmp/workbench-dvl-20261009-3l1ViH/test-py312/bin/python",
+  "configured_model": "gpt-6-sol",
+  "configured_effort": "high",
+  "host_observed_model": "unverified",
+  "host_observed_effort": "unverified",
+  "task": "Read-only independent author retest same8 negative assertions plus existing15 runner/harness exactly once after fix. No source/test/tool/harness/graph edits while reviewer frozen same candidate. Own controlled subprocess/temp/log outputs only, no actualOMP. Report exact command/env/count/exit/firstfailures/PID cleanup. Criterion chatter recognizes meaningful assertion advancement, no busy meaningless output. No scope expansion/delegation.",
+  "prior_assignment_ref": ".workflow/dev-validation-log-retention/runs/implement-p5-20261009/assignment-dvl01-test-01.json",
+  "routing": {
+    "planned_role": "test_designer",
+    "selected_role": "test_designer",
+    "reason_codes": [
+      "independent_same_assertions_retest"
+    ],
+    "evidence_refs": [
+      ".workflow/dev-validation-log-retention/runs/implement-p5-20261009/result-dvl01-test-01.json",
+      ".workflow/dev-validation-log-retention/runs/implement-p5-20261009/result-dvl01-fix-01.json"
+    ]
+  },
+  "effective_write_capability": "no candidate edits; own operational logs/temp tests only; hostunrestricted explicit workdir",
+  "exact_checks": [
+    "G-DV-01",
+    "G-DV-04"
+  ],
+  "reserved_budget": {
+    "test": 1,
+    "review": 1,
+    "finite_run_limit": 64
+  }
+}

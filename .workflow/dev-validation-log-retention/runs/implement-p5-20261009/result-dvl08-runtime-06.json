@@ -1,0 +1,20 @@
+{
+  "invocation": "dvl08-runtime-06",
+  "outcome": "partial",
+  "observed": [
+    "actualcompiled pi.pi 671exports runSubprocess/discoverAgents/getAgent/TaskTool allfunctions",
+    "exactexistingexplorer bytes unchanged",
+    "parentctx.abort BEFOREprovider actualsend0"
+  ],
+  "not_observed": [
+    "nativeexecutor childpositive/negative",
+    "atomicGuardReceipt",
+    "all8gate"
+  ],
+  "classification": "offline sourceexport doubt disproved by compiledAPI inventory; no routefailure established, concrete nextpositive+negative nativeexecutorprobe",
+  "evidence": "/tmp/workbench-dvl-20261009-3l1ViH/dvl08/.workflow/dvl-local/dvl08-runtime-06-native.json",
+  "source_attribution": "collectoronly plus generatedgraphquerystamp; frozen8unchanged",
+  "cleanup": "installedOMP exit0 parentPID2631518 start29150190 stopped/serverclosed/remaining[]",
+  "guard_safety": "0providerrequests; no paid/auth/newdefinition",
+  "next": "dvl08-runtime-07 after exactsnapshot"
+}

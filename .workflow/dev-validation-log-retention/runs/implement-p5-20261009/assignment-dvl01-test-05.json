@@ -1,0 +1,33 @@
+{
+  "feature_id": "dev-validation-log-retention",
+  "ticket_id": "DVL-01",
+  "invocation": "dvl01-test-05",
+  "authority": ".workflow/dev-validation-log-retention/runs/implement-p5-20261009/authority.json",
+  "approved_bundle_digest": "78bc55919e57bbf2132d6653780c5c164a2ee1d618422e5232d4cf0d1d667c3e",
+  "actual_workspace": "/tmp/workbench-dvl-20261009-3l1ViH/dvl01",
+  "input_candidate": "64e94b1852ef9fd0e9b0067bbc74f6687803f05653efc78a1ee24b645e581080",
+  "baseline_snapshot": ".workflow/dev-validation-log-retention/runs/implement-p5-20261009/candidate-dvl01-fix-04-post.json",
+  "checkpoint_ref": ".workflow/dev-validation-log-retention/runs/implement-p5-20261009/candidate-dvl01-fix-04-post.json",
+  "allowed_write_paths": [
+    "tests/dev_validation/test_runner_independent.py",
+    "tests/dev_validation/fixture_items_independent.py"
+  ],
+  "mutation_owner": "independent test author only",
+  "resource_claims": [
+    {
+      "resource": "dev-validation:harness",
+      "mode": "shared"
+    }
+  ],
+  "test_env": "/tmp/workbench-dvl-20261009-3l1ViH/test-py312/bin/python",
+  "configured_model": "gpt-6-sol",
+  "configured_effort": "high",
+  "host_observed_model": "unverified",
+  "host_observed_effort": "unverified",
+  "findings": ".workflow/dev-validation-log-retention/runs/implement-p5-20261009/result-dvl01-review-03.json",
+  "task": "Author requirement-derived normal separate CLI native backend completion before suite end/first scan regression, exact PID/startTicks reaped (Z gone, not merely non-alive), baseline unrelated live and if useful exited child safety, prior PR_GET_CHILD_SUBREAPER restoration and private namespace cleanup. Worker fixed normal-Z collection. Do not weaken prior 15 independent tests or worker fixtures/source; only2 independent files. Test actual separatePython CLI spawn_backend with controlledbootstrap/no actualOMP/model/auth. Run independent+direct worker/harness once targeted, preserve first failures. Inspect ownership fault not broad malicious sandbox. Source worker released, sole writer this workspace. Return candidate/loghash/cleanup/sourceunchanged/lease released; no agents. Root owns actualfast and finalgraph.",
+  "prohibited_paths": [
+    "production/tools/harness/worker tests",
+    "central Root/state/approved bundle/user auth/data/real OMP"
+  ]
+}

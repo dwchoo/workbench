@@ -1,0 +1,18 @@
+{
+  "invocation": "dvl01-test-04",
+  "outcome": "complete",
+  "candidate": "be1fb71086af83bb16926a51371bee85747c4c490f6dad59cf89fd28490aa83a",
+  "tests": {
+    "count": 31,
+    "independent": 15,
+    "exit_code": 0,
+    "duration_seconds": 14.571,
+    "log": "/tmp/workbench-dvl-20261009-3l1ViH/dvl01/.workflow/dvl-local/dvl01-test-04-final-retest.log",
+    "sha256": "a23bd3dcf540311732203c6020596a09c3ed46e0de803600899fe8f18f1abd00"
+  },
+  "first_failure": ".workflow/dev-validation-log-retention/runs/implement-p5-20261009/milestone-dvl01-test-04-author.json",
+  "fixture_correction": ".workflow/dev-validation-log-retention/runs/implement-p5-20261009/milestone-dvl01-test-04-correction.json",
+  "source_hashes": "unchangedbeforeafter",
+  "cleanup": "no ownedPID/socket/namespace leftovers",
+  "not_claimed": "actualOMP/precise"
+}

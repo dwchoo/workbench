@@ -1,0 +1,116 @@
+{
+  "actual_provider_post_counts": {
+    "inert": 1,
+    "missing": 1,
+    "unattributed": 0
+  },
+  "actual_provider_posts": [
+    {
+      "advertised_tools": [
+        "read",
+        "grep",
+        "glob",
+        "web_search",
+        "yield"
+      ],
+      "path": "/v1/chat/completions",
+      "payload_bytes": 14818,
+      "phase": "missing"
+    },
+    {
+      "advertised_tools": [
+        "read",
+        "grep",
+        "glob",
+        "web_search",
+        "yield"
+      ],
+      "path": "/v1/chat/completions",
+      "payload_bytes": 14818,
+      "phase": "inert"
+    }
+  ],
+  "all_q01_pass": false,
+  "cleanup": {
+    "parent_stopped": true,
+    "provider_stopped": true,
+    "remaining_owned": []
+  },
+  "drain": {
+    "exit": 0,
+    "output_bytes_drained": 11,
+    "output_tail_bounded": "Working...\n",
+    "timed_out": false
+  },
+  "events": [
+    {
+      "agent": "explorer",
+      "name": "discovered",
+      "pid": 2670348,
+      "source": "user"
+    },
+    {
+      "name": "phase_begin",
+      "phase": "missing",
+      "pid": 2670348
+    },
+    {
+      "aborted": false,
+      "agent": "explorer",
+      "agentSource": "user",
+      "exitCode": 0,
+      "name": "native_result",
+      "phase": "missing",
+      "pid": 2670348,
+      "requests": 1,
+      "structuredStatus": "valid"
+    },
+    {
+      "name": "phase_end",
+      "phase": "missing",
+      "pid": 2670348
+    },
+    {
+      "name": "phase_begin",
+      "phase": "inert",
+      "pid": 2670348
+    },
+    {
+      "name": "inert_child_factory_registered",
+      "pid": 2670348
+    },
+    {
+      "name": "inert_child_before_agent_start",
+      "pid": 2670348
+    },
+    {
+      "name": "inert_child_provider_hook",
+      "pid": 2670348
+    },
+    {
+      "aborted": false,
+      "agent": "explorer",
+      "agentSource": "user",
+      "exitCode": 0,
+      "name": "native_result",
+      "phase": "inert",
+      "pid": 2670348,
+      "requests": 1,
+      "structuredStatus": "valid"
+    },
+    {
+      "name": "phase_end",
+      "phase": "inert",
+      "pid": 2670348
+    }
+  ],
+  "explorer_definition_sha256": "a226d3d2007fbced80bbe071a7e8f4f9587ee8d9fe96b05000059e5d8366d671",
+  "guard_receipt_atomic_send": "not_provided_by_tested_public_executor_options",
+  "native_results_complete": true,
+  "omp_version": "omp/18.8.6",
+  "parent_pid": 2670348,
+  "parent_start_ticks": 29374731,
+  "product_route_adopted": false,
+  "provider_port": 37355,
+  "result": "guard_confirmation_unavailable"
+}

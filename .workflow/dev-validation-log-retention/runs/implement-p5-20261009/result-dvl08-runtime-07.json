@@ -1,0 +1,29 @@
+{
+  "invocation": "dvl08-runtime-07",
+  "outcome": "partial",
+  "candidate": "547d56c495cf671575257a3d2af546ebb67efc4b0ee4daacb1ef8c3ca455750d",
+  "collector_sha256": "70df565e1f0f36ad1e759778689ecb5e7888a21aeb405c27a325df37fe4c833e",
+  "observed": [
+    "installed OMP18.8.6 public native runSubprocess with exact existing explorer, no agent definition change",
+    "fresh isolated child read/yield active read-back and provider catalog",
+    "strict structuredOutput status valid with request nonce",
+    "write/edit/bash unavailable; private sentinels unchanged",
+    "guard invalidation abort before actual provider POST: negative0, parent0, positive2"
+  ],
+  "not_observed": [
+    "atomic or equivalent GuardReceipt barrier",
+    "all eight Q01 requirements",
+    "production route adoption"
+  ],
+  "evidence": "/tmp/workbench-dvl-20261009-3l1ViH/dvl08/.workflow/dvl-local/dvl08-runtime-07-native-child.json",
+  "cleanup": {
+    "exit": 0,
+    "parent_pid": 2638447,
+    "parent_start_ticks": 29190267,
+    "parent_stopped": true,
+    "provider_stopped": true,
+    "remaining_owned": []
+  },
+  "scope_audit": ".workflow/dev-validation-log-retention/runs/implement-p5-20261009/audit-dvl08-runtime-07.json",
+  "next": "bounded preventive barrier and absence/tamper negative observation; no new writer until resource permits"
+}

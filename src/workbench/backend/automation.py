@@ -635,7 +635,8 @@ class AutomationController:
             owner = None
         raw_log = result = None
         collected = record.get("raw_log_collected")
-        if isinstance(collected, dict) and collected.get("sha256"):
+        if (record.get("log_format") != "segmented-v1" and isinstance(collected, dict)
+                and collected.get("sha256")):
             try:
                 content = run._read_raw() if hasattr(run, "_read_raw") else Path(run.raw_log).read_bytes()
                 raw_log = Artifact("raw_log", str(run.raw_log), content, collected["sha256"])
@@ -796,12 +797,23 @@ class AutomationController:
         status = record.get("exit_status")
         if status is None or type(status) is int:
             facts["exit_status"] = status
-        try:
-            info = os.stat(workflow_run.raw_log)
-            facts["output_bytes"] = info.st_size
-            facts["last_output_age_seconds"] = max(0.0, self._wall() - info.st_mtime)
-        except OSError:
-            facts["unknowns"].append("raw_log_unavailable")
+        if record.get("log_format") == "segmented-v1":
+            raw = record.get("raw_log_status") or {}
+            if type(raw.get("observed_bytes")) is int:
+                facts["output_bytes"] = raw["observed_bytes"]
+            else:
+                facts["unknowns"].append("raw_observation_unknown")
+            if type(raw.get("last_observed_at")) in (int, float):
+                facts["last_output_age_seconds"] = max(0.0, self._wall() - raw["last_observed_at"])
+            else:
+                facts["unknowns"].append("raw_observation_time_unknown")
+        else:
+            try:
+                info = os.stat(workflow_run.raw_log)
+                facts["output_bytes"] = info.st_size
+                facts["last_output_age_seconds"] = max(0.0, self._wall() - info.st_mtime)
+            except OSError:
+                facts["unknowns"].append("raw_log_unavailable")
         return facts
 
     def _dispatch_review(self, request: ReviewRequest) -> dict[str, Any]:

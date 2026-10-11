@@ -1,18 +1,19 @@
-"""Probe-local runtime port, intentionally unavailable before judge freeze.
+"""Fixed probe-local Q01 port for the current installed-OMP eight-item batch.
 
-Runtime implementation is a separate DVL-08 phase. A missing observation here
-cannot be promoted by the Q01 judge.
+This development adapter is never imported by product runtime.
 """
 from __future__ import annotations
 
+from q01_sdk_full_probe import current_probe
+
 
 def prepare_q01_context(context: dict) -> dict:
-    raise ValueError("runtime_probe_not_implemented")
+    return current_probe.prepare(context)
 
 
 def collect_q01_observations(prepared: dict) -> dict:
-    raise ValueError("runtime_probe_not_implemented")
+    return current_probe.collect(prepared)
 
 
 def close_q01_context(prepared: dict) -> None:
-    pass
+    current_probe.close(prepared)

@@ -301,7 +301,7 @@ const TO_MANAGER_PARAMETERS = {
 		},
 	},
 };
-type BridgeTool = "to_worker" | "to_manager" | "terminal" | "restart_worker" | "workbench_status" | "stop_survivor";
+type BridgeTool = "to_worker" | "to_manager" | "terminal" | "restart_worker" | "workbench_status" | "stop_survivor" | "workbench_logs";
 const HANDOFF_TOOLS: Record<Role, { name: "to_worker" | "to_manager"; label: string; description: string; parameters: Frame }> = {
 	manager: {
 		name: "to_worker", label: "To worker", parameters: TO_WORKER_PARAMETERS,
@@ -359,7 +359,7 @@ const NOTICE_TYPES: Record<Role, Set<unknown>> = {
 // the tools are registered; at the subagent's session_start they are removed from that session's active tools
 // (pi.setActiveTools), which drops them from the subagent's provider request. The refusal stays as defence.
 const BRIDGE_TOOL_NAMES = new Set(["to_worker", "to_manager", "terminal", "restart_worker", "workbench_status",
-	"stop_survivor"]);
+	"stop_survivor", "workbench_logs"]);
 const SUBAGENT_DETAIL = "Bridge tools are for the worker itself, not its subagents: only the worker itself reports "
 	+ "to the manager and runs commands. Return your findings to the worker instead.";
 
@@ -474,6 +474,29 @@ const STOP_SURVIVOR_TOOL = {
 		+ "and shown to the user.",
 };
 const MANAGER_TOOLS = [RESTART_WORKER_TOOL, WORKBENCH_STATUS_TOOL, STOP_SURVIVOR_TOOL];
+const WORKBENCH_LOGS_TOOL = {
+	name: "workbench_logs" as const, label: "Workbench logs", parameters: {
+		type: "object", additionalProperties: false,
+		required: ["action", "subject_kind", "subject_id", "limit", "page", "offset", "length"],
+		properties: {
+			action: { type: "string", enum: ["status", "list", "show", "raw", "raw-status"],
+				description: "Read-only important or bounded raw-log operation." },
+			subject_kind: { type: ["string", "null"], enum: ["task", "run", "command", null] },
+			subject_id: { type: ["string", "null"], maxLength: 36 },
+			limit: { type: ["integer", "null"], minimum: 1, maximum: 10 },
+			page: { type: ["string", "null"], maxLength: 512 },
+			offset: { type: ["integer", "null"], minimum: 0, description: "Raw source byte offset for action raw." },
+			length: { type: ["integer", "null"], minimum: 1, maximum: 131072,
+				description: "Bounded raw source page length for action raw." },
+		},
+	},
+	description: "Read important logs and retained raw source ranges without starting a model or maintenance. "
+		+ "Use status for actual DB count and physical usage, list for subjects, show with subject_kind and subject_id "
+		+ "for entries. Use raw with run/command subject_kind, subject_id, offset and length; raw-status shows "
+		+ "separate legacy and segmented usage. Raw chunks and missing/evicted ranges are source-relative: do not "
+		+ "treat gaps or a segmented descriptor log_path as full text. Pass null for unused required fields. "
+		+ "Follow nextAfter for another important page. This tool cannot close or delete logs.",
+};
 
 // How long this bridge waits for the backend's terminal result (C-D68 (9): fixed; the call's arguments do not
 // change it).
@@ -1001,6 +1024,19 @@ export default function workbenchG3Extension(pi: any): void {
 	}
 
 	if (typeof pi.registerTool === "function") {
+		pi.registerTool({
+			name: WORKBENCH_LOGS_TOOL.name,
+			label: WORKBENCH_LOGS_TOOL.label,
+			description: WORKBENCH_LOGS_TOOL.description,
+			parameters: WORKBENCH_LOGS_TOOL.parameters,
+			strict: true,
+			loadMode: "essential",
+			async execute(toolCallId: string, params: unknown, signal?: AbortSignal, _onUpdate?: unknown, ctx?: unknown) {
+				const result = await requestHandoff("workbench_logs", toolCallId, params, signal,
+					TOOL_RESULT_TIMEOUT_MS, ctx);
+				return { content: [{ type: "text", text: JSON.stringify(result) }], details: result };
+			},
+		});
 		const tool = HANDOFF_TOOLS[role];
 		pi.registerTool({
 			name: tool.name,

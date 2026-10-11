@@ -13,6 +13,8 @@ confirms it; until then Workbench starts no automatic work. Exit codes:
 from __future__ import annotations
 
 import argparse
+import base64
+from datetime import datetime, timezone
 import json
 import os
 from pathlib import Path
@@ -24,7 +26,8 @@ from typing import Mapping
 from workbench.backend.client import ClientError, NotRunning, UiClient, run_attach
 from workbench.backend.launcher import ISOLATION_CHECK_TIMEOUT, LaunchPlan, StartRequirementError, build_plan
 from workbench.backend.omp_home import OmpHomeError, auth_guidance, config_dir_value, omp_root
-from workbench.backend.paths import DataDirError, DataLayout, InstanceLock, ensure_private_dir, resolve_data_dir
+from workbench.backend.paths import (BackendLocked, DataDirError, DataLayout, InstanceLock,
+                                     ensure_private_dir, resolve_data_dir)
 from workbench.contracts.ui_v1 import ClientType
 
 EXIT_FAILURE, EXIT_REQUIREMENT, EXIT_NOT_RUNNING = 1, 2, 3
@@ -150,6 +153,7 @@ def _print_summary(snapshot: dict, stream=sys.stdout) -> None:
     if shell:
         print(f"  shell: {shell.get('kind')} {shell.get('executable')} mode={shell.get('parent_mode')}",
               file=stream)
+    _print_important_warning(snapshot, stream)
     usage = snapshot.get("usage")
     if isinstance(usage, dict) and usage.get("task_id"):  # C-AC-21 (CW-16 D-B2-3)
         model = usage.get("model") or {}
@@ -172,6 +176,18 @@ def _print_summary(snapshot: dict, stream=sys.stdout) -> None:
             print(f"WARNING: {isolation['warning']}", file=stream)
         for note in isolation.get("notes") or ():
             print(f"  note: {note}", file=stream)
+
+
+def _print_important_warning(snapshot: dict, stream=sys.stdout) -> None:
+    important = snapshot.get("important_logs")
+    if not isinstance(important, dict):
+        return
+    count = important.get("databaseCount")
+    if important.get("countState") == "known" and type(count) is int and count >= 2:
+        print(f"경고: 중요 로그 DB {count}개 · 총 물리 크기 {important.get('totalPhysicalBytes')} bytes. "
+              "'logs important status'로 확인하고 'logs important delete-db --db UUID'로 정리하세요", file=stream)
+    elif important.get("countState") != "known":
+        print("경고: 중요 로그 DB 수·용량 확인 불가. 'logs important status'로 확인하세요", file=stream)
 
 
 def _print_recovery(snapshot: dict, stream=None) -> None:
@@ -285,6 +301,9 @@ def cmd_start(args: argparse.Namespace) -> int:
 
 def cmd_attach(args: argparse.Namespace) -> int:
     layout = _layout(args)
+    snapshot = _running_snapshot(layout)
+    if snapshot is not None:
+        _print_important_warning(snapshot)
     try:
         return _attach(layout, args)
     except NotRunning:
@@ -307,6 +326,187 @@ def cmd_status(args: argparse.Namespace) -> int:
         _print_summary(snapshot)
         _print_recovery(snapshot)
     return 0
+
+
+def _important_subject(args: argparse.Namespace) -> dict[str, object]:
+    return {"schemaVersion": 1, "kind": "task" if args.task else "command",
+            "id": args.task or args.command_id}
+
+
+def _important_confirmation(args: argparse.Namespace, description: str) -> bool:
+    if args.yes:
+        return True
+    if not sys.stdin.isatty():
+        print(f"{description}: 명시 확인이 필요합니다 (--yes)", file=sys.stderr)
+        return False
+    return input(f"{description}. 계속할까요? [y/N] ").strip().lower() == "y"
+
+
+def _important_print(result: dict, args: argparse.Namespace) -> None:
+    if args.json:
+        print(json.dumps(result, sort_keys=True, ensure_ascii=False))
+        return
+    if args.logs_action == "status":
+        count, size = result.get("databaseCount"), result.get("physicalBytes")
+        if result.get("complete") and type(count) is int:
+            print(f"important DB {count}개 · 총 물리 크기 {size} bytes · active {result.get('active')}")
+            if count >= 2:
+                print("경고: 여러 중요 로그 DB가 남아 있습니다. 'logs important status --json'으로 UUID와 크기를 "
+                      "확인하고 'logs important delete-db --db UUID'로 사용자 정리를 진행하세요")
+        else:
+            print("important DB 수·크기 확인 불가")
+    elif args.logs_action == "list":
+        for row in result.get("subjects", []):
+            item = row["subject"]
+            print(f"{item['kind']} {item['id']} · {row['entryCount']} entries · DB "
+                  f"{','.join(row['sourceDbUuids'])}")
+        if not result.get("subjects") and result.get("complete"):
+            print("기록 없음")
+    elif args.logs_action == "show":
+        for row in result.get("entries", []):
+            print(json.dumps(row, ensure_ascii=False, sort_keys=True))
+        if not result.get("entries") and result.get("complete"):
+            print("기록 없음")
+    else:
+        print(json.dumps(result, ensure_ascii=False, sort_keys=True))
+    if result.get("nextAfter"):
+        print(f"다음 page: {result['nextAfter']}")
+    if not result.get("complete", True):
+        print(f"부분 결과/조회 실패: {json.dumps(result.get('unavailable', []), ensure_ascii=False)}",
+              file=sys.stderr)
+
+
+def cmd_important_read(args: argparse.Namespace) -> int:
+    from workbench.storage.important_log import ImportantLogReader
+    try:
+        layout = _layout(args, create=False)
+        reader = ImportantLogReader(layout.important_logs)
+        if args.logs_action == "status":
+            result = reader.status()
+        elif args.logs_action == "list":
+            result = reader.list_subjects(limit=args.limit, after=args.page)
+        else:
+            result = reader.show(_important_subject(args), limit=args.limit, after=args.page)
+        _important_print(result, args)
+        return 0 if result.get("complete") else EXIT_FAILURE
+    except (OSError, ValueError, RuntimeError) as exc:
+        print(f"important 조회 실패: {type(exc).__name__}: {exc}", file=sys.stderr)
+        return EXIT_FAILURE
+
+
+def cmd_raw_read(args: argparse.Namespace) -> int:
+    """User-only bounded source read; stopped queries never start writer recovery."""
+    from workbench.storage.log_raw.port import raw_query, raw_usage
+    try:
+        layout = _layout(args, create=False)
+        if args.logs_kind == "raw-status":
+            try:
+                with UiClient(layout.ui_socket, name="workbench-cli", timeout=5) as client:
+                    answer = client.request(ClientType.RAW_STATUS)
+                    result = answer["result"] if answer.get("ok") else {"status": "unavailable",
+                                                                     "reason": answer.get("reason")}
+            except (NotRunning, ClientError, OSError):
+                result = raw_usage(layout.root)
+        else:
+            kind, identity = ("run", args.run_id) if args.run_id else ("command", args.command_id)
+            try:
+                with UiClient(layout.ui_socket, name="workbench-cli", timeout=5) as client:
+                    answer = client.request(ClientType.RAW_QUERY, source_kind=kind, source_id=identity,
+                                            offset=args.offset, limit=args.limit)
+                    result = answer["result"] if answer.get("ok") else {"status": "unavailable",
+                                                                     "reason": answer.get("reason")}
+            except (NotRunning, ClientError, OSError):
+                result = raw_query(layout.root, kind, identity, offset=args.offset, limit=args.limit)
+        if args.json:
+            print(json.dumps(result, sort_keys=True, ensure_ascii=False))
+        elif args.logs_kind == "raw-status":
+            print(json.dumps(result, sort_keys=True, ensure_ascii=False))
+        elif result.get("log_format") == "segmented-v1":
+            read = result.get("read") or {}
+            for chunk in read.get("chunks", []):
+                span = chunk["range"]
+                print(f"[{span['start']},{span['end']}) retained:")
+                sys.stdout.buffer.write(base64.b64decode(chunk["dataBase64"]))
+                print()
+            for gap in read.get("missing", []):
+                print(f"[{gap['start']},{gap['end']}) {gap['reason']}", file=sys.stderr)
+            if result.get("next_offset") is not None:
+                print(f"next offset: {result['next_offset']}", file=sys.stderr)
+        elif result.get("status") == "available":
+            sys.stdout.buffer.write(base64.b64decode(result["read"]["dataBase64"]))
+        else:
+            print(f"raw 조회 불가: {result.get('reason', 'unknown')}", file=sys.stderr)
+        return 0 if result.get("status") not in ("unavailable", "unknown") else EXIT_FAILURE
+    except (OSError, ValueError, RuntimeError) as exc:
+        print(f"raw 조회 실패: {type(exc).__name__}: {exc}", file=sys.stderr)
+        return EXIT_FAILURE
+
+
+def cmd_important_mutate(args: argparse.Namespace) -> int:
+    from workbench.storage.important_log import ActiveSubjectLog, ImportantLogCatalog, ImportantLogReader
+    from workbench.storage.important_log.store import ImportantLogStoreError, _canonical_uuid
+    from workbench.contracts.logs_v1 import parse_subject_ref
+
+    try:
+        layout = _layout(args, create=False)
+        if args.logs_action == "delete-db":
+            identity = _canonical_uuid(args.db)
+            before = ImportantLogReader(layout.important_logs).status()
+            if not before.get("complete"):
+                raise ImportantLogStoreError("archive inventory unavailable; deletion refused")
+            selected = next((row for row in before["databases"] if row["dbUuid"] == identity), None)
+            if selected is None or selected["role"] != "archive":
+                raise ImportantLogStoreError("only a selected catalog archive can be deleted")
+            print(f"선택 archive {identity} · {selected['physicalBytes']} bytes; 보호 시작/누적 기록은 "
+                  "이월·재검증 후 삭제합니다. 실패 시 실제 잔존을 다시 확인하세요", file=sys.stderr)
+            description = f"중요 로그 archive {identity} 삭제"
+        else:
+            subject = parse_subject_ref(_important_subject(args))
+            description = f"{subject['kind']} {subject['id']} 보관 종결 (실행 상태·성공 판정 불변)"
+        if not _important_confirmation(args, description):
+            return EXIT_FAILURE
+        # A connected backend owns the instance and its catalog. Never fall
+        # back to a local retry after sending an unknown-result mutation.
+        running = _running_snapshot(layout) if os.path.lexists(layout.root) else None
+        if running is not None:
+            with UiClient(layout.ui_socket, name="workbench-cli", timeout=60) as client:
+                if args.logs_action == "delete-db":
+                    answer = client.request(ClientType.IMPORTANT_DELETE_DB, db_uuid=identity, confirmed=True)
+                else:
+                    answer = client.request(ClientType.IMPORTANT_ARCHIVE_CLOSE,
+                                            subject_kind=subject["kind"], subject_id=subject["id"],
+                                            confirmed=True)
+            if not answer.get("ok"):
+                raise RuntimeError(f"backend refused: {answer.get('reason')}: {answer.get('detail')}")
+            result = answer.get("result")
+        else:
+            if not os.path.isdir(layout.root):
+                raise ImportantLogStoreError("existing private data directory required")
+            lock = InstanceLock(layout.lock)
+            lock.acquire()
+            try:
+                catalog = ImportantLogCatalog(layout.important_logs, create=False)
+                if args.logs_action == "delete-db":
+                    result = catalog.prepare_and_delete_archive(identity)
+                else:
+                    ActiveSubjectLog(catalog).archive_close(
+                        subject, at=datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+                        user_confirmed=True)
+                    result = {"state": "closed", "subject": subject,
+                              "note": "archival closure does not change core execution or task status"}
+            finally:
+                lock.release()
+        if type(result) is not dict:
+            raise RuntimeError("mutation result unknown; inspect status before retrying")
+        if args.json:
+            print(json.dumps(result, sort_keys=True, ensure_ascii=False))
+        else:
+            print(json.dumps(result, sort_keys=True, ensure_ascii=False))
+        return 0 if result.get("state") in ("closed", "deleted") else EXIT_FAILURE
+    except (BackendLocked, ClientError, OSError, ValueError, RuntimeError) as exc:
+        print(f"important 변경 결과 불명 또는 거부: {type(exc).__name__}: {exc}; "
+              "'logs important status'로 잔존 상태를 확인하세요", file=sys.stderr)
+        return EXIT_FAILURE
 
 
 def _worktrees(layout: DataLayout) -> list[str]:
@@ -550,6 +750,51 @@ def parser() -> argparse.ArgumentParser:
     shutdown.add_argument("--yes", action="store_true", help="confirm without prompting")
     shutdown.add_argument("--json", action="store_true")
     shutdown.set_defaults(handler=cmd_shutdown)
+    logs = sub.add_parser("logs", help="inspect stored logs and perform explicit user cleanup")
+    logs_sub = logs.add_subparsers(dest="logs_kind", required=True)
+    important = logs_sub.add_parser("important", help="important task/command logs")
+    important_sub = important.add_subparsers(dest="logs_action", required=True)
+
+    def important_read(name: str) -> argparse.ArgumentParser:
+        action = common(important_sub.add_parser(name))
+        action.add_argument("--json", action="store_true")
+        action.set_defaults(handler=cmd_important_read)
+        return action
+
+    def subject_argument(action: argparse.ArgumentParser) -> None:
+        subject = action.add_mutually_exclusive_group(required=True)
+        subject.add_argument("--task", help="canonical Task UUID")
+        subject.add_argument("--command", dest="command_id", help="canonical command UUID")
+
+    important_read("status")
+    listed = important_read("list")
+    listed.add_argument("--limit", type=int, default=50)
+    listed.add_argument("--page", help="cursor returned as nextAfter")
+    shown = important_read("show")
+    subject_argument(shown)
+    shown.add_argument("--limit", type=int, default=50)
+    shown.add_argument("--page", help="cursor returned as nextAfter")
+    archival = common(important_sub.add_parser("archival-close", help="mark a subject as archivally closed"))
+    subject_argument(archival)
+    archival.add_argument("--yes", action="store_true")
+    archival.add_argument("--json", action="store_true")
+    archival.set_defaults(handler=cmd_important_mutate)
+    deletion = common(important_sub.add_parser("delete-db", help="delete one selected archive UUID"))
+    deletion.add_argument("--db", required=True, help="canonical archive UUID")
+    deletion.add_argument("--yes", action="store_true")
+    deletion.add_argument("--json", action="store_true")
+    deletion.set_defaults(handler=cmd_important_mutate)
+    raw = common(logs_sub.add_parser("raw", help="read retained raw source bytes"))
+    raw_identity = raw.add_mutually_exclusive_group(required=True)
+    raw_identity.add_argument("--run", dest="run_id", help="canonical run UUID")
+    raw_identity.add_argument("--command", dest="command_id", help="canonical command UUID")
+    raw.add_argument("--offset", type=int, default=0)
+    raw.add_argument("--limit", type=int, default=16 * 1024)
+    raw.add_argument("--json", action="store_true")
+    raw.set_defaults(handler=cmd_raw_read)
+    raw_status = common(logs_sub.add_parser("raw-status", help="show separate legacy and disabled v2 usage"))
+    raw_status.add_argument("--json", action="store_true")
+    raw_status.set_defaults(handler=cmd_raw_read)
     backend = sub.add_parser("_backend", help=argparse.SUPPRESS)
     backend.add_argument("--data-dir", required=True)
     backend.add_argument("--project-dir", required=True)

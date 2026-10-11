@@ -102,6 +102,7 @@ from workbench.backend.flow import (
     HandoffService, environment_value_findings, rejected,
 )
 from workbench.contracts.v1 import ActorRole
+from workbench.storage.log_raw.port import DisabledSegmentedRawPort, raw_read_command
 from workbench.terminal.shell_g2.lifecycle import RUN_REQUEST_MAX, encode_run, normalize_run
 
 TERMINAL_TOOL = "terminal"
@@ -315,6 +316,9 @@ def _run_entry(command: str, log_path: str, script_path: str | None, result: Map
                              "duration_seconds": result.get("duration_seconds"), "log_path": log_path}
     if script_path is not None:
         entry["script_path"] = script_path
+    for key in ("log_format", "raw_log_ref", "read_command", "raw_source_status", "raw_source_error"):
+        if key in result:
+            entry[key] = result[key]
     return entry
 
 
@@ -323,7 +327,7 @@ def _drop_unrun_files(command: "_Command", *, keep_script: bool = False) -> None
     paths = [command.log_path] + ([] if keep_script or command.script_path is None else [command.script_path])
     for path in paths:
         try:
-            if path is command.log_path and path.stat().st_size:
+            if path is command.log_path and command.segmented_raw_port is None and path.stat().st_size:
                 continue  # not empty: never removed
             path.unlink()
         except OSError:
@@ -346,6 +350,8 @@ class _Command:
     log_bytes: int = 0
     log_truncated: bool = False
     log_error: str | None = None
+    segmented_raw_port: DisabledSegmentedRawPort | None = None
+    raw_descriptor: dict[str, Any] | None = None
     handoff_typed: bool = False  # Workbench typed wb-handoff for this command (C-D69 (5)(a))
     submitting: bool = False  # the submit to the host shell was attempted (the shell may have the command)
     script_path: Path | None = None  # C-D69 (6)(c): the command runs from this script file (too long for one request)
@@ -391,7 +397,18 @@ class _Command:
             if len(self.unseen) > 4 * TAIL_BYTES:
                 del self.unseen[:-4 * TAIL_BYTES]
                 self.unseen_dropped = True
-        if self.log_error is not None:
+        if self.log_error is not None and self.segmented_raw_port is None:
+            return
+        if self.segmented_raw_port is not None:
+            try:
+                status = self.segmented_raw_port.append(self.raw_descriptor, data)
+                self.log_bytes += status["stored_bytes"]
+                if status["missing_bytes"]:
+                    self.log_truncated = True
+                if status["storage_error"] is not None:
+                    self.log_error = status["storage_error"]
+            except Exception as exc:
+                self.log_error = type(exc).__name__
             return
         room = LOG_MAX - self.log_bytes
         chunk = data[:max(room, 0)]
@@ -415,6 +432,17 @@ class _Command:
     def tail(self) -> dict[str, Any]:
         text, truncated = output_tail(bytes(self.recent))
         return {"output_tail": text, "output_tail_truncated": truncated or self.log_bytes > len(self.recent)}
+
+    def raw_fields(self) -> dict[str, Any]:
+        if self.segmented_raw_port is None:
+            return {}
+        fields = {"log_format": "segmented-v1", "raw_log_ref": self.raw_descriptor["raw_log_ref"],
+                  "read_command": raw_read_command(self.log_path.parents[2], "command", self.command_id)}
+        try:
+            fields["raw_source_status"] = self.segmented_raw_port.status(self.raw_descriptor)
+        except Exception as exc:
+            fields["raw_source_error"] = type(exc).__name__
+        return fields
 
     def take_unseen(self) -> tuple[bytes, bool]:
         with self.lock:
@@ -454,11 +482,17 @@ class TerminalService:
                  done_target: Callable[[Mapping[str, Any]], str] | None = None,
                  clock: Callable[[], float] = time.monotonic, check_interval: float = CHECK_INTERVAL,
                  notice_retry: float = NOTICE_RETRY, tick_interval: float = NOTIFIER_TICK,
-                 wait_seconds: float = WAIT_SECONDS):
+                 wait_seconds: float = WAIT_SECONDS, subject_log: Any | None = None,
+                 subject_capture_failure: Callable[[], None] | None = None,
+                 segmented_raw_port: DisabledSegmentedRawPort | None = None):
         self._handoffs = handoffs
+        self._subject_log = subject_log
+        self._subject_capture_failure = subject_capture_failure
+        self.subject_capture_unknown = False
         self._host_shell = host_shell
         self._gate = gate
         self._log_root = Path(log_root)
+        self._segmented_raw_port = segmented_raw_port
         self._automation = automation
         self._paused = paused
         self._hold = hold  # CW-19 (C-D71 (3)/(4), C-AC-28): no new worker command while held
@@ -497,11 +531,33 @@ class TerminalService:
         self._noticing: list[_Command] = []  # commands whose completion notice is pending
 
     # -- the journal ----------------------------------------------------------------
+    def _mark_subject_unknown(self) -> None:
+        self.subject_capture_unknown = True
+        if self._subject_capture_failure is not None:
+            try:
+                self._subject_capture_failure()
+            except Exception:
+                pass  # terminal ownership and result never depend on the capture indication
+
     def _journal(self, record: Mapping[str, Any]) -> None:
         try:
-            self._handoffs.record(record)
+            confirmed = self._handoffs.record(record)
         except (OSError, TypeError, ValueError):
             pass  # the effect stands; the tool result still says what happened
+        else:
+            if confirmed.get("type") in ("terminal_started", "terminal_ended"):
+                sink = self._subject_log
+                if sink is None:
+                    if self._subject_capture_failure is not None:
+                        self._mark_subject_unknown()
+                    return
+                try:
+                    active = self._active_task() if confirmed["type"] == "terminal_started" else None
+                    revision = (active.revision if active is not None and
+                                active.task_id == confirmed.get("task_id") else None)
+                    sink.record_terminal(confirmed, revision=revision)
+                except Exception:
+                    self._mark_subject_unknown()
 
     def start(self) -> None:
         """The notifier thread (C-D68 (8)); without a ``notify`` port there are no notices."""
@@ -527,6 +583,7 @@ class TerminalService:
             return None
         view = {"command_id": command.command_id, "command": command.command, "log_path": str(command.log_path),
                 "started_at": command.started_at, "running": not command.done.is_set()}
+        view.update(command.raw_fields())
         if command.result is not None:
             view["status"] = command.result.get("status")
         return view
@@ -545,7 +602,8 @@ class TerminalService:
                         "state": "running" if not command.done.is_set() else result.get("status") or "unknown",
                         "exit_code": result.get("exit_code"), "signal": result.get("signal"),
                         "started_at": command.started_at, "duration_seconds": result.get("duration_seconds"),
-                        "log_path": str(command.log_path), "task_id": command.task_id, "owner": "worker"}
+                        "log_path": str(command.log_path), "task_id": command.task_id, "owner": "worker",
+                        **command.raw_fields()}
         return {"running": running, "notice_pending": pending, "operated_by": self.host_operator(), "last": last}
 
     # -- requests ---------------------------------------------------------------------
@@ -667,7 +725,8 @@ class TerminalService:
         text, truncated = output_tail(data)
         return {"status": "running", "command_id": command.command_id, "command": command.command,
                 "log_path": str(command.log_path), "elapsed_seconds": round(time.monotonic() - command.started, 3),
-                "output_tail": text, "output_tail_truncated": truncated or dropped, "detail": RUNNING_DETAIL}
+                "output_tail": text, "output_tail_truncated": truncated or dropped, "detail": RUNNING_DETAIL,
+                **command.raw_fields()}
 
     def _await(self, command: _Command, deadline: float, key: tuple) -> dict[str, Any]:
         wakeup = threading.Event()
@@ -708,7 +767,7 @@ class TerminalService:
             return {**command.result, **command.tail()}
         return {"status": "running", "command_id": command.command_id, "command": command.command,
                 "log_path": str(command.log_path), "elapsed_seconds": round(time.monotonic() - command.started, 3),
-                **command.tail(), "detail": RUNNING_DETAIL}
+                **command.tail(), "detail": RUNNING_DETAIL, **command.raw_fields()}
 
     # -- C-D68 (8): the bridge's abandon signal ----------------------------------------------
     def abandon(self, role: ActorRole | str, request: Mapping[str, Any]) -> dict[str, Any]:
@@ -892,7 +951,7 @@ class TerminalService:
                   "exit_code": None, "elapsed_seconds": round(time.monotonic() - command.started, 1),
                   "new_output": text, "new_output_truncated": truncated or dropped,
                   "log_path": str(command.log_path), "coalesced_count": coalesced,
-                  "instruction": CHECK_INSTRUCTION}
+                  "instruction": CHECK_INSTRUCTION, **command.raw_fields()}
         outcome = self._send(notice)
         with self._lock:
             if outcome != "delivered" and outcome != "unknown":
@@ -927,7 +986,8 @@ class TerminalService:
                       "command": shown_command(command.command), "task_id": command.task_id,
                       "status": result.get("status"), "exit_code": result.get("exit_code"),
                       "signal": result.get("signal"), "log_path": str(command.log_path),
-                      "duration_seconds": result.get("duration_seconds"), "instruction": MANAGER_DONE_INSTRUCTION}
+                      "duration_seconds": result.get("duration_seconds"), "instruction": MANAGER_DONE_INSTRUCTION,
+                      **command.raw_fields()}
             outcome = self._send(notice, self._notify_manager)
         else:
             notice = {"notice_id": command.notice_id, "type": "terminal_done", "command_id": command.command_id,
@@ -935,7 +995,9 @@ class TerminalService:
                       "status": result.get("status"), "exit_code": result.get("exit_code"),
                       "signal": result.get("signal"), "reason": result.get("reason"), **command.tail(),
                       "log_path": str(command.log_path), "duration_seconds": result.get("duration_seconds"),
-                      "instruction": DONE_INSTRUCTION}
+                      "instruction": DONE_INSTRUCTION if command.segmented_raw_port is None else
+                      "Workbench notice: command ended. log_path is a source descriptor; use read_command for retained ranges.",
+                      **command.raw_fields()}
             outcome = self._send(notice)
         with self._lock:
             if outcome in ("deferred", "not_connected", "paused"):
@@ -1072,7 +1134,8 @@ class TerminalService:
                 self._current = command
             started = {"type": "terminal_started", "command_id": command.command_id, "key": key_dict,
                        "task_id": task, "command": command.command, "cwd": command.cwd,
-                       "started_at": command.started_at, "log_path": str(command.log_path)}
+                       "started_at": command.started_at, "log_path": str(command.log_path),
+                       **command.raw_fields()}
             if command.script_path is not None:
                 started["script_path"] = str(command.script_path)
             self._journal(started)
@@ -1095,14 +1158,33 @@ class TerminalService:
     def _new_command(self, text: str, key_dict: dict[str, Any], task: str | None, *,
                      spill: bool = False) -> _Command | dict[str, Any]:
         command_id = str(uuid4())
+        revision = None
+        if self._segmented_raw_port is not None and task is not None:
+            try:
+                active = self._active_task()
+                if active is None or getattr(active, "task_id", None) != task:
+                    raise ValueError("active Task changed before command preparation")
+                revision = getattr(active, "revision", None)
+                if type(revision) is not int or revision < 1:
+                    raise ValueError("active Task revision unavailable")
+            except Exception:
+                return self._refuse(key_dict, "rejected", "source_identity_unavailable",
+                                    "The active Task source identity could not be verified; nothing was run.")
         try:
             self._log_root.mkdir(mode=0o700, parents=True, exist_ok=True)
-            log_path = self._log_root / f"{command_id}.log"
-            os.close(os.open(log_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC, 0o600))
-        except OSError as exc:  # no durable log: nothing is run (C-D46)
+            if self._segmented_raw_port is not None:
+                log_path, raw_descriptor = self._segmented_raw_port.prepare_command(
+                    self._log_root, command_id, task_id=task, revision=revision)
+            else:
+                log_path = self._log_root / f"{command_id}.log"
+                os.close(os.open(log_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC, 0o600))
+        except (OSError, ValueError) as exc:  # no durable log or descriptor: nothing is run
             return self._refuse(key_dict, "rejected", "log_unavailable",
                                 f"The command log could not be created ({type(exc).__name__}); nothing was run.")
         command = _Command(command_id, text, key_dict, task, log_path)
+        if self._segmented_raw_port is not None:
+            command.segmented_raw_port = self._segmented_raw_port
+            command.raw_descriptor = raw_descriptor
         if spill:  # C-D69 (6)(c): next to its log (same 0700 directory, kept and removed with it), 0600
             script = self._log_root / f"{command_id}.sh"
             try:
@@ -1124,7 +1206,8 @@ class TerminalService:
         if command.task_id is None:
             return
         entry = _run_entry(command.command, str(command.log_path),
-                           None if command.script_path is None else str(command.script_path), None)
+                           None if command.script_path is None else str(command.script_path),
+                           command.raw_fields())
         with self._runs_lock:
             held = self._task_runs.pop(command.task_id, None) or _TaskRuns()
             held.runs.append((command.command_id, entry))
@@ -1145,6 +1228,7 @@ class TerminalService:
                 if command_id == command.command_id:
                     entry.update(status=result.get("status") or "unknown", exit_code=result.get("exit_code"),
                                  signal=result.get("signal"), duration_seconds=result.get("duration_seconds"))
+                    entry.update(command.raw_fields())
                     break
 
     def _journal_runs(self, task_id: str) -> list[tuple[str, dict[str, Any]]] | None:
@@ -1174,6 +1258,11 @@ class TerminalService:
             result = ({"status": ended.get("status"), "exit_code": ended.get("exit_code"),
                        "signal": ended.get("signal"), "duration_seconds": ended.get("duration_seconds")}
                       if ended is not None else {"status": "running" if command_id == current else "unknown"})
+            for key in ("log_format", "raw_log_ref", "read_command", "raw_source_status", "raw_source_error"):
+                if ended is not None and key in ended:
+                    result[key] = ended[key]
+                elif key in started:
+                    result[key] = started[key]
             script = started.get("script_path")
             listed.append((command_id, _run_entry(started["command"], str(started.get("log_path") or ""),
                                                   script if isinstance(script, str) else None, result)))
@@ -1283,7 +1372,8 @@ class TerminalService:
             self._gate.release("terminal")
         duration = round(time.monotonic() - command.started, 3)
         result.update({"command_id": command.command_id, "command": command.command, "cwd": command.cwd,
-                       "log_path": str(command.log_path), "duration_seconds": duration})
+                       "log_path": str(command.log_path), "duration_seconds": duration,
+                       **command.raw_fields()})
         if command.script_path is not None:
             result["script_path"] = str(command.script_path)
         if command.log_truncated:
@@ -1295,7 +1385,7 @@ class TerminalService:
                        "reason": result.get("reason"), "started_at": command.started_at, "ended_at": _now(),
                        "duration_seconds": duration, "log_path": str(command.log_path),
                        "log_bytes": command.log_bytes, "log_truncated": command.log_truncated,
-                       "cwd": command.cwd})
+                       "cwd": command.cwd, **command.raw_fields()})
         self._finish_run(command, result)
         command.result = result
         command.done.set()

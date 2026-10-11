@@ -205,6 +205,7 @@ from enum import StrEnum
 import json
 import struct
 from typing import Any
+from uuid import UUID
 
 from .v1 import ContractError, DisplayChunk, PaneId
 
@@ -250,6 +251,10 @@ class ClientType(StrEnum):
     KILL_PANE = "kill_pane"
     PAUSE = "pause"
     RESUME = "resume"
+    IMPORTANT_ARCHIVE_CLOSE = "important_archive_close"
+    IMPORTANT_DELETE_DB = "important_delete_db"
+    RAW_QUERY = "raw_query"
+    RAW_STATUS = "raw_status"
 
 
 class ServerType(StrEnum):
@@ -449,6 +454,15 @@ def _dimension(value: object, field: str, limit: int) -> int:
     return value
 
 
+def _canonical_uuid(value: object, field: str) -> str:
+    try:
+        if type(value) is not str or str(UUID(value)) != value:
+            raise ValueError(value)
+    except (ValueError, TypeError) as exc:
+        raise ContractError(f"{field} must be a canonical UUID") from exc
+    return value
+
+
 def parse_client_frame(frame: Frame, version: int | None) -> ClientMessage:
     """Validate one client frame. ``version`` is None before ``welcome``."""
     header = frame.header
@@ -501,6 +515,27 @@ def parse_client_frame(frame: Frame, version: int | None) -> ClientMessage:
         if type(header.get("reconciled")) is not bool:
             raise ContractError("resume needs reconciled (a boolean)")
         fields["reconciled"] = header["reconciled"]
+    elif kind is ClientType.IMPORTANT_ARCHIVE_CLOSE:
+        if header.get("subject_kind") not in ("task", "command"):
+            raise ContractError("subject_kind must be task or command")
+        fields["subject_kind"] = header["subject_kind"]
+        fields["subject_id"] = _canonical_uuid(header.get("subject_id"), "subject_id")
+        if header.get("confirmed") is not True:
+            raise ContractError("archival close needs explicit confirmation")
+    elif kind is ClientType.IMPORTANT_DELETE_DB:
+        fields["db_uuid"] = _canonical_uuid(header.get("db_uuid"), "db_uuid")
+        if header.get("confirmed") is not True:
+            raise ContractError("database deletion needs explicit confirmation")
+    elif kind is ClientType.RAW_QUERY:
+        if header.get("source_kind") not in ("run", "command"):
+            raise ContractError("raw source_kind must be run or command")
+        fields["source_kind"] = header["source_kind"]
+        fields["source_id"] = _canonical_uuid(header.get("source_id"), "source_id")
+        if type(header.get("offset")) is not int or header["offset"] < 0:
+            raise ContractError("raw offset must be nonnegative")
+        if type(header.get("limit")) is not int or not 1 <= header["limit"] <= 32 * 1024:
+            raise ContractError("raw UI page must be 1..32768 bytes")
+        fields["offset"], fields["limit"] = header["offset"], header["limit"]
     return ClientMessage(kind, request_id, fields, frame.payload, frame.discarded_bytes)
 
 

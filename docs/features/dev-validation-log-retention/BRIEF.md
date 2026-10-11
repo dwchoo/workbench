@@ -1,6 +1,8 @@
 # 개발용 검증과 로그 보관 — 요구사항
 
-Revision: r0.9; state: agreed_delta_for_planning (승인된 r0.8 + 사용자 운영 원칙 추가 합의).
+Revision: r0.9 + 2026-10-10 범위 합의·B안; state: scoped_implementation_authorized.
+현재 권한은 [s5/p5 승인](../../../.workflow/dev-validation-log-retention/runs/approval-s5-p5-20261009/approval.json)과
+[이번 두 결정·재개 승인](../../../.workflow/dev-validation-log-retention/runs/implement-p5-20261009/resume-decisions-20261010.json)을 함께 따른다. 아래 2026-10-09 승인 전 설명은 당시 이력이며 현재 권한을 취소하지 않는다.
 기록일: 2026-10-09. r0.8 전체 승인 “너가 말한대로 승인”은 기존 계획 기준의 승인이다.
 이번 “1번 A / 2번 A / 3번은 … 기본은 그냥 새 버전에 대해서 동작해보고 문제가 생기거나 우리 프로그램의 업데이트가 필요하면 검증 + 수정” 및 “반영해줘.”를 운영 원칙·문서 수정 근거로 기록한다.
 r0.9 전체 bundle의 별도 승인이나 구현 승인을 받은 것으로 확대 해석하지 않는다.
@@ -15,6 +17,9 @@ r0.9 전체 bundle의 별도 승인이나 구현 승인을 받은 것으로 확�
 빠르게 반복할 수 있는 호환성 검증이 필요하다. 기존의 긴 시험 시간을 줄이고 확인 범위와 미확인을 명시한다.
 제품 로그는 한도에서 추가 저장이 멈추는 현행 방식에서 순환 저장으로 전환한다.
 중요 정보는 기존 OMP agent의 정기 요약으로 별도 보관한다.
+중요 로그의 목적은 지시받은 작업을 이해하고 이어갈 수 있도록 목적·범위, 결정과 이유,
+수정·시도, 검증 결과, 미완료와 다음 행동을 남기는 것이다. 전체 시스템 활동이나 사용자 발화와
+개별 command의 일대일 권한 이력을 수집하는 기능으로 확대하지 않는다(LG-D24).
 
 ## 공통 용어
 
@@ -169,10 +174,13 @@ Q-07~09의 LG-D11 합의 중 보관 종료·호출 권한은 후속 리뷰와 LG
   같은 대상이 다시 활동하면 미종결 보호로 돌아가고 다음 보관 종결부터 기간을 다시 계산한다.
   기존 core가 금지하는 재개를 허용한다는 뜻은 아니다. 미종결에도 LG-AC-10의 중간 요약 정리는 적용한다.
 - LG-AC-22: Task가 있는 요약은 해당 Task의 자동화가 승인·활성이고 unpaused일 때만 호출한다.
-  Task 없는 command는 사용자의 직접 실행 지시를 그 command 하나의 요약 허용으로도 본다.
+  Task 없는 command는 Workbench가 기존 실행 권한 아래 접수한 command의 작업 맥락·범위와
+  관련 source/ranges를 command ID에 연결해 요약한다. 특정 사용자 발화와 command의 일대일
+  연결 증명은 요구하지 않는다(LG-D24). 작업 연결이 불명인 자료는 다른 작업에 추정 귀속하지 않는다.
   허용 범위는 새 정보의 5분 주기 요약과 종료 요약까지이며 종료 요약 처리 후 끝난다.
   이는 프로젝트 자동화 재개나 다른 command의 허가가 아니다. Pause 중에는 새 요약을 호출하지 않는다.
-  관련 없는 Task의 승인이나 unpaused 상태만으로 허가하지 않고 별도 요약 활성화 설정은 도입하지 않는다.
+  관련 없는 Task의 승인·자동 notice·unpaused 상태만으로 새 작업 권한을 만들지 않고
+  별도 요약 활성화 설정은 도입하지 않는다. 기존 core 실행 승인과 작업 범위는 유지한다.
   허용되지 않는 동안에는 가능한 수집만 계속한다. 호출 가능 시 남은 입력을 병합하되 LG-AC-18을
   따르고 이미 사라진 raw는 누락으로 표시한다. 허용 중 요청한 유효한 늦은 결과는 LG-AC-19처럼 저장할 수 있다.
 - LG-AC-23: 정상 용량 도달에는 LG-AC-15대로 DB를 전환한다. 디스크 부족·권한 오류·손상 등으로
@@ -289,7 +297,7 @@ Claude의 r0.7 및 후속 추천안 리뷰 뒤 LG-D12를 합의해 r0.8에 반�
 - 요약 요청 중복 키에는 Task/command·revision·입력 범위·skill 버전 등을 검토한다.
   새 정보 판정·입출력 상한·usage/미확인 표시를 정하며, 5분마다 무조건 호출한다고 해석하지 않는다.
 - core 종결 시각·사유와 사용자 보관 종결 기록을 중요 로그 DB에 보존해 flow ledger의 수명에만 의존하지 않는다.
-  재활동 시 보호 복귀, command별 직접 지시 근거·종료 요약 처리 상태를 영속 기록하고
+  재활동 시 보호 복귀, command별 작업 연결·관련 자료·종료 요약 처리 상태를 영속 기록하고
   재시작·pause·늦은 결과·누락 처리에서 권한을 새로 만들거나 LG-AC-18을 우회하지 않게 한다.
 - 공용 segment의 source framing과 reader 전환은 Worker의 DONE_INSTRUCTION/log_path 소비자도 포함한다.
   Matcher의 chunk 경계·관측 공백·최소 근거 크기 상한·revision 연결을 검증한다.
@@ -338,7 +346,7 @@ Claude의 r0.7 및 후속 추천안 리뷰 뒤 LG-D12를 합의해 r0.8에 반�
   활성·보존 DB 통합 조회를 채택한다. 동시 조회·삭제와 crash 안전성, 추가 전환의 자원 한계는 계획 상세다.
 - 요약 실패·재시작·pause 중 도착 결과의 제품 동작은 LG-D10/LG-AC-18·19로 해결했다.
 - Q-07 해결 (LG-D11/D12, LG-AC-21): 기존 closed 시각·사용자 CLI 보관 종결·재활동 보호를 채택했다.
-- Q-08 해결 (LG-D11/D12, LG-AC-22): Task별 승인·활성 조건과 직접 지시 command별 요약 허용을 구분했다.
+- Q-08 해결 (LG-D11/D12/D24, LG-AC-22): Task별 승인·활성 조건과 작업에 연결된 command별 요약 범위를 구분한다. 개별 사용자 발화 연결 증명은 요구하지 않는다.
 - Q-09 해결 (LG-D11/LG-AC-23): 정상 용량 전환과 저장 불능을 구분하고 호출 보류·복구를 확정했다.
 - r0.8 전체 승인과 r0.9의 운영 원칙 개별 합의를 구분한다. 기존 core 완료·승인 bundle은 역사적 증거로 수정하지 않는다.
   LG-D12의 유일한 예외로 core BRIEF C-AC-24·OPERATING-CONTRACT §6에
@@ -355,3 +363,128 @@ Q-01은 여전히 선행 기술 검증이다. 공유 경로의 차단 시간 수
 Claude s4/p4 마지막 리뷰 R1~R3의 기술 보완과 R4~R5 착수 검증은 SPEC·PLAN·ticket과 계획 보강 기록에 반영했다. 이 BRIEF의
 제품 결정·수락 조건은 바꾸지 않고 인계 포인터만 갱신했다. 정확한 새 bundle의 검토/승인은 별도다.
 이 문서 수정은 제품 구현·모델 probe 실행·raw 자동 삭제 활성화를 허가하지 않는다.
+
+
+## 2026-10-10 격리 수정·검증 재개 합의
+
+사용자는 “두 결정 모두 이 내용으로 반영”이라고 확인하고, 해당 범위의 문서·승인 기록 반영과 수정·격리 검증 재개를 지시했다.
+원 s5/p5 승인 digest와 원문을 보존하며 AC·gate 기준, ticket dependency/resource graph는 유지한다.
+
+- LG-D15 / DVL07-ephemeral-read-snapshot-scope: 조회의 “새 DB 없음”은 catalog/active DB의 신규 할당 금지다.
+  원본 본체·WAL·SHM과 파일 목록을 변경하지 않는 private transient read snapshot은 허용한다.
+  snapshot은 catalog count에 포함하지 않고 등록·유지보수·요약·삭제를 유발하지 않으며 사용 후 정리한다.
+  우선 실제 copy bytes·scratch peak·I/O·lease 유지/경합 비용을 격리 합성 DB로 측정해 보고한다.
+  크기/시간 상한이나 큰 정상 DB를 unavailable로 처리할 정책은 측정 후 별도 결정이며 지금 임의로 확정하지 않는다.
+- LG-D16 / DVL11-preservation-fault-scope: public segment 이름이 다른 inode로 교체되는 fault를 시험한다.
+  control/quarantine namespace는 transaction owner 전용이라는 전제 아래 격리 실험·disabled engine 수정을 허용한다.
+  victim identity와 durable intent를 연결하고 quarantine capture 불일치·충돌·crash에서 unknown replacement를 삭제·채택하지 않는다.
+  quarantine과 열린 raw inode도 총5개 한도에 포함한다. 동일 UID가 control/quarantine까지 임의 교체하는 보장은 별도 범위다.
+- 제외: Q01 기준 변경, proxy 채택, FL-01 제품 수정, 실제 raw 활성화. 실제 사용자 DB/raw/서비스와 유료 모델을 사용하지 않는다.
+  기존 Q01 차단·C2 실패·원 검증 기록을 보존하고 격리 fixture 통과를 최종 runtime pass로 해석하지 않는다.
+  commit·게시·배포는 별도 요청 대상이다.
+
+LG-D15는 LG-AC-13/20의 조회 구현 해석, LG-D16은 LG-AC-01~04의 preservation fault 범위다.
+
+## 2026-10-10 쓰기 우선 결정과 첫 수정 경계
+
+- LG-D17 / DVL07-writing-priority: 사용자는 “쓰기 우선으로 하자.”라고 결정했다. 조회는 대기하거나
+  일시 보류될 수 있지만 조회 경합 때문에 중요 로그 저장이 실패하거나 누락되어서는 안 된다.
+  이 결정은 모든 저장 장애에 대한 무손실 보장이나 수치 상한의 채택을 뜻하지 않는다.
+- 사용자의 “적당한 바운더리를 정해서 계획을 빨리 마무리하자” 요청과 기존 claude-wb의 경계 리뷰를
+  반영해 [DVL-07 첫 수정 계획](tickets/DVL-07.md#2026-10-10-쓰기-우선-첫-수정-계획)을 정리했다.
+  기존 lock과 원본 hash 검증을 유지하는 최소 수정·격리 판별부터 진행하는 계획이다.
+  추가 잠금 프로토콜·전역 멱등화·지속 cache 등은 실패 관측 전 첫 수정에 포함하지 않는다.
+- LG-D15/16, 원 AC·gate·PLAN p5 의존성과 Q01/C2 차단은 유지한다. 첫 수정 통과는 측정한 조건의
+  결과이며 DVL-07 전체 완료·일반적인 잠금 우선순위 보장·실제 raw 활성화로 해석하지 않는다.
+  문서 정리와 외부 자문 기록은 이번 턴의 구현·시험 실행을 뜻하지 않는다.
+
+## 2026-10-10 B안 승인: active page 직접 조회
+
+- LG-D18 / DVL07-active-page-read: 사용자는 제시된 B안과 추천에 “b안과 네 추천대로 해줘”라고
+  승인하고 해당 범위의 구현·격리 측정·독립 시험·리뷰를 재개했다.
+  [승인 기록](../../../.workflow/dev-validation-log-retention/runs/dvl07-direct-20261010/authority.json)을 따른다.
+- Active 조회에 SQLite 표준 reader의 SHM read mark·wal-index 갱신과 필요한 WAL/SHM sidecar 생성을
+  허용한다. Reader의 로그 내용·main/WAL 내용 쓰기, checkpoint·정리·rotation·삭제,
+  새 중요 DB·catalog 할당은 계속 금지한다. owner·private 권한·inode 안전성 검사는 유지한다.
+- 이는 LG-D15의 active SHM bytes·파일 목록 불변 보장을 제한적으로 대체한다. Active sidecar의
+  forensic bytes 보존은 약해지며, 같은 UID라는 이유로 보안 영향이 없다고 단정하지 않는다.
+  Archive의 원본 본체/WAL/SHM·파일 목록 불변과 snapshot 정리 조건, LG-D16은 유지한다.
+- LG-D17의 고정 쓰기 우선 목표는 짧은 조회·경합 최소화 목표로 조정한다. Catalog 배타 lease를
+  ro open → page 조회 → close 전체에 유지해 기존 rollover·삭제 직렬화를 재사용한다.
+  전체 DB 복사·재-hash를 active 조회에서 제거하며, WAL 동시 읽기나 공정성·무손실 일반 보장은 주장하지 않는다.
+- Paging token·generation 부분 결과와 같은 250MB 격리 조건의 누락·중복·writer lease 실패,
+  page lease·refresh·rollover·WAL 비용을 확인한다. 제품 수치 상한은 측정 후 보고하며 지금 채택하지 않는다.
+  실패를 숨기거나 자동으로 새 프로토콜을 도입하지 않는다. Intent/abort·전역 멱등화·queue/cache·
+  archive별 lock/immutable fast path·삭제 규약 변경은 보류한다.
+- 원 AC·gate·PLAN p5 의존성과 나머지 DVL-07/DVL-12 범위는 유지한다. 이전 실패 증거를 보존하며,
+  Q01 기준 변경·proxy 채택·FL-01 제품 수정·실제 raw 활성화·실제 사용자 DB·유료 모델은 제외한다.
+
+## 2026-10-10 현실 호출 부하 판별 승인
+
+- LG-D19 / DVL07-usage-contention-boundary: 사용자는 claude-wb 자문을 종합한 제안에
+  “그렇게 진행해 줘.”라고 승인했다. 중요 로그 조회·쓰기 경합의 이번 국소 완료 판별은
+  실제 호출 주체를 모사한 현실 부하에서 전체 쓰기 시도 기준 누락·중복 0, 경합에 따른
+  capture_unknown 0으로 한다. 사람의 page 이동·초 단위 Agent 조회·경량 status·backend 점검을
+  모사하되, 실제 제품 호출 빈도나 자동 Agent 제한을 측정·보장한 것으로 해석하지 않는다.
+  [승인 기록](../../../.workflow/dev-validation-log-retention/runs/dvl07-usage-20261010/authority.json)을 따른다.
+- Active만 있는 약250MB DB와 rollover 뒤 약250MB archive 조회를 모두 판별한다.
+  단독 active page의 약4ms 관측을 archive나 다른 환경의 상한으로 일반화하지 않는다.
+  Writer 대기 분포·page EX 보유 시간·backend 지연과 watchdog을 함께 기록한다.
+  조회 실패는 busy/부분 결과 등으로 표시하고, 저장 실패를 busy/capture_unknown으로 드러낸다.
+  무음 누락은 허용하지 않는다.
+- 끊김 없는 연속 조회 stress의 기존100ms 실패와 실험2초 결과는 알려진 한계 기록으로 보존한다.
+  이 기록을 현실 부하의 통과 근거로 바꾸거나 삭제하지 않는다. 이번 완료 판별에서 연속 stress의
+  누락0을 요구하지 않는다는 범위 조정만 승인하며, 원 feature AC·Q01·PLAN 의존성은 유지한다.
+- LG-D18의 조회 구현과 원본 보호는 유지한다. 현실 부하에서도 실패하면 원인·결과와 최소 대안을
+  보고한다. 제품 writer 대기 수치·archive immutable page 읽기·새 잠금 프로토콜은 지금 채택하지 않는다.
+  해당 판별 통과도 B1 경합 국소 검증이며 DVL-07 전체·DVL-12·feature 완료는 아니다.
+  Q01 기준 변경·proxy 채택·FL-01 제품 수정·실제 raw 활성화·사용자 DB·유료 모델 제외를 유지한다.
+
+## LG-D20 — sealed archive page 직접 읽기 최소 후속 (2026-10-10)
+
+- 사용자 결정: “응 일단 이어가자.”로 [최소 후속 제안](../../../.workflow/dev-validation-log-retention/runs/dvl07-usage-20261010/NEXT-SCOPE.md)을 승인했다. [승인 기록](../../../.workflow/dev-validation-log-retention/runs/dvl07-sealed-20261010/authority.json)을 따른다.
+- LG-D19 현실 부하에서 active40/40, 실제 rollover archive23/40(17 busy 누락)이 관측됐다. 해당 실패 이력을 유지한다.
+- `archiveChecks=complete`이고 WAL 없음 또는 0바이트인 sealed archive만 ro immutable로 한 page를 직접 읽는다. 기존 catalog EX는 open→query→close 전체에 유지한다. SPEC §7.3 조건의 적용이며 archive별 lock·삭제 규약 변경은 하지 않는다.
+- 미checkpoint archive는 기존 snapshot/불가 사유 경로, active는 LG-D18 경로를 유지한다. 원본 bytes·파일 목록 불변, 최신 checkpoint/WAL 내용, 기존 안전성 검사를 유지한다.
+- 측정 harness monitor 지연에도 기존 실험 watchdog을 적용한다. 기존 fixed-plan fixture·호출 일정·시도 쓰기·writer100ms/10ms를 유지하며 obsolete copy-start 동기화만 실제 archive page lease 진입 관측으로 바꾼다. 원시 측정은 별도 새 파일로 보존한다. 독립 테스트·250MB 측정·fresh review·영향권 최종 검사를 수행한다.
+- 수치 정책·새 잠금/queue/cache/intent-abort/전역 멱등화는 채택하지 않는다. 전체 DVL-07/DVL-12 완료와 구분하며 Q01/proxy/FL-01/실제 raw/사용자 DB 제외를 유지한다.
+
+## LG-D21 — 전용 DB 기록 기능 채택과 개발 재개 (2026-10-11)
+
+- 사용자 결정: “c2는 추천안대로 해주고 q01이 결정되었으니 goal을 재게해줘.”로 전용 DB 기록 script/tool 방향과 개발 재개를 승인했다. [승인 기록](../../../.workflow/dev-validation-log-retention/runs/script-only-adoption-20261011/authority.json)을 따른다.
+- 요약 agent에는 일반 shell·파일 수정 기능 대신 고정 DB 기록 기능만 제공한다. Script는 검증된 요약 데이터를 고정 저장 경로로 전달하며 임의 command·SQL·경로를 받지 않는다. Skill 지시만으로 실행 제한을 보장하지 않는다.
+- 격리 OMP의 단일 tool 시험은 통과했으며 독립 테스트·리뷰 근거를 보존한다. 운영 중인 기존 agent/Task 경로 적용과 Q01 나머지 판별은 후속 구현·검증 대상이다. 방향 채택을 Q01 전체 통과로 기록하지 않는다. 새 운영 agent/상주 프로세스나 전송 차단 기준 변경을 이 결정으로 추정하지 않는다.
+- C2는 실패 trace 또는 구체적인 새 재현 근거가 생길 때까지 추측성 제품 수정을 보류한다. 원 실패와 DVL-02/최종 통합 gate의 미완료 상태를 유지한다.
+- 기존 조회 결정·검증과 PLAN 의존성을 유지한다. Proxy·실제 raw 활성화·유료 모델·사용자 DB·commit/게시/배포는 제외한다.
+
+## LG-D22 — 운영 요약의 요청별 제한 SDK session 경로 채택 (2026-10-11)
+
+- 사용자 결정: “문서 요약도 sdk session 경로로 채택해.”로 제안된 운영 요약 경로를 승인했다. [승인 기록](../../../.workflow/dev-validation-log-retention/runs/q01-sdk-route-20261011/authority.json)을 따른다. 별도 문서 요약 제품 기능을 추가하는 결정은 아니다.
+- 기존 Manager/Worker OMP 프로세스 안에서 요청마다 제한된 SDK session을 만들고 기존 agent 정의 prompt와 정확한 skill bytes를 재사용한다. 일반 shell·파일 수정 기능 없이 요청에 결속된 전용 DB 기록 tool 하나만 제공하고 종료·실패 뒤 session을 dispose한다.
+- 기존 Task tool 생명주기 재사용으로 표시하지 않는다. 새 agent 정의·상주 프로세스·별도 운영 OMP·직접 HTTP completion 경로는 채택하지 않는다.
+- 경로 채택과 Q01 검증 통과는 별개다. 기존 8개 항목, 확인 전 전송0, 실행 중 위반의 결과 거부·보호, provenance·budget·priority·recovery 기준을 유지하고 이 경로로 재판별한다. 기존 Task/callback 실패와 SDK 국소 시험 결과는 각각 보존한다.
+- DVL-09/10/14의 진입은 DVL-08의 충분한 통합 검증 뒤다. C2 hold와 기존 조회 결정, Q01 기준 변경·proxy·FL-01 제품 수정·실제 raw 활성화 등의 제외 범위를 유지한다.
+
+## LG-D23 — 요약 시작 전 검증과 제한된 자동 복구 (2026-10-11)
+
+- 사용자 결정: “추천한 시작 전 검증 경계로 변경”으로 Q01-tools의 완료 경계를 조정했다. 이어서 설정·검사 검증 실패 시 복원을 요청했다. [경계 승인](../../../.workflow/dev-validation-log-retention/runs/q01-sdk-route-20261011/startup-boundary-decision-20261011.json)과 [복구 요청](../../../.workflow/dev-validation-log-retention/runs/q01-sdk-route-20261011/startup-recovery-authority.json)을 따른다. 이전의 Q01 기준 변경 제외는 이 항목에 한해 대체한다.
+- Host가 요청별 private SDK session의 제한 설정·전용 DB tool 실제 목록·검사 동작을 모델 전송 전에 확인한다. 검사 누락·무효·API 불일치·오래된 요청 결속이면 시작하지 않는다. 함수 등록이나 모델 자기보고만으로 통과시키지 않는다.
+- 시작 전 검증이 실패하면 host가 session을 폐기하고 신뢰하는 구성으로 한 번 새로 생성·재검증한다. 이는 유한한 구현 기본값이다. 다시 실패하면 요약만 보류하고 원인을 표시하며 메인 작업은 계속한다. 모델이 코드·권한 정책을 고치거나 전송된 요약을 재실행하는 복구는 하지 않는다.
+- 실행 중 요청·tool·모델·정책 불일치의 예방 차단과 비허용 tool event의 결과 거부·즉시 보호는 유지한다. 정상 시작 후 검사 코드를 고의로 제거·무력화하는 시험까지 견디는 보장은 완료 필수 조건에서 제외한다.
+- 기존 고장 시험과 실패는 당시 기준의 한계 기록으로 보존한다. 새 경계의 시작 거부·복구·재검증·실행 중 보호를 별도로 시험한다. LG-D22 채택, 나머지 Q01 7개 항목·C2 hold·조회 결정·PLAN 의존성과 proxy·FL-01·실제 raw·사용자 DB·유료 모델 제외는 유지한다.
+
+## LG-D24 — 작업 내용 중심 중요 로그와 작업 연결 기준 (2026-10-11)
+
+- 사용자는 중요한 로그가 전체 시스템 로깅이 아니라 지시받은 작업의 내용을 나중에 파악하기 위한 것이라고 명확히 했고, “이것에 맞게 작업 방향을 수정해줘”라고 요청했다. [방향 변경 승인 기록](../../../.workflow/dev-validation-log-retention/runs/work-log-boundary-20261011/decision.json)을 따른다.
+- 작업 목적·범위, 결정과 이유, 수정·시도, 검증 결과, 미완료·다음 행동을 중심으로 남긴다. Task/command ID와 revision, 관련 자료·source ranges·결과를 연결해 작업 간 혼동과 중복 요약을 막는다.
+- Q01-origin과 LG-AC-22의 개별 사용자 발화→각 command 일대일 증명은 완료 필수 조건에서 제거한다. 직접 발화 identity나 실행 의도 추적을 얻기 위한 새 OMP API·permission UI·전체 대화 수집은 도입하지 않는다. Task 없는 command의 기존 포함 범위는 유예하거나 삭제하지 않는다.
+- Task의 기존 승인·활성·종료 후처리·철회, 현재 pause, 기존 core 실행 범위, DB 전용 도구와 요청 결속·source 검증·no replay는 유지한다. 자동 notice·무관 Task 승인·unpaused만으로 새 작업 권한을 만들거나 다른 작업 자료를 귀속하지 않는다.
+- 이전 origin source gap과 pending 자문은 당시 기준의 조사 기록으로 보존하며 새 기준의 차단 선행조건으로 사용하지 않는다. 새 Q01-origin은 작업/자료 연결과 범위·종료 처리의 실제 검증을 요구한다. Frozen 판정 도구와 해당 구현은 독립 시험·리뷰·재동결로 정렬해야 하며, 이 결정 자체를 Q01 통과로 표시하지 않는다.
+- 나머지 Q01 기준·gate ID/수준·PLAN 의존성, SDK 경로, 조회 결정, C2 hold 및 proxy·FL-01 제품 수정·실제 raw 활성화·사용자 DB·유료 모델·commit/게시/배포 제외는 유지한다. 기존 Q01 기준 변경 제외는 이번 작업 연결 조건에 한해 대체한다.
+
+## LG-D25 — 원인 수정·복구는 기존 승인 Task 방식 사용 (2026-10-11)
+
+- 사용자 결정: repair-scope 추천 A를 선택하고 이어서 개발 재개를 요청했다. [승인 기록](../../../.workflow/dev-validation-log-retention/runs/continuation-20261011/repair-scope-A-decision.json)을 따른다.
+- 이미 승인된 Task 범위에서는 원인 분석 → 영구 수정 → 회귀 검증 → 재시도를 진행한다. 범위 밖 파일·설정은 필요한 대상만 포함한 작은 수정 Task로 승인받는다. Workbench 제품 전체에 대한 상시 자동 수정 권한은 추가하지 않는다.
+- 현재 개발의 수정·독립 시험·리뷰 권한은 유지한다. 운영의 명시 verify 계약과 미전송 입력만 재시도하는 no replay 경계를 유지하며 자동 verify loop·새 복구 서비스·queue를 추가하지 않는다.
+- 이 결정은 DVL-09/10/14 후속 연결의 복구 범위이며, Q01 통과나 실제 raw 활성화를 뜻하지 않는다. 기존 제외 범위와 C2 hold를 유지한다.

@@ -88,6 +88,7 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field, fields, replace
 import functools
+import json
 import os
 from pathlib import Path
 import threading
@@ -153,6 +154,15 @@ COMMANDS_RULE = ("Run these commands exactly as given with the terminal tool, on
                  "do not paste commands or scripts back.")
 COMMANDS_RUN_NOTE = ("Recorded by Workbench from the terminal journal: the commands the worker ran for this Task "
                      "(command shortened for display, exit code or signal, duration, full output in log_path).")
+SEGMENTED_COMMANDS_RUN_NOTE = ("Recorded by Workbench from the terminal journal. For log_format segmented-v1, "
+                               "log_path is a source descriptor, not full output; use read_command to inspect "
+                               "retained ranges and check missing or evicted ranges.")
+
+
+def _runs_note(runs: Any) -> str:
+    first = (SEGMENTED_COMMANDS_RUN_NOTE if any(isinstance(row, dict) and
+             row.get("log_format") == "segmented-v1" for row in runs) else COMMANDS_RUN_NOTE)
+    return " ".join([first, *(note for note in getattr(runs, "notes", ()) if isinstance(note, str))])
 # C-D70 (4): what a new worker session reads first in a re-sent Task.
 RESEND_NOTE = ("The Task is re-sent in full because the current worker session may not have it. Below is the full Task "
                "as first sent, then commands_already_run (the commands already run for this Task, from the "
@@ -370,12 +380,19 @@ class TaskFlow:
                  host_gate: HostGate | None = None,
                  worker_session: Callable[[], tuple[str, int] | None] = lambda: None,
                  hold: Callable[[ActorRole], str | None] = lambda _role: None,
-                 metadata: Callable[[str, BaseException | None], None] = lambda _source, _error: None):
+                 metadata: Callable[[str, BaseException | None], None] = lambda _source, _error: None,
+                 subject_log: Any | None = None,
+                 subject_capture_failure: Callable[[], None] | None = None):
         self._repository_factory = repository_factory
         # CW-19 (C-D71 (3)/(4), C-AC-28): the admission hold for automatic work into a role, and where a ledger
         # write outcome is reported. Collection of a running experiment never waits on it.
         self._hold = hold
         self._metadata = metadata
+        # DVL-05: optional until DVL-06 owns the active important DB. A failed copy
+        # never changes core flow or silently becomes a summary authorization.
+        self._subject_log = subject_log
+        self._subject_capture_failure = subject_capture_failure
+        self.subject_capture_unknown = False
         # C-D70 (4): the worker OMP's current bridge session (session_id, generation), None when not connected.
         self._worker_session = worker_session
         # C-D68: one Workbench owner of the host shell (an experiment run or the worker's terminal command).
@@ -410,10 +427,23 @@ class TaskFlow:
         self._ledger = HandoffJournal(ledger_path)
         self.tasks: dict[str, FlowTask] = {}
         self.notices: list[dict[str, Any]] = []
+        if self._subject_log is not None:
+            try:
+                self._subject_log.reconcile_flow(self._ledger.records)
+            except Exception:
+                self._mark_subject_unknown()
         self._load(self._ledger.records)
         self._ledger.records = []
 
     # -- persistence ------------------------------------------------------------
+    def _mark_subject_unknown(self) -> None:
+        self.subject_capture_unknown = True
+        if self._subject_capture_failure is not None:
+            try:
+                self._subject_capture_failure()
+            except Exception:
+                pass  # the important-log indication cannot change the confirmed core result
+
     def _load(self, records: list[dict[str, Any]]) -> None:
         pending_approvals: dict[str, Any] = {}
         retired: set[str] = set()
@@ -489,7 +519,7 @@ class TaskFlow:
 
     def _record(self, record: Mapping[str, Any]) -> None:
         try:
-            self._ledger.append(record)
+            confirmed = self._ledger.append(record)
         except OSError as exc:
             try:
                 self._metadata("flow_ledger", exc)
@@ -497,6 +527,73 @@ class TaskFlow:
                 pass
             if not self._stop:  # after close() a late runner record is dropped, never raised
                 raise
+        else:
+            if confirmed.get("type") in ("delegated", "task_closed", "task"):
+                sink = self._subject_log
+                if sink is None:
+                    if self._subject_capture_failure is not None:
+                        self._mark_subject_unknown()
+                    return
+                try:
+                    sink.record_flow(confirmed)
+                except Exception:
+                    self._mark_subject_unknown()
+
+    def _subject_listener(self, outbound: OutboundMessage, inner: Callable | None) -> Callable:
+        """Copy only a confirmed delivered Task message, never arbitrary user dialogue."""
+        copied = False
+
+        def listener(event: str, snapshot: Mapping[str, Any], *, delivered_message: Any = None) -> None:
+            nonlocal copied
+            try:
+                if inner is not None:
+                    inner(event, snapshot)
+            except Exception:
+                if event == "delivered" and (self._subject_log is not None
+                                              or self._subject_capture_failure is not None):
+                    self._mark_subject_unknown()
+                raise
+            finally:
+                # The core listener may fail while recording a confirmed delivery.  Keep its
+                # exception, but still attempt the independent important-log capture.
+                if not copied and event == "delivered":
+                    sink = self._subject_log
+                    if sink is None:
+                        if self._subject_capture_failure is not None:
+                            self._mark_subject_unknown()
+                            copied = True  # a later sink must not replay this confirmed delivery
+                    else:
+                        try:
+                            message_id = snapshot.get("message_id")
+                            if not isinstance(message_id, str):
+                                raise ValueError("confirmed delivery lacks a message ID")
+                            if outbound.kind is MessageKind.TASK:
+                                source_kind = "task_spec"
+                            elif outbound.sender_role is ActorRole.MANAGER:
+                                source_kind = "manager_instruction"
+                            else:
+                                source_kind = "report"
+                            if delivered_message is not None:
+                                if getattr(delivered_message, "message_id", None) != message_id:
+                                    raise ValueError("delivered message ID differs from receipt")
+                                payload = delivered_message.payload
+                            elif outbound.prepare is None:
+                                payload = outbound.payload  # legacy callbacks without a physical message
+                            else:
+                                raise ValueError("prepared delivery lacks its physical payload")
+                            if not isinstance(payload, Mapping):
+                                raise ValueError("delivered payload is not a mapping")
+                            content = json.dumps(dict(payload), ensure_ascii=False,
+                                                 sort_keys=True, separators=(",", ":"))
+                            sink.record_delivery(
+                                {"schemaVersion": 1, "kind": "task", "id": outbound.task_id},
+                                message_id=message_id, revision=outbound.revision, kind=source_kind,
+                                content=content, delivered_at=_now())
+                            copied = True
+                        except Exception:
+                            self._mark_subject_unknown()
+
+        return listener
 
     def _save_task(self, task: FlowTask) -> None:
         self._record({"type": "task", "task": asdict(task)})
@@ -625,8 +722,11 @@ class TaskFlow:
                 notices = self._take_notices()
                 if notices:
                     decision = replace(decision, result={**decision.result, "notices": notices})
-                return decision
-            return self._to_manager(request)
+                return (replace(decision, listener=self._subject_listener(decision.message, decision.listener))
+                        if decision.message is not None else decision)
+            decision = self._to_manager(request)
+            return (replace(decision, listener=self._subject_listener(decision.message, decision.listener))
+                    if decision.message is not None else decision)
 
     def _host_shell_size_error(self, args: Mapping[str, Any]) -> str | None:
         """C-D69 (5)(b) (stuck-review-01 P3-1): an experiment command checked with the current host shell's path
@@ -882,8 +982,7 @@ class TaskFlow:
                 except Exception:
                     runs = None
             payload["commands_already_run"] = [] if runs is None else list(runs)
-            payload["commands_already_run_note"] = (" ".join([COMMANDS_RUN_NOTE, *(
-                note for note in getattr(runs, "notes", ()) if isinstance(note, str))]) if runs is not None
+            payload["commands_already_run_note"] = (_runs_note(runs) if runs is not None
                 else "The terminal journal could not be read; it does not show that nothing ran.")
             return payload
         return prepare
@@ -1047,9 +1146,11 @@ class TaskFlow:
                        "message": record.get("message") or "cancelled by the manager"}
             # CW-16 fix-02 (P2-1): the notice was never submitted, so keeping it through a pause or a CW-19 hold
             # and delivering it after the resume is not a replay (R3); dropping it would leave the worker unaware.
-            queued = self._handoffs.enqueue(OutboundMessage(
+            outbound = OutboundMessage(
                 task.task_id, revision or cancelled_run["revision"], run_id, ActorRole.MANAGER, ActorRole.WORKER,
-                MessageKind.QUESTION, payload), origin=f"cancel:{task.task_id}", keep_across_pause=True)
+                MessageKind.QUESTION, payload)
+            queued = self._handoffs.enqueue(outbound, origin=f"cancel:{task.task_id}",
+                                            listener=self._subject_listener(outbound, None), keep_across_pause=True)
             status = queued.get("status")
             notice = self._cancel_notice_state() if status == "queued" else f"not_queued:{status}"
         if run_id is not None:
@@ -1130,8 +1231,7 @@ class TaskFlow:
                 runs = None
             if runs is not None:
                 payload["commands_run"] = list(runs)
-                payload["commands_run_note"] = " ".join(
-                    [COMMANDS_RUN_NOTE, *(note for note in getattr(runs, "notes", ()) if isinstance(note, str))])
+                payload["commands_run_note"] = _runs_note(runs)
         if report:
             listener = self._report_listener(task.task_id, task.run_id, args["kind"], request.tool_call_id)
             task.held_reason = f"{args['kind']}_report_pending"
@@ -1336,7 +1436,7 @@ class TaskFlow:
                                        MessageKind.TASK, payload)
             self._task_message_state[task_id] = "queued"
         queued = self._handoffs.enqueue(outbound, origin=str(job["origin"]),
-                                        listener=self._task_message_listener(task_id, run_id),
+                                        listener=self._subject_listener(outbound, self._task_message_listener(task_id, run_id)),
                                         keep_across_pause=True)  # R3: never submitted -> sent after a resume
         if queued.get("status") != "queued":
             with self._lock:
@@ -1622,10 +1722,11 @@ class TaskFlow:
                                   "state": event, "message_id": snapshot.get("message_id")})
 
         try:
-            queued = self._handoffs.enqueue(OutboundMessage(
+            outbound = OutboundMessage(
                 task_id, revision, run_id, ActorRole.WORKER, ActorRole.MANAGER,
-                MessageKind.REPORT, payload, in_reply_to_message_id=message_id),
-                origin=origin, listener=listener)
+                MessageKind.REPORT, payload, in_reply_to_message_id=message_id)
+            queued = self._handoffs.enqueue(outbound, origin=origin,
+                                            listener=self._subject_listener(outbound, listener))
         except Exception as exc:  # the notices[] entry still tells the manager
             queued = {"status": "held", "reason": type(exc).__name__}
         with self._lock:

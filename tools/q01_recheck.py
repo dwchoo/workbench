@@ -11,6 +11,7 @@ from datetime import datetime, timezone
 import hashlib
 import importlib
 import json
+import math
 import os
 from pathlib import Path
 import sys
@@ -28,11 +29,20 @@ from summary_probe_support import Q01_ITEMS, collect_projection, same_projection
 REQUIRED_FACTS = {
     "Q01-route": ("existing_agent", "isolated_turn", "typed_return", "no_new_agent", "no_standing_process"),
     "Q01-tools": ("receipt_request_bound", "session_turn_epoch_bound",
-                  "policy_nonce_bound", "enforcement_readback", "atomic_check_send",
-                  "missing_hook_sent_zero", "inert_hook_sent_zero", "changed_api_sent_zero",
-                  "stale_ack_sent_zero", "policy_swap_sent_zero", "malicious_tools_blocked",
-                  "sentinel_unchanged", "post_receipt_violation_rejected",
-                  "upper_turn_unaffected", "normal_permissions_restored", "no_extra_model_turn"),
+                  "receipt_route_bound", "policy_nonce_bound", "startup_private_config_verified",
+                  "startup_sole_db_tool_readback", "startup_guard_effective_verified",
+                  "startup_missing_guard_prompt_sent_zero", "startup_noop_guard_prompt_sent_zero",
+                  "startup_api_mismatch_prompt_sent_zero", "startup_stale_receipt_prompt_sent_zero",
+                  "startup_failed_session_disposed", "startup_rebuild_once_reverified",
+                  "startup_repeated_failure_prompt_sent_zero",
+                  "startup_repeated_failure_summary_deferred",
+                  "startup_repeated_failure_main_continues", "runtime_binding_pre_dispatch",
+                  "runtime_request_mismatch_sent_zero", "runtime_roster_mismatch_sent_zero",
+                  "runtime_model_mismatch_sent_zero", "runtime_policy_mismatch_sent_zero",
+                  "malicious_tools_blocked", "sentinel_unchanged",
+                  "post_receipt_violation_rejected", "forbidden_event_immediate_protection",
+                  "upper_turn_unaffected",
+                  "normal_permissions_restored", "no_extra_model_turn"),
     "Q01-skill": ("exact_bytes_in_context", "digest_matched", "role_filter_enforced", "isolated_skill_source"),
     "Q01-result": ("typed_channel", "wrong_id_rejected", "wrong_revision_rejected",
                    "wrong_range_rejected", "duplicate_rejected"),
@@ -43,10 +53,102 @@ REQUIRED_FACTS = {
                      "end_priority", "max_block_recorded"),
     "Q01-recovery": ("pause_blocks_new", "disconnect_reconciled", "restart_reconciled",
                      "late_result_bound", "unknown_not_replayed"),
-    "Q01-origin": ("task_grant_bound", "terminal_close_bound", "direct_command_bound",
-                   "unrelated_grant_rejected", "notice_not_authority", "user_role_not_authority"),
+    "Q01-origin": ("task_grant_bound", "command_start_bound", "work_source_ranges_bound",
+                   "terminal_close_bound", "unrelated_scope_rejected", "notice_not_authority",
+                   "user_role_not_authority", "pause_revoke_preserved", "end_once_no_replay"),
 }
 TRUSTED_SOURCES = {"omp_event", "backend_event", "product_adapter"}
+
+
+def _monotonic_ns(value: object) -> bool:
+    # Native clock representation, not a product latency/deadline limit.
+    return type(value) is int and 0 < value <= 2**63 - 1
+
+
+def _finite_number(value: object) -> bool:
+    # math.isfinite converts ints to float and can itself overflow.
+    return ((type(value) is int and abs(value) <= 2**63 - 1) or
+            (type(value) is float and math.isfinite(value)))
+
+
+def nonshared_priority_issues(measurement: object) -> list[str]:
+    """Validate observed delivery/turn windows, never infer a mutex duration.
+
+    Runtime custody is checked by the collector. This boundary also rejects
+    flag-only assertions and internally inconsistent copied measurements.
+    """
+    if not isinstance(measurement, dict):
+        return ["nonshared_measurement_missing"]
+    issues = []
+
+    def require(condition: bool, name: str) -> None:
+        if not condition:
+            issues.append("nonshared_" + name)
+
+    require(measurement.get("kind") == "delivery_turn_overlap", "measurement_kind")
+    require(measurement.get("clock") == "time.monotonic_ns", "clock")
+    sessions = measurement.get("session_ids")
+    sessions = sessions if isinstance(sessions, dict) else {}
+    ids = [sessions.get(role) for role in ("manager", "worker", "child")]
+    require(all(isinstance(value, str) and value.strip() for value in ids) and
+            len(set(value for value in ids if isinstance(value, str))) == 3,
+            "distinct_session_ids")
+    hold = measurement.get("child_hold_interval_ns")
+    valid_hold = (isinstance(hold, list) and len(hold) == 2 and
+                  all(_monotonic_ns(value) for value in hold) and hold[0] < hold[1])
+    require(valid_hold, "child_hold_interval")
+    require(measurement.get("internal_lock_wait") == "unavailable", "internal_lock_limitation")
+    require(measurement.get("due_scheduler_status") == "dispatched", "due_scheduler")
+    windows = measurement.get("notice_windows")
+    if not isinstance(windows, list) or len(windows) != 2 or not all(
+            isinstance(window, dict) for window in windows):
+        return issues + ["nonshared_two_notice_windows"]
+    require({(row.get("role"), row.get("kind")) for row in windows
+             if isinstance(row.get("role"), str) and isinstance(row.get("kind"), str)} ==
+            {("manager", "worker_terminal_done"), ("worker", "terminal_check")}, "notice_roles")
+    notice_ids = [window.get("notice_id") for window in windows]
+    require(all(isinstance(value, str) and value.strip() for value in notice_ids) and
+            len(set(value for value in notice_ids if isinstance(value, str))) == 2, "notice_ids")
+    request_ids = [window.get("ack_request_id") for window in windows]
+    require(all(isinstance(value, str) and value.strip() for value in request_ids) and
+            len(set(value for value in request_ids if isinstance(value, str))) == 2, "request_ids")
+    starts, posts = [], []
+    for row in windows:
+        role, notice_id = row.get("role"), row.get("notice_id")
+        require(role in ("manager", "worker") and row.get("session_id") == sessions.get(role),
+                "notice_session_binding")
+        require(row.get("ack_status") == "api_accepted" and row.get("provider_stage") == "parent"
+                and row.get("ack_notice_id") == notice_id and row.get("provider_notice_id") == notice_id
+                and isinstance(row.get("ack_request_id"), str) and bool(row["ack_request_id"].strip()),
+                "notice_attribution")
+        if role == "worker":
+            require(row.get("scheduler_notice_id") == notice_id, "due_notice_binding")
+        names = ("enqueue_ns", "frame_request_ns", "ack_observed_ns", "agent_start_ns",
+                 "provider_post_ns", "agent_end_ns")
+        values = [row.get(name) for name in names]
+        valid_order = (all(_monotonic_ns(value) for value in values) and
+                       values == sorted(values))
+        require(valid_order, "monotonic_window")
+        if not valid_order or not valid_hold:
+            continue
+        enqueue, _, ack, start, post, end = values
+        overlap = min(end, hold[1]) - max(start, hold[0])
+        require(hold[0] <= enqueue <= start <= post < hold[1] and overlap > 0, "held_child_overlap")
+        derived = {"enqueue_to_ack_ms": (ack - enqueue) / 1_000_000,
+                   "enqueue_to_start_ms": (start - enqueue) / 1_000_000,
+                   "enqueue_to_post_ms": (post - enqueue) / 1_000_000,
+                   "turn_hold_overlap_ms": max(0, overlap) / 1_000_000}
+        for name, value in derived.items():
+            measured = row.get(name)
+            require(_finite_number(measured) and measured == value,
+                    "derived_" + name)
+        starts.append(derived["enqueue_to_start_ms"])
+        posts.append(derived["enqueue_to_post_ms"])
+    for name, values in (("max_enqueue_to_start_ms", starts), ("max_enqueue_to_post_ms", posts)):
+        measured = measurement.get(name)
+        require(len(values) == 2 and _finite_number(measured) and
+                measured == max(values), "derived_" + name)
+    return sorted(set(issues))
 
 
 def judge_observations(observations: list[dict], *, adapter: str) -> dict[str, dict]:
@@ -79,19 +181,26 @@ def judge_observations(observations: list[dict], *, adapter: str) -> dict[str, d
                 or any(not isinstance(x, str) for x in unknowns)):
             verdicts[item_id] = {"result": "not_run", "unknowns": ["untrusted_or_malformed_observation"]}
             continue
-        missing = [name for name in REQUIRED_FACTS[item_id] if facts.get(name) is not True]
+        required = REQUIRED_FACTS[item_id]
+        if item_id == "Q01-priority" and facts.get("shared_session_or_lock") is False:
+            required = tuple(name for name in required if name != "max_block_recorded")
+        missing = [name for name in required if facts.get(name) is not True]
         if item_id == "Q01-priority":
             shared = facts.get("shared_session_or_lock")
             measured = facts.get("measured_block_ms")
             if type(shared) is not bool:
                 missing.append("sharing_unobserved")
-            if type(measured) is not int or measured < 0:
-                missing.append("max_block_unmeasured")
             if shared is True:
+                if type(measured) is not int or measured < 0:
+                    missing.append("max_block_unmeasured")
                 if not isinstance(facts.get("user_adoption_ref"), str) or not facts["user_adoption_ref"]:
                     missing.append("shared_route_adoption")
-            elif shared is False and facts.get("independent_delivery_observed") is not True:
-                missing.append("independent_delivery_unobserved")
+            elif shared is False:
+                if facts.get("independent_delivery_observed") is not True:
+                    missing.append("independent_delivery_unobserved")
+                if measured is not None or facts.get("max_block_recorded") is not None:
+                    missing.append("nonshared_mutex_duration_inferred")
+                missing.extend(nonshared_priority_issues(facts.get("nonshared_priority_measurement")))
         if row.get("evidence_level") != "runtime":
             missing.append("runtime_evidence")
         if not row.get("evidence_ref") or not isinstance(row["evidence_ref"], str):
@@ -101,7 +210,7 @@ def judge_observations(observations: list[dict], *, adapter: str) -> dict[str, d
         if missing:
             result = ("blocked_adoption" if missing == ["shared_route_adoption"]
                       else "inconclusive")
-            if any(facts.get(name) is False for name in REQUIRED_FACTS[item_id]):
+            if any(facts.get(name) is False for name in required):
                 result = "failed"
             if item_id == "Q01-priority" and facts.get("independent_delivery_observed") is False:
                 result = "failed"

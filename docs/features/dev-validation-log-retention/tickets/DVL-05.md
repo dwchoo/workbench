@@ -12,8 +12,8 @@
 전달된 spec/instruction/report/확인 decision과 terminal SourceRange만 기록한다. 전체 사용자 대화 수집/인위적 Task 생성은 없다.
 Task 있는 command는 Task subject 하나로 연결하고 Task 없는 것은 command ID다. core closed 시각/reason과 command actual end를 별도 중요 DB에 복사한다.
 finished/blocked/held/unknown command는 보호한다. archival closure/re-activity API는 core success/exit/active 상태를 변경하지 않는다.
-Task의 approval/proceed/현재 scope·pause·철회와 command 직접 실행 지시 참조를 기록하는 bounded authority port를 만든다.
-이 단계에서 직접 사용자 지시가 식별됐다고 추정하지 않는다. injectable fixture origin port를 쓰고 실제 origin은 DVL-08 검증 후 DVL-09/10이 제공한다.
+Task의 approval/proceed/현재 scope·pause·철회와 command ID·작업 범위·관련 source 참조를 기록하는 bounded authority port를 만든다.
+LG-D24에 따라 개별 사용자 발화→command 증명은 요구하지 않는다. 기존 injectable fixture port를 유지하고 실제 작업/자료 연결은 DVL-08 검증 후 DVL-09/10이 제공한다. 새 권한 서비스나 전체 대화 수집을 추가하지 않는다.
 Flow journal만 남아 있고 중요 DB 기록이 실패했다면 미확인을 표시하고 재시작 때 확인 가능한 사실만 복사한다. 모델 호출/재실행을 trigger하지 않는다.
 
 ## 수락·검증 계약
@@ -31,7 +31,7 @@ Required item unknown이면 실패 원인/한계와 evidence를 남기고 affect
 
 ## 구현 경계·안전
 
-기존 Manager 완료 확정 기록을 invent하거나 user-role만으로 direct execution을 승인하면 중단. 권한 불명은 수집만 유지.
+기존 Manager 완료 확정 기록이나 작업 연결을 invent하면 중단. 기존 core 실행 승인·작업 범위를 유지하며 연결 불명 자료는 수집 사실과 미확인만 보존한다.
 기존 dirty/new 사용자 파일과 legacy log/DB/core 승인 증거를 보존한다.
 사용자/실제 Workbench·DB·socket·tmux/herdr를 대상으로 시험하거나 정리하지 않는다.
 새 제품 agent 정의/상주 OMP/독립 Python 모델, Phase2, commit·게시·배포는 범위 밖이다.
@@ -44,7 +44,7 @@ Required item unknown이면 실패 원인/한계와 evidence를 남기고 affect
 물리 작업 공간은 PLAN의 policy를 따르고 parallel writer는 별도 검증된 workspace/service namespace가 필요하다.
 write_scope_hint는 계획 추정이며 dispatch 때 baseline·실제 경로를 검증한다. 이 Markdown에 별도 graph/status를 만들지 않는다.
 중앙 PLAN/state/승인은 Root만 변경한다. Writer는 candidate delta/검사 evidence/남은 unknown을 반환한다.
-현재 미검증: direct instruction/종료 후처리의 실제 OMP provenance는 Q01-origin pending.
+현재 미검증: LG-D24 작업/자료 연결과 종료 후처리의 실제 통합은 Q01-origin pending. 이전 direct-instruction API 미확인은 새 기준의 선행조건이 아니다.
 
 ## p2 리뷰 보강
 

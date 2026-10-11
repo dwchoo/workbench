@@ -1973,6 +1973,9 @@ class ProductModel:
         worker = self.worker_text()
         line1 = (f"focus: {TITLES[self.focus]} | host 입력 owner: {self.shown_owner()} | "
                  f"shell mode: {mode}" + (f" | worker: {worker}" if worker else "") + f" | 자동화: {automation}")
+        important_warning = self.important_log_warning()
+        if important_warning:
+            line1 = f"{important_warning} | {line1}"
         line2 = (f"backend: {self.state.get('phase', 'unknown')} | bridge manager={peer('manager')} "
                  f"worker={peer('worker')} | 마지막 확인 {seen} | Ctrl-] ? 도움말")
         extra = " | ".join(part for part in (self.recovery_text(include_boot=False), self.task_text(),
@@ -1990,6 +1993,33 @@ class ProductModel:
         if boot_wait:  # VM F2: the safety wait comes first, so a narrow terminal still shows it
             line2 = f"{boot_wait} | {line2}"
         return line1, line2
+
+    def important_log_warning(self) -> str:
+        """Persistent catalog warning from observed file count, never an ack flag."""
+        important = self.state.get("important_logs")
+        if not isinstance(important, dict):
+            return ""
+        count = important.get("databaseCount")
+        if important.get("countState") == "known" and type(count) is int:
+            if count >= 2:
+                return (f"경고 중요 로그 DB {count}개 · {important.get('totalPhysicalBytes')} bytes "
+                        "(logs important status / delete-db --db UUID)")
+            return ""
+        return "경고 중요 로그 DB 수·용량 미확인 (logs important status)"
+
+    def important_summary_text(self) -> str:
+        important = self.state.get("important_logs")
+        summary = important.get("summary") if isinstance(important, dict) else None
+        if not isinstance(summary, dict):
+            return ""
+        state = summary.get("state")
+        if state == "error":
+            return "중요 로그 요약 오류 (logs important status)"
+        if state == "delayed":
+            return "중요 로그 요약 지연 (logs important status)"
+        if state == "unknown":
+            return "중요 로그 요약 상태 미확인"
+        return ""
 
     # -- CW-18 U5: current Task / worker / automation (all fields optional; unknown values are shown as sent) --------
     def worker_text(self) -> str:
@@ -2112,6 +2142,13 @@ class ProductModel:
         raw = faults.get("raw_log") if isinstance(faults, dict) else None
         if isinstance(raw, dict) and raw.get("text"):
             parts.append(_plain(raw.get("text")))
+        summary = self.important_summary_text()
+        if summary:
+            parts.append(summary)
+        important = self.state.get("important_logs")
+        if isinstance(important, dict) and important.get("state") in ("unavailable", "capture_unknown",
+                                                                       "busy", "corrupt", "physical_full"):
+            parts.append(f"중요 로그 저장 상태 {important['state']} (logs important status)")
         return " · ".join(parts)
 
     def recovery_text(self, *, include_boot: bool = True) -> str:

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from hashlib import sha256
 import inspect
 import json
@@ -16,6 +17,8 @@ from uuid import UUID, uuid4
 from workbench.contracts.ports_v2 import dispatch_allowed
 from workbench.contracts.v1 import ActorRole, MessageKind
 from workbench.ipc.bridge_g3.mailbox import MailboxStatus, TaskMailbox
+from workbench.storage.log_raw.admission import MetadataAdmissionGate
+from workbench.storage.log_raw.port import DisabledSegmentedRawPort, raw_read_command
 from workbench.tasks.repository import AuthorizationError, TaskRepository
 from workbench.terminal.shell_g2.prototype import ShellChoice
 from workbench.terminal.shell_persistent.adapter import PersistentShell
@@ -53,6 +56,56 @@ def _start_ticks(pid: Any) -> int | None:
 
 def _canonical(value: Mapping[str, Any]) -> bytes:
     return json.dumps(dict(value), sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()
+
+
+def _observed_at() -> str:
+    return datetime.now(timezone.utc).isoformat(timespec="microseconds").replace("+00:00", "Z")
+
+
+class _ExactByteMatcher:
+    """Emit disjoint observed ranges, retaining only a possible cross-drain match suffix."""
+
+    def __init__(self, pattern: bytes):
+        self.pattern = pattern
+        self.pending = bytearray()
+        self.offset = 0
+        self.found = False
+
+    def feed(self, data: bytes) -> list[tuple[int, bytes, bool]]:
+        if not data:
+            return []
+        if self.found:
+            start = self.offset
+            self.offset += len(data)
+            return [(start, data, False)]
+        self.pending.extend(data)
+        self.offset += len(data)
+        base = self.offset - len(self.pending)
+        position = self.pending.find(self.pattern)
+        if position >= 0:
+            segments = []
+            if position:
+                segments.append((base, bytes(self.pending[:position]), False))
+            segments.append((base + position, bytes(self.pending[position:position + len(self.pattern)]), True))
+            tail = bytes(self.pending[position + len(self.pattern):])
+            if tail:
+                segments.append((base + position + len(self.pattern), tail, False))
+            self.pending.clear()
+            self.found = True
+            return segments
+        safe = max(0, len(self.pending) - len(self.pattern) + 1)
+        if not safe:
+            return []
+        segment = (base, bytes(self.pending[:safe]), False)
+        del self.pending[:safe]
+        return [segment]
+
+    def finish(self) -> list[tuple[int, bytes, bool]]:
+        if not self.pending:
+            return []
+        segment = (self.offset - len(self.pending), bytes(self.pending), False)
+        self.pending.clear()
+        return [segment]
 
 
 def _write_json(path: Path, value: Mapping[str, Any]) -> None:
@@ -130,6 +183,44 @@ def _deliver_report(mailbox: Any, message: Any, timeout: float | None,
     return mailbox.deliver(message, **options)
 
 
+def _copy_confirmed_message(subject_log: Any, message: Any, receipt: Any, kind: str) -> None:
+    """확인된 mailbox 전달만 복사한다. 미확인/지연은 원문을 추정하지 않는다."""
+    if subject_log is None or receipt.status is not MailboxStatus.OMP_PROCESSED:
+        return
+    subject_log.record_delivery(
+        {"schemaVersion": 1, "kind": "task", "id": message.task_id},
+        message_id=message.message_id, revision=message.revision, kind=kind,
+        content=json.dumps(dict(message.payload), ensure_ascii=False, sort_keys=True, separators=(",", ":")),
+        delivered_at=_observed_at(),
+    )
+
+
+def _copy_confirmed_decision(subject_log: Any, task_id: str, revision: int,
+                             response: Mapping[str, Any]) -> None:
+    """verified_worker_response가 돌려준 결정만 source event로 복사한다."""
+    if subject_log is None:
+        return
+    subject_log.record_delivery(
+        {"schemaVersion": 1, "kind": "task", "id": task_id},
+        message_id=response["response_id"], revision=revision, kind="decision",
+        content=json.dumps(dict(response), ensure_ascii=False, sort_keys=True, separators=(",", ":")),
+        delivered_at=_observed_at(),
+    )
+
+
+def _latch_condition_metadata(gate: MetadataAdmissionGate | None,
+                              outcome: Callable[[str, BaseException | None], None] | None,
+                              exc: Exception) -> None:
+    if outcome is not None:
+        try:
+            outcome("condition_evidence", exc)
+            return
+        except Exception:
+            pass  # 제품 callback 장애도 진행 중인 collector를 중단하지 않는다.
+    if gate is not None:
+        gate.record_metadata_failure("condition_evidence:" + type(exc).__name__)
+
+
 def classify_worker_request(request: Mapping[str, Any], approved_paths: list[str] | None) -> str:
     """Advisory classification only; never grants execution authority."""
     def valid(path: Any) -> bool:
@@ -185,7 +276,23 @@ class WorkflowRun:
     # CW-19 (C-D71 (5), C-AC-24): the project's RawLogStore (64 MiB per run, 512 MiB per project, cap_source,
     # missing bytes). A full or failing store never stops the run or its collection.
     raw_store: Any = None
+    segmented_raw_port: DisabledSegmentedRawPort | None = None
+    raw_descriptor: dict[str, Any] | None = None
     _raw_missing: int = 0
+    metadata_admission: MetadataAdmissionGate | None = None
+    metadata_outcome: Callable[[str, BaseException | None], None] | None = None
+    subject_log: Any = None
+    subject_log_source: Callable[[], Any] | None = None
+    subject_capture_expected: bool = False
+    subject_capture_unknown: bool = False
+    subject_failure: Callable[[], None] | None = None
+    _source_ref: dict[str, Any] | None = None
+    _start_boundary_id: str | None = None
+    _matcher: _ExactByteMatcher | None = None
+    _source_ids: list[str] | None = None
+    _evidence_error: str | None = None
+    _matched_proof_id: str | None = None
+    _observation_finished: bool = False
 
     def _persist(self) -> None:
         _write_json(self.result_path, self._record)
@@ -194,10 +301,35 @@ class WorkflowRun:
         self._raw_missing += lost
         current = dict(self._record.get("raw_log_status") or {})
         if status is not None:
-            current = {"stored_bytes": status.stored_bytes, "observed_bytes": status.observed_bytes,
-                       "dropped_bytes": status.dropped_bytes, "truncated": status.truncated,
-                       "missing_bytes": status.missing_bytes, "cap_source": status.cap_source,
-                       "storage_error": status.storage_error}
+            if self.segmented_raw_port is not None:
+                try:
+                    source = self.segmented_raw_port.status(self.raw_descriptor)
+                except Exception as exc:
+                    # The append result still distinguishes stored from missing
+                    # bytes if a follow-up status scan fails. Do not count an
+                    # already durable append as a second storage loss.
+                    current.update({"log_format": "segmented-v1", "observed_bytes": status["end"],
+                                    "stored_bytes": int(current.get("stored_bytes") or 0)
+                                    + status["stored_bytes"],
+                                    "missing_bytes": int(current.get("missing_bytes") or 0)
+                                    + status["missing_bytes"],
+                                    "storage_error": status.get("storage_error") or type(exc).__name__,
+                                    "source_status": "unavailable"})
+                else:
+                    current = {"log_format": "segmented-v1", "stored_bytes": source["retained_bytes"],
+                               "observed_bytes": source["observed_bytes"],
+                               "missing_bytes": source["missing_bytes"] + source["evicted_bytes"],
+                               "evicted_bytes": source["evicted_bytes"],
+                               "retained_ranges": source["retained_ranges"],
+                               "missing_ranges": source["missing_ranges"],
+                               "range_detail_truncated": source["range_detail_truncated"],
+                               "storage_error": status.get("storage_error")}
+                current["last_observed_at"] = time.time()
+            else:
+                current = {"stored_bytes": status.stored_bytes, "observed_bytes": status.observed_bytes,
+                           "dropped_bytes": status.dropped_bytes, "truncated": status.truncated,
+                           "missing_bytes": status.missing_bytes, "cap_source": status.cap_source,
+                           "storage_error": status.storage_error}
         if error is not None:
             current["storage_error"] = error
         if self._raw_missing:
@@ -206,6 +338,8 @@ class WorkflowRun:
 
     def _read_raw(self) -> bytes:
         """The stored raw log; a store-owned log that never got a byte does not exist yet (= empty)."""
+        if self.segmented_raw_port is not None:
+            raise ValueError("segmented raw requires bounded source-relative reads")
         try:
             return self.raw_log.read_bytes()
         except FileNotFoundError:
@@ -214,9 +348,109 @@ class WorkflowRun:
                 return b""
             raise
 
+    def _metadata_failure(self, exc: Exception) -> None:
+        if self._evidence_error is not None:
+            return
+        self._evidence_error = type(exc).__name__
+        self._record["condition_evidence_error"] = self._evidence_error
+        _latch_condition_metadata(self.metadata_admission, self.metadata_outcome, exc)
+
+    def _copy_message(self, message: Any, receipt: Any, kind: str) -> None:
+        try:
+            sink = self.subject_log_source() if self.subject_log_source is not None else self.subject_log
+            if sink is None and self.subject_capture_expected and receipt.status is MailboxStatus.OMP_PROCESSED:
+                raise RuntimeError("confirmed subject delivery has no storage sink")
+            _copy_confirmed_message(sink, message, receipt, kind)
+        except Exception:
+            self.subject_capture_unknown = True
+            if self.subject_failure is not None:
+                self.subject_failure()
+
+    def _copy_decision(self, response: Mapping[str, Any]) -> None:
+        try:
+            sink = self.subject_log_source() if self.subject_log_source is not None else self.subject_log
+            if sink is None and self.subject_capture_expected:
+                raise RuntimeError("confirmed subject decision has no storage sink")
+            _copy_confirmed_decision(sink, self.task_id, self.revision, response)
+        except Exception:
+            self.subject_capture_unknown = True
+            if self.subject_failure is not None:
+                self.subject_failure()
+
+    def _record_observed(self, segments: list[tuple[int, bytes, bool]]) -> None:
+        if self._source_ref is None or self._evidence_error is not None:
+            return
+        for start, data, matched in segments:
+            try:
+                source_id = self.repository.record_log_source(
+                    {"schemaVersion": 1, "kind": "task", "id": self.task_id},
+                    {"schemaVersion": 1, "source": self._source_ref, "start": start,
+                     "end": start + len(data), "digest": sha256(data).hexdigest()},
+                )
+                assert self._source_ids is not None
+                self._source_ids.append(source_id)
+                if matched:
+                    self._matched_proof_id = self.repository.record_condition_proof(
+                        self.task_id, self.revision, self.run_id,
+                        sha256(self._matcher.pattern).hexdigest(), matched=True,
+                        observation_complete=False, source_id=source_id,
+                        match_start=start, match_end=start + len(data),
+                        full_match_digest=sha256(data).hexdigest(), excerpt=data[:4096],
+                    )
+            except Exception as exc:
+                self._metadata_failure(exc)
+                return
+
+    def _finish_observation(self) -> None:
+        if self._observation_finished or self._matcher is None or self._source_ref is None:
+            return
+        self._observation_finished = True
+        self._record_observed(self._matcher.finish())
+        if self._evidence_error is not None:
+            return
+        try:
+            final_id = str(uuid4())
+            self.repository.record_observation_boundary({
+                "schemaVersion": 1, "eventId": final_id, "source": self._source_ref,
+                "kind": "final_drain", "offset": self._matcher.offset,
+                "observedAt": _observed_at(),
+            })
+            self._record["condition_final_boundary_id"] = final_id
+            if not self._matcher.found:
+                coverage_id = self.repository.record_gapfree_coverage({
+                    "schemaVersion": 1, "coverageId": str(uuid4()), "source": self._source_ref,
+                    "startEventId": self._start_boundary_id, "finalEventId": final_id,
+                    "finalOffset": self._matcher.offset, "sourceIds": self._source_ids,
+                })
+                proof_id = self.repository.record_condition_proof(
+                    self.task_id, self.revision, self.run_id,
+                    sha256(self._matcher.pattern).hexdigest(), matched=False,
+                    observation_complete=True, coverage_id=coverage_id,
+                )
+                self._record["condition_negative_proof_id"] = proof_id
+        except Exception as exc:
+            self._metadata_failure(exc)
+
     def _drain(self) -> None:
         data = self.shell.display_bytes()
         if not data:
+            return
+        if self._matcher is not None:
+            if self._observation_finished:
+                # Bytes after a claimed final drain contradict its negative coverage.
+                # Journal them to invalidate that coverage, but never mint a late match.
+                start = self._matcher.offset
+                self._matcher.offset += len(data)
+                segments = [(start, data, False)]
+            else:
+                segments = self._matcher.feed(data)
+            self._record_observed(segments)
+        if self.segmented_raw_port is not None:
+            try:
+                status = self.segmented_raw_port.append(self.raw_descriptor, data)
+                self._raw_status(status)
+            except Exception as exc:
+                self._raw_status(error=type(exc).__name__, lost=len(data))
             return
         if self.raw_store is not None:
             try:
@@ -269,15 +503,25 @@ class WorkflowRun:
                 return dict(self._record)
             if life["control_returned"] and life["input_returned"] and life["lifetime"] == "ended":
                 self._drain()
-                try:
-                    collected_log = self._read_raw()
-                    self._record["raw_log_collected"] = {
-                        "size": len(collected_log), "sha256": sha256(collected_log).hexdigest(),
-                    }
-                except OSError as exc:
-                    self._record["raw_log_collected"] = {
-                        "path": str(self.raw_log), "error": type(exc).__name__,
-                    }
+                self._finish_observation()
+                if self.segmented_raw_port is not None:
+                    try:
+                        self._record["raw_log_collected"] = {
+                            "log_format": "segmented-v1", "raw_log_ref": self.raw_descriptor["raw_log_ref"],
+                            "source_status": self.segmented_raw_port.status(self.raw_descriptor)}
+                    except Exception as exc:
+                        self._record["raw_log_collected"] = {"log_format": "segmented-v1",
+                                                              "error": type(exc).__name__}
+                else:
+                    try:
+                        collected_log = self._read_raw()
+                        self._record["raw_log_collected"] = {
+                            "size": len(collected_log), "sha256": sha256(collected_log).hexdigest(),
+                        }
+                    except OSError as exc:
+                        self._record["raw_log_collected"] = {
+                            "path": str(self.raw_log), "error": type(exc).__name__,
+                        }
                 result_file = (self.worktree.path / self.execution["criteria"]["result_file"]).resolve()
                 if not result_file.is_relative_to(self.worktree.path):
                     self._record["result_collected"] = {
@@ -382,12 +626,15 @@ class WorkflowRun:
                            self.approval_hash, self.automation_source)
         criteria = self.execution["criteria"]
         evidence_errors: list[dict[str, str]] = []
-        try:
-            log = self._read_raw()
-        except OSError as exc:
-            log = None
-            evidence_errors.append({"source": "raw_log", "path": str(self.raw_log),
-                                    "error": type(exc).__name__})
+        if self.segmented_raw_port is not None:
+            log = None  # A source can contain gaps; proof was recorded from observed bytes before storage.
+        else:
+            try:
+                log = self._read_raw()
+            except OSError as exc:
+                log = None
+                evidence_errors.append({"source": "raw_log", "path": str(self.raw_log),
+                                        "error": type(exc).__name__})
         collected_log = self._record.get("raw_log_collected")
         if isinstance(collected_log, dict):
             if "error" in collected_log:
@@ -426,26 +673,67 @@ class WorkflowRun:
         incomplete = bool(raw_status.get("truncated") or raw_status.get("missing_bytes")
                           or raw_status.get("dropped_bytes"))
         if incomplete:  # CW-19 (C-AC-24): the judgment says what is missing; it never assumes the rest
-            unknowns.append(f"raw log incomplete: {raw_status.get('stored_bytes')} of "
-                            f"{raw_status.get('observed_bytes')} bytes stored (cap {raw_status.get('cap_source')}, "
-                            f"missing {raw_status.get('missing_bytes')})")
-        if log is None or any(item["source"] == "raw_log" for item in evidence_errors) or not log:
+            if self.segmented_raw_port is not None:
+                unknowns.append(f"segmented raw source incomplete: retained {raw_status.get('stored_bytes')} "
+                                f"of observed {raw_status.get('observed_bytes')} bytes, "
+                                f"evicted {raw_status.get('evicted_bytes')}, "
+                                f"missing {raw_status.get('missing_bytes')}; inspect source ranges")
+            else:
+                unknowns.append(f"raw log incomplete: {raw_status.get('stored_bytes')} of "
+                                f"{raw_status.get('observed_bytes')} bytes stored (cap {raw_status.get('cap_source')}, "
+                                f"missing {raw_status.get('missing_bytes')})")
+        condition_digest = sha256(criteria["log_contains"].encode()).hexdigest()
+        condition_proofs: list[dict[str, Any]] = []
+        proof_error = None
+        try:
+            condition_proofs = [proof for proof in self.repository.get_condition_proofs(self.run_id)
+                                if proof["task_id"] == self.task_id
+                                and proof["revision"] == self.revision
+                                and proof["condition_digest"] == condition_digest]
+        except Exception as exc:
+            proof_error = type(exc).__name__
+            unknowns.append("condition proof read failed: " + proof_error)
+        matched_proof = next((p for p in condition_proofs if p["matched"]), None)
+        negative_proof = next((p for p in condition_proofs
+                               if not p["matched"] and p["observation_complete"]), None)
+        instrumented = self._start_boundary_id is not None
+        if self._evidence_error is not None:
+            unknowns.append("condition evidence write failed: " + self._evidence_error)
+        for proof in condition_proofs:
+            if proof.get("invalidation_reason"):
+                unknowns.append("condition coverage invalidated: " + proof["invalidation_reason"])
+        if self._record["exit_status"] != 0:
+            judgment, reasons = "failure", ["nonzero_exit"]
+        elif any(item["source"] == "raw_log" for item in evidence_errors):
+            # A post-collection raw artifact changed or became unreadable. This is distinct
+            # from an append-time quota loss, and the legacy tamper guard remains conservative.
             judgment, reasons = "indeterminate", ["insufficient_raw_log"]
-            if log == b"":
-                unknowns.append("experiment emitted no raw log bytes")
         elif result_bytes is None or not result_bytes or any(item["source"] == "result_file" for item in evidence_errors):
             judgment, reasons = "indeterminate", ["missing_or_empty_result_file"]
             if result_bytes == b"":
                 unknowns.append("result file is empty")
-        elif self._record["exit_status"] != 0:
-            judgment = "failure"
-            reasons = ["nonzero_exit"]
         elif self.result_before is not None and self.result_before == result_hash:
             judgment, reasons = "indeterminate", ["result_provenance_unconfirmed"]
             unknowns.append("result file is unchanged from before the run")
+        elif criteria["result_contains"].encode() not in result_bytes:
+            judgment, reasons = "failure", ["exit_zero_criteria_failed"]
+        elif instrumented:
+            if (proof_error is not None or (matched_proof is None and negative_proof is None)
+                    or (self._evidence_error is not None and matched_proof is None)
+                    or (matched_proof is not None and negative_proof is not None)):
+                judgment, reasons = "indeterminate", ["condition_observation_incomplete"]
+            elif negative_proof is not None and matched_proof is None:
+                judgment, reasons = "failure", ["exit_zero_criteria_failed"]
+            else:
+                judgment, reasons = "success", ["criteria_met"]
+        elif self.segmented_raw_port is not None and not instrumented:
+            judgment, reasons = "indeterminate", ["condition_observation_incomplete"]
+        elif (self.segmented_raw_port is None and
+              (log is None or any(item["source"] == "raw_log" for item in evidence_errors) or not log)):
+            judgment, reasons = "indeterminate", ["insufficient_raw_log"]
         elif incomplete and criteria["log_contains"].encode() not in log:
-            judgment, reasons = "indeterminate", ["raw_log_incomplete"]  # the marker may be in the lost bytes
-        elif criteria["log_contains"].encode() not in log or criteria["result_contains"].encode() not in result_bytes:
+            judgment, reasons = "indeterminate", ["raw_log_incomplete"]
+        elif criteria["log_contains"].encode() not in log:
             judgment, reasons = "failure", ["exit_zero_criteria_failed"]
         else:
             judgment, reasons = "success", ["criteria_met"]
@@ -460,7 +748,16 @@ class WorkflowRun:
             "result_excerpt": None if result_bytes is None else result_bytes[:1024].decode("utf-8", "replace"),
             "criteria": criteria, "requires_code_change": requires_code_change,
             "code_change_reason": code_change_reason,
+            "condition_evidence": {"condition_digest": condition_digest,
+                                   "matched_proof_id": None if matched_proof is None else matched_proof["proof_id"],
+                                   "negative_proof_id": None if negative_proof is None else negative_proof["proof_id"],
+                                   "instrumented": instrumented},
         }
+        if self.segmented_raw_port is not None:
+            evidence.update({"log_format": "segmented-v1",
+                             "raw_log_ref": self.raw_descriptor["raw_log_ref"],
+                             "read_command": raw_read_command(self.raw_log.parents[3], "run", self.run_id),
+                             "raw_source_status": self._record.get("raw_log_status")})
         host.update({"judgment": judgment, "reasons": list(reasons)})
         if self.worker_port is not None:
             question = self.mailbox.create_message(
@@ -479,6 +776,7 @@ class WorkflowRun:
                 self._record["worker_analysis_request"] = {"message_id": question.message_id,
                                                            "status": "delivery_error"}
                 self._analysis_unavailable(f"analysis_delivery_error:{type(exc).__name__}", judgment, reasons)
+            self._copy_message(question, question_receipt, "manager_instruction")
             self._record["worker_analysis_request"] = {
                 "message_id": question.message_id, "status": question_receipt.status.value,
             }
@@ -500,6 +798,7 @@ class WorkflowRun:
                 self._analysis_unavailable("worker_response_timeout", judgment, reasons)
             except ValueError:  # identity/linkage of the public response did not verify
                 self._analysis_unavailable("worker_response_unverified", judgment, reasons)
+            self._copy_decision(response)
             if ((judgment == "indeterminate" and response["decision"] != "indeterminate")
                     or (judgment == "failure" and response["decision"] == "success")):
                 self._record["worker_analysis_response"] = response
@@ -559,6 +858,7 @@ class WorkflowRun:
         return submitted
 
     def _finish_report(self, receipt: Any) -> dict[str, Any]:
+        self._copy_message(self._report_message, receipt, "report")
         self._record["report"]["status"] = receipt.status.value
         self._record["instruction_ended"] = self._report_requires_code_change
         self._persist()
@@ -615,13 +915,49 @@ class TaskWorkflow:
     def __init__(self, repository: TaskRepository, mailbox: TaskMailbox,
                  *, worker_port: WorkerRolePort | None = None,
                  automation_source: Callable[[], Mapping[str, Any]] | None = None,
-                 raw_store: Any = None):
+                 raw_store: Any = None,
+                 segmented_raw_port: DisabledSegmentedRawPort | None = None,
+                 metadata_admission: MetadataAdmissionGate | None = None,
+                 metadata_outcome: Callable[[str, BaseException | None], None] | None = None,
+                 subject_log: Any = None,
+                 subject_capture_failure: Callable[[], None] | None = None):
         self.repository = repository
         self.mailbox = mailbox
         self.raw_store = raw_store  # CW-19: the project's RawLogStore for the run's raw log (None: a plain file)
+        self.segmented_raw_port = segmented_raw_port
+        self.metadata_admission = metadata_admission
+        self.metadata_outcome = metadata_outcome
+        self.subject_log = subject_log
+        self._subject_capture_failure = subject_capture_failure
+        self.subject_capture_unknown = False
         self.worker_port = worker_port
         self.automation_source = automation_source
         self._public_mailbox = isinstance(mailbox, TaskMailbox)
+
+    def _copy_message(self, message: Any, receipt: Any, kind: str) -> None:
+        try:
+            if (self.subject_log is None and self._subject_capture_failure is not None
+                    and receipt.status is MailboxStatus.OMP_PROCESSED):
+                raise RuntimeError("confirmed subject delivery has no storage sink")
+            _copy_confirmed_message(self.subject_log, message, receipt, kind)
+        except Exception:
+            self._mark_subject_unknown()
+
+    def _copy_decision(self, task_id: str, revision: int, response: Mapping[str, Any]) -> None:
+        try:
+            if self.subject_log is None and self._subject_capture_failure is not None:
+                raise RuntimeError("confirmed subject decision has no storage sink")
+            _copy_confirmed_decision(self.subject_log, task_id, revision, response)
+        except Exception:
+            self._mark_subject_unknown()
+
+    def _mark_subject_unknown(self) -> None:
+        self.subject_capture_unknown = True
+        if self._subject_capture_failure is not None:
+            try:
+                self._subject_capture_failure()
+            except Exception:
+                pass  # subject capture does not affect the approved run outcome
 
     def route_worker_request(self, request: Mapping[str, Any], *, task_id: str | None = None,
                              revision: int | None = None) -> dict[str, Any]:
@@ -689,6 +1025,8 @@ class TaskWorkflow:
         """
         if self._public_mailbox and (self.worker_port is None or self.automation_source is None):
             raise WorkflowHeld("public OMP execution requires worker-response and current-automation ports")
+        if self.metadata_admission is not None and not self.metadata_admission.automatic_runs_allowed:
+            raise WorkflowHeld("metadata evidence failure holds new automatic work")
         automation_source = self.automation_source or (lambda: automation)
         if not dispatch_allowed(dict(automation_source())):
             raise WorkflowHeld("automation is paused, cancelled, unhealthy, or unapproved")
@@ -735,7 +1073,9 @@ class TaskWorkflow:
         try:
             record_dir.mkdir(mode=0o700)
             raw_log, result_path = record_dir / "raw.log", record_dir / "run.json"
-            if self.raw_store is not None:  # CW-19: the store owns <raw-logs>/<run_id>.log and its quota
+            if self.segmented_raw_port is not None:
+                raw_log, raw_descriptor = self.segmented_raw_port.prepare_task(record_dir, task_id, revision, run_id)
+            elif self.raw_store is not None:  # CW-19: the store owns <raw-logs>/<run_id>.log and its quota
                 raw_log = Path(self.raw_store.root_path) / f"{run_id}.log"
                 self.raw_store.append(run_id, b"")
             else:
@@ -752,6 +1092,10 @@ class TaskWorkflow:
             "shell_state": "not_sent", "exit_status": None, "exit_confirmed": False,
             "worker_judgment": None, "approval_hash": approval_hash,
         }
+        if self.segmented_raw_port is not None:
+            record.update({"log_format": "segmented-v1", "raw_log_ref": raw_descriptor["raw_log_ref"],
+                           "raw_source": raw_descriptor["source"],
+                           "read_command": raw_read_command(record_dir.parents[2], "run", run_id)})
         if injected:
             record["shell_source"] = "injected_host_shell"
         try:
@@ -771,6 +1115,7 @@ class TaskWorkflow:
             if self.worker_port is not None:
                 self.worker_port.arm("execute", task_message)
             receipt = self.mailbox.deliver(task_message)
+            self._copy_message(task_message, receipt, "manager_instruction")
             record["worker_request"] = {"message_id": task_message.message_id, "status": receipt.status.value}
             _write_json(result_path, record)
             if receipt.status is not MailboxStatus.OMP_PROCESSED:
@@ -781,6 +1126,7 @@ class TaskWorkflow:
                     self.worker_port.observe("execute", task_message, receipt),
                 )
                 record["worker_execution_decision"] = worker_decision
+                self._copy_decision(task_id, revision, worker_decision)
                 _write_json(result_path, record)
                 if worker_decision["decision"] != "execute":
                     raise WorkflowHeld("worker OMP did not authorize execution")
@@ -829,6 +1175,19 @@ class TaskWorkflow:
             current_automation = _current_authority(
                 self.repository, task_id, revision, run_id, approval_hash, automation_source,
             )
+            if self.metadata_admission is not None and not self.metadata_admission.automatic_runs_allowed:
+                raise WorkflowHeld("metadata evidence failure holds new automatic work")
+            source_ref = {"schemaVersion": 1, "sourceKind": "terminal", "collectorEpoch": 1,
+                          "taskId": task_id, "revision": revision, "runId": run_id}
+            start_boundary_id = str(uuid4())
+            try:
+                self.repository.record_observation_boundary({
+                    "schemaVersion": 1, "eventId": start_boundary_id, "source": source_ref,
+                    "kind": "start", "offset": 0, "observedAt": _observed_at(),
+                })
+            except Exception as exc:
+                _latch_condition_metadata(self.metadata_admission, self.metadata_outcome, exc)
+                raise WorkflowHeld("observation start boundary could not be persisted") from exc
             shell.submit(control, execution["command"], current_automation)
             self.repository.record_shell_event(run_id, "sent", {
                 "cwd": str(worktree.path), "commit": worktree.commit,
@@ -842,7 +1201,17 @@ class TaskWorkflow:
                                task_message.message_id, worktree, shell, execution,
                                record_dir, raw_log, result_path, before, approval_hash, record, {"sent"},
                                automation_source, self.worker_port, owns_shell=not injected,
-                               raw_store=self.raw_store)
+                               raw_store=None if self.segmented_raw_port is not None else self.raw_store,
+                               segmented_raw_port=self.segmented_raw_port,
+                               raw_descriptor=raw_descriptor if self.segmented_raw_port is not None else None,
+                               metadata_admission=self.metadata_admission,
+                               metadata_outcome=self.metadata_outcome, subject_log=self.subject_log,
+                               subject_log_source=lambda: self.subject_log,
+                               subject_capture_expected=self._subject_capture_failure is not None,
+                               subject_failure=self._mark_subject_unknown,
+                               _source_ref=source_ref, _start_boundary_id=start_boundary_id,
+                               _matcher=_ExactByteMatcher(execution["criteria"]["log_contains"].encode()),
+                               _source_ids=[])
         except BaseException as exc:
             if shell is not None:
                 _release_shell(shell, not injected)
@@ -873,6 +1242,7 @@ class TaskWorkflow:
                         _current_authority(self.repository, task_id, revision, run_id,
                                            approval_hash, automation_source)
                         question_receipt = self.mailbox.deliver(question)
+                        self._copy_message(question, question_receipt, "manager_instruction")
                         record["preparation_analysis_request"] = {
                             "message_id": question.message_id, "status": question_receipt.status.value,
                         }
@@ -885,6 +1255,7 @@ class TaskWorkflow:
                         )
                         if response["decision"] != "indeterminate":
                             raise WorkflowHeld("worker preparation judgment conflicts with missing experiment")
+                        self._copy_decision(task_id, revision, response)
                         report_payload["worker_response"] = response
                         _current_authority(self.repository, task_id, revision, run_id,
                                            approval_hash, automation_source)
@@ -896,6 +1267,7 @@ class TaskWorkflow:
                     record["preparation_report"] = {"message_id": report.message_id, "status": "delivery_unknown"}
                     _write_json(result_path, record)
                     preparation_receipt = self.mailbox.deliver(report)
+                    self._copy_message(report, preparation_receipt, "report")
                     record["preparation_report"]["status"] = preparation_receipt.status.value
                 except BaseException as report_exc:
                     failed = record.setdefault("preparation_report", {"status": "not_created"})

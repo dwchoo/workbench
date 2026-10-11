@@ -2,7 +2,8 @@
 
 계획 revision p5 / SPEC s5 / BRIEF r0.9 (r0.8 승인 + 운영 원칙 개별 합의).
 상태·의존성·resources·scope의 canonical source는 [PLAN.json](../PLAN.json)의 DVL-12이다.
-이 ticket은 계획안이며 제품 구현/시험을 시작할 권한은 아직 없다.
+원 s5/p5 승인과 [2026-10-10 두 결정·격리 재개 승인](../../../../.workflow/dev-validation-log-retention/runs/implement-p5-20261009/resume-decisions-20261010.json)을 함께 따른다.
+Q01 기준 변경·proxy 채택·FL-01 제품 수정·실제 raw 활성화는 제외한다.
 기본 계약: [SPEC](../SPEC.md) §5/9/10, [BRIEF](../BRIEF.md).
 
 ## 제공할 행동

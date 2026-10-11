@@ -2,7 +2,8 @@
 
 계획 revision p5 / SPEC s5 / BRIEF r0.9 (r0.8 승인 + 운영 원칙 개별 합의).
 상태·의존성·resources·scope의 canonical source는 [PLAN.json](../PLAN.json)의 DVL-11이다.
-이 ticket은 계획안이며 제품 구현/시험을 시작할 권한은 아직 없다.
+원 s5/p5 승인과 [2026-10-10 두 결정·격리 재개 승인](../../../../.workflow/dev-validation-log-retention/runs/implement-p5-20261009/resume-decisions-20261010.json)을 함께 따른다.
+Q01 기준 변경·proxy 채택·FL-01 제품 수정·실제 raw 활성화는 제외한다.
 기본 계약: [SPEC](../SPEC.md), [BRIEF](../BRIEF.md); source decision은 BRIEF 추적표를 따른다.
 
 ## 제공할 행동
@@ -49,3 +50,9 @@ write_scope_hint는 계획 추정이며 dispatch 때 baseline·실제 경로를 
 ## p2 리뷰 보강
 
 log-contract:v1 shared로 동결 계약을 소비한다. 모델 지연/rotation 임박에 긴급 모델 호출이 없고 bounded payload/buffer만 유지함을 injectable port로 확인한다.
+
+## 2026-10-10 preservation fault 범위
+
+LG-D16: public segment 교체 fault를 시험하고 control/quarantine은 transaction owner 전용으로 둔다.
+durable identity·nonce quarantine capture/mismatch/collision/crash에서 unknown replacement를 보존하고 채택하지 않는다.
+quarantine/unknown 및 열린 anonymous raw inode를 총5개에 포함한다. 동일 UID 임의 control/quarantine 교체 보장은 별도 범위다.

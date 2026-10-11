@@ -47,6 +47,7 @@ import re
 import select
 import shutil
 import signal
+import stat
 import struct
 import subprocess
 import sys
@@ -780,13 +781,21 @@ class Sandbox:
     """
 
     def __init__(self, label: str, *, provider: ScriptedProvider | None = None, omp: str | None = None,
-                 host_shell: str = "bash", shell_env: str = "/usr/bin/bash", report: "ScenarioReport | None" = None):
+                 host_shell: str = "bash", shell_env: str = "/usr/bin/bash", report: "ScenarioReport | None" = None,
+                 root_parent: Path | None = None):
         self.label = label
         self.omp = omp or find_omp()
         if not self.omp:
             raise RuntimeError("OMP is not installed")
+        if root_parent is not None:
+            parent = Path(root_parent)
+            info = parent.lstat()
+            if (not parent.is_absolute() or parent.resolve() != parent
+                    or not stat.S_ISDIR(info.st_mode) or info.st_uid != os.getuid()
+                    or info.st_mode & 0o077):
+                raise ValueError("Sandbox root_parent must be an owned private directory")
         self.root = Path(tempfile.mkdtemp(prefix=f"wbc16{re.sub(r'[^a-z0-9]', '', label.lower())[:8]}-",
-                                          dir="/tmp"))
+                                          dir=str(root_parent) if root_parent is not None else "/tmp"))
         os.chmod(self.root, 0o700)
         self.home = self.root / "h"
         self.data = self.root / "d"

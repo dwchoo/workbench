@@ -170,8 +170,8 @@ class IndependentJudgePortContract(unittest.TestCase):
                  "facts": {fact: True for fact in REQUIRED_FACTS[name]}, "unknowns": []}
                 for name in Q01_ITEMS]
         priority = next(row for row in rows if row["id"] == "Q01-priority")
-        priority["facts"].update(shared_session_or_lock=False, measured_block_ms=120,
-                                 independent_delivery_observed=True)
+        from tests.backend.test_q01_priority_observations_independent import nonshared_facts
+        priority["facts"] = nonshared_facts()
         return rows
 
     def test_all_eight_witnesses_and_product_source(self) -> None:
@@ -190,7 +190,7 @@ class IndependentJudgePortContract(unittest.TestCase):
     def test_shared_priority_requires_measured_user_adoption(self) -> None:
         rows = self.rows("probe-local")
         priority = next(row for row in rows if row["id"] == "Q01-priority")
-        priority["facts"]["shared_session_or_lock"] = True
+        priority["facts"].update(shared_session_or_lock=True, max_block_recorded=True, measured_block_ms=120)
         self.assertEqual(judge_observations(rows, adapter="probe-local")["Q01-priority"]["result"],
                          "blocked_adoption")
         priority["facts"].update(measured_block_ms=120, user_adoption_ref="decision-1")
@@ -202,7 +202,7 @@ class IndependentJudgePortContract(unittest.TestCase):
         cases = (
             lambda facts: facts.pop("shared_session_or_lock"),
             lambda facts: facts.update(shared_session_or_lock="false"),
-            lambda facts: facts.pop("measured_block_ms"),
+            lambda facts: facts.pop("nonshared_priority_measurement"),
             lambda facts: facts.update(measured_block_ms=-1),
             lambda facts: facts.pop("independent_delivery_observed"),
             lambda facts: facts.update(independent_delivery_observed=False),
@@ -233,7 +233,7 @@ class IndependentJudgePortContract(unittest.TestCase):
                            ("Q01-tools", "no_extra_model_turn"),
                            ("Q01-context", "output_ceiling_enforced"),
                            ("Q01-context", "full_output_reserved"),
-                           ("Q01-origin", "direct_command_bound")):
+                           ("Q01-origin", "work_source_ranges_bound")):
             rows = self.rows("probe-local")
             row = next(value for value in rows if value["id"] == item)
             row["facts"][fact] = False

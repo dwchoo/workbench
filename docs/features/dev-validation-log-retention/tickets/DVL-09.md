@@ -13,7 +13,7 @@ DVL-08의 채택된 existing-agent path와 DVL-03 contract만 구현한다. guar
 내부 영어 skill에 선정/사실·해석·unknown/출처/누적/DB health/입력 지시 무시/출력 schema를 넣고 digest를 입력과 결과에 묶는다.
 요약 request 동안 실제 수정/terminal/side-effect 도구를 enforce 차단하고 기존 일반 Manager/Worker 도구 권한은 그 밖에서 유지한다.
 role skill allowlist/isolation 기대값을 실제 채택 role만 변경하고 기존 skill 크기/동작을 회귀로 검증한다.
-SPEC §8.2의 수집/전송/token/context budget·8KiB result·parent receipt bound, request/source/origin/authorization refs/duplicate 검증 및 usage unknown shape를 제공한다.
+SPEC §8.2의 수집/전송/token/context budget·8KiB result·parent receipt bound, request/source/작업범위/authorization refs/duplicate 검증 및 usage unknown shape를 제공한다. LG-D24에 따라 origin은 작업·자료 연결을 뜻하며 개별 사용자 발화→command 증명은 요구하지 않는다.
 Python direct model 판단이나 새 agent 정의/상주 프로세스를 추가하지 않는다.
 
 ## 수락·검증 계약

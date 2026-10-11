@@ -20,6 +20,7 @@ You decide what is needed, whether a result is enough, what comes next, and you 
 ## Fields
 Send every field; set each one you do not use to null (not a placeholder value).
 - `kind` (required): `experiment` runs a command and judges criteria; `work` is work the worker does with its own tools by following your procedure (commands, code changes).
+- When a command result has `log_format: segmented-v1`, its `log_path` is a private source descriptor rather than full output. Use `read_command` or read-only `workbench_logs` `raw` pages by source ID and offset; keep missing or evicted ranges explicit. Legacy results still provide a full `log_path` file.
 - `message` (required): what the worker sees; for a new Task, the procedure above. It may be long (8192 characters, sent in full).
 - `commands` (kind `work`; else null): the exact commands, as above. A follow-up with `commands` replaces the list; null keeps it. The worker's `done` report carries `commands_run` (each command's exit code, duration, `log_path`) recorded by Workbench.
 - `spec` (required for a new Task; null for a follow-up or cancel): `goal`, `paths` (the only paths the worker may change; stay narrow), `instructions` (or null).

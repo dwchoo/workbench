@@ -51,6 +51,10 @@ class Controller(Protocol):
     def shutdown_request(self) -> dict[str, Any]: ...
     def shutdown_confirm(self, token: str) -> dict[str, Any]: ...
     def confirm_boot(self, boot_id: str) -> dict[str, Any]: ...
+    def important_archive_close(self, kind: str, identity: str) -> dict[str, Any]: ...
+    def important_delete_db(self, identity: str) -> dict[str, Any]: ...
+    def raw_query(self, kind: str, identity: str, offset: int, limit: int) -> dict[str, Any]: ...
+    def raw_status(self) -> dict[str, Any]: ...
     def restart_pane(self, pane: PaneId) -> dict[str, Any]: ...
     def kill_pane(self, pane: PaneId) -> dict[str, Any]: ...
     def pause(self) -> dict[str, Any]: ...
@@ -315,7 +319,7 @@ class UiServer:
         if fields is not None:
             self._header(connection, ui_v1.result(message.id, True, **fields))
             if message.type in {ClientType.RESTART_PANE, ClientType.KILL_PANE, ClientType.PAUSE,
-                                ClientType.RESUME}:
+                                ClientType.RESUME, ClientType.IMPORTANT_DELETE_DB}:
                 # The pane is live again / exited now: tell the UI at once, not on the next periodic push (C-D62/C-D63).
                 try:
                     self.push_state(self.controller.snapshot())
@@ -352,6 +356,19 @@ class UiServer:
             return controller.shutdown_confirm(fields["token"])
         if kind is ClientType.CONFIRM_BOOT:
             return controller.confirm_boot(fields["boot_id"])
+        if kind in (ClientType.IMPORTANT_ARCHIVE_CLOSE, ClientType.IMPORTANT_DELETE_DB):
+            # These user-only actions are reachable from the product CLI, not
+            # an attached pane or any bridge tool.
+            if connection.client != "workbench-cli":
+                raise Held(Reason.INVALID_MESSAGE, "important-log mutation requires the user CLI")
+            if kind is ClientType.IMPORTANT_ARCHIVE_CLOSE:
+                return {"result": controller.important_archive_close(fields["subject_kind"], fields["subject_id"])}
+            return {"result": controller.important_delete_db(fields["db_uuid"])}
+        if kind is ClientType.RAW_QUERY:
+            return {"result": controller.raw_query(fields["source_kind"], fields["source_id"],
+                                                   fields["offset"], fields["limit"])}
+        if kind is ClientType.RAW_STATUS:
+            return {"result": controller.raw_status()}
         self._require_attached(connection)
         if kind in {ClientType.INPUT, ClientType.PASTE}:
             data = message.payload

@@ -12,7 +12,9 @@ from unittest.mock import patch
 ROOT = Path(__file__).resolve().parents[2]
 sys.dont_write_bytecode = True
 sys.path.insert(0, str(ROOT / "tools"))
+sys.path.insert(0, str(ROOT))
 from q01_recheck import REQUIRED_FACTS, _collect, judge_envelope, judge_observations, run  # noqa: E402
+from tests.backend.test_q01_priority_observations import nonshared_facts
 from summary_probe_support import (  # noqa: E402
     OVERLAY_FILES, POLICY_PATH, Q01_ITEMS, collect_projection, same_projection,
 )
@@ -130,8 +132,7 @@ class ObservationTests(unittest.TestCase):
                  "evidence_level": "runtime", "evidence_ref": "fixture event reference",
                  "facts": {key: True for key in REQUIRED_FACTS[name]}, "unknowns": []}
                 for name in Q01_ITEMS]
-        rows[5]["facts"].update(shared_session_or_lock=False, measured_block_ms=0,
-                                  independent_delivery_observed=True)
+        rows[5]["facts"].update(nonshared_facts())
         return rows
 
     def test_all_required_witnesses_and_negative_mutations(self) -> None:
@@ -157,7 +158,7 @@ class ObservationTests(unittest.TestCase):
         rows[5]["facts"].pop("shared_session_or_lock")
         self.assertNotEqual(judge_observations(rows, adapter="product")["Q01-priority"]["result"],
                             "passed")
-        rows[5]["facts"]["shared_session_or_lock"] = True
+        rows[5]["facts"].update(shared_session_or_lock=True, max_block_recorded=True, measured_block_ms=0)
         self.assertEqual(judge_observations(rows, adapter="product")["Q01-priority"]["result"],
                          "blocked_adoption")
         rows[5]["facts"].update(measured_block_ms=1200, user_adoption_ref="decision-ref")
@@ -169,13 +170,13 @@ class ObservationTests(unittest.TestCase):
         with patch("q01_recheck.importlib.import_module", side_effect=ImportError("absent")):
             self.assertTrue(_collect("product", {}).get("unknowns"))
 
-    def test_nonshared_priority_needs_observed_delivery_and_max_block(self) -> None:
+    def test_nonshared_priority_needs_observed_delivery_and_measurements(self) -> None:
         rows = self.observations()
         rows[5]["facts"].pop("independent_delivery_observed")
         self.assertNotEqual(judge_observations(rows, adapter="probe-local")["Q01-priority"]["result"],
                             "passed")
         rows[5]["facts"]["independent_delivery_observed"] = True
-        rows[5]["facts"].pop("measured_block_ms")
+        rows[5]["facts"].pop("nonshared_priority_measurement")
         self.assertNotEqual(judge_observations(rows, adapter="probe-local")["Q01-priority"]["result"],
                             "passed")
 
@@ -226,8 +227,9 @@ class ObservationTests(unittest.TestCase):
             self.assertEqual(port.closed, [prepared])
 
     def test_guard_negative_cases_and_post_receipt_event(self) -> None:
-        for name in ("missing_hook_sent_zero", "inert_hook_sent_zero", "changed_api_sent_zero",
-                     "stale_ack_sent_zero", "policy_swap_sent_zero",
+        for name in ("startup_missing_guard_prompt_sent_zero", "startup_noop_guard_prompt_sent_zero",
+                     "startup_api_mismatch_prompt_sent_zero", "startup_stale_receipt_prompt_sent_zero",
+                     "runtime_policy_mismatch_sent_zero",
                      "post_receipt_violation_rejected", "upper_turn_unaffected",
                      "normal_permissions_restored"):
             rows = self.observations()

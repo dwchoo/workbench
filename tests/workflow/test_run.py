@@ -153,7 +153,7 @@ class WorkflowRuntimeTests(unittest.TestCase):
             ("success", "printf 'PASS\\n'; printf PASS > outcome.txt", "success", 0),
             ("nonzero", "printf 'ERROR\\n'; printf BAD > outcome.txt; exit 7", "failure", 7),
             ("criteria_fail", "printf 'WRONG\\n'; printf BAD > outcome.txt", "failure", 0),
-            ("insufficient", "printf PASS > outcome.txt", "indeterminate", 0),
+            ("complete_negative", "printf PASS > outcome.txt", "failure", 0),
         )
         for name, command, expected, exit_status in cases:
             with self.subTest(case=name):
@@ -573,7 +573,7 @@ class WorkflowRuntimeTests(unittest.TestCase):
             "rejected": ("invalid_assistant_response:bad_marker", "success", rejected, None),
             "timeout": ("worker_response_timeout", "success", timeout, None),
             "unverified": ("worker_response_unverified", "success", None, "mismatch"),
-            "conflict": ("worker_judgment_conflicts_with_evidence", "indeterminate", None, None),
+            "conflict": ("worker_judgment_conflicts_with_evidence", "failure", None, None),
             "delivery_unknown": ("analysis_delivery_unknown", "success", None, "unknown"),
             "delivery_rejected": ("analysis_delivery_rejected", "success", None, "rejected"),
         }

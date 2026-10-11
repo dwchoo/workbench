@@ -1833,7 +1833,7 @@
         "DVL-10"
       ],
       "required_evidence_level": "runtime",
-      "check": "Task 승인/활성/합의종료후처리·cancelled/approval_retired 새호출0·유효late저장,직접실행 command 종료요약뒤만료·최신pause/revoke",
+      "check": "Task 승인/활성/합의종료후처리·cancelled/approval_retired 새호출0·유효late저장,command 작업/자료 연결·종료요약뒤범위종료·최신pause/revoke(LG-D24)",
       "coverage_scope": "local_behavior; 해당 AC의 교차 ticket 실제 통합은 INT-runtime",
       "evidence_status": "pending"
     },
@@ -2004,7 +2004,7 @@
         "DVL-08"
       ],
       "required_evidence_level": "runtime",
-      "check": "Task 승인/종료후처리 및 직접 실행 지시 command provenance 확인; 단순user role/무관grant 허가 아님",
+      "check": "LG-D24: Task 승인/종료후처리 및 command 작업 범위·관련 source/ranges 연결 확인; 발화→command 일대일 증명 제외, 무관 작업 자료·notice의 새 권한 오인 거부",
       "coverage_scope": "smallest_decisive_experiment",
       "evidence_status": "pending",
       "blocks_on_not_passed": [
@@ -2459,7 +2459,7 @@
       "acceptance_id": "LG-AC-22",
       "owner_ticket": "DVL-10",
       "local_gate": "G-LG-22",
-      "observable_interface": "Task 승인/활성/합의종료후처리·cancelled/approval_retired 새호출0·유효late저장,직접실행 command 종료요약뒤만료·최신pause/revoke",
+      "observable_interface": "Task 승인/활성/합의종료후처리·cancelled/approval_retired 새호출0·유효late저장,command 작업/자료 연결·종료요약뒤범위종료·최신pause/revoke(LG-D24)",
       "final_integration_gate": "INT-runtime",
       "evidence_status": "pending"
     },
@@ -2580,5 +2580,27 @@
       "R5 10backend시험명시목록/Rootauditallowed·08freeze대조",
       "R6 p4publication/preparedrequest불변+제출record유지·새회신receipt"
     ]
-  }
+  },
+  "direction_amendments": [
+    {
+      "decision_id": "LG-D24",
+      "date": "2026-10-11",
+      "record": "../../../.workflow/dev-validation-log-retention/runs/work-log-boundary-20261011/decision.json",
+      "direction": "중요 로그는 작업 이해·재개를 위한 내용 기록. 개별 사용자 발화→command 일대일 증명은 제외하고 Task/command 작업 범위·자료/source/ranges·결과 연결을 검증한다. Task없는command 포함 유지.",
+      "affected": [
+        "LG-AC-22",
+        "Q01-origin",
+        "G-LG-22",
+        "DVL-05",
+        "DVL-08",
+        "DVL-09",
+        "DVL-10"
+      ],
+      "preserved": "기존 core 실행승인·pause·철회·no replay·DB-only·gate IDs/levels·dependencygraph·C2hold·raw미활성화",
+      "current_brief_sha256": "1cc03131686be73df30df83d8f80f42f7810f6b3e55fe4b3b85228c88be948e4",
+      "current_spec_sha256": "a8ceeef67ab0358f074827561f0fc658133467095fc940fae9b21e916f391da6",
+      "history": "원 p5 planning/bundle/requirements identity는 보존하고 이번 명시 방향 변경을 해당 조건의 후속 승인으로 적용한다. 기존 조사/실패/검증 결과를 새 기준의 pass로 재표시하지 않는다.",
+      "alignment_pending": "08 frozen 판정facts/probe와05/09/10 작업참조를bounded follow-up에서정렬·독립시험/리뷰/재동결. 문서수정은 Q01pass/09ready/rawactivation아님."
+    }
+  ]
 }

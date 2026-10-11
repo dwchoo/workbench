@@ -1,0 +1,171 @@
+{
+  "fixture_kind": "sanitized_recorded_c2_manager_esc_window",
+  "evidence_level": "fixture",
+  "provenance": {
+    "source_run_id": "block-c2-original-01",
+    "source_cell": "Cw16CompatMatrix.test_tmux_dash",
+    "source_step": "C2",
+    "source_step_status": "pass",
+    "source_artifact_sha256": "a2b3e7f285bd787b2ff1ec9598341bca796d463254888eb9cadf614e37c308fd",
+    "source_event_count": 522,
+    "source_window_event_count": 24,
+    "selected_event_count": 18,
+    "transform": "select manager Esc window; project necessary event fields and position-only snapshots; rebase monotonic ns to window start; tokenize request ID and matching output/frame sequence; omit PID, path, body and unrelated events",
+    "fresh_runtime": false
+  },
+  "events": [
+    {
+      "event": "esc_before",
+      "t_ns": 0,
+      "pane": "manager_omp",
+      "hex": "1b",
+      "outer_positions": {
+        "/hot": [
+          [
+            8,
+            4
+          ]
+        ],
+        "hotkeys": [
+          [
+            9,
+            6
+          ]
+        ]
+      },
+      "tmux_positions": {
+        "/hot": [
+          [
+            8,
+            4
+          ]
+        ],
+        "hotkeys": [
+          [
+            9,
+            6
+          ]
+        ]
+      }
+    },
+    {
+      "event": "harness_send_before",
+      "t_ns": 4606930,
+      "pane": "manager_omp",
+      "hex": "1b"
+    },
+    {
+      "event": "product_draw",
+      "t_ns": 385303726,
+      "manager_hotkeys": true
+    },
+    {
+      "event": "product_stdin_read",
+      "t_ns": 505412161,
+      "hex": "1b"
+    },
+    {
+      "event": "parser_feed",
+      "t_ns": 505506656,
+      "hex": "1b",
+      "events": []
+    },
+    {
+      "event": "parser_flush",
+      "t_ns": 594464957,
+      "events": [
+        "Passthrough:1b"
+      ]
+    },
+    {
+      "event": "product_input_send",
+      "t_ns": 594603254,
+      "pane": "manager_omp",
+      "hex": "1b",
+      "request_id": "esc-request-1"
+    },
+    {
+      "event": "omp_admit_before",
+      "t_ns": 594715256,
+      "pane": "manager_omp",
+      "pending": 0
+    },
+    {
+      "event": "omp_pty_flush",
+      "t_ns": 594801990,
+      "prefix_hex": "1b",
+      "removed": 1,
+      "dropped_delta": 0
+    },
+    {
+      "event": "omp_admit_after",
+      "t_ns": 594835110,
+      "pending": 0
+    },
+    {
+      "event": "backend_result",
+      "t_ns": 636485636,
+      "pane": "manager_omp",
+      "request_id": "esc-request-1",
+      "ok": true
+    },
+    {
+      "event": "omp_pty_output",
+      "t_ns": 649848893,
+      "sequences": [
+        1
+      ]
+    },
+    {
+      "event": "manager_display_frame",
+      "t_ns": 674923865,
+      "sequence": 1
+    },
+    {
+      "event": "manager_pane_applied",
+      "t_ns": 679058590,
+      "manager_hotkeys": false
+    },
+    {
+      "event": "product_draw",
+      "t_ns": 706950589,
+      "manager_hotkeys": false
+    },
+    {
+      "event": "harness_send_complete",
+      "t_ns": 1009612722,
+      "pane": "manager_omp",
+      "hex": "1b"
+    },
+    {
+      "event": "esc_after_settle",
+      "t_ns": 1014212890,
+      "pane": "manager_omp",
+      "hex": "1b"
+    },
+    {
+      "event": "esc_close_wait_after",
+      "t_ns": 1128123243,
+      "pane": "manager_omp",
+      "predicate_result": true,
+      "outer_positions": {
+        "/hot": [
+          [
+            14,
+            4
+          ]
+        ],
+        "hotkeys": []
+      },
+      "tmux_positions": {
+        "/hot": [
+          [
+            14,
+            4
+          ]
+        ],
+        "hotkeys": []
+      }
+    }
+  ]
+}

@@ -81,6 +81,22 @@ class ImportantLogStoreTests(unittest.TestCase):
         with self.assertRaises(ImportantLogStoreError):
             ImportantLogStore.open(self.root, db_uuid)
 
+    def test_outer_event_transaction_rolls_back_entry_and_stats(self):
+        with ImportantLogStore.create(self.root) as store:
+            subject = {"schemaVersion": 1, "kind": "command", "id": str(uuid4())}
+            entry = store.make_entry(subject, "event", [],
+                                     {"schemaVersion": 1, "facts": ["confirmed"],
+                                      "interpretations": [], "unknowns": []})
+            with self.assertRaisesRegex(RuntimeError, "after entry"):
+                with store.transaction():
+                    store.put_entry(entry)
+                    raise RuntimeError("after entry")
+            self.assertIsNone(store.get_entry(entry["entryId"]))
+            self.assertEqual(store._connection.execute("SELECT COUNT(*) FROM subject_stats").fetchone()[0], 0)
+            with store.transaction():
+                store.put_entry(entry)
+            self.assertEqual(store.get_entry(entry["entryId"]), entry)
+
     def test_corrupt_blob_and_unsafe_sidecar_fail_closed(self):
         with ImportantLogStore.create(self.root) as store:
             subject = {"schemaVersion": 1, "kind": "command", "id": str(uuid4())}

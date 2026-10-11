@@ -11,6 +11,16 @@ from workbench.storage.log_raw.store import (
     RawLogStore,
     StoreIntegrityError,
 )
+from workbench.storage.log_raw.segments import (
+    MAX_RECORD_PAYLOAD,
+    SEGMENT_COUNT,
+    SEGMENT_LIMIT,
+    SegmentIntegrityError,
+    ReadonlySegmentedRawStore,
+    SegmentedRawStore,
+)
+from workbench.storage.log_raw.reader import SegmentedRawReader
+from workbench.storage.log_raw.port import DisabledSegmentedRawPort
 
 __all__ = [
     "DEFAULT_PER_RUN_LIMIT",
@@ -20,4 +30,12 @@ __all__ = [
     "RawLogStatus",
     "RawLogStore",
     "StoreIntegrityError",
+    "MAX_RECORD_PAYLOAD",
+    "SEGMENT_COUNT",
+    "SEGMENT_LIMIT",
+    "SegmentIntegrityError",
+    "ReadonlySegmentedRawStore",
+    "SegmentedRawReader",
+    "SegmentedRawStore",
+    "DisabledSegmentedRawPort",
 ]

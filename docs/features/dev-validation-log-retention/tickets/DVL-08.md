@@ -12,7 +12,7 @@
 SPEC의 Q01 8개 item별 pass/fail/inconclusive/blocked_adoption를 먼저 고정하고 작은 runtime probe만 구현한다.
 기존 agent/parent 공개 API를 조사하고 isolated OMP+scripted provider로 한 turn/tool request를 판별한다. probe용 scoped fixture는 production agent 정의를 만들지 않는다.
 tools 악성 요청/sentinel, 확정 skill context/digest, typed result wrong ID/range,3회 context 증가, busy/check/end 우선순위,
-pause/restart/late/no replay 및 직접 user 실행/종료 후처리 origin을 각각 최소 사례로 시험한다.
+pause/restart/late/no replay 및 작업/자료 연결·종료 후처리를 각각 최소 사례로 시험한다(LG-D24). 개별 사용자 발화→command 일대일 증명을 위한 API 조사는 완료 선행조건에서 제외한다.
 full chat 저장/heuristic scraping/skill-only safety/별도 OMP 실행을 기존 agent라고 자동 인정하지 않는다.
 08은 SPEC의 동결 preflight/선정 상한을 probe-local로 판별하며09 제품 adapter를 선행 요구하지 않는다.
 03/09와 local envelope/budget 의미가 같다는 계약 시험과 배포 후 재판정은09의 별도 gate다.
@@ -50,7 +50,7 @@ Safety/provenance 위반은 failed. 관측 부족/원인불명 timeout은 inconc
 물리 작업 공간은 PLAN의 policy를 따르고 parallel writer는 별도 검증된 workspace/service namespace가 필요하다.
 write_scope_hint는 계획 추정이며 dispatch 때 baseline·실제 경로를 검증한다. 이 Markdown에 별도 graph/status를 만들지 않는다.
 중앙 PLAN/state/승인은 Root만 변경한다. Writer는 candidate delta/검사 evidence/남은 unknown을 반환한다.
-현재 미검증: 8개 runtime item 모두 현재 pending; direct-origin API도 미검증.
+현재 전체 8개 runtime 판정은 pending이다. LG-D24로 direct-origin API 미확인은 완료 선행조건에서 제외하고 작업 범위·자료 연결의 실제 검증으로 대체한다. 기존 국소 검증/미확인 이력을 전체 pass로 재표시하지 않는다.
 
 ## p2 리뷰 보강
 
@@ -66,9 +66,13 @@ Output8KiB와 실제 enforce output token ceiling/동일량 예약을 작은 run
 
 ## p4 요청별 guard와 판정 독립성 (P1·P8)
 
-Q01-tools는 공개 API의 실제 enforcement를 request/session/turn epoch/policy/one-use nonce에 결속해 확인한다.
-등록 ack나 모델 자기보고로 효력을 대신하지 않는다. Hook 누락·등록되나 미작동·API 변형·stale ack·check/send
-교체의 wrapper 음성은 전송0·즉시보호다. 실제 OMP 정상효력 관측도 필요하며 추가 모델 canary는 만들지 않는다.
+Q01-tools는 LG-D23의 시작 전 검증 경계로 공개 API의 실제 enforcement를 request/session/turn epoch/policy/one-use nonce에 결속한다.
+등록 ack나 모델 자기보고로 효력을 대신하지 않는다. 시작 전 검사 누락·미작동·API 변형·stale 결속은
+prompt/전송0으로 거부한다. Host는 실패한 private session을 폐기하고 신뢰하는 구성으로 한 번 재생성·재검증한다.
+다시 실패하면 요약만 보류하고 메인 작업을 계속한다. 이미 전송한 요약의 replay나 모델의 코드·정책 수정은 하지 않는다.
+실행 중 roster/model/policy/request 불일치의 전송 전 차단과 비허용 event 보호는 유지한다. 정상 시작 뒤 검사
+코드를 고의로 제거·무력화하는 시험은 완료 필수 조건에서 제외하고 기존 실패 기록을 보존한다.
+실제 OMP의 정상 시작·차단·복구 관측은 새로 수집하며 추가 모델 canary는 만들지 않는다.
 확인/장벽이 불가능한 route는 blocked_adoption으로 제한/대안을 보고한다. DV-D03 안전 예외를 임의 만들지 않는다.
 validator/projection/recheck 두 모드·product 포트/판정 음성 fixture를 모두 runtime 판정 전에 독립 검토·동결한다.
 09는 adapter만 주입한다. 판정 tool 변경은 Root의08 follow-up으로 독립 재동결 후8개를 새로 판정한다.
@@ -81,3 +85,7 @@ src/workbench/contracts/summary_compat_policy_v1.json의 비실행 canonical cor
 recheck와 함께 독립 검토·version/SHA-256 동결한다. 개발 probe/harness overlay는 별도이며 core를 약화하지 않는다.
 제품의 실수집기는14에서 이 동일 파일을 읽는다.08의 freeze는 제품 policy digest 대조의 원 근거이며
 제품이 개발 tools/기록을 실행 시 import/read하게 만들지 않는다. 경로 변경은 Root08 follow-up 재동결 대상이다.
+
+## LG-D24 방향 정렬
+
+Q01-origin의 gate ID·runtime 수준은 유지한다. 판정 facts와 probe/authority 참조를 작업 범위·관련 source/ranges·종료 처리 기준으로 정렬했고 독립 시험·리뷰와 192개 통합 회귀 검증을 마쳤다([국소 통합 기록](../../../../.workflow/dev-validation-log-retention/runs/work-log-alignment-20261011/phase-integration01.json)). 기존 core 실행 승인·Task grant/철회·pause, 무관 작업 자료 거부는 유지한다. 이전 `direct_command_bound` 판정·실패 기록은 보존한다. 현재 수집기 판정은 7개 통과, Q01-priority의 내부 lock 최대 점유 시간 미확인이다. 실제 우선순위 stage 1개를 재측정했고 전송 body 전체 byte 검사와 측정 한계 표시의 독립 시험 7개·관련 회귀 34개는 통과했다([현재 판정 기록](../../../../.workflow/dev-validation-log-retention/runs/work-log-alignment-20261011/current-eight-writer05/result.json)). 기존 전체 판정과 현재 재판독의 source·candidate를 구분하고 Q01-validator 통과나 DVL-09 진입을 허용하지 않는다. 새 tracing/hook/queue나 완료 기준 변경은 하지 않았다. 국소 검증을 전체 pass로 바꾸거나 이미 검증된 항목을 근거 없이 반복하지 않는다.

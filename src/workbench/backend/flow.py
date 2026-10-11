@@ -759,6 +759,16 @@ def accepts_keyword(function: Any, name: str) -> bool:
                or p.kind is p.VAR_KEYWORD for p in parameters)
 
 
+def explicitly_accepts_keyword(function: Any, name: str) -> bool:
+    """Only a named opt-in receives a private delivery object (not a generic **kwargs listener)."""
+    try:
+        parameter = inspect.signature(function).parameters.get(name)
+    except (TypeError, ValueError):
+        return False
+    return (parameter is not None
+            and parameter.kind in (parameter.KEYWORD_ONLY, parameter.POSITIONAL_OR_KEYWORD))
+
+
 class HandoffService:
     """Backend handling of ``to_worker``/``to_manager``; see the module docstring."""
 
@@ -1398,7 +1408,14 @@ class HandoffService:
         if entry.listener is None:
             return
         try:
-            entry.listener(event, entry.snapshot())
+            snapshot = entry.snapshot()
+            # Only a listener explicitly requesting the physical delivered message sees its payload.
+            # Status views and the outbox journal continue to contain metadata alone.
+            if (event == "delivered" and entry.message is not None
+                    and explicitly_accepts_keyword(entry.listener, "delivered_message")):
+                entry.listener(event, snapshot, delivered_message=entry.message)
+            else:
+                entry.listener(event, snapshot)
         except Exception:
             pass  # a listener never stops the lane
 

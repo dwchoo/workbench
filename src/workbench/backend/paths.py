@@ -63,6 +63,8 @@ class DataLayout:
     @property
     def raw_logs(self) -> Path: return self.root / "raw-logs"
     @property
+    def raw_v2(self) -> Path: return self.root / "raw-v2"
+    @property
     def important_logs(self) -> Path: return self.root / "important-logs"
     @property
     def pause_journal(self) -> Path: return self.root / "pause.jsonl"

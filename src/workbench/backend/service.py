@@ -26,6 +26,8 @@ manager session one ``backend_restarted`` notice (C-D71 (2)).
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
+from datetime import datetime, timezone
+import json
 import os
 from pathlib import Path
 import signal
@@ -33,6 +35,7 @@ import sys
 import threading
 import time
 import traceback
+import weakref
 from typing import Any, Mapping, Sequence
 from uuid import uuid4
 
@@ -76,6 +79,10 @@ from workbench.ipc.bridge_g3.mailbox import BridgeDisconnected, G3BridgeServer, 
 from workbench.policy.pause_automation.journal import PauseJournal
 from workbench.runtime.process_evidence import LinuxProcessProbe, ProcessRef
 from workbench.storage.log_raw.store import RawLogStore
+from workbench.storage.log_raw.segments import SegmentedRawStore
+from workbench.storage.log_raw.port import DisabledSegmentedRawPort, raw_query, raw_usage
+from workbench.storage.important_log import ActiveSubjectLog, ImportantLogCatalog, ImportantLogReader
+from workbench.contracts.logs_v1 import parse_subject_ref
 from workbench.tasks.repository import TaskRepository
 from workbench.terminal.shell_g2.prototype import ShellChoice, UnsafeShellState
 from workbench.workflow.run import TaskWorkflow
@@ -130,9 +137,12 @@ class Backend:
     """ui_v1 controller plus the backend-owned ports CW-06/CW-18/CW-19 consume."""
 
     def __init__(self, layout: DataLayout, plan: LaunchPlan, *, project_dir: str,
-                 environment: dict[str, str], boot_source: Any = read_boot_id):
+                 environment: dict[str, str], boot_source: Any = read_boot_id,
+                 important_writer_lease_timeout_s: float = 0.1,
+                 disabled_raw_store: SegmentedRawStore | None = None):
         self.layout, self.plan, self.project_dir = layout, plan, project_dir
         self.environment = dict(environment)
+        self.important_writer_lease_timeout_s = important_writer_lease_timeout_s
         self.phase, self.reason = "starting", None
         self.started_wall = time.time()
         self.ref = process_ref("backend", os.getpid())
@@ -178,6 +188,15 @@ class Backend:
         self.automation_loop: AutomationController | None = None
         self.repository: TaskRepository | None = None
         self.raw_logs: RawLogStore | None = None
+        self.segmented_raw_port = (DisabledSegmentedRawPort(disabled_raw_store)
+                                   if disabled_raw_store is not None else None)
+        self.important_catalog: ImportantLogCatalog | None = None
+        self.subject_log: ActiveSubjectLog | None = None
+        self.important_storage_status: dict[str, Any] = {"state": "not_open"}
+        self._important_capture_unknown = False
+        self._important_storage_at = 0.0
+        self._important_binding_lock = threading.Lock()
+        self._important_workflows: weakref.WeakSet[TaskWorkflow] = weakref.WeakSet()
         self.pause_journal: PauseJournal | None = None
         self.lifecycle_journal: LifecycleJournal | None = None
         self.ui: UiServer | None = None
@@ -377,6 +396,18 @@ class Backend:
         self.repository = TaskRepository(layout.tasks)
         os.chmod(layout.tasks, 0o600)  # SQLite journals inherit the database mode
         self.raw_logs = RawLogStore(layout.raw_logs)
+        try:
+            self.important_catalog = ImportantLogCatalog(
+                layout.important_logs, create=True,
+                writer_lease_timeout_s=self.important_writer_lease_timeout_s)
+            self.subject_log = ActiveSubjectLog(self.important_catalog)
+            self.important_storage_status = {"state": "ready", "active": self.important_catalog.active_uuid(),
+                                             **self._important_inventory()}
+        except Exception as exc:
+            # Important-log observation may fail independently of core execution.
+            self.important_catalog = None
+            self.subject_log = None
+            self.important_storage_status = {"state": "unavailable", "reason": type(exc).__name__}
         self.pause_journal = PauseJournal(layout.pause_journal)
         self.lifecycle_journal = LifecycleJournal(layout.lifecycle_journal)
         for path in (layout.bridge_socket, layout.ui_socket):
@@ -417,7 +448,9 @@ class Backend:
                 artifacts_root=ensure_private_dir(layout.workflow / "runs")),
             project_dir=self.project_dir, lifecycle=self.automation_loop, host_gate=host_gate,
             worker_session=self._worker_session_key,  # C-D70 (4): a new worker session gets the full Task again
-            hold=self._hold_reason, metadata=self._metadata_event)
+            hold=self._hold_reason, metadata=self._metadata_event,
+            subject_log=self.subject_log,
+            subject_capture_failure=self._mark_important_capture_unknown)
         self.handoffs.configure(policy=self.flow, active_task=self.flow.active_task)
         self.terminal = TerminalService(
             handoffs=self.handoffs, host_shell=self._host_shell_port, gate=host_gate,
@@ -429,7 +462,10 @@ class Backend:
             notify=self._worker_notice,  # C-D68 (8): checks and the completion notice
             # p27-cd70-02 Q3: the completion of a previous worker session's command goes to the manager until the
             # open Task reached the current worker session
-            notify_manager=lambda notice: self._notice(ActorRole.MANAGER, notice), done_target=self._done_target)
+            notify_manager=lambda notice: self._notice(ActorRole.MANAGER, notice), done_target=self._done_target,
+            subject_log=self.subject_log,
+            subject_capture_failure=self._mark_important_capture_unknown,
+            segmented_raw_port=self.segmented_raw_port)
         self.flow.terminal_runs = self.terminal.runs_for_task  # C-D69 (6)(d): the done report's commands run
         self.watchdog = self._make_watchdog()  # C-D70: status checks, stalled/restart/recovery notices
         # p27-cd70-02 Q2: a manager follow-up the worker accepted re-arms the status checks and worker_stalled
@@ -563,6 +599,7 @@ class Backend:
                 self.ui.broadcast(chunk)
         self._run_restart_jobs()  # C-D70 (3): the manager's restart_worker, on this loop (it owns the panes)
         self._poll_model_events()
+        self._refresh_important_storage()
         if self._metadata_failures and time.monotonic() >= self._metadata_retry_at:
             self._metadata_retry_at = time.monotonic() + METADATA_RETRY
             self._write_record()  # a durable write that succeeds again reopens admission
@@ -806,7 +843,53 @@ class Backend:
                 "boot": dict(self.boot), "shutdown": {"pending": self._shutdown_token is not None},
                 # CW-19 (additive): the start-up reconcile, the admission hold and the fault display
                 "startup": self._startup_view(), "holds": self.hold.view(), "faults": self._faults_view(),
-                "ui": dict(self.ui.stats) if self.ui else {}}
+                "ui": dict(self.ui.stats) if self.ui else {},
+                "important_logs": {**self.important_storage_status,
+                                   "summary": {"state": "unknown", "latencySeconds": None,
+                                               "newInfo": None, "usage": None,
+                                               "lastHealthy": None}}}
+
+    def _important_inventory(self) -> dict[str, Any]:
+        """The actual catalog file count; failed observation is never one DB."""
+        layout = getattr(self, "layout", None)
+        result = (ImportantLogReader(layout.important_logs).status()
+                  if layout is not None else {"complete": False, "unavailable": [{"reason": "not_observed"}]})
+        if not result.get("complete"):
+            return {"databaseCount": None, "totalPhysicalBytes": None,
+                    "cleanupNeeded": None, "countState": "unknown",
+                    "countUnavailable": result.get("unavailable") or []}
+        return {"databaseCount": result["databaseCount"],
+                "totalPhysicalBytes": result["physicalBytes"],
+                "cleanupNeeded": result["cleanupNeeded"], "countState": "known"}
+
+    def important_archive_close(self, kind: str, identity: str) -> dict[str, Any]:
+        sink = self.subject_log
+        if sink is None:
+            raise RuntimeError("important-log storage unavailable")
+        subject = {"schemaVersion": 1, "kind": kind, "id": identity}
+        sink.archive_close(subject, at=datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+                           user_confirmed=True)
+        return {"state": "closed", "subject": subject,
+                "note": "archival closure does not change core execution or task status"}
+
+    def important_delete_db(self, identity: str) -> dict[str, Any]:
+        catalog = self.important_catalog
+        if catalog is None:
+            raise RuntimeError("important-log storage unavailable")
+        result = catalog.prepare_and_delete_archive(identity)
+        self.important_storage_status = {**self.important_storage_status, **self._important_inventory()}
+        return result
+
+    def raw_query(self, kind: str, identity: str, offset: int, limit: int) -> dict[str, Any]:
+        """Read one bounded page through the existing optional singleton."""
+        try:
+            return raw_query(self.layout.root, kind, identity, offset=offset, limit=limit,
+                             segmented=self.segmented_raw_port)
+        except (OSError, ValueError, RuntimeError) as exc:
+            return {"status": "unavailable", "reason": type(exc).__name__}
+
+    def raw_status(self) -> dict[str, Any]:
+        return raw_usage(self.layout.root, segmented=self.segmented_raw_port)
 
     def _startup_view(self) -> dict[str, Any] | None:
         startup = self.startup
@@ -825,6 +908,66 @@ class Backend:
         """C-AC-17/24/28: what failed and what still runs (execution and observation continue)."""
         return {"metadata": self._metadata_view(), "record_error": self._record_error,
                 "model": self._model_view(), "raw_log": self._raw_log_view()}
+
+    def _refresh_important_storage(self) -> None:
+        """Observe storage health every 30 seconds without changing core admission."""
+        now = time.monotonic()
+        if now - self._important_storage_at < 30:
+            return
+        self._important_storage_at = now
+        catalog = self.important_catalog
+        try:
+            if catalog is None:
+                catalog = ImportantLogCatalog(
+                    self.layout.important_logs, create=True,
+                    writer_lease_timeout_s=getattr(self, "important_writer_lease_timeout_s", 0.1))
+                sink = ActiveSubjectLog(catalog)
+                lock = self._important_sink_lock()
+                with lock:
+                    self.important_catalog = catalog
+                    self.subject_log = sink
+                    if self.flow is not None:
+                        self.flow._subject_log = sink
+                    if self.terminal is not None:
+                        self.terminal._subject_log = sink
+                    for workflow in self._important_workflows:
+                        workflow.subject_log = sink
+            sink_failure = self.subject_log.last_failure if self.subject_log is not None else None
+            failed = sink_failure is not None or catalog.last_status["state"] not in ("unknown", "ok", "healthy")
+            recovery = catalog.recovery_probe(force=True) if failed else None
+            maintenance = (catalog.maintenance_step() if recovery is None or recovery.get("state") == "healthy"
+                           else None)
+            health = catalog.health_snapshot()
+            active = health["active"]
+            maintenance_state = None if maintenance is None or maintenance.get("state") == "ok" else maintenance["state"]
+            capture_unknown = bool(
+                getattr(self, "_important_capture_unknown", False)
+                or (self.flow and self.flow.subject_capture_unknown)
+                or (getattr(self, "terminal", None) and self.terminal.subject_capture_unknown))
+            self.important_storage_status = {
+                "state": ("capture_unknown" if sink_failure or capture_unknown else maintenance_state or
+                          (recovery or {}).get("state", "ready")),
+                "active": active["dbUuid"], "logicalLiveBytes": active["logicalLiveBytes"],
+                "physicalBytes": active["totalBytes"], "cleanupCandidates": active["cleanupCandidates"],
+                "archiveCount": health["archiveCount"], "lastQuickCheck": active["lastQuickCheck"],
+                **self._important_inventory(),
+                "metadataOutsideBudget": health["operatingMetadata"],
+                "subjectCaptureUnknown": capture_unknown,
+                "recovery": recovery, "maintenance": maintenance, "error": sink_failure}
+        except Exception as exc:
+            self.important_storage_status = {"state": "unavailable", "reason": type(exc).__name__}
+
+    def _important_sink_lock(self) -> threading.Lock:
+        # Also supports the reduced backend used by storage-fault probes.
+        lock = getattr(self, "_important_binding_lock", None)
+        if lock is None:
+            lock = threading.Lock()
+            self._important_binding_lock = lock
+            self._important_workflows = weakref.WeakSet()
+        return lock
+
+    def _mark_important_capture_unknown(self) -> None:
+        self._important_capture_unknown = True
 
     def _model_view(self) -> dict[str, Any] | None:
         return {role: dict(state) for role, state in self._model.items()} or None
@@ -1280,6 +1423,8 @@ class Backend:
         """Bridge tool requests: the worker's ``terminal`` (C-D68) waits for its command; the manager's
         ``restart_worker`` and ``workbench_status`` (C-D70) are answered here; the rest is handoffs."""
         tool = request.get("tool")
+        if tool == "workbench_logs":
+            return self._workbench_logs_tool(peer, request)
         watchdog = getattr(self, "watchdog", None)  # a backend built without __init__ (tests) has none
         if watchdog is not None and getattr(peer.role, "value", peer.role) == "worker" \
                 and tool in (TERMINAL_TOOL, "to_manager"):
@@ -1294,6 +1439,66 @@ class Backend:
                 return terminal.abandon(peer.role, request)
             return terminal.handle(peer.role, request)
         return self.handoffs.handle(peer.role, request)
+
+    def _workbench_logs_tool(self, peer: Any, request: dict[str, Any]) -> dict[str, Any]:
+        """Read-only bridge port; mutation never enters through an agent tool."""
+        parsed = HandoffService._parse(peer.role, request)
+        if isinstance(parsed, dict):
+            return parsed
+        args = parsed.args
+        base = {"action", "subject_kind", "subject_id", "limit", "page"}
+        if (type(args) is not dict or not base <= set(args)
+                or set(args) - base - {"offset", "length"}
+                or args["action"] not in ("status", "list", "show", "raw", "raw-status")):
+            return rejected("invalid_arguments")
+        action, limit, page = args["action"], args["limit"], args["page"]
+        if action in ("raw", "raw-status"):
+            if limit is not None or page is not None:
+                return rejected("invalid_arguments")
+            if action == "raw-status":
+                if args["subject_kind"] is not None or args["subject_id"] is not None:
+                    return rejected("invalid_arguments")
+                return {"status": "ok", "data": raw_usage(self.layout.root, segmented=self.segmented_raw_port)}
+            if args["subject_kind"] not in ("run", "command"):
+                return rejected("invalid_arguments")
+            offset, length = args.get("offset"), args.get("length")
+            if (type(offset) is not int or offset < 0 or type(length) is not int
+                    or not 1 <= length <= 128 * 1024):
+                return rejected("invalid_arguments")
+            try:
+                result = raw_query(self.layout.root, args["subject_kind"], args["subject_id"],
+                                   offset=offset, limit=length, segmented=self.segmented_raw_port)
+            except (OSError, ValueError, RuntimeError) as exc:
+                return {"status": "unavailable", "reason": type(exc).__name__}
+            answer = {"status": "ok" if result.get("status") == "available" else "partial", "data": result}
+            if len(json.dumps(answer, ensure_ascii=False).encode("utf-8")) > 900_000:
+                return {"status": "unavailable", "reason": "bridge_response_bound"}
+            return answer
+        if limit is not None and (type(limit) is not int or not 1 <= limit <= 10):
+            return rejected("invalid_arguments")
+        if page is not None and (type(page) is not str or not 1 <= len(page) <= 512):
+            return rejected("invalid_arguments")
+        if action != "show" and (args["subject_kind"] is not None or args["subject_id"] is not None):
+            return rejected("invalid_arguments")
+        if action == "status" and (limit is not None or page is not None):
+            return rejected("invalid_arguments")
+        try:
+            reader = ImportantLogReader(self.layout.important_logs)
+            if action == "status":
+                result = reader.status()
+            elif action == "list":
+                result = reader.list_subjects(limit=limit or 10, after=page)
+            else:
+                subject = parse_subject_ref({"schemaVersion": 1, "kind": args["subject_kind"],
+                                             "id": args["subject_id"]})
+                result = reader.show(subject, limit=limit or 10, after=page)
+        except (OSError, ValueError, RuntimeError) as exc:
+            return {"status": "unavailable", "reason": type(exc).__name__}
+        answer = {"status": "ok" if result.get("complete") else "partial", "data": result}
+        if len(json.dumps(answer, ensure_ascii=False).encode("utf-8")) > 900_000:
+            return {"status": "unavailable", "reason": "bridge_response_bound",
+                    "detail": "Use the CLI to inspect this page"}
+        return answer
 
     def _bridge_peer_gone(self, peer: Any) -> None:
         """A bridge session ended (closed or replaced): its waiting terminal calls are dropped (review-02 P3 (3))."""
@@ -1748,10 +1953,19 @@ class Backend:
 
     def _make_workflow(self, repository: TaskRepository) -> TaskWorkflow:
         """Runs on the task-flow runner thread: its own mailbox on the shared bridge."""
-        return TaskWorkflow(repository, TaskMailbox(repository, self.bridge),
-                            worker_port=G3WorkerResponsePort(self.bridge),
-                            automation_source=self._automation_port,
-                            raw_store=self.raw_logs)  # CW-19 (C-D71 (5)): run raw logs under the project cap
+        with self._important_sink_lock():
+            automation_loop = getattr(self, "automation_loop", None)
+            workflow = TaskWorkflow(repository, TaskMailbox(repository, self.bridge),
+                                    worker_port=G3WorkerResponsePort(self.bridge),
+                                    automation_source=self._automation_port,
+                                    raw_store=self.raw_logs,
+                                    segmented_raw_port=getattr(self, "segmented_raw_port", None),
+                                    metadata_admission=None if automation_loop is None else automation_loop.metadata,
+                                    metadata_outcome=self._metadata_event,
+                                    subject_log=getattr(self, "subject_log", None),
+                                    subject_capture_failure=self._mark_important_capture_unknown)
+            self._important_workflows.add(workflow)
+            return workflow
 
     def set_automation_status(self, status: dict[str, Any]) -> None:
         """CW-18 publishes AutomationState/run status here; pushed to the UI as state."""

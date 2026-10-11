@@ -32,7 +32,7 @@ Required item unknown이면 실패 원인/한계와 evidence를 남기고 affect
 
 ## 구현 경계·안전
 
-개발 Q01 근거 stale/failed 또는 direct command origin/종료 후처리 권한 불명이면 해당 구현 확대를 중단한다. 제품 운영의 OMP version-only 실행 예외는 SPEC §8.1이며 개발 gate를 완화하지 않는다. 입력/요청 ID/skill 변경으로 no replay를 우회하지 않는다.
+개발 Q01 근거 stale/failed 또는 command 작업 범위·관련 자료 연결/종료 후처리가 불명이면 해당 구현 확대를 중단한다. LG-D24로 개별 사용자 발화→command 일대일 증명은 요구하지 않는다. 제품 운영의 OMP version-only 실행 예외는 SPEC §8.1이며 개발 gate를 완화하지 않는다. 입력/요청 ID/skill 변경으로 no replay를 우회하지 않는다.
 기존 dirty/new 사용자 파일과 legacy log/DB/core 승인 증거를 보존한다.
 사용자/실제 Workbench·DB·socket·tmux/herdr를 대상으로 시험하거나 정리하지 않는다.
 새 제품 agent 정의/상주 OMP/독립 Python 모델, Phase2, commit·게시·배포는 범위 밖이다.

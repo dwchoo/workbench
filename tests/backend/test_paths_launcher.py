@@ -302,7 +302,7 @@ class IsolationLaunchTests(unittest.TestCase):
         # CW-18: the repository ships the two role skills and (C-D70 (7)) the manager's recovery skill; each role's
         # allow-list is its own.
         self.assertEqual(launcher.workbench_skill_names(launcher.default_skills_dir()),
-                         ("to-manager", "to-worker", "workbench-recovery"))
+                         ("important-log-summary", "to-manager", "to-worker", "workbench-recovery"))
         self.assertEqual(launcher.role_skill_allowlist("manager"), ("to-worker", "workbench-recovery"))
         self.assertEqual(launcher.role_skill_allowlist("worker"), ("to-manager",))
 

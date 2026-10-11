@@ -83,6 +83,7 @@ from workbench.storage.log_raw.segments import SegmentedRawStore
 from workbench.storage.log_raw.port import DisabledSegmentedRawPort, raw_query, raw_usage
 from workbench.storage.important_log import ActiveSubjectLog, ImportantLogCatalog, ImportantLogReader
 from workbench.contracts.logs_v1 import parse_subject_ref
+from workbench.backend.summary_adapter import SDKSummaryAdapter
 from workbench.tasks.repository import TaskRepository
 from workbench.terminal.shell_g2.prototype import ShellChoice, UnsafeShellState
 from workbench.workflow.run import TaskWorkflow
@@ -475,6 +476,8 @@ class Backend:
         # The role is the peer's authenticated hello role, never a frame field.
         self.bridge.set_tool_handler(self._tool_request, undelivered=self._tool_result_undelivered,
                                      peer_gone=self._bridge_peer_gone)
+        # DVL-09 prepares a port only. DVL-10 owns scheduling and durable admission.
+        self.summary_adapter = SDKSummaryAdapter(self.bridge)
         self.ui = UiServer(layout.ui_socket, self)
         self._write_record()
         self._shell_env = shell_environment(self.environment)

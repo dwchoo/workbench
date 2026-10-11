@@ -393,7 +393,7 @@ class ImportantLogCatalog:
                 "prune": sweep, "rollover": rollover}
 
     def append(self, subject: SubjectRef, kind: str, sources: list[SourceRange], body: dict,
-               *, now: datetime | None = None) -> dict[str, Any]:
+               *, now: datetime | None = None, source_gaps: list[dict] | None = None) -> dict[str, Any]:
         """One result and at most one rollover for a new write."""
         now = now or datetime.now(timezone.utc)
         item = parse_subject_ref(subject)
@@ -411,7 +411,7 @@ class ImportantLogCatalog:
                     if pre["diskFreeBytes"] < _MIN_FREE_BYTES + _MAX_TRANSACTION_BYTES:
                         self.last_status = {"state": "physical_free", "pre": pre}
                         return self.last_status
-                    entry = store.make_entry(item, kind, sources, body)
+                    entry = store.make_entry(item, kind, sources, body, source_gaps=source_gaps)
                     store.put_entry(entry)
                     committed_entry = entry["entryId"]
                     self.last_status = {"state": "ok", "entry": entry, "pre": pre,

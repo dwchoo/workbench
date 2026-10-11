@@ -102,7 +102,7 @@ def _repository_root() -> Path:
 
 
 def default_bridge_extension() -> Path:
-    return _repository_root() / "omp_bridge" / "g3" / "bridge.ts"
+    return _repository_root() / "omp_bridge" / "g3" / "entry.ts"
 
 
 def default_isolation_overlay() -> Path:

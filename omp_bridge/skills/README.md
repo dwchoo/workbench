@@ -29,3 +29,9 @@ it is agent-only.
 
 The backend start-up isolation check reports any loaded skill that is not in
 this directory (after the role filter) as a leak.
+
+`important-log-summary` is an internal SDK-session asset. The host supplies its
+exact bytes only to the request-specific restricted `task@Manager` summary
+session. It is not added to the ordinary Manager or Worker skill roster. The
+sole `db_summary_save` tool and startup checks live in the product adapter;
+the skill text itself grants no tool or repair authority.

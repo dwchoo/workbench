@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import net from "node:net";
 import { parseControlEnvelope } from "../contract/v1.ts";
+import { dispatchSummarySDK } from "./summary_sdk.ts";
 
 type Role = "manager" | "worker";
 type Frame = Record<string, unknown>;
@@ -506,7 +507,7 @@ export function terminalTimeoutMs(params?: unknown): number {
 	return TERMINAL_WAIT_S * 1000 + TERMINAL_RESULT_SLACK_MS;
 }
 
-export default function workbenchG3Extension(pi: any): void {
+export default function workbenchG3Extension(pi: any, summarySDK?: Record<string, any>): void {
 	const socketPath = env("WORKBENCH_G3_BRIDGE_SOCKET");
 	const role = env("WORKBENCH_G3_ROLE") as Role;
 	const token = env("WORKBENCH_G3_TOKEN");
@@ -530,6 +531,7 @@ export default function workbenchG3Extension(pi: any): void {
 	let reconnectTimer: ReturnType<typeof setTimeout> | undefined;
 	let reconnectAttempt = 0;
 	let agentActive = false;
+	let summaryActive = false;
 	let activeDelivery: DeliveryEvidence | undefined;
 	let turnSequence = 0;
 	let abortTargetTurn: number | undefined;
@@ -723,6 +725,28 @@ export default function workbenchG3Extension(pi: any): void {
 			acknowledge(client, sessionId, sessionGeneration, requestId, status, extra);
 		if (frame.kind === "probe" && typeof frame.requestId === "string") {
 			ack(frame.requestId, "state", { state: snapshot() });
+			return;
+		}
+		if (frame.kind === "summary_request" && typeof frame.requestId === "string") {
+			if (role !== "manager" || summaryActive || paused || !isMessageSafe()) {
+				ack(frame.requestId, "deferred", { sent: false, protected: false,
+					reason: role !== "manager" ? "role_not_allowed" : paused ? "paused" : "parent_busy" });
+				return;
+			}
+			summaryActive = true;
+			const requestEpoch = pauseEpoch;
+			try {
+				// DVL-14 supplies the operational parent descriptor observer. An
+				// unavailable observer is unknown, never reconstructed from settings.
+				const result = await dispatchSummarySDK({ role, context, prepared: frame.summary, sdk: summarySDK,
+					writer: frame.writer, observeMetadata: () => context?.workbenchSummaryMetadata?.(),
+					current: () => isCurrentConnection(client, sessionId, sessionGeneration)
+						&& !paused && pauseEpoch === requestEpoch });
+				if (result.receipt) pi.appendEntry("workbench-summary-receipt", result.receipt);
+				ack(frame.requestId, result.status, result);
+			} catch {
+				ack(frame.requestId, "unknown", { sent: true, protected: false, reason: "summary_outcome_unknown" });
+			} finally { summaryActive = false; }
 			return;
 		}
 		if (frame.kind === "pause" && typeof frame.requestId === "string") {

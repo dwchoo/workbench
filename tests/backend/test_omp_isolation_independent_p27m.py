@@ -1036,7 +1036,7 @@ class RealEntrypointIsolationTests(RealEntrypointBase):
             self.assertEqual(len(configs), 2, argv)
             self.assertEqual(configs[0], str(STATIC_OVERLAY))
             self.assertIn("--no-extensions", argv)
-            self.assertEqual(argv[argv.index("--extension") + 1], str(REPO / "omp_bridge" / "g3" / "bridge.ts"))
+            self.assertEqual(argv[argv.index("--extension") + 1], str(REPO / "omp_bridge" / "g3" / "entry.ts"))
             for forbidden in FORBIDDEN_ARGS:
                 self.assertFalse([a for a in argv if a == forbidden or a.startswith(forbidden + "=")], argv)
             assert_required_isolation_args(self, argv)

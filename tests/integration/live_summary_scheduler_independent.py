@@ -110,6 +110,31 @@ class SchedulerTransport:
         return result
 
 
+def collect_scenario_observation(name,status,control,requests,posts,read_journal,read_sdk):
+    """Keep a pre-dispatch refusal distinct from an observed SDK outcome."""
+    outcome={"status":status,"control":control}
+    if name not in requests:
+        case_posts=[row for row in posts if row.get("case")==name]
+        if (status.get("state") in {"deferred","not_sent"}
+                and status.get("requestId") is None and status.get("reason")
+                and not case_posts):
+            outcome.update(observation="predispatch_deferred",provider_posts=0)
+            return outcome
+        raise AssertionError(f"missing_reserved_request:{name}")
+    request=requests[name]
+    outcome["journal"]=read_journal(request["requestId"])
+    outcome["sdk"]=read_sdk(name)
+    return outcome
+
+
+def mark_dependent_scenarios_not_run(observed,cases,index):
+    name=cases[index]
+    observed.update(passed=False,blocked_case=name,incomplete_reason="predispatch_deferred")
+    for dependent in cases[index+1:]:
+        observed["outcomes"][dependent]={"observation":"not_run",
+            "reason":"dependent_prior_predispatch_defer","depends_on":name}
+
+
 def scheduler_composition(output):
     output.mkdir(parents=True,exist_ok=False,mode=0o700)
     extension=output/"owner-scheduler-extension.ts"
@@ -173,10 +198,16 @@ def scheduler_composition(output):
                 assert attempt["plumbing_verified"] and attempt["real_model_contract"]=="unverified"
                 observed["recovery_attempt"]=attempt
             transport.case=name
-            outcomes[name]={"status":tick(due),"control":control()}
+            status=tick(due)
             with factory() as j:
-                request=phase.requests[name];outcomes[name]["journal"]=j.get_summary_request(request["requestId"])
-            outcomes[name]["sdk"]=json.loads((phase.private/f"result-{name}.json").read_text())
+                outcomes[name]=collect_scenario_observation(name,status,control(),phase.requests,phase.posts,
+                    j.get_summary_request,lambda case:json.loads((phase.private/f"result-{case}.json").read_text()))
+            if outcomes[name].get("observation")=="predispatch_deferred":
+                mark_dependent_scenarios_not_run(observed,cases,index)
+                observed.update(frames=transport.frames,control_incidents=compat.incidents,
+                    producer={"observedBytes":command.summary_observed,"rawBytes":len(logpath.read_bytes()),
+                        "rawSha256":sha256(logpath.read_bytes()).hexdigest(),"taskBoundRevision":command.summary_revision,"summaryFailed":command.summary_failed})
+                return observed
             if name=="task_positive":assert outcomes[name]["journal"]["state"]=="stored"
             elif name.startswith("contract") and name!="contract_then_bash":
                 assert outcomes[name]["sdk"]["reason"]=="invalid_result",outcomes[name]
@@ -259,11 +290,16 @@ def main():
     assert identity["root_uid"]==os.getuid() and identity["root_mode"]=="0o700"
     (out/"candidate-identity.json").write_text(json.dumps(identity,indent=2))
     actual=scheduler_composition(out/"scheduler-sdk")
-    frozen=execute(out/"current-product8")
-    assert frozen["passed"],frozen["verdicts"]
-    result={"passed":actual["passed"] and frozen["passed"],"actual_scheduler":str(out/"scheduler-sdk/result.json"),
-        "fresh_product8":str(out/"current-product8/result.json"),"same_fresh_invocation":True,"metadata_supplier":"controlled14 fixture; operating metadata/output semantics remain unknown","remaining_owned":[]}
+    frozen=None
+    if actual["passed"]:
+        frozen=execute(out/"current-product8")
+        assert frozen["passed"],frozen["verdicts"]
+    result={"passed":actual["passed"] and frozen is not None and frozen["passed"],"actual_scheduler":str(out/"scheduler-sdk/result.json"),
+        "fresh_product8":str(out/"current-product8/result.json") if frozen is not None else None,
+        "fresh_product8_status":"executed" if frozen is not None else "not_run",
+        "same_fresh_invocation":True,"metadata_supplier":"controlled14 fixture; operating metadata/output semantics remain unknown","remaining_owned":[]}
     (out/"result.json").write_text(json.dumps(result,ensure_ascii=False,indent=2));print(json.dumps(result,ensure_ascii=False))
+    if not result["passed"]:raise SystemExit(2)
 
 
 if __name__=="__main__":main()

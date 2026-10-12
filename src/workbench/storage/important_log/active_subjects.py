@@ -2,13 +2,15 @@
 
 from __future__ import annotations
 
+from contextlib import ExitStack
+import json
 from datetime import datetime, timezone
 import errno
 from typing import Any, Callable, Mapping
 
-from workbench.contracts.logs_v1 import parse_subject_ref
+from workbench.contracts.logs_v1 import canonical_json, parse_summary_request, parse_subject_ref
 from .catalog import ImportantLogCatalog, _storage_reason
-from .lifecycle import SubjectLifecycle, _CLOSE_CALL_REASONS, _StaleFlowEvent
+from .lifecycle import SubjectLifecycle, _CLOSE_CALL_REASONS, _StaleFlowEvent, authorize_summary_sources
 from .maintenance import ImportantLogMaintenance
 from .store import ImportantLogStore, ImportantLogStoreError
 
@@ -249,12 +251,102 @@ class ActiveSubjectLog:
                 return {"allowed": False, "reason": "no_matching_task_grant"}
             if not closing_event and state["core_status"] == "closed":
                 return {"allowed": False, "reason": "task_closed"}
-            return {"allowed": True, "authorization_ref": ref, "revision": state["grant_revision"]}
-        if not state["direct_origin_ref"] or state["direct_expired"]:
-            return {"allowed": False, "reason": "no_direct_command_origin"}
+            return {"allowed": True, "authorization_ref": ref,
+                    "authorization_epoch": state["event_cursor"], "revision": state["grant_revision"]}
+        if state["direct_expired"]:
+            return {"allowed": False, "reason": "command_summary_scope_expired"}
         if not closing_event and state["command_end_status"] is not None:
             return {"allowed": False, "reason": "command_already_ended"}
         if closing_event and state["command_end_status"] != "exited":
             return {"allowed": False, "reason": "command_end_unknown"}
-        return {"allowed": True, "authorization_ref": state["direct_origin_ref"],
-                "authorization_epoch": state["direct_origin_epoch"]}
+        starts = set()
+        with self.catalog._lease() as fd:
+            pointer = self.catalog._current(fd)
+            with ExitStack() as stack:
+                stores = [stack.enter_context(ImportantLogStore.open(self.catalog.directory, pointer["active"], readonly=True))]
+                stores += [stack.enter_context(self.catalog._archive_source(fd, pointer, identity))
+                           for identity in pointer["archives"]]
+                for store in stores:
+                    if _table(store._connection, "subject_events_v1"):
+                        starts.update(tuple(row) for row in store._connection.execute("""SELECT e.event_key,e.source_id
+                            FROM subject_events_v1 e JOIN subject_commands_v1 c
+                            ON c.command_id=e.subject_id AND c.task_id IS NULL
+                            WHERE e.subject_kind='command' AND e.subject_id=?
+                              AND e.event_kind='terminal_started'""", (item["id"],)))
+        if len(starts) != 1:
+            return {"allowed": False, "reason": "no_confirmed_command_start"}
+        key, ref = starts.pop()
+        try:
+            epoch = int(key.removeprefix("terminal:"))
+        except ValueError:
+            return {"allowed": False, "reason": "command_start_epoch_unknown"}
+        if key != f"terminal:{epoch}" or epoch < 1:
+            return {"allowed": False, "reason": "command_start_epoch_unknown"}
+        return {"allowed": True, "authorization_ref": ref,
+                "authorization_epoch": epoch, "command_id": item["id"]}
+
+    def authorize_summary_request(self, request: Mapping[str, Any], **flags: Any) -> dict[str, Any]:
+        parsed = parse_summary_request(dict(request))
+        decision = self.authority(parsed["subject"], **flags)
+        if not decision["allowed"]:
+            return decision
+        if (parsed["authorizationRef"] != decision["authorization_ref"]
+                or parsed["authorizationEpoch"] != decision["authorization_epoch"]
+                or (parsed["subject"]["kind"] == "task" and parsed["revision"] != decision["revision"])):
+            return {"allowed": False, "reason": "work_scope_authorization_mismatch"}
+        with self.catalog._lease() as fd:
+            pointer = self.catalog._current(fd)
+            with ExitStack() as stack:
+                stores = [stack.enter_context(ImportantLogStore.open(self.catalog.directory, pointer["active"], readonly=True))]
+                stores += [stack.enter_context(self.catalog._archive_source(fd, pointer, identity))
+                           for identity in pointer["archives"]]
+                return authorize_summary_sources(parsed, decision, [store._connection for store in stores])
+
+    def summary_entries_page(self, cursor: dict[str, Any] | None, *, limit: int = 32) -> dict[str, Any]:
+        """Append-order references for the scheduler; no persisted body copies."""
+        if type(limit) is not int or not 1 <= limit <= 32:
+            raise ValueError("summary discovery page must be 1..32")
+        with self.catalog._lease() as fd:
+            pointer = self.catalog._current(fd)
+            identities = [*pointer["archives"], pointer["active"]]
+            identity = identities[0] if cursor is None else cursor["db_uuid"]
+            if identity not in identities:
+                raise ImportantLogStoreError("summary discovery cursor DB unavailable")
+            after = 0 if cursor is None else cursor["rowid"]
+            if type(after) is not int or after < 0:
+                raise ValueError("invalid summary cursor")
+            context = (ImportantLogStore.open(self.catalog.directory, identity, readonly=True)
+                       if identity == pointer["active"] else self.catalog._archive_source(fd, pointer, identity))
+            with context as store:
+                if cursor is not None and after:
+                    previous = store._connection.execute("SELECT entry_id FROM entries WHERE rowid=?", (after,)).fetchone()
+                    if previous is None or previous[0] != cursor.get("entry_id"):
+                        after = 0  # prune may recycle SQLite rowids; reindex only references
+                rows = store._connection.execute("SELECT rowid,entry_id,kind,subject_kind,subject_id,sources_json,source_gaps_json,recorded_at FROM entries WHERE rowid>? ORDER BY rowid LIMIT ?",
+                                                 (after, limit)).fetchall()
+                entries = [{"cursor": row["rowid"], "entry": {"entryId": row["entry_id"],
+                    "kind": row["kind"], "subject": {"schemaVersion": 1, "kind": row["subject_kind"], "id": row["subject_id"]},
+                    "sources": json.loads(row["sources_json"]), "sourceGaps": json.loads(row["source_gaps_json"]),
+                    "recordedAt": row["recorded_at"]}} for row in rows]
+            next_cursor = {"db_uuid": identity, "rowid": rows[-1][0] if rows else after}
+            if rows:
+                next_cursor["entry_id"] = rows[-1]["entry_id"]
+            elif cursor is not None and after:
+                next_cursor["entry_id"] = cursor["entry_id"]
+            if not rows and identity != pointer["active"]:
+                next_cursor = {"db_uuid": identities[identities.index(identity) + 1], "rowid": 0}
+            return {"entries": entries, "cursor": next_cursor}
+
+    def summary_entry(self, entry_id: str) -> dict[str, Any] | None:
+        with self.catalog._lease() as fd:
+            pointer = self.catalog._current(fd)
+            with ImportantLogStore.open(self.catalog.directory, pointer["active"], readonly=True) as store:
+                entry = store.get_entry(entry_id)
+                if entry is not None:
+                    return entry
+            for identity in reversed(pointer["archives"]):
+                with self.catalog._archive_source(fd, pointer, identity) as store:
+                    entry = store.get_entry(entry_id)
+                    if entry is not None:
+                        return entry
+        return None

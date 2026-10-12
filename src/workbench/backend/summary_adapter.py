@@ -44,6 +44,11 @@ class SourcePiece:
     text: str
     kind: str = "terminal"
     sequence: int = 0
+    ranges: tuple[dict[str, Any], ...] = ()
+
+    @property
+    def source_ranges(self) -> tuple[dict[str, Any], ...]:
+        return self.ranges or (self.range,)
 
 
 def _resolved_metadata(value: Mapping[str, Any] | None) -> dict[str, Any]:
@@ -105,15 +110,26 @@ def prepare_summary(request: dict[str, Any], pieces: Sequence[SourcePiece], *,
     expected = {canonical_json(span) for span in item["sources"]}
     seen: set[bytes] = set()
     for piece in pieces:
-        span = parse_source_range(piece.range)
+        spans = [parse_source_range(span) for span in piece.source_ranges]
         raw = piece.text.encode("utf-8")
-        identity = canonical_json(span)
         if (piece.kind not in _PRIORITY or type(piece.sequence) is not int
-                or identity not in expected or identity in seen
-                or span["end"] - span["start"] != len(raw)
-                or span["digest"] != sha256(raw).hexdigest()):
+                or canonical_json(piece.range) != canonical_json(spans[0])
+                or (len(spans) > 1 and piece.kind != "terminal")):
             raise LogContractError("source piece identity or bytes mismatch")
-        seen.add(identity)
+        cursor = 0
+        for index, span in enumerate(spans):
+            identity = canonical_json(span)
+            length = span["end"] - span["start"]
+            if (identity not in expected or identity in seen
+                    or (index > 0 and (canonical_json(span["source"]) != canonical_json(spans[0]["source"])
+                                      or spans[index - 1]["end"] != span["start"]))
+                    or span["digest"] != sha256(raw[cursor:cursor + length]).hexdigest()
+                    or len(raw[cursor:cursor + length]) != length):
+                raise LogContractError("source piece identity or bytes mismatch")
+            cursor += length
+            seen.add(identity)
+        if cursor != len(raw):
+            raise LogContractError("source piece identity or bytes mismatch")
         collected += len(raw)
         if collected > COLLECTION_BYTES:
             raise SummaryDeferred("collection_budget_exceeded")
@@ -128,10 +144,12 @@ def prepare_summary(request: dict[str, Any], pieces: Sequence[SourcePiece], *,
     limit = min(8192, resolved["model"]["contextWindow"] // 10)
 
     def envelope(keep: list[SourcePiece], omissions: list[dict[str, Any]]) -> dict[str, Any]:
-        current = {**item, "sources": [p.range for p in keep]}
+        current = {**item, "sources": [span for p in keep for span in p.source_ranges]}
         current["inputKey"] = summary_input_key(current["subject"], current["revision"],
                                                current["sources"], current["sourceGaps"], current["skillDigest"])
-        return {"request": current, "selected": [{"range": p.range, "text": p.text} for p in keep],
+        return {"request": current, "selected": [
+            {"ranges": list(p.source_ranges), "text": p.text} if len(p.source_ranges) > 1 else
+            {"range": p.range, "text": p.text} for p in keep],
                 "omitted": omissions, "priorCumulative": prior_cumulative,
                 "resultByteLimit": RESULT_BYTES}
 
@@ -145,8 +163,8 @@ def prepare_summary(request: dict[str, Any], pieces: Sequence[SourcePiece], *,
         if size(trial) <= limit:
             selected.append(piece)
         else:
-            omitted.append({"range": piece.range, "reason": "input_budget",
-                            "estimatedBytes": len(piece.text.encode())})
+            omitted.extend({"range": span, "reason": "input_budget",
+                            "estimatedBytes": span["end"] - span["start"]} for span in piece.source_ranges)
     payload = envelope(selected, omitted)
     input_estimate = size(payload)
     if (not selected and not item["sourceGaps"] or input_estimate > limit
@@ -180,13 +198,27 @@ class SDKSummaryAdapter:
 
     def dispatch_prepared(self, prepared: dict[str, Any], *, expected_peer: tuple[str, int],
                           authority_token: object, writer: dict[str, str]) -> dict[str, Any]:
-        if not callable(getattr(authority_token, "current", None)) or authority_token.current() is not True:
-            raise SummaryDeferred("authority_unavailable")
-        response = self.bridge.request("manager", {"kind": "summary_request", "summary": prepared,
-                                                   "writer": writer}, timeout=self.timeout,
-                                       expected_peer=expected_peer, authority_token=authority_token)
+        response = self.dispatch_outcome(prepared, expected_peer=expected_peer,
+                                         authority_token=authority_token, writer=writer)
         if response.get("status") == "deferred" and response.get("sent") is False:
             raise SummaryDeferred(str(response.get("reason", "summary_deferred")))
         if response.get("status") != "summary_result" or response.get("protected") is not False:
             raise SummaryUnknown(str(response.get("reason", "summary_result_unknown")))
         return validate_result(prepared["request"], response.get("result"))
+
+    def dispatch_outcome(self, prepared: dict[str, Any], *, expected_peer: tuple[str, int],
+                         authority_token: object, writer: dict[str, str]) -> dict[str, Any]:
+        """Preserve sent/protection/reason for the durable scheduler owner."""
+        if not callable(getattr(authority_token, "current", None)) or authority_token.current() is not True:
+            raise SummaryDeferred("authority_unavailable")
+        from workbench.ipc.bridge_g3.mailbox import BridgeBoundMismatch
+        try:
+            response = self.bridge.request("manager", {"kind": "summary_request", "summary": prepared,
+                                                       "writer": writer}, timeout=self.timeout,
+                                           expected_peer=expected_peer, authority_token=authority_token)
+        except BridgeBoundMismatch as exc:
+            # The bridge's bound/claim rejection precedes all frame bytes.
+            raise SummaryDeferred("authority_changed_before_submission") from exc
+        if response.get("status") == "summary_result" and response.get("protected") is False:
+            validate_result(prepared["request"], response.get("result"))
+        return response

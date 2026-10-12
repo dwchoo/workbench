@@ -365,6 +365,36 @@ BEGIN
 END;
 CREATE UNIQUE INDEX IF NOT EXISTS summary_stored_once
     ON summary_request_events_v1(request_id) WHERE state='stored';
+
+-- Cursor-only scheduling; original bodies remain in their existing source stores.
+CREATE TABLE IF NOT EXISTS summary_ingest_cursor_v1 (
+    id INTEGER PRIMARY KEY CHECK(id=1),
+    cursor_json TEXT NOT NULL CHECK(length(CAST(cursor_json AS BLOB))<=256)
+);
+CREATE TABLE IF NOT EXISTS summary_source_refs_v1 (
+    source_id TEXT PRIMARY KEY,
+    entry_id TEXT NOT NULL,
+    FOREIGN KEY(source_id) REFERENCES log_source_records(source_id)
+);
+CREATE TABLE IF NOT EXISTS summary_schedule_v1 (
+    subject_kind TEXT NOT NULL CHECK(subject_kind IN ('task','command')),
+    subject_id TEXT NOT NULL,
+    high_water INTEGER NOT NULL,
+    due_at REAL,
+    end_ref_json TEXT,
+    end_processed INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY(subject_kind,subject_id)
+);
+CREATE INDEX IF NOT EXISTS summary_schedule_due ON summary_schedule_v1(due_at);
+CREATE TABLE IF NOT EXISTS summary_control_events_v1 (
+    event_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    request_id TEXT,
+    outcome TEXT NOT NULL,
+    state_json TEXT NOT NULL CHECK(length(CAST(state_json AS BLOB)) <= 4096),
+    created_at TEXT NOT NULL,
+    FOREIGN KEY(request_id) REFERENCES summary_requests_v1(request_id),
+    UNIQUE(request_id,outcome)
+);
 """
 
 SCHEMA += LOG_METADATA_SCHEMA
@@ -393,4 +423,6 @@ APPEND_ONLY_TABLES = (
     "summary_request_events_v1",
     "summary_result_receipts_v1",
     "summary_result_drops_v1",
+    "summary_control_events_v1",
+    "summary_source_refs_v1",
 )

@@ -116,6 +116,8 @@ export async function dispatchSummarySDK(options: {
   const policySha = sha(policy);
   const state = { armed: false, spent: false, protected: false, sent: false,
     result: undefined as RecordValue | undefined, receipt: undefined as RecordValue | undefined,
+    contractReason: undefined as "invalid_result" | undefined,
+    dispatchReason: undefined as string | undefined,
     violationReason: undefined as "guard_violation_observed" | "request_mismatch" | "compatibility_failed" | undefined };
   const requestMismatch = () => {
     state.protected = true; state.armed = false;
@@ -123,6 +125,8 @@ export async function dispatchSummarySDK(options: {
   };
   const reject = (reason: string) => {
     state.protected = true; state.armed = false;
+    if (reason === "invalid_result") state.contractReason = "invalid_result";
+    else if (reason === "result_binding_or_duplicate") state.violationReason ??= "guard_violation_observed";
     return { isError: true, content: [{ type: "text", text: JSON.stringify({ received: false, reason }) }] };
   };
   const tool = { name: SUMMARY_TOOL_NAME, label: "Submit work summary",
@@ -238,6 +242,8 @@ export async function dispatchSummarySDK(options: {
           if (!inputMatches()) reason = "request_mismatch";
           if (reason) {
             if (reason === "request_mismatch") requestMismatch();
+            // Inactivity caused by an already rejected result is not a new safety cause.
+            if (reason !== "owner_inactive" || !state.contractReason) state.dispatchReason ??= reason;
             state.protected = true; state.armed = false; throw new Error(reason);
           }
           state.sent = true;
@@ -297,10 +303,12 @@ export async function dispatchSummarySDK(options: {
     await child.dispose(); child = undefined;
     emit({ event: "disposed", requestId: request.requestId });
     if (!inputMatches()) requestMismatch();
+    if (promptError && !state.protected) return { status: "unknown", sent: state.sent,
+      protected: false, reason: "summary_outcome_unknown" };
     if (state.protected || promptError || !state.result) return {
       status: state.sent ? "rejected" : "deferred", sent: state.sent,
       protected: state.protected, reason: state.protected
-        ? state.violationReason ?? "guard_violation_observed" : "result_unavailable" };
+        ? state.violationReason ?? state.dispatchReason ?? state.contractReason ?? "guard_violation_observed" : "result_unavailable" };
     const written = await (options.save ?? fixedSummaryWriter)(writer, request.requestId, state.result);
     if (written.saved !== true) return { status: "storage_failed", sent: true,
       protected: false, reason: written.reason ?? "storage_failed", writer: written };
@@ -311,7 +319,7 @@ export async function dispatchSummarySDK(options: {
     return { status: "summary_result", sent: true, protected: false, result: state.result, writer: written, receipt };
   } catch {
     return { status: state.sent ? "unknown" : "deferred", sent: state.sent,
-      protected: state.protected, reason: state.violationReason
+      protected: state.protected, reason: state.violationReason ?? state.dispatchReason ?? state.contractReason
         ?? (state.sent ? "summary_outcome_unknown" : "startup_validation_failed") };
   } finally {
     state.armed = false;

@@ -474,27 +474,8 @@ class SubjectLifecycle:
                 or parsed["authorizationEpoch"] != decision["authorization_epoch"]
                 or (subject["kind"] == "task" and parsed["revision"] != decision["revision"])):
             return {"allowed": False, "reason": "work_scope_authorization_mismatch"}
-        sources = {canonical_json(span) for span in parsed["sources"]}
-        gaps = {canonical_json(gap) for gap in parsed["sourceGaps"]}
         with self._open() as store:
-            conn = store._connection
-            prior = parsed["priorCumulativeEntryId"]
-            if prior is not None and conn.execute("""SELECT 1 FROM entries
-                WHERE entry_id=? AND subject_kind=? AND subject_id=? AND kind='cumulative'""",
-                    (prior, subject["kind"], subject["id"])).fetchone() is None:
-                return {"allowed": False, "reason": "prior_work_context_unrelated"}
-            for row in conn.execute("""SELECT sources_json,source_gaps_json FROM entries
-                WHERE subject_kind=? AND subject_id=?""", (subject["kind"], subject["id"])):
-                sources.difference_update(canonical_json(span) for span in json.loads(row[0]))
-                gaps.difference_update(canonical_json(gap) for gap in json.loads(row[1]))
-                if not sources and not gaps:
-                    break
-        if sources or gaps:
-            return {"allowed": False, "reason": "unrelated_or_unobserved_source_range"}
-        return {**decision, "request_id": parsed["requestId"],
-                "input_key": parsed["inputKey"],
-                "source_range_count": len(parsed["sources"]),
-                "source_gap_count": len(parsed["sourceGaps"])}
+            return authorize_summary_sources(parsed, decision, [store._connection])
 
     def reconcile_flow(self, records: list[dict[str, Any]]) -> int:
         """Restart copies only already-fsynced journal facts; never dispatches or replays."""
@@ -523,3 +504,28 @@ class SubjectLifecycle:
             if self.record_terminal(record, revision=revision):
                 copied += 1
         return copied
+
+def authorize_summary_sources(parsed: Mapping[str, Any], decision: Mapping[str, Any], connections: Any) -> dict[str, Any]:
+    """Shared confirmed-source check; connections are held under the owner's lease."""
+    subject = parsed["subject"]
+    sources = {canonical_json(span) for span in parsed["sources"]}
+    gaps = {canonical_json(gap) for gap in parsed["sourceGaps"]}
+    prior = parsed["priorCumulativeEntryId"]
+    prior_found = prior is None
+    for conn in connections:
+        if prior is not None and conn.execute("""SELECT 1 FROM entries
+            WHERE entry_id=? AND subject_kind=? AND subject_id=? AND kind='cumulative'""",
+                (prior, subject["kind"], subject["id"])).fetchone() is not None:
+            prior_found = True
+        for row in conn.execute("""SELECT sources_json,source_gaps_json FROM entries
+            WHERE subject_kind=? AND subject_id=?""", (subject["kind"], subject["id"])):
+            sources.difference_update(canonical_json(span) for span in json.loads(row[0]))
+            gaps.difference_update(canonical_json(gap) for gap in json.loads(row[1]))
+            if not sources and not gaps:
+                break
+    if not prior_found:
+        return {"allowed": False, "reason": "prior_work_context_unrelated"}
+    if sources or gaps:
+        return {"allowed": False, "reason": "unrelated_or_unobserved_source_range"}
+    return {**decision, "request_id": parsed["requestId"], "input_key": parsed["inputKey"],
+            "source_range_count": len(parsed["sources"]), "source_gap_count": len(parsed["sourceGaps"])}

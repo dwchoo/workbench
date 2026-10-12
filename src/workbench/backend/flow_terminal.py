@@ -102,7 +102,7 @@ from workbench.backend.flow import (
     HandoffService, environment_value_findings, rejected,
 )
 from workbench.contracts.v1 import ActorRole
-from workbench.storage.log_raw.port import DisabledSegmentedRawPort, raw_read_command
+from workbench.storage.log_raw.port import DisabledSegmentedRawPort, raw_read_command, command_source
 from workbench.terminal.shell_g2.lifecycle import RUN_REQUEST_MAX, encode_run, normalize_run
 
 TERMINAL_TOOL = "terminal"
@@ -374,6 +374,30 @@ class _Command:
     notice_due: float = 0.0
     notice_logged: set = field(default_factory=set)
 
+    summary_revision: int | None = None
+    summary_started: bool = False
+    summary_observed: int = 0
+    summary_failed: bool = False
+    summary_capture: Callable[[int, bytes], None] | None = None
+    summary_failure: Callable[[], None] | None = None
+
+    def _capture(self, data: bytes, raw_end: int | None) -> None:
+        start = self.summary_observed
+        self.summary_observed += len(data)
+        if self.summary_capture is None or self.summary_failed:
+            return
+        try:
+            if not self.summary_started or (raw_end is not None and raw_end != self.summary_observed):
+                raise ValueError("summary observation continuity unknown")
+            self.summary_capture(start, data)
+        except Exception:
+            self.summary_failed = True
+            if self.summary_failure is not None:
+                try:
+                    self.summary_failure()
+                except Exception:
+                    pass
+
     def write(self, data: bytes) -> None:
         if data and self.echo:  # the "[worker] $ <command>" line is for the user's pane, not the output
             n = 0
@@ -397,37 +421,42 @@ class _Command:
             if len(self.unseen) > 4 * TAIL_BYTES:
                 del self.unseen[:-4 * TAIL_BYTES]
                 self.unseen_dropped = True
-        if self.log_error is not None and self.segmented_raw_port is None:
-            return
-        if self.segmented_raw_port is not None:
-            try:
-                status = self.segmented_raw_port.append(self.raw_descriptor, data)
-                self.log_bytes += status["stored_bytes"]
-                if status["missing_bytes"]:
-                    self.log_truncated = True
-                if status["storage_error"] is not None:
-                    self.log_error = status["storage_error"]
-            except Exception as exc:
-                self.log_error = type(exc).__name__
-            return
-        room = LOG_MAX - self.log_bytes
-        chunk = data[:max(room, 0)]
-        if len(chunk) < len(data):
-            self.log_truncated = True
-        if not chunk:
-            return
+        raw_end = None
         try:
-            fd = os.open(self.log_path, os.O_WRONLY | os.O_APPEND | os.O_NOFOLLOW | os.O_CLOEXEC)
+            if self.log_error is not None and self.segmented_raw_port is None:
+                return
+            if self.segmented_raw_port is not None:
+                try:
+                    status = self.segmented_raw_port.append(self.raw_descriptor, data)
+                    raw_end = status["end"]
+                    self.log_bytes += status["stored_bytes"]
+                    if status["missing_bytes"]:
+                        self.log_truncated = True
+                    if status["storage_error"] is not None:
+                        self.log_error = status["storage_error"]
+                except Exception as exc:
+                    self.log_error = type(exc).__name__
+                return
+            room = LOG_MAX - self.log_bytes
+            chunk = data[:max(room, 0)]
+            if len(chunk) < len(data):
+                self.log_truncated = True
+            if not chunk:
+                return
             try:
-                view = memoryview(chunk)
-                while view:
-                    written = os.write(fd, view)
-                    view = view[written:]
-            finally:
-                os.close(fd)
-            self.log_bytes += len(chunk)
-        except OSError as exc:  # the command and its observation continue (C-D46)
-            self.log_error = type(exc).__name__
+                fd = os.open(self.log_path, os.O_WRONLY | os.O_APPEND | os.O_NOFOLLOW | os.O_CLOEXEC)
+                try:
+                    view = memoryview(chunk)
+                    while view:
+                        written = os.write(fd, view)
+                        view = view[written:]
+                finally:
+                    os.close(fd)
+                self.log_bytes += len(chunk)
+            except OSError as exc:  # the command and its observation continue (C-D46)
+                self.log_error = type(exc).__name__
+        finally:
+            self._capture(data, raw_end)
 
     def tail(self) -> dict[str, Any]:
         text, truncated = output_tail(bytes(self.recent))
@@ -484,7 +513,9 @@ class TerminalService:
                  notice_retry: float = NOTICE_RETRY, tick_interval: float = NOTIFIER_TICK,
                  wait_seconds: float = WAIT_SECONDS, subject_log: Any | None = None,
                  subject_capture_failure: Callable[[], None] | None = None,
-                 segmented_raw_port: DisabledSegmentedRawPort | None = None):
+                 segmented_raw_port: DisabledSegmentedRawPort | None = None,
+                 repository_factory: Callable[[], Any] | None = None):
+        self._repository_factory = repository_factory
         self._handoffs = handoffs
         self._subject_log = subject_log
         self._subject_capture_failure = subject_capture_failure
@@ -539,7 +570,7 @@ class TerminalService:
             except Exception:
                 pass  # terminal ownership and result never depend on the capture indication
 
-    def _journal(self, record: Mapping[str, Any]) -> None:
+    def _journal(self, record: Mapping[str, Any], *, bound_revision: int | None | bool = False) -> Mapping[str, Any] | None:
         try:
             confirmed = self._handoffs.record(record)
         except (OSError, TypeError, ValueError):
@@ -553,11 +584,39 @@ class TerminalService:
                     return
                 try:
                     active = self._active_task() if confirmed["type"] == "terminal_started" else None
-                    revision = (active.revision if active is not None and
+                    revision = (bound_revision if bound_revision is not False else
+                                active.revision if active is not None and
                                 active.task_id == confirmed.get("task_id") else None)
                     sink.record_terminal(confirmed, revision=revision)
                 except Exception:
                     self._mark_subject_unknown()
+                    return None  # no confirmed important start for subsequent range attribution
+
+            return confirmed
+        return None
+
+    def _configure_summary_capture(self, command: _Command) -> None:
+        if self._repository_factory is None:
+            return
+        command.summary_failure = self._mark_subject_unknown
+        try:
+            source = command_source(command.command_id, command.task_id, command.summary_revision)
+        except ValueError:
+            command.summary_failed = True
+            self._mark_subject_unknown()
+            return
+        subject = {"schemaVersion": 1, "kind": "task" if command.task_id else "command",
+                   "id": command.task_id or command.command_id}
+        def observed(start: int, data: bytes) -> None:
+            span = {"schemaVersion": 1, "source": source, "start": start,
+                    "end": start + len(data), "digest": sha256(data).hexdigest()}
+            with self._repository_factory() as repository:
+                identity = repository.record_log_source(subject, span)
+            sink = self._subject_log
+            if sink is None:
+                raise RuntimeError("observed terminal range has no storage sink")
+            sink.record_terminal_range(subject, identity, span, observed_at=_now())
+        command.summary_capture = observed
 
     def start(self) -> None:
         """The notifier thread (C-D68 (8)); without a ``notify`` port there are no notices."""
@@ -897,6 +956,20 @@ class TerminalService:
             except Exception:
                 pass  # the next tick tries again; the command itself is never affected
 
+    def summary_command_active(self, command_id: str) -> bool:
+        with self._lock:
+            return (self._current is not None and self._current.command_id == command_id
+                    and not self._current.done.is_set())
+
+    def summary_priority(self) -> bool:
+        """Cheap readback of existing end notices and due60 checks."""
+        with self._lock:
+            current = self._current
+            return (any(item.notice in ("pending", "sending") for item in self._noticing)
+                    or (current is not None and not current.done.is_set()
+                        and (current.check_pending is not None
+                             or self._clock() >= current.check_base + self._check_interval)))
+
     def tick(self) -> None:
         """One notifier step: pending completion notices, then the running command's check."""
         if self._notify is None:
@@ -1138,7 +1211,9 @@ class TerminalService:
                        **command.raw_fields()}
             if command.script_path is not None:
                 started["script_path"] = str(command.script_path)
-            self._journal(started)
+            confirmed = self._journal(started, bound_revision=command.summary_revision)
+            command.summary_started = confirmed is not None
+            self._configure_summary_capture(command)
             self._remember_run(command)
             thread = threading.Thread(target=self._follow, args=(port, command), daemon=True,
                                       name=f"terminal-{command.command_id[:8]}")
@@ -1182,6 +1257,14 @@ class TerminalService:
             return self._refuse(key_dict, "rejected", "log_unavailable",
                                 f"The command log could not be created ({type(exc).__name__}); nothing was run.")
         command = _Command(command_id, text, key_dict, task, log_path)
+        if self._repository_factory is not None and task is not None and revision is None:
+            try:
+                active = self._active_task()
+                if active is not None and active.task_id == task and type(active.revision) is int and active.revision > 0:
+                    revision = active.revision
+            except Exception:
+                pass  # capture fails closed; summary metadata never cancels the core command
+        command.summary_revision = revision
         if self._segmented_raw_port is not None:
             command.segmented_raw_port = self._segmented_raw_port
             command.raw_descriptor = raw_descriptor

@@ -30,6 +30,12 @@ from workbench.contracts.logs_v1 import (
 )
 
 
+UNKNOWN_SAFETY_REASONS = frozenset((
+    "guard_violation_observed", "request_mismatch", "compatibility_failed", "stale_binding",
+    "roster_mismatch", "schema_mismatch", "policy_mismatch", "model_mismatch",
+))
+
+
 class RepositoryClosedError(RuntimeError):
     """Raised when the repository is used after close()."""
 
@@ -1354,6 +1360,212 @@ class TaskRepository:
                 (item["requestId"], entry_id, _now()),
             )
             return True
+
+    def summary_ingest_cursor(self) -> dict[str, Any] | None:
+        row = self._connection.execute("SELECT cursor_json FROM summary_ingest_cursor_v1 WHERE id=1").fetchone()
+        return None if row is None else _decoded(row[0])
+
+    def ingest_summary_source(self, subject: dict[str, Any], span: dict[str, Any], entry_id: str) -> int:
+        """An idempotent reference to an already confirmed important entry."""
+        identity = str(uuid.uuid5(uuid.NAMESPACE_URL, "summary-source-v1:" + canonical_json(span).decode()))
+        row = self._connection.execute("""SELECT rowid,source_id FROM log_source_records WHERE subject_kind=? AND subject_id=?
+            AND source_json=? AND span_start=? AND span_end=? AND digest=? ORDER BY rowid LIMIT 1""",
+            (subject["kind"], subject["id"], canonical_json(span["source"]).decode(), span["start"], span["end"], span["digest"])).fetchone()
+        if row is not None:
+            identity = row["source_id"]
+        if row is None:
+            self.record_log_source(subject, span, source_id=identity)
+            row = self._connection.execute("SELECT rowid FROM log_source_records WHERE source_id=?", (identity,)).fetchone()
+        with self._transaction() as conn:
+            conn.execute("INSERT OR IGNORE INTO summary_source_refs_v1(source_id,entry_id) VALUES(?,?)", (identity, entry_id))
+        return row[0]
+
+    def advance_summary_ingest(self, cursor: dict[str, Any]) -> None:
+        _log_uuid(cursor["db_uuid"], name="db_uuid")
+        _nonnegative_integer(cursor["rowid"], name="rowid")
+        with self._transaction() as conn:
+            conn.execute("INSERT INTO summary_ingest_cursor_v1 VALUES(1,?) ON CONFLICT(id) DO UPDATE SET cursor_json=excluded.cursor_json",
+                         (_json(cursor, name="summary ingest cursor"),))
+
+    def summary_source_entry(self, source_id: str) -> str | None:
+        row = self._connection.execute("SELECT entry_id FROM summary_source_refs_v1 WHERE source_id=?", (source_id,)).fetchone()
+        return None if row is None else row[0]
+
+    def latest_summary_receipt(self, subject: dict[str, Any]) -> dict[str, Any] | None:
+        owner = parse_subject_ref(subject)
+        row = self._connection.execute("""SELECT r.entry_id,q.request_id FROM summary_requests_v1 q
+            JOIN summary_result_receipts_v1 r ON r.request_id=q.request_id
+            WHERE q.subject_kind=? AND q.subject_id=? ORDER BY q.rowid DESC LIMIT 1""",
+            (owner["kind"], owner["id"])).fetchone()
+        return None if row is None else dict(row)
+
+    def pending_summary_sources(self, subject: dict[str, Any], *, limit: int = 100,
+                                revision: int | None = None) -> list[dict[str, Any]]:
+        """Only whole, unreserved physical ranges; ID/epoch changes cannot replay them."""
+        owner = parse_subject_ref(subject)
+        if type(limit) is not int or not 1 <= limit <= 100:
+            raise InvalidTransitionError("summary source page must be 1..100")
+        rows = self._connection.execute(
+            """SELECT rowid,* FROM log_source_records WHERE subject_kind=? AND subject_id=?
+               AND EXISTS(SELECT 1 FROM summary_source_refs_v1 ref WHERE ref.source_id=log_source_records.source_id)
+               AND (? IS NULL OR revision=?) ORDER BY rowid""",
+            (owner["kind"], owner["id"], revision, revision))
+        result = []
+        for row in rows:
+            source = _decoded(row["source_json"])
+            used = self._connection.execute(
+                """SELECT r.request_id FROM summary_request_ranges_v1 r WHERE source_key=?
+                   AND span_start<? AND span_end>?""",
+                (_summary_source_overlap_key(source), row["span_end"], row["span_start"])).fetchall()
+            if any(self._summary_state(self._connection, entry[0]) != "not_sent" for entry in used):
+                continue
+            result.append({"cursor": row["rowid"], "source_id": row["source_id"],
+                           "status": row["status"], "range": {"schemaVersion": 1,
+                           "source": source, "start": row["span_start"],
+                           "end": row["span_end"], "digest": row["digest"]}})
+            if len(result) == limit:
+                break
+        return result
+
+    def observe_summary_cursor(self, subject: dict[str, Any], high_water: int, *, now: float,
+                               end_ref: dict[str, Any] | None = None) -> None:
+        owner = parse_subject_ref(subject)
+        _nonnegative_integer(high_water, name="high_water")
+        end = None if end_ref is None else _json(end_ref, name="summary end reference")
+        if end is not None and len(end.encode()) > 4096:
+            raise InvalidTransitionError("summary end reference exceeds bound")
+        with self._transaction() as conn:
+            row = conn.execute("SELECT * FROM summary_schedule_v1 WHERE subject_kind=? AND subject_id=?",
+                               (owner["kind"], owner["id"])).fetchone()
+            if row is None:
+                conn.execute("INSERT INTO summary_schedule_v1 VALUES(?,?,?,?,?,0)",
+                             (owner["kind"], owner["id"], high_water, now + 300, end))
+            else:
+                if end is not None and row["end_ref_json"] not in (None, end):
+                    raise InvalidTransitionError("summary end event cannot be replaced")
+                if high_water > row["high_water"]:
+                    conn.execute("""UPDATE summary_schedule_v1 SET high_water=?,
+                        due_at=COALESCE(due_at,?),end_ref_json=COALESCE(end_ref_json,?)
+                        WHERE subject_kind=? AND subject_id=?""",
+                        (high_water, now + 300, end, owner["kind"], owner["id"]))
+                elif end is not None:
+                    conn.execute("UPDATE summary_schedule_v1 SET end_ref_json=COALESCE(end_ref_json,?) WHERE subject_kind=? AND subject_id=?",
+                                 (end, owner["kind"], owner["id"]))
+
+    def summary_candidates(self, now: float, *, limit: int = 32) -> list[dict[str, Any]]:
+        if type(limit) is not int or not 1 <= limit <= 32:
+            raise InvalidTransitionError("summary candidate page must be 1..32")
+        rows = self._connection.execute("""SELECT * FROM summary_schedule_v1 WHERE due_at IS NOT NULL
+            AND (due_at<=? OR (end_ref_json IS NOT NULL AND end_processed=0))
+            ORDER BY due_at,subject_kind,subject_id LIMIT ?""", (now, limit)).fetchall()
+        return [{"subject": {"schemaVersion": 1, "kind": row["subject_kind"], "id": row["subject_id"]},
+                 "high_water": row["high_water"], "due_at": row["due_at"],
+                 "end_ref": None if row["end_ref_json"] is None else _decoded(row["end_ref_json"]),
+                 "end_processed": bool(row["end_processed"])} for row in rows]
+
+    def settle_summary_cursor(self, subject: dict[str, Any], *, now: float,
+                              pending: bool, end_processed: bool = False) -> None:
+        owner = parse_subject_ref(subject)
+        with self._transaction() as conn:
+            conn.execute("""UPDATE summary_schedule_v1 SET due_at=?,
+                end_processed=MAX(end_processed,?) WHERE subject_kind=? AND subject_id=?""",
+                (now + 300 if pending else None, int(end_processed), owner["kind"], owner["id"]))
+
+    def summary_unclassified_outcomes(self, *, after: int = 0, limit: int = 100) -> list[dict[str, Any]]:
+        _nonnegative_integer(after, name="after")
+        if type(limit) is not int or not 1 <= limit <= 100:
+            raise InvalidTransitionError("summary outcome page must be 1..100")
+        safety_reasons = tuple(sorted(UNKNOWN_SAFETY_REASONS))
+        safety_slots = ",".join("?" for _ in safety_reasons)
+        rows = self._connection.execute(f"""SELECT q.rowid,q.request_id,e.state,e.detail
+            FROM summary_requests_v1 q JOIN summary_request_events_v1 e ON e.event_id=(
+              SELECT MAX(event_id) FROM summary_request_events_v1 WHERE request_id=q.request_id)
+            WHERE q.rowid>? AND e.state IN ('stored','rejected','storage_failed','unknown','executed_observed')
+              AND NOT EXISTS(SELECT 1 FROM summary_control_events_v1 c WHERE c.request_id=q.request_id
+                AND c.outcome=CASE WHEN e.detail IN ('input_budget_unavailable','output_budget_unavailable') THEN 'transient'
+                  WHEN e.state='unknown' AND e.detail IN ({safety_slots}) THEN 'safety'
+                  WHEN e.state='stored' THEN 'stored' WHEN e.state='storage_failed' THEN 'storage'
+                  WHEN e.state='rejected' THEN CASE WHEN e.detail IN ('invalid_result','result_unavailable') THEN 'contract_rejected' ELSE 'safety' END
+                  ELSE 'transient' END)
+            ORDER BY q.rowid LIMIT ?""", (after, *safety_reasons, limit)).fetchall()
+        return [dict(row) for row in rows]
+
+    @staticmethod
+    def summary_outcome_kind(state: str, reason: str | None) -> str:
+        """Same terminal classification as the unclassified-outcome query."""
+        if reason in {"input_budget_unavailable", "output_budget_unavailable"}:
+            return "transient"
+        if state == "unknown" and reason in UNKNOWN_SAFETY_REASONS:
+            return "safety"
+        if state == "stored":
+            return "stored"
+        if state == "storage_failed":
+            return "storage"
+        if state == "rejected":
+            return "contract_rejected" if reason in {"invalid_result", "result_unavailable"} else "safety"
+        return "transient"
+
+    def summary_control_state(self) -> dict[str, Any]:
+        row = self._connection.execute("SELECT state_json FROM summary_control_events_v1 ORDER BY event_id DESC LIMIT 1").fetchone()
+        return ({"streak": 0, "latest_sequence": 0, "protection": None, "episode": None,
+                 "recovery_attempt": None, "last_reason": None} if row is None else _decoded(row[0]))
+
+    def _put_summary_control(self, conn: sqlite3.Connection, state: dict[str, Any],
+                             request_id: str | None, outcome: str) -> None:
+        conn.execute("INSERT INTO summary_control_events_v1(request_id,outcome,state_json,created_at) VALUES(?,?,?,?)",
+                     (request_id, outcome, _json(state, name="summary control"), _now()))
+
+    def record_summary_control(self, request_id: str, outcome: str, *, reason: str) -> dict[str, Any] | None:
+        """Persistent sequence-aware breaker; returns a new incident only once per episode."""
+        if outcome not in {"stored", "contract_rejected", "safety", "transient", "storage"}:
+            raise InvalidTransitionError("unsupported summary outcome")
+        if type(reason) is not str or not reason or len(reason.encode()) > 256:
+            raise InvalidTransitionError("summary outcome reason must be bounded")
+        with self._transaction() as conn:
+            row = conn.execute("SELECT rowid FROM summary_requests_v1 WHERE request_id=?", (request_id,)).fetchone()
+            if row is None:
+                raise InvalidTransitionError("unknown summary request")
+            if conn.execute("SELECT 1 FROM summary_control_events_v1 WHERE request_id=? AND outcome=?", (request_id, outcome)).fetchone():
+                return None
+            state = self.summary_control_state()
+            sequence = row[0]
+            latest = conn.execute("SELECT MAX(rowid) FROM summary_requests_v1").fetchone()[0]
+            incident = None
+            attempt = state["recovery_attempt"]
+            current_attempt = attempt is None or sequence > attempt["after_sequence"]
+            if sequence >= state["latest_sequence"] and current_attempt:
+                state["latest_sequence"] = sequence
+                state["last_reason"] = reason
+                if outcome == "stored" and sequence == latest and self._summary_state(conn, request_id) == "stored":
+                    state["streak"] = 0
+                    state["recovery_attempt"] = None
+                elif outcome == "contract_rejected":
+                    state["streak"] += 1
+            if outcome == "safety" or (outcome == "contract_rejected" and current_attempt
+                    and sequence >= state["latest_sequence"]
+                    and (attempt is not None or state["streak"] >= 3)):
+                if state["protection"] is None:
+                    state["episode"] = str(uuid.uuid4())
+                    incident = {"episode": state["episode"], "reason": reason}
+                state["protection"] = reason if outcome == "safety" else "summary_contract_failed"
+                state["recovery_attempt"] = None
+            self._put_summary_control(conn, state, request_id, outcome)
+            return incident
+
+    def begin_summary_recovery(self, verify_ref: str, *, boundaries_verified: bool) -> dict[str, Any]:
+        """Explicit trusted verify only; no model call, replay or implicit unpause."""
+        if boundaries_verified is not True or type(verify_ref) is not str or not verify_ref or len(verify_ref.encode()) > 256:
+            raise InvalidTransitionError("verified boundary reference required")
+        with self._transaction() as conn:
+            state = self.summary_control_state()
+            if state["protection"] != "summary_contract_failed":
+                raise InvalidTransitionError("contract recovery cannot clear other protections")
+            state["recovery_attempt"] = {"id": str(uuid.uuid4()), "verify_ref": verify_ref,
+                "plumbing_verified": True, "real_model_contract": "unverified",
+                "after_sequence": conn.execute("SELECT COALESCE(MAX(rowid),0) FROM summary_requests_v1").fetchone()[0]}
+            state["protection"] = None
+            self._put_summary_control(conn, state, None, "explicit_recovery")
+            return state["recovery_attempt"]
 
     def _durable_counts(self) -> dict[str, int]:
         """Private, test-only read helper for rollback assertions."""

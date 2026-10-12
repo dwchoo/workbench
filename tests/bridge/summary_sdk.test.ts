@@ -36,8 +36,9 @@ function fixture() {
     writer: { python: "/fixed/python", moduleRoot: "/fixed/src", dataRoot: "/fixed/data" } };
 }
 
-function fakeSDK(mode: "normal" | "saved_then_bash" | "duplicate" | "first_bad_api" | "confirmed_then_refused" = "normal",
-                 beforeTool?: () => void) {
+function fakeSDK(mode: "normal" | "saved_then_bash" | "duplicate" | "first_bad_api" | "confirmed_then_refused" | "invalid" | "invalid_then_confirmed" | "invalid_then_refused" | "invalid_then_duplicate" = "normal",
+                 beforeTool?: () => void,
+                 streamControl?: (child: any, options: any, listeners: Array<(event: any) => void>) => Promise<void>) {
   const events: string[] = [];
   const prompts: string[] = [];
   let creates = 0;
@@ -68,14 +69,22 @@ function fakeSDK(mode: "normal" | "saved_then_bash" | "duplicate" | "first_bad_a
         async prompt(text: string) {
           events.push("prompt");
           prompts.push(text);
+          if (streamControl) { await streamControl(child, options, listeners); return; }
           await child.agent.streamFn(child.model, { systemPrompt: options.systemPrompt,
             tools: [{ name: "db_summary_save", description: options.customTools[0].description,
               parameters: options.customTools[0].parameters }],
             messages: [{ role: "user", content: text }] }, {});
           beforeTool?.();
           const result = await options.customTools[0].execute("call-1", {
-            facts: ["verified work"], interpretations: [], unknowns: [] });
-          if (result.isError) return;
+            facts: mode.startsWith("invalid") ? "invalid" : ["verified work"], interpretations: [], unknowns: [] });
+          if (result.isError) {
+            if (mode === "invalid_then_confirmed" || mode === "invalid_then_refused")
+              listeners.forEach(fn => fn({ type: "tool_execution_end", toolName: "bash",
+                isError: mode === "invalid_then_refused" }));
+            if (mode === "invalid_then_duplicate") await options.customTools[0].execute("call-2", {
+              facts: ["second"], interpretations: [], unknowns: [] });
+            return;
+          }
           assert.deepEqual(JSON.parse(result.content[0].text), {
             received: true, saved: false, requestId: JSON.parse(text).request.requestId });
           if (mode === "duplicate") await options.customTools[0].execute("call-2", {
@@ -343,4 +352,97 @@ test("SDK tier resolution gets a fresh mutable clone without mutating the bound 
   assert.equal(result.status, "summary_result");
   assert.equal(writes, 1);
   assert.deepEqual(input.metadata.serviceTierByFamily, {});
+});
+
+test("invalid contract stays distinct from later sticky safety violations", async () => {
+  for (const [mode, reason] of [["invalid", "invalid_result"],
+    ["invalid_then_confirmed", "compatibility_failed"],
+    ["invalid_then_refused", "guard_violation_observed"],
+    ["invalid_then_duplicate", "guard_violation_observed"]] as const) {
+    const input = fixture(); const mock = fakeSDK(mode); let writes = 0;
+    const outcome = await dispatchSummarySDK({ ...input, sdk: mock.sdk,
+      current: () => true, observeMetadata: () => input.metadata,
+      save: async () => { writes++; return { saved: true }; } });
+    assert.equal(outcome.status, "rejected"); assert.equal(outcome.sent, true);
+    assert.equal(outcome.protected, true); assert.equal(outcome.reason, reason);
+    assert.equal(writes, 0); assert.equal(mock.events.at(-1), "dispose");
+  }
+});
+
+test("first and followup stream budget reasons survive disposal with no write", async () => {
+  for (const followup of [false, true]) for (const reason of ["input_budget_unavailable", "output_budget_unavailable"]) {
+    const input = fixture(); let writes = 0;
+    const mock = fakeSDK("normal", undefined, async (child, options) => {
+      const context = { systemPrompt: options.systemPrompt, messages: [{ role: "user", content: "work" }],
+        tools: [{ name: options.customTools[0].name, description: options.customTools[0].description,
+          parameters: options.customTools[0].parameters }] };
+      if (followup) await child.agent.streamFn(child.model, context, {});
+      if (reason === "input_budget_unavailable") context.messages[0].content = "x".repeat(9000);
+      else mock.sdk.fitOutputTokensToContextWindow = (_m: any, _c: any, cap: number) => cap - 1;
+      await child.agent.streamFn(child.model, context, {});
+    });
+    const outcome = await dispatchSummarySDK({ ...input, sdk: mock.sdk, current: () => true,
+      observeMetadata: () => input.metadata, save: async () => { writes++; return { saved: true }; } });
+    assert.equal(outcome.reason, reason); assert.equal(outcome.sent, followup);
+    assert.equal(outcome.status, followup ? "rejected" : "deferred"); assert.equal(outcome.protected, true);
+    assert.equal(writes, 0); assert.equal(mock.events.filter(x => x === "stream").length, Number(followup));
+    assert.equal(mock.events.at(-1), "dispose");
+  }
+});
+
+test("confirmed forbidden or duplicate safety outranks an earlier stream budget reason", async () => {
+  for (const duplicate of [false, true]) {
+    const input = fixture(); let writes = 0;
+    const mock = fakeSDK("normal", undefined, async (child, options, listeners) => {
+      const context = { systemPrompt: options.systemPrompt, messages: [{ role: "user", content: "work" }],
+        tools: [{ name: options.customTools[0].name, description: options.customTools[0].description,
+          parameters: options.customTools[0].parameters }] };
+      await child.agent.streamFn(child.model, context, {});
+      context.messages[0].content = "x".repeat(9000);
+      try { await child.agent.streamFn(child.model, context, {}); } catch {
+        if (duplicate) await options.customTools[0].execute("after-budget", { facts: ["ignored"], interpretations: [], unknowns: [] });
+        else listeners.forEach(fn => fn({ type: "tool_execution_end", toolName: "bash", isError: false }));
+      }
+    });
+    const outcome = await dispatchSummarySDK({ ...input, sdk: mock.sdk, current: () => true,
+      observeMetadata: () => input.metadata, save: async () => { writes++; return { saved: true }; } });
+    assert.equal(outcome.reason, duplicate ? "guard_violation_observed" : "compatibility_failed");
+    assert.equal(outcome.status, "rejected"); assert.equal(outcome.sent, true); assert.equal(outcome.protected, true);
+    assert.equal(writes, 0); assert.equal(mock.events.at(-1), "dispose");
+  }
+});
+
+test("followup refused by prior invalid result preserves the contract cause", async () => {
+  const input = fixture(); let writes = 0;
+  const mock = fakeSDK("normal", undefined, async (child, options) => {
+    const context = { systemPrompt: options.systemPrompt, messages: [{ role: "user", content: "work" }],
+      tools: [{ name: options.customTools[0].name, description: options.customTools[0].description,
+        parameters: options.customTools[0].parameters }] };
+    await child.agent.streamFn(child.model, context, {});
+    await options.customTools[0].execute("invalid", { facts: "bad", interpretations: [], unknowns: [] });
+    await child.agent.streamFn(child.model, context, {});
+  });
+  const outcome = await dispatchSummarySDK({ ...input, sdk: mock.sdk, current: () => true,
+    observeMetadata: () => input.metadata, save: async () => { writes++; return { saved: true }; } });
+  assert.equal(outcome.reason, "invalid_result"); assert.equal(outcome.sent, true);
+  assert.equal(outcome.status, "rejected"); assert.equal(writes, 0); assert.equal(mock.events.at(-1), "dispose");
+});
+
+
+test("provider exception is unknown while successful completion without a result is contract rejection", async () => {
+  for (const throwing of [true, false]) {
+    const input = fixture(); let writes = 0;
+    const mock = fakeSDK("normal", undefined, async (child, options) => {
+      await child.agent.streamFn(child.model, { systemPrompt: options.systemPrompt,
+        messages: [{ role: "user", content: "work" }], tools: [{ name: "db_summary_save",
+          description: options.customTools[0].description, parameters: options.customTools[0].parameters }] }, {});
+      if (throwing) throw new Error("owned provider fixture failure");
+    });
+    const outcome = await dispatchSummarySDK({ ...input, sdk: mock.sdk, current: () => true,
+      observeMetadata: () => input.metadata, save: async () => { writes++; return { saved: true }; } });
+    assert.equal(outcome.status, throwing ? "unknown" : "rejected");
+    assert.equal(outcome.reason, throwing ? "summary_outcome_unknown" : "result_unavailable");
+    assert.equal(outcome.sent, true); assert.equal(outcome.protected, false);
+    assert.equal(writes, 0); assert.equal(mock.events.at(-1), "dispose");
+  }
 });

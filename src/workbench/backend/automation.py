@@ -271,6 +271,7 @@ class AutomationController:
                  model_ok: Callable[[], bool] = lambda: True,
                  metadata: Callable[[str, BaseException | None], None] | None = None):
         self.bridge = bridge
+        self.summary_scheduler: Any | None = None
         # CW-19 R4: the user's pause is durable (a backend crash never lifts it); ``hold`` is the backend's
         # admission hold for the 60 s review (C-D71 (3)/(4), C-AC-28).
         self._pause_store = pause_store
@@ -762,7 +763,20 @@ class AutomationController:
                 if self._bound is bound:
                     self._last_tick = result
             self._publish()
+            scheduler = self.summary_scheduler
+            if scheduler is not None:
+                result["summary"] = scheduler.tick()  # bounded cursor work; model dispatch is off-loop
             return dict(result)
+
+    def summary_priority(self) -> bool:
+        """Existing end/review admission wins; no model-completion deadline."""
+        with self._lock:
+            review = self._last_review or {}
+            bound = self._bound
+            reviewing = bound is not None and bound.kind == "experiment" and not bound.ended and not bound.host_finished
+            return (self._transition is not None or reviewing and (review.get("pending") is True
+                    or (type(review.get("next_due_at")) in (int, float)
+                        and self._clock() >= review["next_due_at"])))
 
     # -- WorkerReviewScheduler ports -----------------------------------------------------------
     def _review_run(self) -> ActiveRunRef | None:

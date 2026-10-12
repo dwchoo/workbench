@@ -387,6 +387,18 @@ class WorkflowRun:
                     {"schemaVersion": 1, "source": self._source_ref, "start": start,
                      "end": start + len(data), "digest": sha256(data).hexdigest()},
                 )
+                try:
+                    sink = self.subject_log_source() if self.subject_log_source is not None else self.subject_log
+                    if sink is None and self.subject_capture_expected:
+                        raise RuntimeError("observed terminal range has no storage sink")
+                    if sink is not None:
+                        sink.record_terminal_range({"schemaVersion": 1, "kind": "task", "id": self.task_id},
+                            source_id, {"schemaVersion": 1, "source": self._source_ref, "start": start,
+                            "end": start + len(data), "digest": sha256(data).hexdigest()}, observed_at=_observed_at())
+                except Exception:
+                    self.subject_capture_unknown = True
+                    if self.subject_failure is not None:
+                        self.subject_failure()
                 assert self._source_ids is not None
                 self._source_ids.append(source_id)
                 if matched:

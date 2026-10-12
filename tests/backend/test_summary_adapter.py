@@ -57,6 +57,35 @@ class SummaryAdapterTests(unittest.TestCase):
             self.assertEqual(request["sources"], [p.range for p in pieces])
             self.assertLessEqual(prepared["budget"]["inputEstimate"], 8192)
 
+    def test_utf8_group_uses_original_ranges_once_and_is_omitted_whole(self):
+        with TemporaryDirectory() as name:
+            for text, omitted in (("가\n", False), ("가" + "x" * 6997, True)):
+                with self.subTest(omitted=omitted):
+                    request, metadata = request_fixture(Path(name) / str(omitted), [text, "report"])
+                    original = request["sources"][0]
+                    raw = text.encode()
+                    ranges = [{**original, "end": 1, "digest": sha256(raw[:1]).hexdigest()},
+                              {**original, "start": 1, "digest": sha256(raw[1:]).hexdigest()}]
+                    request["sources"] = [*ranges, request["sources"][1]]
+                    request["inputKey"] = summary_input_key(request["subject"], None,
+                        request["sources"], [], request["skillDigest"])
+                    grouped = SourcePiece(ranges[0], text, "terminal", 2, tuple(ranges))
+                    prepared = prepare_summary(request, [grouped, SourcePiece(request["sources"][-1], "report", "report")],
+                                               metadata=metadata, instructions="task")
+                    if omitted:
+                        self.assertEqual([r["range"] for r in prepared["omitted"]], ranges)
+                        self.assertEqual(prepared["request"]["sources"], request["sources"][-1:])
+                    else:
+                        self.assertEqual(prepared["selected"][-1], {"ranges": ranges, "text": text})
+                        self.assertEqual(prepared["request"]["sources"], [request["sources"][-1], *ranges])
+                    bad = deepcopy(ranges); bad[1]["digest"] = "0" * 64
+                    with self.assertRaises(LogContractError):
+                        prepare_summary({**request, "sources": [*bad, request["sources"][-1]],
+                            "inputKey": summary_input_key(request["subject"], None, [*bad, request["sources"][-1]], [], request["skillDigest"])},
+                            [SourcePiece(bad[0], text, "terminal", 2, tuple(bad)),
+                             SourcePiece(request["sources"][-1], "report", "report")],
+                            metadata=metadata, instructions="task")
+
     def test_bad_source_bytes_and_missing_piece_are_rejected(self):
         with TemporaryDirectory() as name:
             request, metadata = request_fixture(Path(name), ["known"])

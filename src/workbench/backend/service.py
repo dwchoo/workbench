@@ -84,6 +84,7 @@ from workbench.storage.log_raw.port import DisabledSegmentedRawPort, raw_query, 
 from workbench.storage.important_log import ActiveSubjectLog, ImportantLogCatalog, ImportantLogReader
 from workbench.contracts.logs_v1 import parse_subject_ref
 from workbench.backend.summary_adapter import SDKSummaryAdapter
+from workbench.backend.summary_scheduler import SummaryScheduler, SummarySourceCollector
 from workbench.tasks.repository import TaskRepository
 from workbench.terminal.shell_g2.prototype import ShellChoice, UnsafeShellState
 from workbench.workflow.run import TaskWorkflow
@@ -140,8 +141,12 @@ class Backend:
     def __init__(self, layout: DataLayout, plan: LaunchPlan, *, project_dir: str,
                  environment: dict[str, str], boot_source: Any = read_boot_id,
                  important_writer_lease_timeout_s: float = 0.1,
-                 disabled_raw_store: SegmentedRawStore | None = None):
+                 disabled_raw_store: SegmentedRawStore | None = None,
+                 summary_runtime: Any = None, summary_compatibility: Any = None):
         self.layout, self.plan, self.project_dir = layout, plan, project_dir
+        self.summary_runtime = summary_runtime
+        self.summary_compatibility = summary_compatibility
+        self.summary_scheduler: SummaryScheduler | None = None
         self.environment = dict(environment)
         self.important_writer_lease_timeout_s = important_writer_lease_timeout_s
         self.phase, self.reason = "starting", None
@@ -466,7 +471,8 @@ class Backend:
             notify_manager=lambda notice: self._notice(ActorRole.MANAGER, notice), done_target=self._done_target,
             subject_log=self.subject_log,
             subject_capture_failure=self._mark_important_capture_unknown,
-            segmented_raw_port=self.segmented_raw_port)
+            segmented_raw_port=self.segmented_raw_port,
+            repository_factory=lambda: TaskRepository(layout.tasks))
         self.flow.terminal_runs = self.terminal.runs_for_task  # C-D69 (6)(d): the done report's commands run
         self.watchdog = self._make_watchdog()  # C-D70: status checks, stalled/restart/recovery notices
         # p27-cd70-02 Q2: a manager follow-up the worker accepted re-arms the status checks and worker_stalled
@@ -478,6 +484,17 @@ class Backend:
                                      peer_gone=self._bridge_peer_gone)
         # DVL-09 prepares a port only. DVL-10 owns scheduling and durable admission.
         self.summary_adapter = SDKSummaryAdapter(self.bridge)
+        self.summary_scheduler = SummaryScheduler(
+            repository_factory=lambda: TaskRepository(layout.tasks), adapter=self.summary_adapter,
+            subject_log=lambda: self.subject_log,
+            collector=SummarySourceCollector(layout.root, lambda: self.subject_log, segmented=self.segmented_raw_port),
+            authority_flags=self._summary_authority_flags, paused=self._automation_paused,
+            priority=self._summary_priority, dispatch_ready=self._summary_dispatch_ready,
+            runtime=lambda: self.summary_runtime() if callable(self.summary_runtime) else None,
+            storage_ready=lambda: self.important_catalog is not None
+                and self.important_storage_status.get("state") in ("ok", "ready", "healthy"),
+            compatibility=self.summary_compatibility)
+        self.automation_loop.summary_scheduler = self.summary_scheduler
         self.ui = UiServer(layout.ui_socket, self)
         self._write_record()
         self._shell_env = shell_environment(self.environment)
@@ -694,6 +711,9 @@ class Backend:
             lifecycle = self.automation_loop.shutdown_bound()
         if self.automation_loop is not None:
             self.automation_loop.close()  # the tick and pause/resume threads end first; nothing is replayed
+        scheduler = getattr(self, "summary_scheduler", None)
+        if scheduler is not None:
+            scheduler.close()  # no fresh request, bounded existing bridge dispatch settles
         if self.flow is not None:
             self.flow.close()  # the runner stops before the panes close; a run left current stays unknown
         if self.terminal is not None:
@@ -848,9 +868,42 @@ class Backend:
                 "startup": self._startup_view(), "holds": self.hold.view(), "faults": self._faults_view(),
                 "ui": dict(self.ui.stats) if self.ui else {},
                 "important_logs": {**self.important_storage_status,
-                                   "summary": {"state": "unknown", "latencySeconds": None,
-                                               "newInfo": None, "usage": None,
-                                               "lastHealthy": None}}}
+                                   "summary": (self.summary_scheduler.status() if getattr(self, "summary_scheduler", None)
+                                               else {"state": "unknown", "latencySeconds": None,
+                                                     "newInfo": None, "usage": None, "lastHealthy": None})}}
+
+    def _summary_priority(self) -> bool:
+        if self._hold_reason("manager") is not None:
+            return True
+        return (self.automation_loop.summary_priority()
+                or self.terminal.summary_priority())
+
+    def _summary_dispatch_ready(self) -> bool:
+        # Share TaskMailbox's delivery admission briefly, never its model wait.
+        from workbench.ipc.bridge_g3.mailbox import state_blockers
+        lock = self.bridge.delivery_lock("manager")
+        if not lock.acquire(blocking=False):
+            return False
+        try:
+            return not state_blockers(self.bridge.probe("manager", timeout=0.1))
+        except Exception:
+            return False
+        finally:
+            lock.release()
+
+    def _summary_authority_flags(self, subject: dict[str, Any], end: dict[str, Any] | None) -> dict[str, Any]:
+        if subject["kind"] == "command":
+            return {"active": self.terminal.summary_command_active(subject["id"]), "revoked": False}
+        active = self.flow.active_task()
+        state = self.subject_log.state(subject) if self.subject_log is not None else {}
+        revision = state.get("grant_revision")
+        revoked = True
+        if type(revision) is int:
+            with TaskRepository(self.layout.tasks) as journal:
+                decisions = journal.get_decisions(subject["id"], revision)
+                revoked = any(row["kind"] == "revoked" for row in decisions)
+        return {"active": active is not None and active.task_id == subject["id"]
+                and active.revision == revision and active.approved is True, "revoked": revoked}
 
     def _important_inventory(self) -> dict[str, Any]:
         """The actual catalog file count; failed observation is never one DB."""

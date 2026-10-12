@@ -3,6 +3,7 @@ import net from "node:net";
 import { parseControlEnvelope } from "../contract/v1.ts";
 import { canonicalJson } from "../contract/logs_v1.ts";
 import { countSummaryFragments, dispatchSummarySDK } from "./summary_sdk.ts";
+import { modelMetadataObserver } from "./model_metadata.ts";
 
 type Role = "manager" | "worker";
 type Frame = Record<string, unknown>;
@@ -533,6 +534,8 @@ export default function workbenchG3Extension(pi: any, summarySDK?: Record<string
 	let reconnectAttempt = 0;
 	let agentActive = false;
 	let summaryActive = false;
+	const operationalMetadata = modelMetadataObserver(() => context, summarySDK);
+	const readSummaryMetadata = () => context?.workbenchSummaryMetadata?.() ?? operationalMetadata();
 	let activeDelivery: DeliveryEvidence | undefined;
 	let turnSequence = 0;
 	let abortTargetTurn: number | undefined;
@@ -763,7 +766,7 @@ export default function workbenchG3Extension(pi: any, summarySDK?: Record<string
 				}
 				// Native parent identity and G3 channel generation are checked separately.
 				// The existing observer supplies epoch; never reconstruct it from settings.
-				const observed = context?.workbenchSummaryMetadata?.();
+				const observed = readSummaryMetadata();
 				if (!observed) {
 					ack(frame.requestId, "count_unavailable", { sent: false, protected: false,
 						reason: "model_metadata_unavailable" }); return;
@@ -782,7 +785,7 @@ export default function workbenchG3Extension(pi: any, summarySDK?: Record<string
 					&& !paused && pauseEpoch === requestEpoch && isMessageSafe()
 					&& readback.source === "parent_session_readback"
 					&& readback.parentSessionId === String(context?.sessionManager?.getSessionId())
-					&& ownerText === canonicalJson(owner(context?.workbenchSummaryMetadata?.() ?? {}))
+					&& ownerText === canonicalJson(owner(readSummaryMetadata() ?? {}))
 					&& ownerText === canonicalJson(query.owner)
 					&& modelKey(readback.model) === modelKey(context?.model);
 				if (!current()) { defer("input_count_owner_mismatch"); return; }
@@ -807,7 +810,7 @@ export default function workbenchG3Extension(pi: any, summarySDK?: Record<string
 				// DVL-14 supplies the operational parent descriptor observer. An
 				// unavailable observer is unknown, never reconstructed from settings.
 				const result = await dispatchSummarySDK({ role, context, prepared: frame.summary, sdk: summarySDK,
-					writer: frame.writer, observeMetadata: () => context?.workbenchSummaryMetadata?.(),
+					writer: frame.writer, observeMetadata: readSummaryMetadata,
 					current: () => isCurrentConnection(client, sessionId, sessionGeneration)
 						&& !paused && pauseEpoch === requestEpoch });
 				if (result.receipt) pi.appendEntry("workbench-summary-receipt", result.receipt);

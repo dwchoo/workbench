@@ -67,6 +67,8 @@ class DataLayout:
     @property
     def important_logs(self) -> Path: return self.root / "important-logs"
     @property
+    def summary_compatibility(self) -> Path: return self.root / "summary-compatibility"
+    @property
     def pause_journal(self) -> Path: return self.root / "pause.jsonl"
     @property
     def lifecycle_journal(self) -> Path: return self.root / "lifecycle.json"

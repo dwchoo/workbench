@@ -342,6 +342,27 @@ def _important_confirmation(args: argparse.Namespace, description: str) -> bool:
     return input(f"{description}. 계속할까요? [y/N] ").strip().lower() == "y"
 
 
+def cmd_summary_compat(args: argparse.Namespace) -> int:
+    from workbench.backend.summary_compatibility import SummaryCompatibility
+    layout = _layout(args, create=args.compat_action == "verify")
+    service = SummaryCompatibility(layout.summary_compatibility)
+    try:
+        result = service.verify_scripted() if args.compat_action == "verify" else service.status()
+    except BackendLocked:
+        result = {"result": "unavailable", "reason": "compatibility_record_busy"}
+    except (OSError, ValueError, KeyError, TypeError):
+        result = {"result": "unavailable", "reason": "compatibility_record_invalid"}
+    if args.json:
+        print(json.dumps(result, sort_keys=True, ensure_ascii=False))
+    else:
+        print(f"중요 로그 요약 호환 상태: {result.get('result', result.get('state'))}")
+        if result.get("unknowns"):
+            print("미확인: " + ", ".join(result["unknowns"]))
+        if result.get("reason"):
+            print("사유: " + result["reason"])
+    return EXIT_FAILURE if args.compat_action == "verify" and result.get("result") != "pass" else 0
+
+
 def _important_print(result: dict, args: argparse.Namespace) -> None:
     if args.json:
         print(json.dumps(result, sort_keys=True, ensure_ascii=False))
@@ -795,6 +816,15 @@ def parser() -> argparse.ArgumentParser:
     raw_status = common(logs_sub.add_parser("raw-status", help="show separate legacy and disabled v2 usage"))
     raw_status.add_argument("--json", action="store_true")
     raw_status.set_defaults(handler=cmd_raw_read)
+    compat = logs_sub.add_parser("summary-compat", help="중요 로그 요약 호환 상태와 명시적 검증")
+    compat_sub = compat.add_subparsers(dest="compat_action", required=True)
+    compat_status = common(compat_sub.add_parser("status", help="로컬 호환 상태 표시"))
+    compat_status.add_argument("--json", action="store_true")
+    compat_status.set_defaults(handler=cmd_summary_compat)
+    compat_verify = common(compat_sub.add_parser("verify", help="명시적 scripted 검증; 요약·raw 활성화 없음"))
+    compat_verify.add_argument("--scripted", action="store_true", required=True)
+    compat_verify.add_argument("--json", action="store_true")
+    compat_verify.set_defaults(handler=cmd_summary_compat)
     backend = sub.add_parser("_backend", help=argparse.SUPPRESS)
     backend.add_argument("--data-dir", required=True)
     backend.add_argument("--project-dir", required=True)

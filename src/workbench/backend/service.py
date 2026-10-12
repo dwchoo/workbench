@@ -84,6 +84,7 @@ from workbench.storage.log_raw.port import DisabledSegmentedRawPort, raw_query, 
 from workbench.storage.important_log import ActiveSubjectLog, ImportantLogCatalog, ImportantLogReader
 from workbench.contracts.logs_v1 import parse_subject_ref
 from workbench.backend.summary_adapter import SDKSummaryAdapter
+from workbench.backend.summary_compatibility import SummaryCompatibility
 from workbench.backend.summary_scheduler import SummaryScheduler, SummarySourceCollector
 from workbench.tasks.repository import TaskRepository
 from workbench.terminal.shell_g2.prototype import ShellChoice, UnsafeShellState
@@ -483,6 +484,8 @@ class Backend:
         self.bridge.set_tool_handler(self._tool_request, undelivered=self._tool_result_undelivered,
                                      peer_gone=self._bridge_peer_gone)
         # DVL-09 prepares a port only. DVL-10 owns scheduling and durable admission.
+        if self.summary_compatibility is None:
+            self.summary_compatibility = SummaryCompatibility(layout.summary_compatibility)
         self.summary_adapter = SDKSummaryAdapter(self.bridge)
         self.summary_scheduler = SummaryScheduler(
             repository_factory=lambda: TaskRepository(layout.tasks), adapter=self.summary_adapter,

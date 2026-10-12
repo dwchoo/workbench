@@ -83,6 +83,16 @@ else null; a client shows the worker as the host terminal's user then (the
 shell itself is claimed on the manager side, so ``input_owner`` stays
 ``manager``). Experiment runs leave it null.
 
+중요 로그 요약 호환 관측 (DVL-14; additive)
+------------------------------------------
+``important_logs.compatibility``는 마지막 실제 검사 결과의 detached 관측값이다.
+``state``, ``reason``, ``lastCheckedAt``(UTC 문자열 또는 미검사 null)을 제공한다.
+표시 상태는 verified, version_drift_unverified, unrelated_change_observed,
+revalidation_required, protected, unavailable이며 미검사를 정상으로 표시하지 않는다.
+snapshot 조회는 runtime hash·admission·verify·notice 소비·raw 활성화를 수행하지 않는다.
+마지막 검사 결과는 현재 사용 가능 여부나 실행 권한이 아니다. 기존 summary 오류·지연과
+다중 DB 경고는 별도로 유지한다.
+
 Task and worker (CW-18, C-D66; additive)
 ----------------------------------------
 The manager's ``to_worker`` is the user's standing delegation (C-D66): there is

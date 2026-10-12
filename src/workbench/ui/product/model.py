@@ -19,6 +19,7 @@ from workbench.contracts.v1 import PaneId
 from workbench.terminal.vt_g1.screen import STRING_MAX, TerminalScreen, make_stream
 from workbench.ui.product.input import (PASTE_END, PREFIX, PASTE_START, Command, InputParser, Mouse, PageScroll, Paste,
                                        PasteRejected, Passthrough, _sequence_length)
+from workbench.ui.status_workbench.projection import _plain, summary_compatibility_text
 from workbench.ui.product.layout import (DEFAULT_LAYOUT, Layout, clamp_height, clamp_width, left_width,
                                          top_height)
 
@@ -223,12 +224,6 @@ _SCROLL_KEYS = {
     b"\x1b[F": "end", b"\x1b[4~": "end", b"\x1bOF": "end", b"\x1b[8~": "end",
     b"k": "up", b"j": "down", b"g": "home", b"G": "end", b"q": "quit", b"Q": "quit", b"\x1b": "quit",
 }
-
-
-def _plain(value: Any) -> str:
-    """Backend text made safe for a status line: no control characters, single spaces."""
-    text = value if isinstance(value, str) else ("" if value is None else str(value))
-    return " ".join("".join(ch if ch.isprintable() else " " for ch in text).split())
 
 
 def _clip(text: str, width: int) -> str:
@@ -2021,6 +2016,12 @@ class ProductModel:
             return "중요 로그 요약 상태 미확인"
         return ""
 
+    def important_compatibility_text(self) -> str:
+        important = self.state.get("important_logs")
+        if not isinstance(important, dict):
+            return ""
+        return summary_compatibility_text(important.get("compatibility"))
+
     # -- CW-18 U5: current Task / worker / automation (all fields optional; unknown values are shown as sent) --------
     def worker_text(self) -> str:
         """대기 / 작업 중 from the snapshot ``worker``; empty when an older backend sends none."""
@@ -2145,6 +2146,9 @@ class ProductModel:
         summary = self.important_summary_text()
         if summary:
             parts.append(summary)
+        compatibility = self.important_compatibility_text()
+        if compatibility:
+            parts.append(compatibility)
         important = self.state.get("important_logs")
         if isinstance(important, dict) and important.get("state") in ("unavailable", "capture_unknown",
                                                                        "busy", "corrupt", "physical_full"):

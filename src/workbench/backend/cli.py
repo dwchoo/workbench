@@ -29,6 +29,7 @@ from workbench.backend.omp_home import OmpHomeError, auth_guidance, config_dir_v
 from workbench.backend.paths import (BackendLocked, DataDirError, DataLayout, InstanceLock,
                                      ensure_private_dir, resolve_data_dir)
 from workbench.contracts.ui_v1 import ClientType
+from workbench.ui.status_workbench.projection import _plain, summary_compatibility_text
 
 EXIT_FAILURE, EXIT_REQUIREMENT, EXIT_NOT_RUNNING = 1, 2, 3
 START_TIMEOUT = 120.0
@@ -188,6 +189,8 @@ def _print_important_warning(snapshot: dict, stream=sys.stdout) -> None:
               "'logs important status'로 확인하고 'logs important delete-db --db UUID'로 정리하세요", file=stream)
     elif important.get("countState") != "known":
         print("경고: 중요 로그 DB 수·용량 확인 불가. 'logs important status'로 확인하세요", file=stream)
+
+    print(summary_compatibility_text(important.get("compatibility")), file=stream)
 
 
 def _print_recovery(snapshot: dict, stream=None) -> None:
@@ -355,11 +358,14 @@ def cmd_summary_compat(args: argparse.Namespace) -> int:
     if args.json:
         print(json.dumps(result, sort_keys=True, ensure_ascii=False))
     else:
-        print(f"중요 로그 요약 호환 상태: {result.get('result', result.get('state'))}")
+        if args.compat_action == "status":
+            print(summary_compatibility_text(service.observed_status()))
+        else:
+            print("중요 로그 요약 명시 검증 결과: " + _plain(result.get("result")))
         if result.get("unknowns"):
-            print("미확인: " + ", ".join(result["unknowns"]))
+            print("미확인: " + _plain(", ".join(result["unknowns"])))
         if result.get("reason"):
-            print("사유: " + result["reason"])
+            print("사유: " + _plain(result["reason"]))
     return EXIT_FAILURE if args.compat_action == "verify" and result.get("result") != "pass" else 0
 
 
@@ -376,6 +382,7 @@ def _important_print(result: dict, args: argparse.Namespace) -> None:
                       "확인하고 'logs important delete-db --db UUID'로 사용자 정리를 진행하세요")
         else:
             print("important DB 수·크기 확인 불가")
+        print(summary_compatibility_text(result.get("compatibility")))
     elif args.logs_action == "list":
         for row in result.get("subjects", []):
             item = row["subject"]
@@ -404,6 +411,11 @@ def cmd_important_read(args: argparse.Namespace) -> int:
         reader = ImportantLogReader(layout.important_logs)
         if args.logs_action == "status":
             result = reader.status()
+            # Reuse the running backend's observation, never perform a live compatibility check.
+            snapshot = _running_snapshot(layout) or {}
+            important = snapshot.get("important_logs")
+            result["compatibility"] = (important.get("compatibility")
+                                       if isinstance(important, dict) else None)
         elif args.logs_action == "list":
             result = reader.list_subjects(limit=args.limit, after=args.page)
         else:

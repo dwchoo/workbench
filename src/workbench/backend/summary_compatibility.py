@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import ast
 from contextlib import contextmanager
+from copy import deepcopy
 from datetime import datetime, timezone
 from hashlib import sha256
 import importlib.util
@@ -293,6 +294,8 @@ class SummaryCompatibility:
         self.directory, self.identity = directory, identity
         self.omp_identity, self.boundary = omp_identity, boundary
         self._lock = RLock()
+        self._last_observation = {"state": "unavailable", "reason": "compatibility_not_checked",
+                                  "lastCheckedAt": None}
 
     def _state(self) -> dict:
         if self.directory.exists() or self.directory.is_symlink():
@@ -394,7 +397,29 @@ class SummaryCompatibility:
             return None
         return record
 
+    def observed_status(self) -> dict:
+        """Detached last check for display; no file I/O or admission decision."""
+        with self._lock:
+            return deepcopy(self._last_observation)
+
+    def _observe(self, result: dict) -> None:
+        observation = deepcopy(result)
+        observation.pop("admitted", None)  # A stale display never grants admission.
+        observation["lastCheckedAt"] = datetime.now(timezone.utc).isoformat()
+        self._last_observation = observation
+
     def status(self) -> dict:
+        """Live check, preserving the admission API; rendering uses observed_status."""
+        with self._lock:
+            result = self._checked_status()
+            try:
+                self._observe(result)
+            except RecursionError:
+                result = {"state": "unavailable", "reason": "compatibility_record_invalid", "admitted": False}
+                self._observe(result)
+            return result
+
+    def _checked_status(self) -> dict:
         with self._lock:
             try:
                 state = self._state()
@@ -458,6 +483,8 @@ class SummaryCompatibility:
             state.update(protection=str(incident.get("reason") or "guard_confirmation_unavailable")[:256],
                          incident_key=key, incident=incident, notice_pending=True)
             self._save_state(state)
+            self._observe({"state": "protected", "reason": state["protection"],
+                           "episode": state["episode"], "latest_record": state["latest_record"]})
 
     def take_notice(self) -> dict | None:
         with self._mutation():

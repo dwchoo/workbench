@@ -871,9 +871,18 @@ class Backend:
                 "startup": self._startup_view(), "holds": self.hold.view(), "faults": self._faults_view(),
                 "ui": dict(self.ui.stats) if self.ui else {},
                 "important_logs": {**self.important_storage_status,
+                                   "compatibility": self._summary_compatibility_observation(),
                                    "summary": (self.summary_scheduler.status() if getattr(self, "summary_scheduler", None)
                                                else {"state": "unknown", "latencySeconds": None,
                                                      "newInfo": None, "usage": None, "lastHealthy": None})}}
+
+    def _summary_compatibility_observation(self) -> dict:
+        """Snapshots read the last check only; never invoke admission or hash runtime."""
+        service = getattr(self, "summary_compatibility", None)
+        observe = getattr(service, "observed_status", None)
+        if callable(observe):
+            return observe()
+        return {"state": "unavailable", "reason": "compatibility_not_checked", "lastCheckedAt": None}
 
     def _summary_priority(self) -> bool:
         if self._hold_reason("manager") is not None:

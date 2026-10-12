@@ -147,3 +147,34 @@ def project_three_area_status(*, pause: PauseStatus, manager: AreaObservation,
         "persistence_error": pause.persistence_error,
     }
     return ThreeAreaStatus(manager=manager_row, worker=worker_row, host=host_row)
+
+
+def _plain(value: Any) -> str:
+    """Backend text made safe for a status line: no control characters, single spaces."""
+    text = value if isinstance(value, str) else ("" if value is None else str(value))
+    return " ".join("".join(ch if ch.isprintable() else " " for ch in text).split())
+
+
+def summary_compatibility_text(observation: Any) -> str:
+    """Pure CLI/TUI label for a previous observation, never an admission claim."""
+    value = observation if isinstance(observation, dict) else {}
+    state = _plain(value.get("state"))
+    labels = {
+        "verified": "검증 완료",
+        "version_drift_unverified": "버전 변경 · 현재 버전 미검증",
+        "unrelated_change_observed": "비관련 변경 관측",
+        "revalidation_required": "재검증 필요",
+        "protected": "보호 상태 · 요약 보류",
+        "unavailable": "확인 불가",
+    }
+    checked = _plain(value.get("lastCheckedAt"))
+    label = labels.get(state, "미확인") if checked else "미확인 · 아직 검사하지 않음"
+    parts = ["중요 로그 요약 호환: " + label,
+             "마지막 검사 " + (checked or "없음")]
+    reason = _plain(value.get("reason"))
+    if reason:
+        parts.append("사유 " + reason)
+    # Version-only drift needs no mandatory banner or repeated verify request.
+    if state in ("revalidation_required", "protected", "unavailable"):
+        parts.append("명시 검증: logs summary-compat verify --scripted")
+    return " · ".join(parts)

@@ -90,6 +90,9 @@ shell itself is claimed on the manager side, so ``input_owner`` stays
 표시 상태는 verified, version_drift_unverified, unrelated_change_observed,
 revalidation_required, protected, unavailable이며 미검사를 정상으로 표시하지 않는다.
 snapshot 조회는 runtime hash·admission·verify·notice 소비·raw 활성화를 수행하지 않는다.
+raw-status의 additive ``rotation``은 활성화 여부·시각·근거 UUID와 마지막 호환 관측에
+따른 신규 source 정책·사유를 표시한다. 표시 조회는 live admission이나 verify를 하지 않는다.
+기존 source는 시작할 때 선택한 writer를 유지하며 이 표시로 전환되지 않는다.
 마지막 검사 결과는 현재 사용 가능 여부나 실행 권한이 아니다. 기존 summary 오류·지연과
 다중 DB 경고는 별도로 유지한다.
 

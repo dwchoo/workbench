@@ -30,8 +30,10 @@ BUDGET_REASONS = frozenset(("input_budget_unavailable", "output_budget_unavailab
 
 class SummarySourceCollector:
     """Read only confirmed ranges from fixed product stores, without a body cache."""
-    def __init__(self, root: Path, subject_log: Callable[[], Any], *, segmented: Any = None):
+    def __init__(self, root: Path, subject_log: Callable[[], Any], *, segmented: Any = None,
+                 raw_query_port: Callable[..., dict] | None = None):
         self.root, self.subject_log, self.segmented = Path(root), subject_log, segmented
+        self.raw_query_port = raw_query_port
 
     def _event(self, event_id: str) -> bytes | None:
         # The identity was minted by SubjectLifecycle from the durable seq.
@@ -79,8 +81,10 @@ class SummarySourceCollector:
                 try:
                     while offset < span["end"]:
                         end = min(span["end"], offset + 32768)
-                        result = raw_query(self.root, kind, identity, offset=offset,
-                                           limit=end - offset, segmented=self.segmented)
+                        result = (self.raw_query_port(kind, identity, offset=offset, limit=end - offset)
+                                  if self.raw_query_port is not None else
+                                  raw_query(self.root, kind, identity, offset=offset,
+                                            limit=end - offset, segmented=self.segmented))
                         read = result["read"]
                         if result.get("log_format") == "segmented-v1":
                             if read.get("source") != source:

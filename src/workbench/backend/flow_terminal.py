@@ -514,6 +514,7 @@ class TerminalService:
                  wait_seconds: float = WAIT_SECONDS, subject_log: Any | None = None,
                  subject_capture_failure: Callable[[], None] | None = None,
                  segmented_raw_port: DisabledSegmentedRawPort | None = None,
+                 segmented_raw_port_factory: Callable[[], DisabledSegmentedRawPort | None] | None = None,
                  repository_factory: Callable[[], Any] | None = None):
         self._repository_factory = repository_factory
         self._handoffs = handoffs
@@ -524,6 +525,7 @@ class TerminalService:
         self._gate = gate
         self._log_root = Path(log_root)
         self._segmented_raw_port = segmented_raw_port
+        self._segmented_raw_port_factory = segmented_raw_port_factory
         self._automation = automation
         self._paused = paused
         self._hold = hold  # CW-19 (C-D71 (3)/(4), C-AC-28): no new worker command while held
@@ -1233,8 +1235,10 @@ class TerminalService:
     def _new_command(self, text: str, key_dict: dict[str, Any], task: str | None, *,
                      spill: bool = False) -> _Command | dict[str, Any]:
         command_id = str(uuid4())
+        segmented_raw_port = (self._segmented_raw_port_factory() if self._segmented_raw_port_factory
+                              else self._segmented_raw_port)
         revision = None
-        if self._segmented_raw_port is not None and task is not None:
+        if segmented_raw_port is not None and task is not None:
             try:
                 active = self._active_task()
                 if active is None or getattr(active, "task_id", None) != task:
@@ -1247,8 +1251,8 @@ class TerminalService:
                                     "The active Task source identity could not be verified; nothing was run.")
         try:
             self._log_root.mkdir(mode=0o700, parents=True, exist_ok=True)
-            if self._segmented_raw_port is not None:
-                log_path, raw_descriptor = self._segmented_raw_port.prepare_command(
+            if segmented_raw_port is not None:
+                log_path, raw_descriptor = segmented_raw_port.prepare_command(
                     self._log_root, command_id, task_id=task, revision=revision)
             else:
                 log_path = self._log_root / f"{command_id}.log"
@@ -1265,8 +1269,8 @@ class TerminalService:
             except Exception:
                 pass  # capture fails closed; summary metadata never cancels the core command
         command.summary_revision = revision
-        if self._segmented_raw_port is not None:
-            command.segmented_raw_port = self._segmented_raw_port
+        if segmented_raw_port is not None:
+            command.segmented_raw_port = segmented_raw_port
             command.raw_descriptor = raw_descriptor
         if spill:  # C-D69 (6)(c): next to its log (same 0700 directory, kept and removed with it), 0600
             script = self._log_root / f"{command_id}.sh"

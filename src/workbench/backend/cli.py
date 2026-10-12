@@ -427,6 +427,26 @@ def cmd_important_read(args: argparse.Namespace) -> int:
         return EXIT_FAILURE
 
 
+def cmd_raw_rotation(args: argparse.Namespace) -> int:
+    from workbench.backend.raw_rotation import RawRotationPolicy
+    from workbench.backend.summary_compatibility import SummaryCompatibility
+    # Even --yes does not bypass the local product evidence and live gate.
+    print("경고: 이후 시작한 raw source는 100MB × 5 rotation으로 오래된 bytes가 삭제될 수 있습니다. "
+          "기존 source와 legacy 파일은 전환하거나 삭제하지 않습니다.", file=sys.stderr)
+    if not args.yes:
+        print("사용자의 명시 활성화 요청이 필요합니다 (--yes)", file=sys.stderr)
+        return EXIT_FAILURE
+    try:
+        layout = _layout(args, create=False)
+        policy = RawRotationPolicy(layout.raw_rotation, SummaryCompatibility(layout.summary_compatibility))
+        result = policy.activate(args.evidence)
+        print(json.dumps(result, sort_keys=True, ensure_ascii=False))
+        return 0
+    except (OSError, ValueError, TypeError, RuntimeError) as exc:
+        print("raw rotation 활성화 거부: " + _plain(str(exc)), file=sys.stderr)
+        return EXIT_FAILURE
+
+
 def cmd_raw_read(args: argparse.Namespace) -> int:
     """User-only bounded source read; stopped queries never start writer recovery."""
     from workbench.storage.log_raw.port import raw_query, raw_usage
@@ -440,6 +460,11 @@ def cmd_raw_read(args: argparse.Namespace) -> int:
                                                                      "reason": answer.get("reason")}
             except (NotRunning, ClientError, OSError):
                 result = raw_usage(layout.root)
+                from workbench.backend.raw_rotation import RawRotationPolicy
+                from workbench.backend.summary_compatibility import SummaryCompatibility
+                result["rotation"] = RawRotationPolicy(layout.raw_rotation,
+                    SummaryCompatibility(layout.summary_compatibility)).status()
+                result["activation"] = "enabled" if result["rotation"]["activated"] else "disabled"
         else:
             kind, identity = ("run", args.run_id) if args.run_id else ("command", args.command_id)
             try:
@@ -828,6 +853,12 @@ def parser() -> argparse.ArgumentParser:
     raw_status = common(logs_sub.add_parser("raw-status", help="show separate legacy and disabled v2 usage"))
     raw_status.add_argument("--json", action="store_true")
     raw_status.set_defaults(handler=cmd_raw_read)
+    rotation = logs_sub.add_parser("raw-rotation", help="사용자 전용 raw rotation 활성화")
+    rotation_sub = rotation.add_subparsers(dest="rotation_action", required=True)
+    activation = common(rotation_sub.add_parser("activate", help="검증된 로컬 제품 record로 명시 활성화"))
+    activation.add_argument("--yes", action="store_true")
+    activation.add_argument("--evidence", required=True, help="로컬 product record UUID (파일 경로 아님)")
+    activation.set_defaults(handler=cmd_raw_rotation)
     compat = logs_sub.add_parser("summary-compat", help="중요 로그 요약 호환 상태와 명시적 검증")
     compat_sub = compat.add_subparsers(dest="compat_action", required=True)
     compat_status = common(compat_sub.add_parser("status", help="로컬 호환 상태 표시"))

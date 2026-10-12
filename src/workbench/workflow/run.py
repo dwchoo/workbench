@@ -929,6 +929,7 @@ class TaskWorkflow:
                  automation_source: Callable[[], Mapping[str, Any]] | None = None,
                  raw_store: Any = None,
                  segmented_raw_port: DisabledSegmentedRawPort | None = None,
+                 segmented_raw_port_factory: Callable[[], DisabledSegmentedRawPort | None] | None = None,
                  metadata_admission: MetadataAdmissionGate | None = None,
                  metadata_outcome: Callable[[str, BaseException | None], None] | None = None,
                  subject_log: Any = None,
@@ -937,6 +938,7 @@ class TaskWorkflow:
         self.mailbox = mailbox
         self.raw_store = raw_store  # CW-19: the project's RawLogStore for the run's raw log (None: a plain file)
         self.segmented_raw_port = segmented_raw_port
+        self.segmented_raw_port_factory = segmented_raw_port_factory
         self.metadata_admission = metadata_admission
         self.metadata_outcome = metadata_outcome
         self.subject_log = subject_log
@@ -1083,10 +1085,12 @@ class TaskWorkflow:
         })
         record_dir = root / run_id
         try:
+            segmented_raw_port = (self.segmented_raw_port_factory() if self.segmented_raw_port_factory
+                                  else self.segmented_raw_port)
             record_dir.mkdir(mode=0o700)
             raw_log, result_path = record_dir / "raw.log", record_dir / "run.json"
-            if self.segmented_raw_port is not None:
-                raw_log, raw_descriptor = self.segmented_raw_port.prepare_task(record_dir, task_id, revision, run_id)
+            if segmented_raw_port is not None:
+                raw_log, raw_descriptor = segmented_raw_port.prepare_task(record_dir, task_id, revision, run_id)
             elif self.raw_store is not None:  # CW-19: the store owns <raw-logs>/<run_id>.log and its quota
                 raw_log = Path(self.raw_store.root_path) / f"{run_id}.log"
                 self.raw_store.append(run_id, b"")
@@ -1104,7 +1108,7 @@ class TaskWorkflow:
             "shell_state": "not_sent", "exit_status": None, "exit_confirmed": False,
             "worker_judgment": None, "approval_hash": approval_hash,
         }
-        if self.segmented_raw_port is not None:
+        if segmented_raw_port is not None:
             record.update({"log_format": "segmented-v1", "raw_log_ref": raw_descriptor["raw_log_ref"],
                            "raw_source": raw_descriptor["source"],
                            "read_command": raw_read_command(record_dir.parents[2], "run", run_id)})
@@ -1213,9 +1217,9 @@ class TaskWorkflow:
                                task_message.message_id, worktree, shell, execution,
                                record_dir, raw_log, result_path, before, approval_hash, record, {"sent"},
                                automation_source, self.worker_port, owns_shell=not injected,
-                               raw_store=None if self.segmented_raw_port is not None else self.raw_store,
-                               segmented_raw_port=self.segmented_raw_port,
-                               raw_descriptor=raw_descriptor if self.segmented_raw_port is not None else None,
+                               raw_store=None if segmented_raw_port is not None else self.raw_store,
+                               segmented_raw_port=segmented_raw_port,
+                               raw_descriptor=raw_descriptor if segmented_raw_port is not None else None,
                                metadata_admission=self.metadata_admission,
                                metadata_outcome=self.metadata_outcome, subject_log=self.subject_log,
                                subject_log_source=lambda: self.subject_log,

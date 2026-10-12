@@ -25,6 +25,8 @@ manager session one ``backend_restarted`` notice (C-D71 (2)).
 
 from __future__ import annotations
 
+from contextlib import nullcontext
+
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 import json
@@ -85,6 +87,7 @@ from workbench.storage.important_log import ActiveSubjectLog, ImportantLogCatalo
 from workbench.contracts.logs_v1 import parse_subject_ref
 from workbench.backend.summary_adapter import SDKSummaryAdapter
 from workbench.backend.summary_compatibility import SummaryCompatibility
+from workbench.backend.raw_rotation import RawRotationPolicy
 from workbench.backend.summary_scheduler import SummaryScheduler, SummarySourceCollector
 from workbench.tasks.repository import TaskRepository
 from workbench.terminal.shell_g2.prototype import ShellChoice, UnsafeShellState
@@ -197,6 +200,10 @@ class Backend:
         self.raw_logs: RawLogStore | None = None
         self.segmented_raw_port = (DisabledSegmentedRawPort(disabled_raw_store)
                                    if disabled_raw_store is not None else None)
+        self._raw_port_lock = threading.RLock()
+        self._owned_segmented_store = None
+        self.raw_rotation = None
+        self._raw_rotation_error = None
         self.important_catalog: ImportantLogCatalog | None = None
         self.subject_log: ActiveSubjectLog | None = None
         self.important_storage_status: dict[str, Any] = {"state": "not_open"}
@@ -403,6 +410,9 @@ class Backend:
         self.repository = TaskRepository(layout.tasks)
         os.chmod(layout.tasks, 0o600)  # SQLite journals inherit the database mode
         self.raw_logs = RawLogStore(layout.raw_logs)
+        if self.summary_compatibility is None:
+            self.summary_compatibility = SummaryCompatibility(layout.summary_compatibility)
+        self.raw_rotation = RawRotationPolicy(layout.raw_rotation, self.summary_compatibility)
         try:
             self.important_catalog = ImportantLogCatalog(
                 layout.important_logs, create=True,
@@ -473,6 +483,7 @@ class Backend:
             subject_log=self.subject_log,
             subject_capture_failure=self._mark_important_capture_unknown,
             segmented_raw_port=self.segmented_raw_port,
+            segmented_raw_port_factory=self._new_raw_port,
             repository_factory=lambda: TaskRepository(layout.tasks))
         self.flow.terminal_runs = self.terminal.runs_for_task  # C-D69 (6)(d): the done report's commands run
         self.watchdog = self._make_watchdog()  # C-D70: status checks, stalled/restart/recovery notices
@@ -484,13 +495,12 @@ class Backend:
         self.bridge.set_tool_handler(self._tool_request, undelivered=self._tool_result_undelivered,
                                      peer_gone=self._bridge_peer_gone)
         # DVL-09 prepares a port only. DVL-10 owns scheduling and durable admission.
-        if self.summary_compatibility is None:
-            self.summary_compatibility = SummaryCompatibility(layout.summary_compatibility)
         self.summary_adapter = SDKSummaryAdapter(self.bridge)
         self.summary_scheduler = SummaryScheduler(
             repository_factory=lambda: TaskRepository(layout.tasks), adapter=self.summary_adapter,
             subject_log=lambda: self.subject_log,
-            collector=SummarySourceCollector(layout.root, lambda: self.subject_log, segmented=self.segmented_raw_port),
+            collector=SummarySourceCollector(layout.root, lambda: self.subject_log,
+                                             segmented=self.segmented_raw_port, raw_query_port=self._raw_source_query),
             authority_flags=self._summary_authority_flags, paused=self._automation_paused,
             priority=self._summary_priority, dispatch_ready=self._summary_dispatch_ready,
             runtime=lambda: self.summary_runtime() if callable(self.summary_runtime) else None,
@@ -762,6 +772,7 @@ class Backend:
             self.repository.close()
         if self.raw_logs is not None:
             self.raw_logs.close()
+        self._close_owned_raw_store()
         probe = LinuxProcessProbe()
         evidence = {name: probe.observe(ref).state for name, ref in refs.items() if name != "backend"}
         # C-AC-22: a process left running is never reported as a verified shutdown
@@ -948,16 +959,59 @@ class Backend:
         self.important_storage_status = {**self.important_storage_status, **self._important_inventory()}
         return result
 
-    def raw_query(self, kind: str, identity: str, offset: int, limit: int) -> dict[str, Any]:
-        """Read one bounded page through the existing optional singleton."""
-        try:
+    def _new_raw_port(self) -> DisabledSegmentedRawPort | None:
+        """Choose once at source start; existing source objects retain this port."""
+        with self._raw_port_lock:
+            injected = self.segmented_raw_port if self._owned_segmented_store is None else None
+        if injected is not None:
+            return injected  # Explicit disabled-store fixture injection.
+        # No compatibility/policy lock is acquired under the raw-store leaf lock.
+        if self.raw_rotation is None or not self.raw_rotation.admits_new_source():
+            return None
+        with self._raw_port_lock:
+            if self.segmented_raw_port is None:
+                try:
+                    store = SegmentedRawStore(self.layout.raw_v2)
+                    self.segmented_raw_port = DisabledSegmentedRawPort(store)
+                    self._owned_segmented_store = store
+                    self._raw_rotation_error = None
+                except (OSError, ValueError, RuntimeError):
+                    self._raw_rotation_error = "raw_store_unavailable"
+                    return None
+            return self.segmented_raw_port
+
+    def _close_owned_raw_store(self) -> None:
+        with getattr(self, "_raw_port_lock", nullcontext()):
+            if self._owned_segmented_store is not None:
+                self._owned_segmented_store.close()
+                self._owned_segmented_store = None
+                self.segmented_raw_port = None
+
+    def _raw_source_query(self, kind: str, identity: str, *, offset: int, limit: int) -> dict[str, Any]:
+        """Root-fixed exact read; preserve the storage result and exceptions for collectors."""
+        with getattr(self, "_raw_port_lock", nullcontext()):
             return raw_query(self.layout.root, kind, identity, offset=offset, limit=limit,
                              segmented=self.segmented_raw_port)
+
+    def raw_query(self, kind: str, identity: str, offset: int, limit: int) -> dict[str, Any]:
+        try:
+            return self._raw_source_query(kind, identity, offset=offset, limit=limit)
         except (OSError, ValueError, RuntimeError) as exc:
             return {"status": "unavailable", "reason": type(exc).__name__}
 
     def raw_status(self) -> dict[str, Any]:
-        return raw_usage(self.layout.root, segmented=self.segmented_raw_port)
+        with getattr(self, "_raw_port_lock", nullcontext()):
+            result = raw_usage(self.layout.root, segmented=self.segmented_raw_port)
+            error = getattr(self, "_raw_rotation_error", None)
+        rotation = getattr(self, "raw_rotation", None)
+        if rotation is not None:
+            result["rotation"] = rotation.status()
+            result["activation"] = "enabled" if result["rotation"]["activated"] else "disabled"
+            if error:
+                result["rotation"]["storageError"] = error
+                if result["rotation"]["newSourcePolicy"] == "segmented-v1":
+                    result["rotation"].update(newSourcePolicy="legacy-stop", reason=error)
+        return result
 
     def _startup_view(self) -> dict[str, Any] | None:
         startup = self.startup
@@ -1526,7 +1580,7 @@ class Backend:
             if action == "raw-status":
                 if args["subject_kind"] is not None or args["subject_id"] is not None:
                     return rejected("invalid_arguments")
-                return {"status": "ok", "data": raw_usage(self.layout.root, segmented=self.segmented_raw_port)}
+                return {"status": "ok", "data": self.raw_status()}
             if args["subject_kind"] not in ("run", "command"):
                 return rejected("invalid_arguments")
             offset, length = args.get("offset"), args.get("length")
@@ -1534,8 +1588,7 @@ class Backend:
                     or not 1 <= length <= 128 * 1024):
                 return rejected("invalid_arguments")
             try:
-                result = raw_query(self.layout.root, args["subject_kind"], args["subject_id"],
-                                   offset=offset, limit=length, segmented=self.segmented_raw_port)
+                result = self._raw_source_query(args["subject_kind"], args["subject_id"], offset=offset, limit=length)
             except (OSError, ValueError, RuntimeError) as exc:
                 return {"status": "unavailable", "reason": type(exc).__name__}
             answer = {"status": "ok" if result.get("status") == "available" else "partial", "data": result}
@@ -2028,6 +2081,7 @@ class Backend:
                                     automation_source=self._automation_port,
                                     raw_store=self.raw_logs,
                                     segmented_raw_port=getattr(self, "segmented_raw_port", None),
+                                    segmented_raw_port_factory=self._new_raw_port,
                                     metadata_admission=None if automation_loop is None else automation_loop.metadata,
                                     metadata_outcome=self._metadata_event,
                                     subject_log=getattr(self, "subject_log", None),

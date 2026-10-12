@@ -65,6 +65,8 @@ class DataLayout:
     @property
     def raw_v2(self) -> Path: return self.root / "raw-v2"
     @property
+    def raw_rotation(self) -> Path: return self.root / "raw-rotation.json"
+    @property
     def important_logs(self) -> Path: return self.root / "important-logs"
     @property
     def summary_compatibility(self) -> Path: return self.root / "summary-compatibility"

@@ -1,7 +1,8 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import net from "node:net";
 import { parseControlEnvelope } from "../contract/v1.ts";
-import { dispatchSummarySDK } from "./summary_sdk.ts";
+import { canonicalJson } from "../contract/logs_v1.ts";
+import { countSummaryFragments, dispatchSummarySDK } from "./summary_sdk.ts";
 
 type Role = "manager" | "worker";
 type Frame = Record<string, unknown>;
@@ -725,6 +726,73 @@ export default function workbenchG3Extension(pi: any, summarySDK?: Record<string
 			acknowledge(client, sessionId, sessionGeneration, requestId, status, extra);
 		if (frame.kind === "probe" && typeof frame.requestId === "string") {
 			ack(frame.requestId, "state", { state: snapshot() });
+			return;
+		}
+		if (frame.kind === "summary_count" && typeof frame.requestId === "string") {
+			const defer = (reason: string) => ack(frame.requestId as string, "deferred",
+				{ sent: false, protected: false, reason });
+			if (role !== "manager" || summaryActive || paused || !isMessageSafe()) {
+				defer(role !== "manager" ? "role_not_allowed" : paused ? "paused" : "parent_busy");
+				return;
+			}
+			const requestEpoch = pauseEpoch;
+			try {
+				const expected = frame.expectedPeer as any;
+				if (!expected || expected.sessionId !== sessionId || expected.generation !== sessionGeneration) {
+					defer("authority_changed_before_submission"); return;
+				}
+				const query = frame.query as any;
+				const sha = (text: string) => createHash("sha256").update(text).digest("hex");
+				if (!query || query.version !== "summary-host-input-v1"
+					|| !query.owner || Object.keys(query.owner).sort().join(",") !== "epoch,model,parentSessionId"
+					|| typeof query.owner.epoch !== "string" || !query.owner.epoch
+					|| typeof query.owner.parentSessionId !== "string" || !query.owner.parentSessionId
+					|| !query.owner.model || typeof query.owner.model !== "object"
+					|| !Array.isArray(query.fragments) || query.fragments.length !== 2
+					|| query.fragments.some((text: unknown) => typeof text !== "string")
+					|| query.ownerDigest !== sha(canonicalJson(query.owner))
+					|| canonicalJson(query.fragmentDigests) !== canonicalJson(query.fragments.map(sha))) {
+					defer("input_count_binding_mismatch"); return;
+				}
+				const modelKey = (model: any) => canonicalJson(Object.fromEntries(
+					["provider", "id", "api", "baseUrl", "contextWindow", "maxTokens", "tokenizer"]
+						.map(key => [key, model?.[key] ?? null])));
+				if (query.owner.parentSessionId !== String(context?.sessionManager?.getSessionId())
+					|| (context?.model && modelKey(query.owner.model) !== modelKey(context.model))) {
+					defer("input_count_owner_mismatch"); return;
+				}
+				// Native parent identity and G3 channel generation are checked separately.
+				// The existing observer supplies epoch; never reconstruct it from settings.
+				const observed = context?.workbenchSummaryMetadata?.();
+				if (!observed) {
+					ack(frame.requestId, "count_unavailable", { sent: false, protected: false,
+						reason: "model_metadata_unavailable" }); return;
+				}
+				const readback = JSON.parse(canonicalJson(observed));
+				if (["id", "provider", "api", "baseUrl"].some(key =>
+					typeof readback.model?.[key] !== "string" || !readback.model[key])
+					|| ["contextWindow", "maxTokens"].some(key =>
+						!Number.isSafeInteger(readback.model?.[key]) || readback.model[key] <= 0)) {
+					defer("model_metadata_unavailable"); return;
+				}
+				const owner = (metadata: any) => ({ epoch: metadata.epoch,
+					parentSessionId: metadata.parentSessionId, model: metadata.model });
+				const ownerText = canonicalJson(owner(readback));
+				const current = () => isCurrentConnection(client, sessionId, sessionGeneration)
+					&& !paused && pauseEpoch === requestEpoch && isMessageSafe()
+					&& readback.source === "parent_session_readback"
+					&& readback.parentSessionId === String(context?.sessionManager?.getSessionId())
+					&& ownerText === canonicalJson(owner(context?.workbenchSummaryMetadata?.() ?? {}))
+					&& ownerText === canonicalJson(query.owner)
+					&& modelKey(readback.model) === modelKey(context?.model);
+				if (!current()) { defer("input_count_owner_mismatch"); return; }
+				if (typeof summarySDK?.Tokenizer !== "function") { defer("sdk_api_unavailable"); return; }
+				// Only the injected SDK's local tokenizer is used. No child, prompt,
+				// provider, DB, settings, authentication or model provisioning here.
+				const proof = countSummaryFragments(readback, query.fragments, summarySDK);
+				if (!current()) { defer("input_count_owner_mismatch"); return; }
+				ack(frame.requestId, "summary_count", { sent: false, protected: false, proof });
+			} catch { defer("input_count_unavailable"); }
 			return;
 		}
 		if (frame.kind === "summary_request" && typeof frame.requestId === "string") {

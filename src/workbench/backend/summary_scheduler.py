@@ -367,21 +367,30 @@ class SummaryScheduler:
                     "dbHealth": sink.catalog.health_snapshot()["active"],
                     "requestedAt": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")}
                 request["inputKey"] = summary_input_key(subject, request["revision"], sources, gaps, digest)
-                prepared = prepare_summary(request, pieces, metadata=runtime.get("metadata"),
-                    instructions=runtime.get("instructions"), prior_cumulative=None if prior is None else
-                    {"entryId": prior["entry_id"], "body": prior_entry["body"]},
-                    count_fragments=runtime.get("count_fragments"))
-                request = prepared["request"]
-                with self._lock:
-                    self._status.update(newInfo={"sourceRanges": len(request["sources"]),
-                        "sourceGaps": len(request["sourceGaps"]), "omittedRanges": len(prepared["omitted"])},
-                        budget=dict(prepared["budget"]))
                 def current() -> bool:
                     if not self._admitted():
                         return False
                     fresh = self.authority_flags(subject, end)
                     fresh.update(paused=self.paused(), has_new_input=True, closing_event=end is not None)
                     return sink.authorize_summary_request(request, **fresh).get("allowed") is True
+                token = SimpleNamespace(current=current, claim=current)
+                expected_peer = runtime["expected_peer"]
+                count_fragments = runtime.get("count_fragments")
+                adapter_count = getattr(self.adapter, "count_fragments", None)
+                if count_fragments is None and callable(adapter_count):
+                    def count_fragments(query: dict) -> Any:
+                        if self.dispatch_ready() is not True or current() is not True:
+                            raise SummaryDeferred("authority_changed")
+                        return adapter_count(query, expected_peer=expected_peer, authority_token=token)
+                prepared = prepare_summary(request, pieces, metadata=runtime.get("metadata"),
+                    instructions=runtime.get("instructions"), prior_cumulative=None if prior is None else
+                    {"entryId": prior["entry_id"], "body": prior_entry["body"]},
+                    count_fragments=count_fragments)
+                request = prepared["request"]
+                with self._lock:
+                    self._status.update(newInfo={"sourceRanges": len(request["sources"]),
+                        "sourceGaps": len(request["sourceGaps"]), "omittedRanges": len(prepared["omitted"])},
+                        budget=dict(prepared["budget"]))
                 if self.dispatch_ready() is not True or current() is not True:
                     raise SummaryDeferred("authority_changed")
                 journal.reserve_summary_request(request)
@@ -389,8 +398,7 @@ class SummaryScheduler:
                 journal.record_summary_state(request_id, "sending")
                 # Sending is deliberately persisted before the socket claim. Crash
                 # here is unknown, never optimistically replayed after restart.
-                token = SimpleNamespace(current=current, claim=current)
-                response = self.adapter.dispatch_outcome(prepared, expected_peer=runtime["expected_peer"],
+                response = self.adapter.dispatch_outcome(prepared, expected_peer=expected_peer,
                                                         authority_token=token, writer=runtime["writer"])
                 sent = response.get("sent") is not False  # absent evidence is unknown
                 reason = str(response.get("reason", response.get("status", "summary_outcome_unknown")))[:256]

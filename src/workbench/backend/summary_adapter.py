@@ -205,6 +205,8 @@ def prepare_summary(request: dict[str, Any], pieces: Sequence[SourcePiece], *,
                  "fragmentDigests": [sha256(f.encode()).hexdigest() for f in fragments]}
         try:
             response = count_fragments(deepcopy(query))
+        except SummaryDeferred:
+            raise
         except Exception:
             raise SummaryDeferred("input_count_unavailable") from None
         if response is None:
@@ -236,7 +238,11 @@ def prepare_summary(request: dict[str, Any], pieces: Sequence[SourcePiece], *,
 
     for piece in checked:
         trial = envelope([*selected, piece], omitted)
-        if fits(trial, count(trial)[0]):
+        # A byte-wire-impossible candidate cannot benefit from native counting.
+        # Preserve ordered complete-range selection without shipping up to 1MiB
+        # over the count-only IPC for a range that must be omitted anyway.
+        if (size(trial) + continuation_bytes + RESULT_BYTES <= WIRE_BYTES
+                and fits(trial, count(trial)[0])):
             selected.append(piece)
         else:
             omitted.extend({"range": span, "reason": "input_budget",
@@ -278,6 +284,34 @@ class SDKSummaryAdapter:
     def __init__(self, bridge: Any, *, timeout: float = 30):
         self.bridge = bridge
         self.timeout = timeout
+
+    def count_fragments(self, query: dict[str, Any], *, expected_peer: tuple[str, int],
+                        authority_token: object) -> Mapping[str, Any] | None:
+        """Pure local native count via the existing bound Manager connection."""
+        if not callable(getattr(authority_token, "current", None)) or authority_token.current() is not True:
+            raise SummaryDeferred("authority_unavailable")
+        from workbench.ipc.bridge_g3.mailbox import BridgeBoundMismatch
+        try:
+            response = self.bridge.request("manager", {"kind": "summary_count", "query": deepcopy(query),
+                "expectedPeer": {"sessionId": expected_peer[0], "generation": expected_peer[1]}},
+                timeout=self.timeout, expected_peer=expected_peer, authority_token=authority_token)
+        except BridgeBoundMismatch as exc:
+            raise SummaryDeferred("authority_changed_before_submission") from exc
+        if authority_token.current() is not True:
+            raise SummaryDeferred("authority_changed")
+        if response.get("status") == "deferred" and response.get("sent") is False:
+            raise SummaryDeferred(str(response.get("reason", "input_count_unavailable")))
+        if response.get("status") == "count_unavailable" and response.get("sent") is False:
+            if response.get("reason") == "model_metadata_unavailable":
+                return None
+        proof = response.get("proof")
+        if (response.get("status") != "summary_count" or not isinstance(proof, Mapping)
+                or proof.get("version") != query.get("version")
+                or proof.get("ownerDigest") != query.get("ownerDigest")
+                or proof.get("fragmentDigests") != query.get("fragmentDigests")
+                or type(proof.get("exact")) is not bool):
+            raise SummaryDeferred("input_count_binding_mismatch")
+        return deepcopy(dict(proof))
 
     def dispatch_prepared(self, prepared: dict[str, Any], *, expected_peer: tuple[str, int],
                           authority_token: object, writer: dict[str, str]) -> dict[str, Any]:

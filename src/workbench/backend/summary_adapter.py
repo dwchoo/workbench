@@ -21,6 +21,11 @@ COLLECTION_BYTES = 1_048_576
 WIRE_BYTES = 32_768
 RESULT_BYTES = 8_192
 RECEIPT_BYTES = 4_096
+BYTES_ESTIMATOR = "utf8_bytes_upper_bound"
+NATIVE_ESTIMATOR = "native_known_family_strict"
+TOKENIZER_ENCODINGS = {"claude-v3": "ClaudeV3", "claude-v47": "ClaudeV47",
+    "claude-v5": "ClaudeV5", "claude-v5-sonnet": "ClaudeV5Sonnet", "qwen3": "Qwen3",
+    "deepseek-v3": "DeepSeekV3", "kimi-k2": "KimiK2", "glm5": "Glm5"}
 _PRIORITY = {"start_spec": 0, "decision": 1, "report": 2, "terminal": 3}
 
 
@@ -83,14 +88,15 @@ def _resolved_metadata(value: Mapping[str, Any] | None) -> dict[str, Any]:
             or result["visibleResultTokens"] <= 0
             or result["reasoningTokens"] + result["visibleResultTokens"] > cap):
         raise SummaryDeferred("output_budget_unavailable")
-    if result.get("estimator") != "utf8_bytes_upper_bound":
+    if result.get("estimator") not in (BYTES_ESTIMATOR, NATIVE_ESTIMATOR):
         raise SummaryDeferred("input_budget_unavailable")
     return result
 
 
 def prepare_summary(request: dict[str, Any], pieces: Sequence[SourcePiece], *,
                     metadata: Mapping[str, Any] | None, instructions: str,
-                    prior_cumulative: dict[str, Any] | None = None) -> dict[str, Any]:
+                    prior_cumulative: dict[str, Any] | None = None,
+                    count_fragments: Callable[[dict[str, Any]], Mapping[str, Any] | None] | None = None) -> dict[str, Any]:
     """Choose complete ranges only; budget omissions remain explicit references."""
     item = parse_summary_request(request)
     skill = skill_bytes()
@@ -183,37 +189,77 @@ def prepare_summary(request: dict[str, Any], pieces: Sequence[SourcePiece], *,
     continuation_bytes = len(canonical_json(continuation)) - 1
     fixed_framing = continuation_bytes - arguments_bytes
 
-    def fits(payload: dict[str, Any]) -> bool:
-        estimate = size(payload)
-        # The original 8192 wire allowance is applied once to the next projection.
+    def count(payload: dict[str, Any]) -> tuple[int, dict[str, Any] | None, str | None]:
+        # This shared host-fragment estimate is NOT a bound for the SDK's full
+        # projection. The SDK keeps its independent initial quota/context checks.
+        if count_fragments is None:
+            return size(payload), None, "count_port_absent"
+        encoding = (TOKENIZER_ENCODINGS.get(model.get("tokenizer"))
+                    if isinstance(model.get("tokenizer"), str) else None)
+        if encoding is None:
+            return size(payload), None, "tokenizer_family_unavailable"
+        fragments = [instructions + "\n\n" + skill.decode("utf-8"), canonical_json(payload).decode("utf-8")]
+        owner = {"epoch": resolved["epoch"], "parentSessionId": resolved["parentSessionId"], "model": model}
+        query = {"version": "summary-host-input-v1", "owner": deepcopy(owner),
+                 "ownerDigest": sha256(canonical_json(owner)).hexdigest(), "fragments": fragments,
+                 "fragmentDigests": [sha256(f.encode()).hexdigest() for f in fragments]}
+        try:
+            response = count_fragments(deepcopy(query))
+        except Exception:
+            raise SummaryDeferred("input_count_unavailable") from None
+        if response is None:
+            return size(payload), None, "count_port_unavailable"
+        if (not isinstance(response, Mapping) or response.get("version") != query["version"]
+                or response.get("ownerDigest") != query["ownerDigest"]
+                or response.get("fragmentDigests") != query["fragmentDigests"]
+                or type(response.get("exact")) is not bool):
+            raise SummaryDeferred("input_count_binding_mismatch")
+        if response["exact"] is False:
+            return size(payload), None, "native_count_unavailable"
+        tokens = response.get("tokens")
+        if (response.get("encoding") != encoding or response.get("estimator") != NATIVE_ESTIMATOR
+                or not isinstance(tokens, list) or len(tokens) != len(fragments)
+                or any(type(n) is not int or n < 0 for n in tokens)):
+            raise SummaryDeferred("input_count_binding_mismatch")
+        binding = {"version": query["version"], "ownerDigest": query["ownerDigest"],
+            "fragmentDigests": list(query["fragmentDigests"]), "encoding": encoding,
+            "tokens": list(tokens), "exact": True, "estimator": NATIVE_ESTIMATOR}
+        return sum(tokens) + 2048, binding, None
+
+    def fits(payload: dict[str, Any], estimate: int) -> bool:
+        # Wire size always remains bytes, including its once-only 8192 allowance.
+        wire_estimate = size(payload)
         return (estimate <= limit
-                and estimate + continuation_bytes + RESULT_BYTES <= WIRE_BYTES
+                and wire_estimate + continuation_bytes + RESULT_BYTES <= WIRE_BYTES
                 and estimate + fixed_framing + resolved["existingContextTokens"]
                 + resolved["outputCap"] + resolved["outputCap"] <= model["contextWindow"])
 
     for piece in checked:
         trial = envelope([*selected, piece], omitted)
-        if fits(trial):
+        if fits(trial, count(trial)[0]):
             selected.append(piece)
         else:
             omitted.extend({"range": span, "reason": "input_budget",
                             "estimatedBytes": span["end"] - span["start"]} for span in piece.source_ranges)
     payload = envelope(selected, omitted)
-    input_estimate = size(payload)
-    if (not selected and not item["sourceGaps"] or not fits(payload)):
+    input_estimate, count_binding, fallback = count(payload)
+    wire_estimate = size(payload)
+    estimator = NATIVE_ESTIMATOR if count_binding is not None else BYTES_ESTIMATOR
+    if (not selected and not item["sourceGaps"] or not fits(payload, input_estimate)):
         raise SummaryDeferred("input_budget_unavailable")
     parse_summary_request(payload["request"])
-    return {**payload, "metadata": resolved,
+    return {**payload, **({"countBinding": count_binding} if count_binding is not None else {}), "metadata": resolved,
             "budget": {"collectedBytes": collected, "selectedBytes": sum(len(p.text.encode()) for p in selected),
-                       "inputEstimate": input_estimate, "estimator": resolved["estimator"],
+                       "inputEstimate": input_estimate, "estimator": estimator,
+                       "fallbackReason": fallback, "wireInputEstimateBytes": wire_estimate,
                        "inputLimit": limit, "outputReserve": resolved["outputCap"],
                        "previousOutputReserve": resolved["outputCap"],
                        "nextOutputReserve": resolved["outputCap"],
                        "mandatoryArgumentsBytes": arguments_bytes,
                        "fixedContinuationEstimate": fixed_framing,
                        "mandatoryContinuationEstimate": input_estimate + continuation_bytes,
-                       "mandatoryWireBytes": input_estimate + continuation_bytes + RESULT_BYTES,
-                       "dynamicExtrasReserve": WIRE_BYTES - input_estimate - continuation_bytes - RESULT_BYTES,
+                       "mandatoryWireBytes": wire_estimate + continuation_bytes + RESULT_BYTES,
+                       "dynamicExtrasReserve": WIRE_BYTES - wire_estimate - continuation_bytes - RESULT_BYTES,
                        "wireByteLimit": WIRE_BYTES, "resultByteLimit": RESULT_BYTES},
             "definitionDigest": sha256(instructions.encode()).hexdigest()}
 

@@ -9,7 +9,7 @@ from workbench.backend.summary_adapter import (
     SKILL_NAME, SDKSummaryAdapter, SourcePiece, SummaryDeferred, SummaryUnknown,
     prepare_summary, skill_bytes, validate_result,
 )
-from workbench.contracts.logs_v1 import LogContractError, summary_input_key
+from workbench.contracts.logs_v1 import LogContractError, canonical_json, summary_input_key
 from workbench.storage.important_log import ImportantLogCatalog
 
 
@@ -131,6 +131,87 @@ class SummaryAdapterTests(unittest.TestCase):
             self.assertEqual(prepared["omitted"][0]["range"], request["sources"][0])
             self.assertLessEqual(prepared["budget"]["inputEstimate"] + prepared["budget"]["fixedContinuationEstimate"]
                 + metadata["existingContextTokens"] + 2 * metadata["outputCap"], metadata["model"]["contextWindow"])
+
+    @staticmethod
+    def contract_counter(query):
+        # Contract stand-in only: actual native values are checked by the owned
+        # installed-SDK conformance probe, not inferred from this unit fixture.
+        return {"version": query["version"], "ownerDigest": query["ownerDigest"],
+            "fragmentDigests": list(query["fragmentDigests"]), "encoding": "ClaudeV3",
+            "tokens": [100, 100], "exact": True, "estimator": "native_known_family_strict"}
+
+    def test_absent_and_unavailable_ports_keep_byte_selection_and_parent_metadata_truth(self):
+        with TemporaryDirectory() as name:
+            request, metadata = request_fixture(Path(name), ["x" * 7000, "report"])
+            pieces = [SourcePiece(request["sources"][0], "x" * 7000),
+                      SourcePiece(request["sources"][1], "report", "report")]
+            baseline = prepare_summary(request, pieces, metadata=metadata, instructions="task")
+            metadata["estimator"] = "native_known_family_strict"
+            metadata["model"]["tokenizer"] = "claude-v3"
+            original = deepcopy(metadata)
+            for port in (None, lambda q: None, lambda q: {**self.contract_counter(q), "exact": False}):
+                value = prepare_summary(request, pieces, metadata=metadata, instructions="task", count_fragments=port)
+                self.assertEqual(value["selected"], baseline["selected"])
+                self.assertEqual(value["omitted"], baseline["omitted"])
+                self.assertEqual(value["budget"]["inputEstimate"], baseline["budget"]["inputEstimate"])
+                self.assertEqual(value["budget"]["estimator"], "utf8_bytes_upper_bound")
+                self.assertTrue(value["budget"]["fallbackReason"])
+                self.assertNotIn("countBinding", value)
+                self.assertEqual(value["metadata"], original)
+                self.assertEqual(metadata, original)
+
+    def test_native_port_binds_exact_ordered_shared_fragments_and_keeps_wire_bytes(self):
+        with TemporaryDirectory() as name:
+            request, metadata = request_fixture(Path(name), ["x" * 7000])
+            metadata["model"]["tokenizer"] = "claude-v3"
+            seen = []
+            def port(query):
+                seen.append(deepcopy(query))
+                response = self.contract_counter(query)
+                query["owner"]["model"]["tokenizer"] = "mutated port input"
+                return response
+            value = prepare_summary(request, [SourcePiece(request["sources"][0], "x" * 7000)],
+                                    metadata=metadata, instructions="task", count_fragments=port)
+            self.assertEqual(value["budget"]["inputEstimate"], 2248)
+            self.assertEqual(value["countBinding"]["tokens"], [100, 100])
+            self.assertEqual(value["metadata"]["model"]["tokenizer"], "claude-v3")
+            self.assertEqual(seen[-1]["fragments"][0], "task\n\n" + skill_bytes().decode())
+            payload = {key: value[key] for key in ("request", "selected", "omitted", "priorCumulative", "resultByteLimit")}
+            self.assertEqual(seen[-1]["fragments"][1], canonical_json(payload).decode())
+            self.assertEqual(value["countBinding"]["fragmentDigests"],
+                             [sha256(text.encode()).hexdigest() for text in seen[-1]["fragments"]])
+            self.assertGreater(value["budget"]["wireInputEstimateBytes"], value["budget"]["inputEstimate"])
+            self.assertEqual(value["budget"]["mandatoryWireBytes"], value["budget"]["wireInputEstimateBytes"]
+                + value["budget"]["mandatoryArgumentsBytes"] + value["budget"]["fixedContinuationEstimate"] + 8192)
+            self.assertEqual(value["budget"]["previousOutputReserve"], 8192)
+            self.assertEqual(value["budget"]["nextOutputReserve"], 8192)
+
+    def test_bad_native_provenance_or_owner_fragment_proof_defers_before_dispatch(self):
+        with TemporaryDirectory() as name:
+            request, metadata = request_fixture(Path(name), ["fact"])
+            metadata["model"]["tokenizer"] = "claude-v3"
+            for change in ({"ownerDigest": "wrong"}, {"fragmentDigests": []}, {"encoding": "o200k_base"},
+                           {"tokens": [-1, 0]}, {"tokens": [True, 0]}, {"estimator": "approximate"}):
+                with self.subTest(change=change), self.assertRaisesRegex(SummaryDeferred, "input_count_binding_mismatch"):
+                    prepare_summary(request, [SourcePiece(request["sources"][0], "fact")],
+                        metadata=metadata, instructions="task", count_fragments=lambda q: {**self.contract_counter(q), **change})
+            metadata["model"]["tokenizer"] = "unknown-family"
+            value = prepare_summary(request, [SourcePiece(request["sources"][0], "fact")],
+                metadata=metadata, instructions="task", count_fragments=lambda q: self.fail("unknown family must not call port"))
+            self.assertEqual(value["budget"]["estimator"], "utf8_bytes_upper_bound")
+
+    def test_native_selection_still_enforces_wire_and_two_full_output_reserves(self):
+        with TemporaryDirectory() as name:
+            request, metadata = request_fixture(Path(name), ["x" * 22000, "report"])
+            metadata["model"]["tokenizer"] = "claude-v3"
+            pieces = [SourcePiece(request["sources"][0], "x" * 22000),
+                      SourcePiece(request["sources"][1], "report", "report")]
+            value = prepare_summary(request, pieces, metadata=metadata, instructions="task", count_fragments=self.contract_counter)
+            self.assertEqual(value["request"]["sources"], [request["sources"][1]])
+            self.assertEqual(value["omitted"][0]["range"], request["sources"][0])
+            metadata["existingContextTokens"] = 116000
+            with self.assertRaisesRegex(SummaryDeferred, "input_budget_unavailable"):
+                prepare_summary(request, pieces, metadata=metadata, instructions="task", count_fragments=self.contract_counter)
 
     def test_result_cannot_move_to_another_work_request_or_source(self):
         with TemporaryDirectory() as name:

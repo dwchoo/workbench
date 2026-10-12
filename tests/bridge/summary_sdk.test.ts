@@ -3,7 +3,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import { canonicalJson, summaryInputKey } from "../../omp_bridge/contract/logs_v1.ts";
-import { dispatchSummarySDK, validateSummaryParams } from "../../omp_bridge/g3/summary_sdk.ts";
+import { countSummaryFragments, dispatchSummarySDK, validateSummaryParams } from "../../omp_bridge/g3/summary_sdk.ts";
 
 const sha = (x: string) => createHash("sha256").update(x).digest("hex");
 const definition = "Existing bundled task definition.";
@@ -534,4 +534,117 @@ test("actual later context overflow is still rejected with sent true and no writ
   const later = preflights.find(p => !p.initialInputQuota);
   assert.ok(later.conservativeWireBytes <= 32768);
   assert.ok(later.inputEstimate + input.metadata.existingContextTokens + 8192 > 131072);
+});
+
+// These counters are contract stand-ins. The owned installed-SDK conformance
+// probe supplies actual native values separately; no native accuracy is inferred.
+function nativeContractSDK(mock: ReturnType<typeof fakeSDK>, fullCount?: (text: string) => number) {
+  mock.sdk.Tokenizer = class {
+    encoding = "ClaudeV3";
+    countTokens(text: string, mode: string) {
+      assert.equal(mode, "strict");
+      return fullCount ? fullCount(text) : Math.ceil(Buffer.byteLength(text) / 4);
+    }
+    checkTokenBudget(text: string, _budget: number) {
+      return { exact: true, fits: false, tokens: this.countTokens(text, "strict") };
+    }
+  } as any;
+  return mock;
+}
+function attachNativeProof(input: any, sdk: any) {
+  input.metadata.model.tokenizer = "claude-v3";
+  const skill = readFileSync("omp_bridge/skills/important-log-summary/SKILL.md", "utf8");
+  const shared = [definition + "\n\n" + skill, canonicalJson({ request: input.prepared.request,
+    selected: input.prepared.selected, omitted: input.prepared.omitted, priorCumulative: null, resultByteLimit: 8192 })];
+  input.prepared.countBinding = countSummaryFragments(input.metadata, shared, sdk);
+}
+
+test("known-family strict proof and unavailable encodings remain distinguishable", () => {
+  const input: any = fixture();
+  const mock = nativeContractSDK(fakeSDK());
+  input.metadata.model.tokenizer = "claude-v3";
+  const proof = countSummaryFragments(input.metadata, ["한국어", "quoted\\\""], mock.sdk);
+  assert.equal(proof.exact, true);
+  assert.equal(proof.encoding, "ClaudeV3");
+  assert.equal(proof.estimator, "native_known_family_strict");
+  input.metadata.model.tokenizer = "unknown";
+  const unknown = countSummaryFragments(input.metadata, ["한국어"], mock.sdk);
+  assert.equal(unknown.exact, false);
+  assert.equal(unknown.tokens[0], Buffer.byteLength("한국어"));
+  input.metadata.model.tokenizer = "claude-v3";
+  mock.sdk.Tokenizer = class { encoding = "o200k_base"; } as any;
+  assert.equal(countSummaryFragments(input.metadata, ["text"], mock.sdk).exact, false);
+  mock.sdk.Tokenizer = class { encoding = "ClaudeV3"; countTokens() { return 1; }
+    checkTokenBudget() { return { exact: false, tokens: 1 }; } } as any;
+  assert.equal(countSummaryFragments(input.metadata, ["text"], mock.sdk).exact, false);
+});
+
+test("native binding is checked before child creation and participates in mutation guards", async () => {
+  for (const field of ["ownerDigest", "fragmentDigests", "tokens", "encoding"]) {
+    const input: any = fixture(); const mock = nativeContractSDK(fakeSDK());
+    attachNativeProof(input, mock.sdk);
+    input.prepared.countBinding[field] = field === "tokens" ? [1, 1] : "wrong";
+    const result = await dispatchSummarySDK({ ...input, sdk: mock.sdk, current: () => true,
+      observeMetadata: () => input.metadata });
+    assert.equal(result.reason, "input_count_binding_mismatch");
+    assert.equal(result.sent, false); assert.equal(mock.count(), 0);
+  }
+  const input: any = fixture(); const mock = nativeContractSDK(fakeSDK());
+  attachNativeProof(input, mock.sdk);
+  const result = await dispatchSummarySDK({ ...input, sdk: mock.sdk, current: () => true,
+    observeMetadata: () => input.metadata,
+    emit(event) { if (event.event === "prompt_start") input.prepared.countBinding.tokens[0]++; } });
+  assert.equal(result.reason, "request_mismatch"); assert.equal(result.sent, false);
+});
+
+test("shared native quota never replaces the actual initial full-projection quota", async () => {
+  const input: any = fixture();
+  const mock = nativeContractSDK(fakeSDK(), text => text.startsWith('{"systemPrompt":') ? 9000 : 100);
+  attachNativeProof(input, mock.sdk);
+  const observed: any[] = [];
+  const result = await dispatchSummarySDK({ ...input, sdk: mock.sdk, current: () => true,
+    observeMetadata: () => input.metadata, emit: event => observed.push(event) });
+  assert.equal(result.reason, "input_budget_unavailable"); assert.equal(result.sent, false);
+  assert.equal(mock.prompts.length, 0);
+  const preflight = observed.find(x => x.event === "dispatch_preflight");
+  assert.equal(preflight.sharedInputEstimate, 2248);
+  assert.equal(preflight.inputEstimate, 9000);
+  assert.equal(preflight.sharedQuotaIsFullProjectionBound, false);
+});
+
+test("native projection keeps byte wire bounds, two reserves and family/model detachment", async () => {
+  const input: any = fixture(); const mock = nativeContractSDK(fakeSDK());
+  attachNativeProof(input, mock.sdk);
+  const create = mock.sdk.createAgentSession;
+  mock.sdk.createAgentSession = async options => {
+    assert.notStrictEqual(options.model, input.context.model);
+    assert.equal(options.model.tokenizer, "claude-v3");
+    return create(options);
+  };
+  const events: any[] = [];
+  const result = await dispatchSummarySDK({ ...input, sdk: mock.sdk, current: () => true,
+    observeMetadata: () => input.metadata, emit: event => events.push(event),
+    save: async () => ({ saved: true, entryId: randomUUID() }) });
+  assert.equal(result.status, "summary_result");
+  const preflight = events.find(x => x.event === "dispatch_preflight");
+  assert.equal(preflight.estimator, "native_known_family_strict");
+  assert.equal(preflight.previousOutputReserve, 8192); assert.equal(preflight.nextOutputReserve, 8192);
+  assert.ok(preflight.mandatoryWireBytes > preflight.mandatoryContinuationEstimate + 8192);
+  assert.equal(preflight.dynamicExtrasReserve, 32768 - preflight.mandatoryWireBytes);
+  const changed: any = fixture(); const changedMock = nativeContractSDK(fakeSDK());
+  attachNativeProof(changed, changedMock.sdk);
+  const refused = await dispatchSummarySDK({ ...changed, sdk: changedMock.sdk, current: () => true,
+    observeMetadata: () => changed.metadata,
+    emit(event) { if (event.event === "prompt_start") changed.context.model.tokenizer = "qwen3"; } });
+  assert.equal(refused.sent, false); assert.equal(refused.protected, true);
+});
+
+test("native-advertising metadata without an optional proof does not rewrite observer truth", async () => {
+  const input: any = fixture(); const mock = nativeContractSDK(fakeSDK());
+  input.metadata.model.tokenizer = "claude-v3";
+  input.metadata.estimator = "native_known_family_strict";
+  const original = structuredClone(input.metadata);
+  const result = await dispatchSummarySDK({ ...input, sdk: mock.sdk, current: () => true,
+    observeMetadata: () => input.metadata, save: async () => ({ saved: true, entryId: randomUUID() }) });
+  assert.equal(result.status, "summary_result"); assert.deepEqual(input.metadata, original);
 });

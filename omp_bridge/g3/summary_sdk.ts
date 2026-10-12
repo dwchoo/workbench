@@ -20,7 +20,8 @@ const stable = (value: unknown) => canonicalJson(value);
 const bytes = (text: string) => Buffer.byteLength(text, "utf8");
 const boundInput = (prepared: RecordValue) => ({ request: parseSummaryRequest(prepared?.request),
   selected: prepared.selected, omitted: prepared.omitted, priorCumulative: prepared.priorCumulative,
-  definitionDigest: prepared.definitionDigest, metadata: prepared.metadata });
+  definitionDigest: prepared.definitionDigest, metadata: prepared.metadata,
+  ...(prepared.countBinding === undefined ? {} : { countBinding: prepared.countBinding }) });
 function freezeInput(value: any): any {
   if (value && typeof value === "object") {
     Object.values(value).forEach(freezeInput);
@@ -30,7 +31,44 @@ function freezeInput(value: any): any {
 }
 const modelKey = (model: any) => stable({ provider: model?.provider ?? null,
   id: model?.id ?? null, api: model?.api ?? null, baseUrl: model?.baseUrl ?? null,
-  contextWindow: model?.contextWindow ?? null, maxTokens: model?.maxTokens ?? null });
+  contextWindow: model?.contextWindow ?? null, maxTokens: model?.maxTokens ?? null,
+  tokenizer: model?.tokenizer ?? null });
+
+const BYTES_ESTIMATOR = "utf8_bytes_upper_bound";
+const NATIVE_ESTIMATOR = "native_known_family_strict";
+const TOKENIZER_ENCODINGS: Record<string, string> = { "claude-v3": "ClaudeV3", "claude-v47": "ClaudeV47",
+  "claude-v5": "ClaudeV5", "claude-v5-sonnet": "ClaudeV5Sonnet", qwen3: "Qwen3",
+  "deepseek-v3": "DeepSeekV3", "kimi-k2": "KimiK2", glm5: "Glm5" };
+const countOwner = (metadata: RecordValue) => ({ epoch: metadata.epoch,
+  parentSessionId: metadata.parentSessionId, model: metadata.model });
+
+/** Count-only optional port implementation; callers provide the already loaded SDK.
+ * No provider call, model inference, transport or operating supplier is created here.
+ */
+export function countSummaryFragments(metadata: RecordValue, fragments: string[], sdk: SDK): RecordValue {
+  const base = { version: "summary-host-input-v1", ownerDigest: sha(stable(countOwner(metadata))),
+    fragmentDigests: fragments.map(sha) };
+  const fallback = (reason: string): RecordValue => ({ ...base, encoding: null, exact: false,
+    estimator: BYTES_ESTIMATOR, tokens: fragments.map(bytes), fallbackReason: reason });
+  const expected = TOKENIZER_ENCODINGS[metadata.model?.tokenizer];
+  if (!expected) return fallback("tokenizer_family_unavailable");
+  try {
+    const tokenizer = new sdk.Tokenizer(metadata.model);
+    if (tokenizer.encoding !== expected) return fallback("native_encoding_unavailable");
+    const tokens = fragments.map(fragment => {
+      const strict = tokenizer.countTokens(fragment, "strict");
+      const checked = tokenizer.checkTokenBudget(fragment, 0);
+      if (!Number.isSafeInteger(strict) || strict < 0 || (!fragment ? strict !== 0 :
+          checked.exact !== true || checked.tokens !== strict)) throw new Error("native_count_unavailable");
+      return strict;
+    });
+    return { ...base, encoding: expected, exact: true, estimator: NATIVE_ESTIMATOR, tokens };
+  } catch { return fallback("native_count_unavailable"); }
+}
+
+const hostInputFragments = (input: RecordValue, instructions: string, skill: string) => [
+  instructions + "\n\n" + skill, stable({ request: input.request, selected: input.selected,
+    omitted: input.omitted, priorCumulative: input.priorCumulative, resultByteLimit: 8192 })];
 
 export function validateSummaryParams(value: unknown): RecordValue {
   if (!value || typeof value !== "object" || Array.isArray(value)
@@ -158,12 +196,26 @@ export async function dispatchSummarySDK(options: {
   let schemaSha: string;
   try { schemaSha = sha(stable(sdk.toolWireSchema(tool))); }
   catch { return defer("sdk_api_unavailable"); }
+  // Only the shared fragments have cross-language count equality. They are not
+  // an unconditional bound for the different actual SDK projection below.
+  let sharedInputEstimate: number | undefined;
+  if (input.countBinding !== undefined) {
+    const proof = countSummaryFragments(metadata, hostInputFragments(input, bundled.systemPrompt, skill), sdk);
+    if (proof.exact !== true || stable(proof) !== stable(input.countBinding))
+      return defer("input_count_binding_mismatch");
+    sharedInputEstimate = proof.tokens.reduce((sum: number, n: number) => sum + n, 0) + 2048;
+    if (!Number.isSafeInteger(sharedInputEstimate)) return defer("input_count_binding_mismatch");
+  }
   const prompt = JSON.stringify({ request, selected: input.selected, omitted: input.omitted,
     priorCumulative: input.priorCumulative, resultByteLimit: 8192,
     instruction: "Use db_summary_save exactly once, then stop." });
   const outputCap = metadata.outputCap;
   const inputLimit = Math.min(8192, Math.floor(metadata.model.contextWindow / 10));
-  const tokenBudget = (text: string) => bytes(text); // Explicit conservative estimator, not exact token count.
+  const tokenBudget = (text: string) => {
+    const proof = countSummaryFragments(metadata, [text], sdk);
+    return { tokens: proof.tokens[0], estimator: proof.estimator, exact: proof.exact,
+      encoding: proof.encoding, fallbackReason: proof.fallbackReason ?? null };
+  };
   const projection = (sdkContext: any) => JSON.stringify({ systemPrompt: sdkContext.systemPrompt,
     messages: sdkContext.messages,
     tools: sdkContext.tools?.map((t: any) => ({ name: t.name, description: t.description, parameters: t.parameters })),
@@ -188,7 +240,7 @@ export async function dispatchSummarySDK(options: {
   };
   const budgetCheck = (model: any, sdkContext: any, initial: boolean): string | undefined => {
     if (metadata.outputMeaning !== "reasoning_and_visible" || metadata.outputLimitEnforced !== true
-        || metadata.estimator !== "utf8_bytes_upper_bound" || !Number.isSafeInteger(outputCap)
+        || ![BYTES_ESTIMATOR, NATIVE_ESTIMATOR].includes(metadata.estimator) || !Number.isSafeInteger(outputCap)
         || typeof metadata.outputLimitSource !== "string" || !metadata.outputLimitSource
         || !Number.isSafeInteger(metadata.existingContextTokens) || metadata.existingContextTokens < 0
         || outputCap < 1 || outputCap > Math.min(8192, model.maxTokens)
@@ -197,27 +249,33 @@ export async function dispatchSummarySDK(options: {
         || metadata.reasoningTokens + metadata.visibleResultTokens > outputCap)
       return "output_budget_unavailable";
     const projected = projection(sdkContext);
-    const estimate = tokenBudget(projected);
+    const counted = tokenBudget(projected);
+    const estimate = counted.tokens;
     const fitted = sdk.fitOutputTokensToContextWindow(model, sdkContext, outputCap, new sdk.Tokenizer(model));
     const continuation = initial ? mandatoryContinuation(model, sdkContext) : undefined;
-    const nextEstimate = continuation ? tokenBudget(projection(continuation.context)) : undefined;
-    const fixedFraming = continuation ? nextEstimate! - estimate - continuation.argumentsBytes : 0;
+    const nextProjection = continuation ? projection(continuation.context) : undefined;
+    const nextEstimate = nextProjection ? tokenBudget(nextProjection).tokens : undefined;
+    // Native counts are not additive across concatenation boundaries. Keep the
+    // existing fixed continuation framing as a conservative byte upper bound.
+    const fixedFraming = continuation ? bytes(nextProjection!) - bytes(projected) - continuation.argumentsBytes : 0;
     const nextFitted = continuation ? sdk.fitOutputTokensToContextWindow(model, continuation.context,
       outputCap, new sdk.Tokenizer(model)) : undefined;
     emit({ event: "dispatch_preflight", requestId: request.requestId, inputEstimate: estimate,
-      estimator: "utf8_bytes_upper_bound", inputLimit, outputCap, fittedCap: fitted,
+      estimator: counted.estimator, exact: counted.exact, encoding: counted.encoding,
+      fallbackReason: counted.fallbackReason, sharedInputEstimate: sharedInputEstimate ?? null,
+      sharedQuotaIsFullProjectionBound: false, inputLimit, outputCap, fittedCap: fitted,
       initialInputQuota: initial, conservativeWireBytes: bytes(projected) + 8192,
       ...(continuation ? { mandatoryContinuationEstimate: nextEstimate,
         mandatoryArgumentsBytes: continuation.argumentsBytes, fixedContinuationEstimate: fixedFraming,
         previousOutputReserve: outputCap, nextOutputReserve: outputCap, nextFittedCap: nextFitted,
-        mandatoryWireBytes: nextEstimate! + 8192,
+        mandatoryWireBytes: bytes(nextProjection!) + 8192,
         // Remaining headroom after the existing allowance is a reservation only;
         // dynamic IDs, thinking/text and provider metadata have no absolute byte bound.
-        dynamicExtrasReserve: 32768 - nextEstimate! - 8192 } : {}) });
+        dynamicExtrasReserve: 32768 - bytes(nextProjection!) - 8192 } : {}) });
     return fitted !== outputCap || (continuation && nextFitted !== outputCap) ? "output_budget_unavailable" :
-      (initial && estimate > inputLimit) || bytes(projected) + 8192 > 32768
+      (initial && (estimate > inputLimit || (sharedInputEstimate !== undefined && sharedInputEstimate > inputLimit))) || bytes(projected) + 8192 > 32768
       || estimate + metadata.existingContextTokens + outputCap > model.contextWindow
-      || (continuation && (nextEstimate! + 8192 > 32768
+      || (continuation && (bytes(nextProjection!) + 8192 > 32768
         || estimate + fixedFraming + metadata.existingContextTokens + outputCap + outputCap > model.contextWindow))
         ? "input_budget_unavailable" : undefined;
   };
@@ -235,7 +293,7 @@ export async function dispatchSummarySDK(options: {
       state.receipt = undefined;
       let admitted = false;
       try {
-        child = (await sdk.createAgentSession({ cwd: process.cwd(), model: context.model,
+        child = (await sdk.createAgentSession({ cwd: process.cwd(), model: structuredClone(context.model),
           thinkingLevel: metadata.thinkingLevel,
           resolveServiceTierByFamily: () => structuredClone(metadata.serviceTierByFamily),
           settings, sessionManager: sdk.SessionManager.inMemory(process.cwd()), agentRegistry: registry, agentId,
@@ -266,7 +324,8 @@ export async function dispatchSummarySDK(options: {
             sha(stable(tools[0].parameters)) !== schemaSha ? "schema_mismatch" :
             sha(readFileSync(fileURLToPath(new URL("../../src/workbench/contracts/summary_compat_policy_v1.json", import.meta.url)), "utf8")) !== policySha
               ? "policy_mismatch" :
-            modelKey(model) !== modelKey(metadata.model) || stable(observeMetadata() ?? null) !== stable(metadata)
+            modelKey(model) !== modelKey(metadata.model) || modelKey(context.model) !== modelKey(metadata.model)
+              || stable(observeMetadata() ?? null) !== stable(metadata)
               ? "model_mismatch" : undefined;
         };
         const original = child.agent.streamFn;

@@ -369,7 +369,8 @@ class SummaryScheduler:
                 request["inputKey"] = summary_input_key(subject, request["revision"], sources, gaps, digest)
                 prepared = prepare_summary(request, pieces, metadata=runtime.get("metadata"),
                     instructions=runtime.get("instructions"), prior_cumulative=None if prior is None else
-                    {"entryId": prior["entry_id"], "body": prior_entry["body"]})
+                    {"entryId": prior["entry_id"], "body": prior_entry["body"]},
+                    count_fragments=runtime.get("count_fragments"))
                 request = prepared["request"]
                 with self._lock:
                     self._status.update(newInfo={"sourceRanges": len(request["sources"]),

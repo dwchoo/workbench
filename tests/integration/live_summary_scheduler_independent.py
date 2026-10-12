@@ -2,7 +2,8 @@
 
 The 14 metadata/compatibility supplier is controlled. The SDK getters and
 transport are real; this does not establish operating model output semantics.
-Existing09 frozen runtime harness is reused read-only for fresh product8.
+Existing09 frozen fixtures are reused read-only. Product8 has separate evidence;
+this invocation measures only controlled native-capability composition.
 """
 from copy import deepcopy
 from hashlib import sha256
@@ -12,6 +13,7 @@ import os
 from pathlib import Path
 import shutil
 import sqlite3
+import subprocess
 import sys
 import threading
 import time
@@ -19,11 +21,11 @@ from unittest.mock import patch
 from uuid import uuid4
 
 from tests.backend.q01_product_adapter_probe.composition import Phase
-from tests.backend.q01_product_adapter_probe.runtime import ROOT, HERE, execute
+from tests.backend.q01_product_adapter_probe.runtime import ROOT, HERE
 from tests.backend.test_summary_scheduler_independent import CompatibilityPort, AT
 from workbench.backend.flow import HandoffJournal
 from workbench.backend.flow_terminal import TerminalService, _Command
-from workbench.backend.summary_adapter import SDKSummaryAdapter
+from workbench.backend.summary_adapter import SDKSummaryAdapter, NATIVE_ESTIMATOR
 from workbench.backend.summary_scheduler import SummaryScheduler, SummarySourceCollector
 from workbench.backend.paths import ensure_private_dir
 from workbench.storage.important_log import ActiveSubjectLog, ImportantLogReader
@@ -34,6 +36,16 @@ class ScriptedProvider(ThreadingHTTPServer):
     daemon_threads=True
     def __init__(self,runtime):
         self.runtime=runtime;super().__init__(("127.0.0.1",0),ScriptedHandler)
+
+
+def scripted_summary_params(case):
+    params={"facts":["확인한 작업과 검증 결과"],"interpretations":[],"unknowns":[]}
+    if case.startswith("contract"):
+        # 2001 characters remain valid under the whole-envelope 8KiB cap.
+        # An extra raw key exercises the existing exact-key result contract.
+        params["facts"]=["x"*2001]
+        params["fixtureUnexpected"]=True
+    return params
 
 
 class ScriptedHandler(BaseHTTPRequestHandler):
@@ -56,9 +68,7 @@ class ScriptedHandler(BaseHTTPRequestHandler):
             owner.held.set();owner.release.wait(4)
         count=sum(m.get("role")=="tool" for m in body.get("messages",[]))
         if count==0:
-            params={"facts":["확인한 작업과 검증 결과"],"interpretations":[],"unknowns":[]}
-            if case.startswith("contract"):
-                params["facts"]=["x"*2001]
+            params=scripted_summary_params(case)
             calls=[{"index":0,"id":case+"-save","type":"function","function":{"name":"db_summary_save","arguments":json.dumps(params)}}]
             if case=="contract_then_bash":
                 calls.append({"index":1,"id":case+"-bash","type":"function","function":{"name":"bash","arguments":json.dumps({"command":"echo CHANGED > "+str(owner.private/"project/sentinel")})}})
@@ -77,12 +87,34 @@ def build_test_extension(path):
     # product dispatch. Existing harness source and canonical product are read-only.
     original=(HERE/"composition_extension.ts").read_text()
     original=original.replace('"../../../omp_bridge/g3/summary_sdk.ts"',json.dumps(str(ROOT/"omp_bridge/g3/summary_sdk.ts")))
+    original=original.replace('import {dispatchSummarySDK}', 'import {dispatchSummarySDK,countSummaryFragments}')
+    original=original.replace('maxTokens:parent.model.maxTokens}',
+                              'maxTokens:parent.model.maxTokens,tokenizer:parent.model.tokenizer}')
+    ready=' writeFileSync(dir+"/metadata.json"'
+    assert original.count(ready)==1
+    original=original.replace(ready, ''' if(parent.model.tokenizer!=="claude-v3"||ctx.model?.tokenizer!==parent.model.tokenizer)
+  throw Error("controlled_parent_tokenizer_unavailable");
+ let countIndex=0;
+ const serveCount=()=>{
+  const queryPath=dir+"/count-query-"+countIndex+".json";
+  if(!existsSync(queryPath))return;
+  const query=JSON.parse(readFileSync(queryPath,"utf8"));
+  const proof=countSummaryFragments(metadata(),query.fragments,{Tokenizer});
+  log({event:"actual_native_count",index:countIndex,ownerDigest:proof.ownerDigest,
+   fragmentDigests:proof.fragmentDigests,tokens:proof.tokens,encoding:proof.encoding,
+   exact:proof.exact,estimator:proof.estimator,fragmentBytes:query.fragments.map((f:string)=>Buffer.byteLength(f))});
+  writeFileSync(dir+"/count-reply-"+countIndex+".json.tmp",JSON.stringify(proof));
+  renameSync(dir+"/count-reply-"+countIndex+".json.tmp",dir+"/count-reply-"+countIndex+".json");
+  countIndex++;
+ };
+'''+ready)
+    original=original.replace('readFileSync,writeFileSync}', 'readFileSync,writeFileSync,renameSync}')
     start=original.index(' const deadline=Date.now()+30000;')
     stop=original.index('  let creates=0;',start)
     replacement=''' for(let index=0;index<6;index++){
   const job=dir+"/job-"+index+".json";
   const limit=Date.now()+45000;
-  while(!existsSync(job)&&Date.now()<limit)await new Promise(r=>setTimeout(r,10));
+  while(!existsSync(job)&&Date.now()<limit){serveCount();await new Promise(r=>setTimeout(r,10));}
   if(!existsSync(job))throw Error("owned_scheduler_job_timeout");
   const {name,value}=JSON.parse(readFileSync(job,"utf8"));
 '''
@@ -90,7 +122,52 @@ def build_test_extension(path):
     path.write_text(original)
     return {"frozen_fixture_sha256":sha256((HERE/"composition_extension.ts").read_bytes()).hexdigest(),
             "test_extension_sha256":sha256(path.read_bytes()).hexdigest(),
-            "differences":"absolute canonical product import; bounded sequential owner jobs in place of pre-reserved fixture dictionary; no product guard or SDK logic modified"}
+            "differences":"absolute canonical product import; actual parent tokenizer readback; count-only owner files in same installed SDK process; bounded sequential owner jobs; no product guard/SDK/frozen fixture modified"}
+
+
+def start_native_phase(phase):
+    """Declare the controlled family through normal models.yml before OMP launch."""
+    launch=subprocess.Popen
+    config=phase.private/"agent/models.yml"
+    def configured_launch(argv,*args,**kwargs):
+        assert argv[argv.index("--model")+1]=="currentproduct/scripted"
+        assert Path(kwargs["cwd"])==phase.private/"project"
+        original=config.read_text()
+        assert original.count("        reasoning: true\n")==1 and "tokenizer:" not in original
+        configured=original.replace("        reasoning: true\n",
+                                    "        reasoning: true\n        tokenizer: claude-v3\n")
+        config.write_text(configured)
+        phase.native_configuration={"path":str(config),"sha256":sha256(configured.encode()).hexdigest(),
+            "family":"claude-v3","source":"owned models.yml through normal OMP model resolution; no parent object mutation"}
+        return launch(argv,*args,**kwargs)
+    # This narrow launch boundary ends before scheduler or SDK children run.
+    with patch("tests.backend.q01_product_adapter_probe.runtime.subprocess.Popen",configured_launch):
+        phase.start()
+    assert phase.metadata["model"].get("tokenizer")=="claude-v3"
+
+
+class OwnerCountPort:
+    """Fixture-only count exchange; it does not reproduce the G3 count frame."""
+    def __init__(self,phase):self.phase=phase;self.rows=[]
+    def __call__(self,query):
+        index=len(self.rows)
+        request=self.phase.private/f"count-query-{index}.json"
+        temporary=request.with_suffix(".json.tmp")
+        temporary.write_text(json.dumps(query,ensure_ascii=False))
+        temporary.replace(request)
+        reply=self.phase.private/f"count-reply-{index}.json"
+        until=time.monotonic()+5
+        while not reply.exists():
+            if self.phase.stop_reason or any(e.get("event")=="fatal" for e in self.phase.events()):
+                raise RuntimeError("owned_native_count_failed")
+            if time.monotonic()>until:raise TimeoutError("owned_native_count_timeout")
+            time.sleep(.01)
+        proof=json.loads(reply.read_text())
+        self.rows.append({"index":index,"query_sha256":sha256(request.read_bytes()).hexdigest(),
+                          "proof":proof})
+        if proof.get("exact") is not True or proof.get("estimator")!=NATIVE_ESTIMATOR:
+            raise RuntimeError("controlled_native_count_unavailable")
+        return proof
 
 
 class SchedulerTransport:
@@ -140,9 +217,10 @@ def scheduler_composition(output):
     extension=output/"owner-scheduler-extension.ts"
     extension_custody=build_test_extension(extension)
     phase=Phase(output/"owned-omp");phase.extension=extension
-    scheduler=None;events=None;observed={"observation_boundary":"Actual product scheduler, journal, adapter, installed SDK child, fixed writer; owner file transport fixture, controlled14 metadata/compatibility supplier. Product launch/no credential/userDB/paid model absent."}
+    scheduler=None;events=None;count_port=OwnerCountPort(phase)
+    observed={"observation_boundary":"Controlled fixture native capability composition: actual product scheduler/journal/adapter/SDK child/writer, same-process actual SDK strict count. runtime.count_fragments owner-file fixture bypasses adapter.count_fragments/G3 count frame; not B IPC, operating14, provider-token accuracy or current8 evidence."}
     try:
-        with patch("tests.backend.q01_product_adapter_probe.runtime.Provider",ScriptedProvider):phase.start()
+        with patch("tests.backend.q01_product_adapter_probe.runtime.Provider",ScriptedProvider):start_native_phase(phase)
         root=phase.private/"data";ensure_private_dir(root/"workflow/terminal")
         events=HandoffJournal(root/"workflow/handoffs.jsonl")
         sink=ActiveSubjectLog(phase.catalog);factory=lambda:TaskRepository(root/"tasks.sqlite3")
@@ -161,6 +239,7 @@ def scheduler_composition(output):
         producer._configure_summary_capture(command)
         clock=[0.];paused=[False];priority=[False];compat=CompatibilityPort();transport=SchedulerTransport(phase)
         runtime={"metadata":deepcopy(phase.metadata),"instructions":phase.definition,"expected_peer":(str(uuid4()),1),
+            "count_fragments":count_port,
             "writer":{"python":sys.executable,"moduleRoot":str(ROOT/"src"),"dataRoot":str(root)}}
         scheduler=SummaryScheduler(repository_factory=factory,adapter=SDKSummaryAdapter(transport),subject_log=lambda:sink,
             collector=SummarySourceCollector(root,lambda:sink),authority_flags=lambda subject,end:{"active":subject["id"]==task,"revoked":False},
@@ -235,6 +314,9 @@ def scheduler_composition(output):
         phase.release.set();phase.close()
         if phase.process is not None:observed["runtime_final"]=phase.snapshot()
         observed["extension_custody"]=extension_custody
+        observed["native_configuration"]=getattr(phase,"native_configuration",None)
+        observed["actual_parent_metadata"]=getattr(phase,"metadata",None)
+        observed["native_count_queries"]=count_port.rows
         (output/"result.json").write_text(json.dumps(observed,ensure_ascii=False,indent=2))
     return observed
 
@@ -290,14 +372,11 @@ def main():
     assert identity["root_uid"]==os.getuid() and identity["root_mode"]=="0o700"
     (out/"candidate-identity.json").write_text(json.dumps(identity,indent=2))
     actual=scheduler_composition(out/"scheduler-sdk")
-    frozen=None
-    if actual["passed"]:
-        frozen=execute(out/"current-product8")
-        assert frozen["passed"],frozen["verdicts"]
-    result={"passed":actual["passed"] and frozen is not None and frozen["passed"],"actual_scheduler":str(out/"scheduler-sdk/result.json"),
-        "fresh_product8":str(out/"current-product8/result.json") if frozen is not None else None,
-        "fresh_product8_status":"executed" if frozen is not None else "not_run",
-        "same_fresh_invocation":True,"metadata_supplier":"controlled14 fixture; operating metadata/output semantics remain unknown","remaining_owned":[]}
+    result={"passed":actual["passed"],"actual_scheduler":str(out/"scheduler-sdk/result.json"),
+        "fresh_product8":None,"fresh_product8_status":"separate_existing_evidence_not_rerun_or_combined",
+        "evidence_label":"controlled fixture native capability composition",
+        "metadata_supplier":"controlled family via normal owned model config; operating metadata/output semantics remain unknown",
+        "remaining_owned":[] if actual["runtime_final"]["pgid_absent"] else [actual["runtime_final"]["pid"]]}
     (out/"result.json").write_text(json.dumps(result,ensure_ascii=False,indent=2));print(json.dumps(result,ensure_ascii=False))
     if not result["passed"]:raise SystemExit(2)
 

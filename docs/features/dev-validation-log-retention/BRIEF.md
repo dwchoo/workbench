@@ -488,3 +488,11 @@ LG-D15는 LG-AC-13/20의 조회 구현 해석, LG-D16은 LG-AC-01~04의 preserva
 - 이미 승인된 Task 범위에서는 원인 분석 → 영구 수정 → 회귀 검증 → 재시도를 진행한다. 범위 밖 파일·설정은 필요한 대상만 포함한 작은 수정 Task로 승인받는다. Workbench 제품 전체에 대한 상시 자동 수정 권한은 추가하지 않는다.
 - 현재 개발의 수정·독립 시험·리뷰 권한은 유지한다. 운영의 명시 verify 계약과 미전송 입력만 재시도하는 no replay 경계를 유지하며 자동 verify loop·새 복구 서비스·queue를 추가하지 않는다.
 - 이 결정은 DVL-09/10/14 후속 연결의 복구 범위이며, Q01 통과나 실제 raw 활성화를 뜻하지 않는다. 기존 제외 범위와 C2 hold를 유지한다.
+
+## LG-D26 — 최초 host 입력 quota와 후속 turn 예약 (2026-10-12)
+
+- 사용자 결정: 입력 예산 적용 범위 추천에 “그럼 그렇게 하자.”로 동의했다. [승인 기록](../../../.workflow/dev-validation-log-retention/runs/dvl10-20261012/u1-host-input-20261012/decision.json)을 따른다.
+- `min(8192 tokens, 확인된 model context의 10%)`는 host가 선정한 최초 입력에 적용한다. 모델의 tool 호출·고정 결과 확인문이 추가되는 후속 SDK turn에는 같은 quota를 반복 적용하지 않는다.
+- 최초 전송 전에 필수 후속 turn의 증가분까지 수용 가능한지 검사한다. 후속 turn은 최대 output 전량 예약·기존 context/고정 instructions·전체 contextWindow와 전송 body 32KiB로 판별한다. 결과 8KiB와 output ceiling 초기8192 이하 등 숫자는 유지한다.
+- bytes 보수 estimator에서 token ceiling을 임의 byte 비율로 변환하지 않는다. 확인된 결과 byte 상한과 실제 framing·고정 tool 결과를 사용한다. 필수 envelope·모델/tokenizer/output 의미를 확인하지 못하거나 예산이 부족하면 전송 전에 사유를 표시하고 보류한다.
+- 이 결정은 U1 해석을 확정하며 실제 모델 적합성·운영 metadata·Q01 통과·DVL10 통합 완료·raw 활성화가 아니다. 기존 C2 hold·조회 결정·no replay·승인/pause·제외 범위를 유지한다.

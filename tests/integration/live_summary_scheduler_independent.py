@@ -47,7 +47,8 @@ class ScriptedHandler(BaseHTTPRequestHandler):
         if case is None or tools!=["db_summary_save"]:
             owner.stop_reason="unattributed_or_expanded_tools";self.send_error(503);return
         row={"case":case,"requestId":owner.requests[case]["requestId"],"monotonic_ns":time.monotonic_ns(),
-             "tools":tools,"sha256":sha256(raw).hexdigest(),"body_bytes":len(raw)}
+             "tools":tools,"sha256":sha256(raw).hexdigest(),"body_bytes":len(raw),
+             "output_cap":body.get("max_completion_tokens"),"tool_result_messages":sum(m.get("role")=="tool" for m in body.get("messages",[]))}
         with owner.lock:
             row["body_path"]=str(owner.private/f"post-{len(owner.posts)+1:03}.json");owner.posts.append(row)
         Path(row["body_path"]).write_bytes(raw)
@@ -157,6 +158,7 @@ def scheduler_composition(output):
         observed["before_dispatch"]={"at299_posts":0,"paused_posts":0,"priority_posts":0,"task":task,"command":command_id,"revision":1}
         cases=("task_positive","contract1","contract2","contract3","recovery_ok","contract_then_bash")
         outcomes={}
+        observed["outcomes"]=outcomes # Preserve partial actual outcomes on first failed assertion.
         for index,name in enumerate(cases):
             if index:
                 command.write((name+" never-sent work\n").encode())
@@ -244,6 +246,18 @@ def main():
     out=Path(sys.argv[1]).resolve()
     assert out.is_relative_to(ROOT/".workflow/dvl-local") and not out.exists()
     out.mkdir(mode=0o700)
+    identity={"source_sha256":{name:sha256((ROOT/name).read_bytes()).hexdigest() for name in
+        ("omp_bridge/g3/summary_sdk.ts","src/workbench/backend/summary_adapter.py","src/workbench/backend/summary_scheduler.py",
+         "src/workbench/tasks/repository.py","tests/backend/q01_product_adapter_probe/runtime.py",
+         "tests/backend/q01_product_adapter_probe/composition_extension.ts","tools/q01_recheck.py",
+         "src/workbench/contracts/summary_compat_policy_v1.json")},
+        "omp_binary_path":str(Path(shutil.which("omp")).resolve()),
+        "omp_binary_sha256":sha256(Path(shutil.which("omp")).resolve().read_bytes()).hexdigest(),
+        "root_uid":out.stat().st_uid,"root_mode":oct(out.stat().st_mode&0o777),
+        "metadata_supplier":"controlled14 fixture, not operating model metadata/output semantics",
+        "inputs_and_caps":"existing scheduler fixture and8192/10%/32768 unchanged"}
+    assert identity["root_uid"]==os.getuid() and identity["root_mode"]=="0o700"
+    (out/"candidate-identity.json").write_text(json.dumps(identity,indent=2))
     actual=scheduler_composition(out/"scheduler-sdk")
     frozen=execute(out/"current-product8")
     assert frozen["passed"],frozen["verdicts"]

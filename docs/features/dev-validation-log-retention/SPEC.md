@@ -452,7 +452,17 @@ DVL-09는 Q-01에서 통과·채택된 경로만 구현한다. 새 agent 파일/
 기존 to-worker/to-manager/recovery 동작과 repo skill 크기 제약을 유지한다.
 
 1MiB 수집 상한과 별개로 전송 body는 초기 최대32KiB이며 skill·system·기존 context를 포함한 token preflight를 한다.
-초기 목표 input estimate <= min(8192 tokens, 확인된 model context의10%)다.
+LG-D26에 따라 input estimate <= min(8192 tokens, 확인된 model context의10%)는 host가 선정한 최초 입력의 quota다.
+후속 SDK turn에서 모델의 tool 호출과 고정 tool 결과가 추가되면 이 quota를 반복 적용하지 않는다.
+최초 전송 전에 필수 후속 turn 증가분까지 예산에 맞는지 확인한다. 이후 매 전송도 최대 output 전량 예약,
+기존 context/고정 instructions 여유, 전체 contextWindow와 전송 body 32KiB를 계속 검사한다.
+Bytes 보수 estimator는 유효 결과의8KiB 상한과 실제 JSON framing·고정 tool 결과를 사용하며,
+output token ceiling을 범용 token/byte 비율로 바꾸지 않는다. 필수 후속 turn이 맞지 않으면 전송 전에 보류한다.
+후속 판별은 실제 SDK message 형식의 같은 projection에 기존 projected+8192 검사와 fittedCap 검사를 적용한다.
+기존8192 framing allowance를 동적 추가분 몫으로 재사용하지 않는다. 판별 뒤 남은 wire 잔여분은
+provider toolCallId·thinking·text·metadata의 예약 여유이며 무조건적인 byte 상한 보장이 아니다.
+Context는 최초 입력·고정 결과/framing·기존 context와 직전 출력 전량 및 후속 출력 전량을 예약한다.
+실제 후속 전송도 다시 검사하며 초과 시 전송하지 않는다. Provider HTTP body 적합성은 별도 미검증이다.
 결과 전체 JSON은8KiB이고, 출력은 채택 OMP 경로가 실제 enforce하는 최대 output tokens(초기8192 이하)로
 별도 제한한다. Preflight는 그 최대 output token 수 전체와 기존 context/고정 instructions 여유를 예약한다.
 8192는 초기 ceiling의 상한이지 매 요청의 목표 출력량이나 reasoning을 무시한 고정 예약값이 아니다.
@@ -804,3 +814,7 @@ LG-D19의 현실 부하 누락0·중복0·경합 capture_unknown0·watchdog 기�
 ## 2026-10-11 LG-D25 기존 Task를 이용한 원인 수정·복구
 
 [BRIEF LG-D25](BRIEF.md#lg-d25--원인-수정복구는-기존-승인-task-방식-사용-2026-10-11)를 따른다. 원인 분석·영구 수정·회귀 검증은 기존 승인 Task 범위에서 수행하고 범위 밖 대상은 작은 수정 Task로 별도 승인한다. 실패 알림 자체는 수정 권한이 아니다. 운영 명시 verify와 recovery_attempt 연결, 미전송 범위만 재시도하고 전송된 unknown/contract-rejected 범위는 replay하지 않는 계약을 유지한다. 제품 전체의 상시 쓰기 권한이나 자동 verify loop는 채택하지 않는다. 현재 개발 수정·독립 검증 권한은 유지하며 실제 제품 연결은 DVL-09/10/14의 수락 대상이다.
+
+## 2026-10-12 LG-D26 최초 입력 quota 적용 범위
+
+[BRIEF LG-D26](BRIEF.md#lg-d26--최초-host-입력-quota와-후속-turn-예약-2026-10-12)와 [사용자 승인 기록](../../../.workflow/dev-validation-log-retention/runs/dvl10-20261012/u1-host-input-20261012/decision.json)에 따라 §8.2의 최초 host 입력과 필수 후속 turn 판별을 구분한다. 한도 수치·no replay·운영 metadata 요구·PLAN 의존성과 나머지 Q01 기준은 유지한다. 기존 stream별 quota 아래의 실패·측정 기록은 당시 결과로 보존하고 새 해석의 회귀·runtime을 별도로 검증한다.

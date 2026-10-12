@@ -377,7 +377,8 @@ test("first and followup stream budget reasons survive disposal with no write", 
         tools: [{ name: options.customTools[0].name, description: options.customTools[0].description,
           parameters: options.customTools[0].parameters }] };
       if (followup) await child.agent.streamFn(child.model, context, {});
-      if (reason === "input_budget_unavailable") context.messages[0].content = "x".repeat(9000);
+      // LG-D26 removes only the continuation quota; followup still has a wire ceiling.
+      if (reason === "input_budget_unavailable") context.messages[0].content = "x".repeat(followup ? 30000 : 9000);
       else mock.sdk.fitOutputTokensToContextWindow = (_m: any, _c: any, cap: number) => cap - 1;
       await child.agent.streamFn(child.model, context, {});
     });
@@ -398,7 +399,8 @@ test("confirmed forbidden or duplicate safety outranks an earlier stream budget 
         tools: [{ name: options.customTools[0].name, description: options.customTools[0].description,
           parameters: options.customTools[0].parameters }] };
       await child.agent.streamFn(child.model, context, {});
-      context.messages[0].content = "x".repeat(9000);
+      // Exercise actual wire overflow, rather than the removed followup input quota.
+      context.messages[0].content = "x".repeat(30000);
       try { await child.agent.streamFn(child.model, context, {}); } catch {
         if (duplicate) await options.customTools[0].execute("after-budget", { facts: ["ignored"], interpretations: [], unknowns: [] });
         else listeners.forEach(fn => fn({ type: "tool_execution_end", toolName: "bash", isError: false }));
@@ -445,4 +447,91 @@ test("provider exception is unknown while successful completion without a result
     assert.equal(outcome.sent, true); assert.equal(outcome.protected, false);
     assert.equal(writes, 0); assert.equal(mock.events.at(-1), "dispose");
   }
+});
+
+test("LG-D26 continuation above initial quota writes once after actual wire and context checks", async () => {
+  const input = fixture(); const preflights: any[] = []; let writes = 0;
+  const mock = fakeSDK("normal", undefined, async (child, options) => {
+    const context: any = { systemPrompt: options.systemPrompt,
+      messages: [{ role: "user", content: [{ type: "text", text: mock.prompts[0] }], timestamp: Date.now() }],
+      tools: [{ name: "db_summary_save", description: options.customTools[0].description,
+        parameters: options.customTools[0].parameters }] };
+    await child.agent.streamFn(child.model, context, {});
+    const args = { facts: ["x".repeat(6500)], interpretations: [], unknowns: [] };
+    const receipt = await options.customTools[0].execute("real-call", args);
+    assert.equal(receipt.isError, undefined);
+    context.messages.push({ role: "assistant", content: [{ type: "toolCall", id: "real-call",
+      name: "db_summary_save", arguments: args }], timestamp: Date.now() },
+      { role: "toolResult", toolCallId: "real-call", toolName: "db_summary_save",
+        content: receipt.content, isError: false, timestamp: Date.now() });
+    await child.agent.streamFn(child.model, context, {});
+  });
+  const fittedContexts: any[] = [];
+  mock.sdk.fitOutputTokensToContextWindow = (_m: any, context: any, cap: number) => {
+    fittedContexts.push(context); return cap;
+  };
+  const outcome = await dispatchSummarySDK({ ...input, sdk: mock.sdk, current: () => true,
+    observeMetadata: () => input.metadata, emit: event => {
+      if (event.event === "dispatch_preflight") preflights.push(event);
+    }, save: async () => { writes++; assert.equal(mock.events.at(-1), "dispose"); return { saved: true }; } });
+  assert.equal(outcome.status, "summary_result"); assert.equal(writes, 1);
+  assert.equal(mock.events.filter(x => x === "stream").length, 2);
+  const later = preflights.find(p => p.initialInputQuota === false);
+  assert.ok(later.inputEstimate > 8192); assert.ok(later.conservativeWireBytes <= 32768);
+  for (const early of preflights.filter(p => p.initialInputQuota)) {
+    assert.equal(early.mandatoryArgumentsBytes, 8192);
+    assert.equal(early.previousOutputReserve, 8192); assert.equal(early.nextOutputReserve, 8192);
+    assert.equal(early.mandatoryWireBytes, early.mandatoryContinuationEstimate + 8192);
+    assert.equal(early.dynamicExtrasReserve, 32768 - early.mandatoryWireBytes);
+  }
+  const synthetic = fittedContexts.find(c => c.messages.at(-2)?.content?.[0]?.id === "summary-preflight");
+  const args = synthetic.messages.at(-2).content[0].arguments;
+  assert.equal(typeof args, "object"); assert.equal(Buffer.byteLength(JSON.stringify(args)), 8192);
+  assert.deepEqual(JSON.parse(JSON.stringify(args)), args); validateSummaryParams(args);
+  const receipt = synthetic.messages.at(-1);
+  assert.deepEqual(JSON.parse(receipt.content[0].text), {
+    received: true, saved: false, requestId: input.prepared.request.requestId });
+  // Quotes inside the SDK text receipt are escaped by its outer projection; args stay an object.
+  assert.ok(JSON.stringify(receipt).includes('\\"received\\"'));
+  assert.equal(receipt.isError, false); assert.equal(receipt.details, undefined);
+  assert.equal(receipt.providerMetadata, undefined);
+});
+
+test("mandatory next full output reservation or fitted cap refuses before prompt", async () => {
+  for (const failFit of [false, true]) {
+    const input = fixture(); const mock = fakeSDK(); let writes = 0;
+    // A single output fits; the required second full output plus receipt does not.
+    if (!failFit) input.metadata.existingContextTokens = 118000;
+    else mock.sdk.fitOutputTokensToContextWindow = (_m: any, c: any, cap: number) =>
+      c.messages.length >= 3 ? cap - 1 : cap;
+    const preflights: any[] = [];
+    const outcome = await dispatchSummarySDK({ ...input, sdk: mock.sdk, current: () => true,
+      observeMetadata: () => input.metadata, emit: event => { if (event.event === "dispatch_preflight") preflights.push(event); },
+      save: async () => { writes++; return { saved: true }; } });
+    assert.equal(outcome.status, "deferred"); assert.equal(outcome.sent, false); assert.equal(writes, 0);
+    assert.equal(outcome.reason, failFit ? "output_budget_unavailable" : "input_budget_unavailable");
+    assert.deepEqual(mock.events, ["dispose"]);
+    if (!failFit) assert.ok(preflights[0].inputEstimate + input.metadata.existingContextTokens + 8192 <= 131072);
+  }
+});
+
+test("actual later context overflow is still rejected with sent true and no write", async () => {
+  const input = fixture(); input.metadata.existingContextTokens = 108000;
+  let writes = 0; const preflights: any[] = [];
+  const mock = fakeSDK("normal", undefined, async (child, options) => {
+    const context = { systemPrompt: options.systemPrompt, messages: [{ role: "user", content: "work" }],
+      tools: [{ name: "db_summary_save", description: options.customTools[0].description,
+        parameters: options.customTools[0].parameters }] };
+    await child.agent.streamFn(child.model, context, {});
+    context.messages[0].content = "x".repeat(18000);
+    await child.agent.streamFn(child.model, context, {});
+  });
+  const outcome = await dispatchSummarySDK({ ...input, sdk: mock.sdk, current: () => true,
+    observeMetadata: () => input.metadata, emit: event => { if (event.event === "dispatch_preflight") preflights.push(event); },
+    save: async () => { writes++; return { saved: true }; } });
+  assert.equal(outcome.status, "rejected"); assert.equal(outcome.sent, true);
+  assert.equal(outcome.reason, "input_budget_unavailable"); assert.equal(writes, 0);
+  const later = preflights.find(p => !p.initialInputQuota);
+  assert.ok(later.conservativeWireBytes <= 32768);
+  assert.ok(later.inputEstimate + input.metadata.existingContextTokens + 8192 > 131072);
 });

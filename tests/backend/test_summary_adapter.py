@@ -103,6 +103,35 @@ class SummaryAdapterTests(unittest.TestCase):
                 with self.subTest(update=update), self.assertRaisesRegex(SummaryDeferred, reason):
                     prepare_summary(request, [piece], metadata={**metadata, **update}, instructions="task")
 
+    def test_mandatory_continuation_reserves_two_full_outputs_without_double_counting_args(self):
+        with TemporaryDirectory() as name:
+            request, metadata = request_fixture(Path(name), ["new fact"])
+            piece = SourcePiece(request["sources"][0], "new fact")
+            prepared = prepare_summary(request, [piece], metadata=metadata, instructions="task")
+            budget = prepared["budget"]
+            self.assertEqual(budget["mandatoryArgumentsBytes"], 8192)
+            self.assertEqual(budget["previousOutputReserve"], 8192)
+            self.assertEqual(budget["nextOutputReserve"], 8192)
+            self.assertEqual(budget["mandatoryWireBytes"], budget["mandatoryContinuationEstimate"] + 8192)
+            self.assertEqual(budget["dynamicExtrasReserve"], 32768 - budget["mandatoryWireBytes"])
+            # LG-D26: initial+one cap can fit while the mandatory next turn cannot.
+            metadata["existingContextTokens"] = 116000
+            self.assertLessEqual(budget["inputEstimate"] + 116000 + 8192, 131072)
+            with self.assertRaisesRegex(SummaryDeferred, "input_budget_unavailable"):
+                prepare_summary(request, [piece], metadata=metadata, instructions="task")
+
+    def test_selection_accounts_for_next_turn_context_before_sending(self):
+        with TemporaryDirectory() as name:
+            request, metadata = request_fixture(Path(name), ["x" * 1000, "short report"])
+            metadata["existingContextTokens"] = 107000
+            prepared = prepare_summary(request, [SourcePiece(request["sources"][0], "x" * 1000),
+                SourcePiece(request["sources"][1], "short report", "report")],
+                metadata=metadata, instructions="task")
+            self.assertEqual(prepared["request"]["sources"], [request["sources"][1]])
+            self.assertEqual(prepared["omitted"][0]["range"], request["sources"][0])
+            self.assertLessEqual(prepared["budget"]["inputEstimate"] + prepared["budget"]["fixedContinuationEstimate"]
+                + metadata["existingContextTokens"] + 2 * metadata["outputCap"], metadata["model"]["contextWindow"])
+
     def test_result_cannot_move_to_another_work_request_or_source(self):
         with TemporaryDirectory() as name:
             request, _ = request_fixture(Path(name), ["fact"])

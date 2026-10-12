@@ -158,25 +158,62 @@ def prepare_summary(request: dict[str, Any], pieces: Sequence[SourcePiece], *,
         # context before every stream call. This is not an exact tokenizer count.
         return len(canonical_json(payload)) + len(instructions.encode()) + len(skill) + 2048
 
+    # Mirror the SDK's mandatory assistant/toolResult framing with object arguments.
+    # Serialized args reserve bytes only; the previous full outputCap reserves their
+    # context contribution, so arguments are not charged twice as context tokens.
+    arguments = {"facts": [""], "interpretations": [], "unknowns": []}
+    arguments["facts"][0] = "x" * (RESULT_BYTES - len(canonical_json(arguments)))
+    arguments_bytes = len(canonical_json(arguments))
+    model = resolved["model"]
+    call_id = "summary-preflight"  # Placeholder; arbitrary provider extras are not bounded.
+    continuation = [
+        {"role": "assistant", "content": [{"type": "toolCall", "id": call_id,
+          "name": "db_summary_save", "arguments": arguments}], "api": model["api"],
+         "provider": model["provider"], "model": model["id"],
+         "usage": {"input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0,
+                   "totalTokens": 0, "cost": {"input": 0, "output": 0, "cacheRead": 0,
+                                            "cacheWrite": 0, "total": 0}},
+         "stopReason": "toolUse", "timestamp": 9_999_999_999_999},
+        {"role": "toolResult", "toolCallId": call_id, "toolName": "db_summary_save",
+         "content": [{"type": "text", "text": canonical_json({"received": True, "saved": False,
+                      "requestId": item["requestId"]}).decode()}], "isError": False,
+         "timestamp": 9_999_999_999_999}]
+    # Two added messages replace the closing bracket of the existing message list:
+    # their own list brackets cost one byte more than the appended comma framing.
+    continuation_bytes = len(canonical_json(continuation)) - 1
+    fixed_framing = continuation_bytes - arguments_bytes
+
+    def fits(payload: dict[str, Any]) -> bool:
+        estimate = size(payload)
+        # The original 8192 wire allowance is applied once to the next projection.
+        return (estimate <= limit
+                and estimate + continuation_bytes + RESULT_BYTES <= WIRE_BYTES
+                and estimate + fixed_framing + resolved["existingContextTokens"]
+                + resolved["outputCap"] + resolved["outputCap"] <= model["contextWindow"])
+
     for piece in checked:
         trial = envelope([*selected, piece], omitted)
-        if size(trial) <= limit:
+        if fits(trial):
             selected.append(piece)
         else:
             omitted.extend({"range": span, "reason": "input_budget",
                             "estimatedBytes": span["end"] - span["start"]} for span in piece.source_ranges)
     payload = envelope(selected, omitted)
     input_estimate = size(payload)
-    if (not selected and not item["sourceGaps"] or input_estimate > limit
-            or input_estimate + RESULT_BYTES > WIRE_BYTES
-            or input_estimate + resolved["existingContextTokens"] + resolved["outputCap"]
-            > resolved["model"]["contextWindow"]):
+    if (not selected and not item["sourceGaps"] or not fits(payload)):
         raise SummaryDeferred("input_budget_unavailable")
     parse_summary_request(payload["request"])
     return {**payload, "metadata": resolved,
             "budget": {"collectedBytes": collected, "selectedBytes": sum(len(p.text.encode()) for p in selected),
                        "inputEstimate": input_estimate, "estimator": resolved["estimator"],
                        "inputLimit": limit, "outputReserve": resolved["outputCap"],
+                       "previousOutputReserve": resolved["outputCap"],
+                       "nextOutputReserve": resolved["outputCap"],
+                       "mandatoryArgumentsBytes": arguments_bytes,
+                       "fixedContinuationEstimate": fixed_framing,
+                       "mandatoryContinuationEstimate": input_estimate + continuation_bytes,
+                       "mandatoryWireBytes": input_estimate + continuation_bytes + RESULT_BYTES,
+                       "dynamicExtrasReserve": WIRE_BYTES - input_estimate - continuation_bytes - RESULT_BYTES,
                        "wireByteLimit": WIRE_BYTES, "resultByteLimit": RESULT_BYTES},
             "definitionDigest": sha256(instructions.encode()).hexdigest()}
 

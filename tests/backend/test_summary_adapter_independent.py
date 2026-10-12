@@ -95,14 +95,52 @@ class IndependentSummaryPreparationTests(unittest.TestCase):
             with self.subTest(reason=reason, value=value), self.assertRaisesRegex(SummaryDeferred, reason):
                 prepare_summary(request, [piece], metadata=value, instructions="task")
 
+    def test_utf8_group_quota_omission_keeps_every_original_range_and_digest(self):
+        large="가\n"+"x"*9000
+        request, metadata, _=contract_fixture((large,"확인한 결정"))
+        original=request["sources"][0];raw=large.encode()
+        first={**deepcopy(original),"end":1,"digest":sha256(raw[:1]).hexdigest()}
+        second={**deepcopy(original),"start":1,"digest":sha256(raw[1:]).hexdigest()}
+        decision=request["sources"][1]
+        request["sources"]=[first,second,decision];rebind(request)
+        before=deepcopy(request)
+        pieces=[SourcePiece(first,large,"terminal",0,(first,second)),
+                SourcePiece(decision,"확인한 결정","decision",1)]
+        prepared=prepare_summary(request,pieces,metadata=metadata,instructions="task")
+        self.assertEqual(request,before)
+        self.assertEqual(prepared["request"]["sources"],[decision])
+        self.assertEqual([value["range"] for value in prepared["omitted"]],[first,second])
+        self.assertTrue(all(value["reason"]=="input_budget" for value in prepared["omitted"]))
+        self.assertEqual(prepared["budget"]["inputLimit"],8192)
+        self.assertEqual(prepared["budget"]["resultByteLimit"],8192)
+        self.assertLessEqual(prepared["budget"]["mandatoryWireBytes"],32768)
+
     def test_full_ceiling_and_parent_context_reserved_even_for_a_small_result(self):
         request, metadata, _ = contract_fixture(("short",))
         piece = SourcePiece(request["sources"][0], "short")
         ok = prepare_summary(request, [piece], metadata=metadata, instructions="task")
-        reserved = {**metadata, "existingContextTokens": metadata["model"]["contextWindow"]
-                    - ok["budget"]["inputEstimate"] - 8192}
+        # Locate the externally observable fit/defer edge without reimplementing
+        # the product's continuation serialization or trusting its reported sum.
+        low, high = 0, metadata["model"]["contextWindow"]
+        while low + 1 < high:
+            middle = (low + high) // 2
+            try:
+                prepare_summary(request, [piece], metadata={**metadata, "existingContextTokens": middle}, instructions="task")
+                low = middle
+            except SummaryDeferred:
+                high = middle
+        reserved = {**metadata, "existingContextTokens": low}
         accepted = prepare_summary(request, [piece], metadata=reserved, instructions="task")
         self.assertEqual(accepted["budget"]["outputReserve"], 8192)
+        self.assertEqual(accepted["budget"]["previousOutputReserve"], 8192)
+        self.assertEqual(accepted["budget"]["nextOutputReserve"], 8192)
+        reserved_beyond_host = metadata["model"]["contextWindow"] - low - ok["budget"]["inputEstimate"]
+        self.assertGreaterEqual(reserved_beyond_host, 2 * 8192)
+        self.assertLess(reserved_beyond_host, 2 * 8192 + 2048)
+        self.assertEqual(accepted["request"]["sources"], request["sources"])
+        self.assertEqual(accepted["budget"]["inputLimit"], 8192)
+        self.assertEqual(accepted["budget"]["mandatoryArgumentsBytes"], 8192)
+        self.assertLessEqual(accepted["budget"]["mandatoryWireBytes"], 32768)
         reserved["existingContextTokens"] += 1
         with self.assertRaisesRegex(SummaryDeferred, "input_budget_unavailable"):
             prepare_summary(request, [piece], metadata=reserved, instructions="task")

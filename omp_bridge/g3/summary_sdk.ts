@@ -129,6 +129,8 @@ export async function dispatchSummarySDK(options: {
     else if (reason === "result_binding_or_duplicate") state.violationReason ??= "guard_violation_observed";
     return { isError: true, content: [{ type: "text", text: JSON.stringify({ received: false, reason }) }] };
   };
+  const receivedContent = () => [{ type: "text", text: JSON.stringify({ received: true, saved: false,
+    requestId: request.requestId }) }];
   const tool = { name: SUMMARY_TOOL_NAME, label: "Submit work summary",
     description: "Submit one bound summary for the fixed DB writer after session validation.",
     approval: "write", loadMode: "essential", intent: "omit", parameters: SUMMARY_PARAMETERS,
@@ -149,8 +151,7 @@ export async function dispatchSummarySDK(options: {
         state.result = result;
         emit({ event: "result_received", requestId: request.requestId, bytes: bytes(JSON.stringify(result)) });
         // This is acceptance into bounded memory, not a claim of durable save.
-        return { content: [{ type: "text", text: JSON.stringify({ received: true, saved: false,
-          requestId: request.requestId }) }] };
+        return { content: receivedContent() };
       } catch { return reject("invalid_result"); }
     },
   };
@@ -163,7 +164,29 @@ export async function dispatchSummarySDK(options: {
   const outputCap = metadata.outputCap;
   const inputLimit = Math.min(8192, Math.floor(metadata.model.contextWindow / 10));
   const tokenBudget = (text: string) => bytes(text); // Explicit conservative estimator, not exact token count.
-  const budgetCheck = (model: any, sdkContext: any): string | undefined => {
+  const projection = (sdkContext: any) => JSON.stringify({ systemPrompt: sdkContext.systemPrompt,
+    messages: sdkContext.messages,
+    tools: sdkContext.tools?.map((t: any) => ({ name: t.name, description: t.description, parameters: t.parameters })),
+    inactiveTools: [] });
+  const mandatoryContinuation = (model: any, sdkContext: any) => {
+    // SDK arguments are an object, not an escaped JSON string. Any valid result's
+    // serialized arguments fit within 8KiB; this valid maximum-size object reserves
+    // those bytes without counting them again as context tokens alongside outputCap.
+    const argumentsValue = { facts: [""], interpretations: [], unknowns: [] };
+    argumentsValue.facts[0] = "x".repeat(8192 - bytes(JSON.stringify(argumentsValue)));
+    const argumentsBytes = bytes(JSON.stringify(argumentsValue));
+    const toolCallId = "summary-preflight"; // Placeholder, not a bound on provider IDs.
+    const messages = [{ role: "assistant", content: [{ type: "toolCall", id: toolCallId,
+      name: SUMMARY_TOOL_NAME, arguments: argumentsValue }], api: model.api, provider: model.provider,
+      model: model.id, usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0,
+        totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
+      stopReason: "toolUse", timestamp: Date.now() },
+    { role: "toolResult", toolCallId, toolName: SUMMARY_TOOL_NAME,
+      content: receivedContent(),
+      isError: false, timestamp: Date.now() }];
+    return { context: { ...sdkContext, messages: [...sdkContext.messages, ...messages] }, argumentsBytes };
+  };
+  const budgetCheck = (model: any, sdkContext: any, initial: boolean): string | undefined => {
     if (metadata.outputMeaning !== "reasoning_and_visible" || metadata.outputLimitEnforced !== true
         || metadata.estimator !== "utf8_bytes_upper_bound" || !Number.isSafeInteger(outputCap)
         || typeof metadata.outputLimitSource !== "string" || !metadata.outputLimitSource
@@ -173,17 +196,29 @@ export async function dispatchSummarySDK(options: {
         || !Number.isSafeInteger(metadata.visibleResultTokens) || metadata.visibleResultTokens < 1
         || metadata.reasoningTokens + metadata.visibleResultTokens > outputCap)
       return "output_budget_unavailable";
-    const projected = JSON.stringify({ systemPrompt: sdkContext.systemPrompt, messages: sdkContext.messages,
-      tools: sdkContext.tools?.map((t: any) => ({ name: t.name, description: t.description, parameters: t.parameters })),
-      inactiveTools: [] });
+    const projected = projection(sdkContext);
     const estimate = tokenBudget(projected);
     const fitted = sdk.fitOutputTokensToContextWindow(model, sdkContext, outputCap, new sdk.Tokenizer(model));
+    const continuation = initial ? mandatoryContinuation(model, sdkContext) : undefined;
+    const nextEstimate = continuation ? tokenBudget(projection(continuation.context)) : undefined;
+    const fixedFraming = continuation ? nextEstimate! - estimate - continuation.argumentsBytes : 0;
+    const nextFitted = continuation ? sdk.fitOutputTokensToContextWindow(model, continuation.context,
+      outputCap, new sdk.Tokenizer(model)) : undefined;
     emit({ event: "dispatch_preflight", requestId: request.requestId, inputEstimate: estimate,
       estimator: "utf8_bytes_upper_bound", inputLimit, outputCap, fittedCap: fitted,
-      conservativeWireBytes: bytes(projected) + 8192 });
-    return fitted !== outputCap ? "output_budget_unavailable" :
-      estimate > inputLimit || bytes(projected) + 8192 > 32768
+      initialInputQuota: initial, conservativeWireBytes: bytes(projected) + 8192,
+      ...(continuation ? { mandatoryContinuationEstimate: nextEstimate,
+        mandatoryArgumentsBytes: continuation.argumentsBytes, fixedContinuationEstimate: fixedFraming,
+        previousOutputReserve: outputCap, nextOutputReserve: outputCap, nextFittedCap: nextFitted,
+        mandatoryWireBytes: nextEstimate! + 8192,
+        // Remaining headroom after the existing allowance is a reservation only;
+        // dynamic IDs, thinking/text and provider metadata have no absolute byte bound.
+        dynamicExtrasReserve: 32768 - nextEstimate! - 8192 } : {}) });
+    return fitted !== outputCap || (continuation && nextFitted !== outputCap) ? "output_budget_unavailable" :
+      (initial && estimate > inputLimit) || bytes(projected) + 8192 > 32768
       || estimate + metadata.existingContextTokens + outputCap > model.contextWindow
+      || (continuation && (nextEstimate! + 8192 > 32768
+        || estimate + fixedFraming + metadata.existingContextTokens + outputCap + outputCap > model.contextWindow))
         ? "input_budget_unavailable" : undefined;
   };
   let child: any;
@@ -235,8 +270,12 @@ export async function dispatchSummarySDK(options: {
               ? "model_mismatch" : undefined;
         };
         const original = child.agent.streamFn;
+        let streamInvocations = 0;
         const wrapper = (model: any, sdkContext: any, streamOptions: any) => {
-          let reason = check(model, sdkContext) ?? budgetCheck(model, sdkContext);
+          // LG-D26 exempts only subsequent invocations in this same child from
+          // the host-input quota. All actual wire/context/output guards remain.
+          const initial = ++streamInvocations === 1;
+          let reason = check(model, sdkContext) ?? budgetCheck(model, sdkContext, initial);
           emit({ event: "stream_guard", requestId: request.requestId, reason: reason ?? null });
           // Observer callbacks are host code too; recheck before the synchronous dispatch call.
           if (!inputMatches()) reason = "request_mismatch";
@@ -270,7 +309,7 @@ export async function dispatchSummarySDK(options: {
         const preliminary = { systemPrompt: [bundled.systemPrompt, skill],
           messages: [{ role: "user", content: [{ type: "text", text: prompt }], timestamp: Date.now() }],
           tools: [{ name: tool.name, description: tool.description, parameters: sdk.toolWireSchema(tool) }] };
-        const reason = budgetCheck(context.model, preliminary);
+        const reason = budgetCheck(context.model, preliminary, true);
         if (reason) return defer(reason);
         break;
       } catch { emit({ event: "startup_rejected", requestId: request.requestId, attempt }); }

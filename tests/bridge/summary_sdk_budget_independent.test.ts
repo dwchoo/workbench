@@ -61,7 +61,8 @@ async function exercise(stage: "first" | "followup", budget: "input" | "output",
         dispose: async () => { counters.dispose++; child.isDisposed = true; },
         async prompt(text: string) {
           const context = (refused: boolean) => ({ systemPrompt: options.systemPrompt,
-            messages: [{ role: "user", content: refused && budget === "input" ? "x".repeat(8193) : text }],
+            // LG-D26: a later turn needs actual wire overflow, not another host quota.
+            messages: [{ role: "user", content: refused && budget === "input" ? "x".repeat(stage === "first" ? 8193 : 32768) : text }],
             tools: [{ name: "db_summary_save", description: options.customTools[0].description,
               parameters: options.customTools[0].parameters }], outputRefused: refused && budget === "output" });
           if (stage === "followup") {
@@ -98,7 +99,7 @@ async function exercise(stage: "first" | "followup", budget: "input" | "output",
   return { result, counters };
 }
 
-test("first and mandatory-followup input/output refusal preserve exact budget cause and write nothing", async () => {
+test("first host quota and later wire/output refusal preserve exact budget cause and write nothing", async () => {
   for (const stage of ["first", "followup"] as const) for (const budget of ["input", "output"] as const) {
     const { result } = await exercise(stage, budget);
     assert.equal(result.reason, budget + "_budget_unavailable");
@@ -214,4 +215,103 @@ test("confirmed forbidden end with abort rejection shape for Python protection r
   assert.ok(path && path.includes(".workflow/"));
   writeFileSync(path,JSON.stringify({outcome,counters,trace,
     boundary:"Actual product dispatchSummarySDK subscriber/catch/finally with controlled SDK event and abort; no installedSDK/POST/tool execution claim"},null,2));
+});
+
+const u1Observations:any[]=[];
+async function u1Turn(scenario:"first_quota"|"ten_percent"|"continuation"|"mandatory_context"|"mandatory_fit"|"later_id") {
+  const input=ownedRequest();
+  const text="work "+"x".repeat(scenario==="first_quota"?9000:2600);
+  const span=input.prepared.request.sources[0];span.end=Buffer.byteLength(text);span.digest=digest(text);
+  input.prepared.selected[0].text=text;
+  input.prepared.request.inputKey=summaryInputKey(input.prepared.request.subject as any,null,[span] as any,[],input.prepared.request.skillDigest);
+  if(scenario==="ten_percent")input.metadata.model.contextWindow=50000;
+  if(scenario==="mandatory_context")input.metadata.existingContextTokens=112000;
+  const counters={create:0,prompt:0,dispatch:0,write:0,dispose:0};const trace:any[]=[];
+  class Registry {
+    entries=new Map<string,any>();get(id:string){return this.entries.get(id);}
+    static global(){return {get(){return undefined;}};}
+  }
+  const sdk={AgentRegistry:Registry,Settings:{isolated:(value:any)=>value},SessionManager:{inMemory:()=>({})},
+    Tokenizer:class {},toolWireSchema:(tool:any)=>tool.parameters,
+    fitOutputTokensToContextWindow:(_model:any,ctx:any,cap:number)=>
+      scenario==="mandatory_fit"&&ctx.messages?.some((m:any)=>m.role==="toolResult")?cap-1:cap,
+    getBundledAgent:()=>({source:"bundled",filePath:"embedded:task.md",systemPrompt:definition}),
+    async createAgentSession(options:any){
+      counters.create++;const id=randomUUID();const tool=options.customTools[0];
+      const child:any={settings:options.settings,model:options.model,thinkingLevel:options.thinkingLevel,
+        serviceTierByFamily:options.resolveServiceTierByFamily(),isDisposed:false,
+        sessionManager:{getSessionId:()=>id},getEnabledToolNames:()=>["db_summary_save"],
+        agent:{streamFn:(_m:any,_c:any,opts:any)=>{assert.equal(opts.maxTokens,8192);counters.dispatch++;}},
+        subscribe:()=>()=>{},abort:async()=>{},dispose:async()=>{counters.dispose++;child.isDisposed=true;},
+        async prompt(prompt:string){
+          counters.prompt++;
+          const initial:any={systemPrompt:options.systemPrompt,messages:[{role:"user",content:prompt}],
+            tools:[{name:tool.name,description:tool.description,parameters:tool.parameters}]};
+          await child.agent.streamFn(child.model,initial,{});
+          const params={facts:['한"\\'.repeat(400)],interpretations:[],unknowns:[]};
+          assert.ok(Buffer.byteLength(JSON.stringify(params))<8192);
+          const result=await tool.execute("observed-save",params);assert.equal(result.isError,undefined);
+          const callId=scenario==="later_id"?"provider-extra-"+"i".repeat(24000):"observed-save";
+          const next={...initial,messages:[...initial.messages,
+            {role:"assistant",content:[{type:"toolCall",id:callId,name:tool.name,arguments:params}],
+              api:child.model.api,provider:child.model.provider,model:child.model.id,stopReason:"toolUse",timestamp:1},
+            {role:"toolResult",toolCallId:callId,toolName:tool.name,content:result.content,isError:false,timestamp:2}]};
+          if(scenario==="later_id")await assert.rejects(async()=>child.agent.streamFn(child.model,next,{}),/input_budget_unavailable/);
+          else await child.agent.streamFn(child.model,next,{});
+        }};
+      options.agentRegistry.entries.set(options.agentId,child);return {session:child};
+    }};
+  const outcome=await dispatchSummarySDK({...input,sdk,current:()=>true,observeMetadata:()=>input.metadata,
+    emit:event=>trace.push(event),save:async()=>{counters.write++;return {saved:true,entryId:randomUUID()};}});
+  u1Observations.push({scenario,outcome,counters,trace,modelWindow:input.metadata.model.contextWindow,
+    existingContext:input.metadata.existingContextTokens,boundary:"controlledSDK, actual product dispatch; projection not provider payload proof"});
+  const path=process.env.DVL10_U1_BUDGET_EVIDENCE;
+  if(path){assert.ok(path.includes(".workflow/"));writeFileSync(path,JSON.stringify(u1Observations,null,2));}
+  return {outcome,counters,trace,input};
+}
+
+test("LGD26 first host quota 8192 and ten percent prevent prompt and stream",async()=>{
+  for(const scenario of ["first_quota","ten_percent"] as const){
+    const {outcome,counters,trace}=await u1Turn(scenario);
+    assert.deepEqual(outcome,{status:"deferred",sent:false,protected:false,reason:"input_budget_unavailable"});
+    assert.equal(counters.prompt,0);assert.equal(counters.dispatch,0);assert.equal(counters.write,0);
+    const preflight=trace.find(e=>e.event==="dispatch_preflight");
+    assert.equal(preflight.inputLimit,scenario==="first_quota"?8192:5000);
+    assert.ok(preflight.inputEstimate>preflight.inputLimit);assert.equal(preflight.outputCap,8192);
+  }
+});
+
+test("LGD26 mandatory full next output and fitted cap are checked before prompt",async()=>{
+  for(const scenario of ["mandatory_context","mandatory_fit"] as const){
+    const {outcome,counters,trace,input}=await u1Turn(scenario);
+    assert.deepEqual(outcome,{status:"deferred",sent:false,protected:false,
+      reason:scenario==="mandatory_context"?"input_budget_unavailable":"output_budget_unavailable"});
+    assert.equal(counters.prompt,0);assert.equal(counters.dispatch,0);assert.equal(counters.write,0);
+    const e=trace.find(e=>e.event==="dispatch_preflight");
+    assert.equal(e.previousOutputReserve,8192);assert.equal(e.nextOutputReserve,8192);
+    assert.equal(e.mandatoryArgumentsBytes,8192);
+    if(scenario==="mandatory_context"){
+      assert.ok(e.inputEstimate+input.metadata.existingContextTokens+8192<=input.metadata.model.contextWindow);
+      assert.ok(e.inputEstimate+e.fixedContinuationEstimate+input.metadata.existingContextTokens+16384>input.metadata.model.contextWindow);
+    }else{assert.equal(e.fittedCap,8192);assert.equal(e.nextFittedCap,8191);}
+  }
+});
+
+test("LGD26 valid escaped multibyte continuation above host quota can complete",async()=>{
+  const {outcome,counters,trace}=await u1Turn("continuation");
+  assert.equal(outcome.status,"summary_result");assert.equal(outcome.sent,true);assert.equal(outcome.protected,false);
+  assert.deepEqual(counters,{create:1,prompt:1,dispatch:2,write:1,dispose:1});
+  const actual=trace.filter(e=>e.event==="dispatch_preflight");
+  const next=actual.find(e=>e.initialInputQuota===false);
+  assert.ok(next.inputEstimate>8192);assert.equal(next.inputLimit,8192);
+  assert.ok(next.conservativeWireBytes<=32768);assert.equal(next.fittedCap,8192);
+});
+
+test("LGD26 unexpected later provider ID exceeds remaining wire without writing",async()=>{
+  const {outcome,counters,trace}=await u1Turn("later_id");
+  assert.deepEqual(outcome,{status:"rejected",sent:true,protected:true,reason:"input_budget_unavailable"});
+  assert.deepEqual(counters,{create:1,prompt:1,dispatch:1,write:0,dispose:1});
+  assert.equal(Object.hasOwn(outcome,"receipt"),false);
+  const next=trace.find(e=>e.event==="dispatch_preflight"&&e.initialInputQuota===false);
+  assert.ok(next.conservativeWireBytes>32768);assert.ok(trace.some(e=>e.event==="stream_guard"&&e.reason==="input_budget_unavailable"));
 });

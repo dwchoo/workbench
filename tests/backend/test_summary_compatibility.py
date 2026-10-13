@@ -65,7 +65,8 @@ class CompatibilityCoreTests(unittest.TestCase):
 
     def test_explicit_unavailable_verify_zero_launch_keeps_protection(self):
         self.service.protect({"episode": "existing", "reason": "compatibility_failed"})
-        with patch("subprocess.Popen", side_effect=AssertionError("unexpected launch")):
+        with patch("workbench.backend.summary_compat_runtime.shutil.which", return_value=None), \
+             patch("subprocess.Popen", side_effect=AssertionError("unexpected launch")):
             result = self.service.verify_scripted()
         self.assertEqual(result["result"], "unavailable")
         self.assertEqual(set(result["items"].values()), {"not_run"})
@@ -252,7 +253,7 @@ class CompatibilityCoreTests(unittest.TestCase):
         for relative in ("src/workbench", "omp_bridge"):
             shutil.copytree(ROOT / relative, self.root / relative, ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
         shutil.copy2(ROOT / "pyproject.toml", self.root / "pyproject.toml")
-        environment = {"PATH": os.environ.get("PATH", ""), "PYTHONPATH": str(self.root / "src"),
+        environment = {"PATH": str(self.root / "no-executables"), "PYTHONPATH": str(self.root / "src"),
                        "PYTHONDONTWRITEBYTECODE": "1", "HOME": str(self.root / "home")}
         data = self.root / "data"
         result = subprocess.run([sys.executable, "-m", "workbench.backend.cli", "logs", "summary-compat", "verify",

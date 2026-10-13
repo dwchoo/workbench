@@ -12,6 +12,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 from uuid import uuid4
 
 from workbench.backend.paths import ensure_private_dir, write_private_json
@@ -295,7 +296,8 @@ class PersistedCompatibilityIndependentTests(unittest.TestCase):
         self.service.protect({"reason": "guard_confirmation_unavailable", "episode": "one"})
         self.assertEqual(self.service.take_notice()["episode"], 1)
         reopened = self.reopen()
-        result = reopened.verify_scripted()
+        with patch("workbench.backend.summary_compat_runtime.shutil.which", return_value=None):
+            result = reopened.verify_scripted()
         self.assertEqual(result["result"], "unavailable")
         self.assertEqual(set(result["items"].values()), {"not_run"})
         self.assertEqual(result["model_metadata"]["status"], "inconclusive")

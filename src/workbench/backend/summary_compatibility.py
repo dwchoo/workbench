@@ -334,7 +334,12 @@ class SummaryCompatibility:
                 before = self.identity()
             except (OSError, ValueError, KeyError, TypeError):
                 before = {"unknowns": ["runtime_identity_unavailable"]}
-            observed = ScriptedCompatibilityProvider().observe()
+            # Unknown checkout identity cannot authorize owned runtime launch.
+            if _complete_identity(before):
+                observed = ScriptedCompatibilityProvider().observe()
+            else:
+                from workbench.backend.summary_compat_runtime import unavailable
+                observed = unavailable("runtime_identity_unavailable")
             try:
                 after = self.identity()
             except (OSError, ValueError, KeyError, TypeError):
@@ -345,8 +350,10 @@ class SummaryCompatibility:
             record = {"id": str(uuid4()), "schema_version": 1, "validator_version": 1,
                       "created_at": datetime.now(timezone.utc).isoformat(), "identity": before,
                       "omp": self.omp_identity(), "boundary": self.boundary(),
-                      "result": "unavailable", "observations": observed["observations"],
-                      "items": {name: "not_run" for name in Q01_ITEMS},
+                      "result": "inconclusive" if observed["level"] == "inconclusive" else "unavailable",
+                      "observations": observed["observations"],
+                      "items": {name: "inconclusive" if observed.get("items", {}).get(name) == "inconclusive"
+                                else "not_run" for name in Q01_ITEMS},
                       "model_metadata": observed["model_metadata"], "real_model_contract": "unverified",
                       "unknowns": sorted(set(unknowns)), "io": observed["io"]}
             ensure_private_dir(self.directory)

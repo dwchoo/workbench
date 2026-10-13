@@ -34,7 +34,9 @@ export default function verification(pi: any) {
           || realpathSync(fileURLToPath(new URL("../", import.meta.url))) !== root + "/runtime/omp_bridge")
         throw Error("unsafe_verification_root");
       owned = true;
-      await run(root, context);
+      // TUI starts the initial registry refresh after session_start handlers return.
+      void run(root, context).catch(error =>
+        publishVerificationCompletion(root, { error: String(error), exercised: [] }, "err"));
     } catch (error) {
       if (owned) publishVerificationCompletion(root, { error: String(error), exercised: [] }, "err");
     }

@@ -503,3 +503,10 @@ LG-D15는 LG-AC-13/20의 조회 구현 해석, LG-D16은 LG-AC-01~04의 preserva
 - 소유한 임시 환경 준비에서 빈 private 저장소 생성·열기를 허용한다. Scripted 검증에서는 소유 localhost provider 통신·임시 DB 기록을 허용한다. 사용자 인증정보·실제 로그 접근, 외부 통신, 유료 모델 호출은 전 구간 금지한다.
 - Metadata observer의 모델 호출·대화 입력·네트워크·auth store open·설정 쓰기0는 유지한다. 검증용 SDK child의 새 auth store open·설정 쓰기는 금지한다. 준비 I/O와 observer/child 관측은 분리하며 금지 동작이나 격리/귀속 불명은 pass로 판정하지 않는다.
 - 이 결정은 DVL-14 검증 경계의 후속 승인이다. 공개 capability를 먼저 확인하고 최소 구현·독립 테스트·리뷰를 진행한다. 기존 실패를 새 기준의 pass로 재표시하지 않고, 운영 MODEL unknown·Q01 나머지 기준/caps·LG-D22 route·DB-only·no replay·C2 hold·실제 raw 미활성화를 유지한다.
+
+## LG-D28 — 검증용 OMP의 정상 시작·모델 목록 조회 허용 (2026-10-13)
+
+- 사용자 결정: 외부 통신 전체 차단과 OS 격리안을 철회하고, 임시 HOME·설정·DB에서 OMP의 정상 시작·모델 목록 조회 통신을 허용하는 최소 검증안에 “그렇게 해줘.”로 동의했다. [승인 기록](../../../.workflow/dev-validation-log-retention/runs/dvl14-20261013/normal-startup01/decision.json)을 따른다.
+- LG-D27의 전 구간 외부 통신 금지는 검증 환경 준비의 정상 시작·모델 목록 갱신에 한해 대체한다. 사용자 인증정보·실제 로그를 넘기지 않으며 유료 모델 호출은 금지한다. 검증 모델 요청은 소유 localhost scripted provider로 처리하고 결과는 임시 DB에만 기록한다.
+- OS sandbox·provider blacklist·새 상주 서비스를 추가하지 않는다. 시작·목록 갱신 I/O는 준비 동작으로 분리해 기록하고, metadata observer의 기존 무부작용 조건 및 SDK child의 새 auth store open·설정 쓰기0는 유지한다. 귀속 불명은 pass로 판정하지 않는다.
+- 기존 운영 route·DB-only·no replay·caps·C2 hold·실제 raw 미활성화와 gate ID/level·의존 graph는 유지한다. LG-D27과 최초 실패·과거 검증은 이력으로 보존하며 새 기준의 pass로 재표시하지 않는다. 이 결정만으로 제품 verifier·MODEL-metadata·DVL-14 전체 또는 DVL-13 최종 검증이 완료되지는 않는다.

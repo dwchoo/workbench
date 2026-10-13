@@ -88,7 +88,7 @@ def _owned_json(path: Path, limit: int = 2097152) -> dict:
 
 
 def _daemon_states(root: Path) -> list[dict]:
-    """Read only daemon registry metadata below this fresh owned root."""
+    """Read observed registry files; missing metadata/writer absence is unknown."""
     rt._private_root(root)
     observed = []
     for path in root.glob("**/run/daemons/**/meta.json"):
@@ -110,7 +110,9 @@ def _daemon_states(root: Path) -> list[dict]:
         value = json.loads(raw)
         state = value["daemon"]["state"]
         observed.append({"path": str(path.relative_to(root)), "bytes": len(raw),
-                         "sha256": sha256(raw).hexdigest(), "state": state})
+                         "sha256": sha256(raw).hexdigest(), "state": state,
+                         "exited_at_wall_ms": value["daemon"].get("exitedAt"),
+                         "mtime_ns": after.st_mtime_ns})
     return observed
 
 
@@ -201,7 +203,7 @@ def observe_priority(source: Path, *, budget_seconds: float = 90.0) -> dict:
         if (root / "helper.log").is_file():
             data["containment"]["log"] = artifact(root / "helper.log")
         daemon_metadata = {"entries": [], "all_observed_exited": False,
-                           "limit": "owned registry JSON view only; not complete native I/O or process absence proof"}
+                           "limit": "observed owned registry JSON only; missing metadata/unobserved writers, complete native I/O and process absence remain unknown"}
         try:
             daemon_metadata["entries"] = _daemon_states(root)
             daemon_metadata["all_observed_exited"] = all(row["state"] == "exited" for row in daemon_metadata["entries"])
@@ -368,6 +370,7 @@ def _execute(top: Path, binary: Path, body_budget_seconds: float):
             "Injected review clock0/60; internal mutex wait unavailable; only Python monotonic_ns is compared.",
             "Output8192/context0/reasoning0/ClaudeV3 are controlled fixture semantics, not operating proof.",
             "Native entry JSON.stringify view only; memory/storage serialization equality unknown.",
+            "COMMON5s shutdown budget is a technical bound, not universal completion proof; missing daemon metadata/unobserved writers remain unknown.",
             "Upper summary subject is its separately bound owned producer command, not the Core Task grant.",
             "Workflow completion/Worker analysis/TaskFlow workerheld/_remember_home_cwd/_give_back/_HandoffWatch unverified."]}
     roots, owned, servers, serves, drains, masters, stops, readies = {}, {}, {}, {}, {}, {}, {}, {}
@@ -903,7 +906,7 @@ def _execute(top: Path, binary: Path, body_budget_seconds: float):
         if repository is not None:
             repository.close()
         for role, (process, ref) in owned.items():
-            data['launches'][role]['term_requested_ns'] = now()
+            data['launches'][role]['live_peer_observation_ns'] = now()
             try:
                 peer_git = data["peer_git_fixture"][role]
                 peer_git["head_after"] = git("-C", str(roots[role] / "project"), "rev-parse", "--verify", "HEAD")
@@ -913,12 +916,69 @@ def _execute(top: Path, binary: Path, body_budget_seconds: float):
                     data["launches"][role]["actual_pid_cwd_after"] = os.readlink(f"/proc/{process.pid}/cwd")
             except (OSError, ValueError, subprocess.SubprocessError) as error:
                 data["errors"].append("peer_observation:" + str(error))
+
+        # Both markers share one deadline; capture live cwd/HEAD before either.
+        request_ns, request_wall_ns = now(), time.time_ns()
+        termination_deadline_ns = request_ns + 5000000000
+        for role in owned:
+            stop = {"stop_request_ns": request_ns, "stop_request_wall_ns": request_wall_ns,
+                "termination_deadline_ns": termination_deadline_ns, "common_deadline": True,
+                "registry_view": "observed owned metadata only; missing metadata/unobserved writers unknown"}
+            data["launches"][role]["owned_graceful_stop"] = stop
             try:
-                error = rt._stop_leader(process, ref)
-                if error:
-                    data['errors'].append(error)
+                write_private_json(roots[role] / "owned-stop.json", {"kind": "owned-graceful-stop"})
+                stop["marker_written_ns"] = now()
+            except (OSError, ValueError, KeyError, TypeError) as error:
+                stop["marker_error"] = type(error).__name__ + ":" + str(error)
+                data["errors"].append("cleanup:" + role + ":owned_stop_marker:" + stop["marker_error"])
+
+        for role, (process, ref) in owned.items():
+            stop = data["launches"][role]["owned_graceful_stop"]
+            stop.update(wait_started_ns=now(), wait_started_wall_ms=time.time_ns() // 1000000)
+            try:
+                process.wait(timeout=max(0, (termination_deadline_ns - now()) / 1000000000))
+                stop["method"] = "graceful_exit"
+            except subprocess.TimeoutExpired:
+                data["errors"].append("cleanup:" + role + ":public_shutdown_timeout")
+                if process.poll() is None:
+                    stop["method"] = "sigterm_fallback"
+                    stop["fallback_requested_ns"] = now()
+                    try:
+                        error = rt._stop_leader(process, ref)
+                        if error:
+                            data["errors"].append(error)
+                    except (OSError, ValueError, KeyError, TypeError, sqlite3.Error, RuntimeError, AssertionError, subprocess.SubprocessError) as error:
+                        data["errors"].append("cleanup:" + role + ":fallback:" + str(error))
+                else:
+                    stop["method"] = "exited_after_deadline"
             except (OSError, ValueError, KeyError, TypeError, sqlite3.Error, RuntimeError, AssertionError, subprocess.SubprocessError) as error:
-                data['errors'].append('cleanup:' + str(error))
+                data["errors"].append("cleanup:" + role + ":" + str(error))
+            finally:
+                stop.update(returncode=process.returncode, wait_returned_ns=now(),
+                    wait_returned_wall_ns=time.time_ns())
+                stop["wait_returned_wall_ms"] = stop["wait_returned_wall_ns"] // 1000000
+            if process.returncode != 0:
+                data["errors"].append("cleanup:" + role + ":public_shutdown_nonzero_or_unobserved")
+            stop.update(barrier_started_ns=now(), barrier_started_wall_ns=time.time_ns())
+            try:
+                while True:
+                    states = _daemon_states(roots[role])
+                    stop["last_registry_metadata"] = states
+                    if all(row["state"] == "exited" for row in states):
+                        stop["barrier_terminal"] = now() <= termination_deadline_ns
+                        break
+                    if now() >= termination_deadline_ns:
+                        stop["barrier_terminal"] = False
+                        break
+                    time.sleep(min(.01, max(0, (termination_deadline_ns - now()) / 1000000000)))
+                if not stop["barrier_terminal"]:
+                    data["errors"].append("cleanup:" + role + ":owned_registry_common5s_deadline")
+            except (OSError, ValueError, KeyError, TypeError) as error:
+                stop["barrier_terminal"] = False
+                stop["barrier_error"] = type(error).__name__ + ":" + str(error)
+                data["errors"].append("cleanup:" + role + ":owned_registry_read:" + stop["barrier_error"])
+            finally:
+                stop.update(barrier_returned_ns=now(), barrier_returned_wall_ns=time.time_ns())
         parent_observations = {}
         for role, root in roots.items():
             if (root / 'ownerready.json').exists():

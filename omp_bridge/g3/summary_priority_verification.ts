@@ -1,6 +1,6 @@
 /** Explicit owned priority verifier; scripted capability, never operating MODEL proof. */
 import { createHash } from "node:crypto";
-import { readFileSync, readdirSync, realpathSync, renameSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, realpathSync, renameSync, statSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { AgentRegistry, createAgentSession, SessionManager, Settings, VERSION } from "@oh-my-pi/pi-coding-agent";
 import { toolWireSchema } from "@oh-my-pi/pi-ai";
@@ -58,6 +58,13 @@ export default function observer(pi: any) {
       if (matches.length !== 1 || ctx.modelRegistry !== matches[0].session.modelRegistry)
         throw Error("native_parent_registry_unavailable");
       parent = matches[0].session;
+      let ownedStopRequested = false;
+      const ownedStopTimer = ctx.setInterval(() => {
+        if (ownedStopRequested || !existsSync(root + "/owned-stop.json")) return;
+        ownedStopRequested = true;
+        ctx.clearTimer(ownedStopTimer);
+        ctx.shutdown();
+      }, 20);
       const abort = new AbortController();
       const timer = setTimeout(() => abort.abort(), 25000);
       try { await ctx.modelRegistry.awaitInitialBackgroundRefresh(abort.signal); }

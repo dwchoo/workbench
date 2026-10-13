@@ -6,6 +6,7 @@ report ownership and wrapper cleanup are actual product behavior. No native/Core
 periodic QUESTION or upper SDK capability is asserted by this fixture.
 """
 from copy import deepcopy
+import ast
 from hashlib import sha256
 import json
 import os
@@ -15,6 +16,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from workbench.backend import summary_compat_priority as priority
@@ -53,6 +55,11 @@ if mode.startswith('daemon-'):
     meta.parent.mkdir(mode=0o700, parents=True)
     meta.write_text('{not-json' if mode == 'daemon-invalid' else json.dumps({'daemon':{'state':mode.removeprefix('daemon-')}}))
     meta.chmod(0o664)
+if mode.startswith('graceful-report-'):
+    report.update(json.loads(sys.argv[3]))
+    meta = root / 'config/run/daemons/fixture/meta.json'
+    meta.parent.mkdir(mode=0o700, parents=True)
+    meta.write_text(json.dumps({'daemon':{'state':'exited'}})); meta.chmod(0o664)
 path = root / 'priority-result.json'
 path.write_text(json.dumps(report)); path.chmod(0o600)
 '''
@@ -71,7 +78,7 @@ class PrivatePriorityWrapperTests(unittest.TestCase):
         self.real_popen = subprocess.Popen
         self.launches = []
 
-    def observe_fixture(self, mode, survivor=None):
+    def observe_fixture(self, mode, survivor=None, report=None):
         root = self.fixture / mode
         root.mkdir(mode=0o700)
         def launch(argv, **options):
@@ -97,6 +104,8 @@ class PrivatePriorityWrapperTests(unittest.TestCase):
             args = [sys.executable, "-P", "-s", "-c", HELPER, str(root), mode]
             if survivor:
                 args.append(json.dumps(survivor))
+            elif report is not None:
+                args.append(json.dumps(report))
             return self.real_popen(args, **options)
         with patch.object(priority.shutil, "which", return_value=str(self.binary)), \
              patch.object(priority.tempfile, "mkdtemp", return_value=str(root)), \
@@ -187,7 +196,8 @@ class PrivatePriorityWrapperTests(unittest.TestCase):
                     observed["containment"]["cleanup_complete"], observed["cleanup"]["complete"]],
                     [expected, expected, expected])
                 metadata = observed["containment"]["owned_daemon_metadata"]
-                self.assertIn("not complete native I/O", metadata["limit"])
+                self.assertIn("complete native I/O and process absence remain unknown", metadata["limit"])
+                self.assertIn("missing metadata/unobserved writers", metadata["limit"])
                 self.assertEqual(metadata["all_observed_exited"], expected)
                 if expected:
                     delete.assert_called_once_with(root)
@@ -213,6 +223,110 @@ class PrivatePriorityWrapperTests(unittest.TestCase):
                     "delete_calls": delete.call_count, "retained_root": not expected,
                     "metadata_limit": metadata["limit"]})
         print("daemon_metadata_observations=" + json.dumps(observations, sort_keys=True))
+
+    def graceful_block(self, case):
+        # Compile actual statements, not a rewritten cleanup algorithm. The
+        # surrounding Core/TUI setup is deliberately outside this boundary.
+        tree = ast.parse(Path(priority.__file__).read_text())
+        function = next(node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == "_execute")
+        final = next(node.finalbody for node in ast.walk(function) if isinstance(node, ast.Try)
+            and any(isinstance(item, ast.Assign) and isinstance(item.targets[0], ast.Tuple)
+                and [getattr(value, "id", None) for value in item.targets[0].elts] == ["request_ns", "request_wall_ns"] for item in node.finalbody))
+        request = next(index for index, node in enumerate(final) if isinstance(node, ast.Assign)
+            and isinstance(node.targets[0], ast.Tuple) and getattr(node.targets[0].elts[0], "id", None) == "request_ns")
+        end = next(index for index, node in enumerate(final) if isinstance(node, ast.Assign)
+            and isinstance(node.targets[0], ast.Name) and node.targets[0].id == "parent_observations")
+        safe = next(index for index, node in enumerate(final) if isinstance(node, ast.Assign)
+            and isinstance(node.targets[0], ast.Name) and node.targets[0].id == "safe")
+        self.assertIsInstance(final[request - 1], ast.For)
+        clocks, events, waits, sleeps = [1_000_000_000], [], {}, []
+        top = self.fixture / ("block-" + case); top.mkdir(mode=0o700)
+        roots, owned, paths = {}, {}, {}
+        data = {"launches": {}, "peer_git_fixture": {}, "errors": [], "coverage_complete": True}
+        def metadata(path, state):
+            path.parent.mkdir(parents=True, mode=0o700, exist_ok=True)
+            path.write_text(json.dumps({"daemon": {"state": state}})); path.chmod(0o664)
+        for role in ("manager", "worker"):
+            root = top / role; root.mkdir(mode=0o700); (root / "project").mkdir(mode=0o700)
+            roots[role] = root; paths[role] = root / "config/run/daemons/initial/meta.json"
+            metadata(paths[role], "running" if role == "manager" and case in ("positive", "deadline") else "exited")
+            if role == "manager" and case == "parse": paths[role].write_text("{bad-json")
+            parent = SimpleNamespace(pid=os.getpid(), returncode=None)
+            def wait(timeout, role=role, parent=parent):
+                waits[role] = timeout; events.append("wait:" + role)
+                if role == "manager" and case == "fallback":
+                    raise subprocess.TimeoutExpired("controlled-parent", timeout)
+                clocks[0] += int((.8 if role == "manager" else .4 if case == "positive" else 0) * 1e9)
+                parent.returncode = 0
+            parent.wait, parent.poll = wait, lambda parent=parent: parent.returncode
+            owned[role] = (parent, {"start_ticks": runtime._identity(parent.pid)})
+            data["launches"][role] = {}
+            data["peer_git_fixture"][role] = {"head_before": "fixture-head", "status_before": ""}
+        def git(*args):
+            events.append("git:" + Path(args[1]).parent.name)
+            return "fixture-head" if args[-1] == "HEAD" else ""
+        def marker(path, value):
+            self.assertTrue(all("actual_pid_cwd_after" in data["launches"][role]
+                and data["peer_git_fixture"][role].get("unchanged") is True for role in owned))
+            events.append("marker:" + path.parent.name)
+            priority.write_private_json(path, value)
+        def sleep(seconds):
+            sleeps.append(seconds); clocks[0] += int(seconds * 1e9)
+            if case == "positive":
+                metadata(paths["manager"], "exited")
+                metadata(roots["manager"] / "config/run/daemons/newly-observed/meta.json", "exited")
+            elif case == "deadline": clocks[0] = 6_000_000_000
+        def fallback(parent, ref):
+            events.append("controlled-fallback"); parent.returncode = 0
+        namespace = {**vars(priority), "roots": roots, "owned": owned, "data": data, "git": git,
+            "now": lambda: clocks[0], "time": SimpleNamespace(time_ns=lambda: 1_700_000_000_000_000_000 + clocks[0], sleep=sleep),
+            "write_private_json": marker, "rt": SimpleNamespace(_identity=runtime._identity, _stop_leader=fallback)}
+        exec(compile(ast.Module(body=deepcopy(final[request - 1:end]), type_ignores=[]), str(priority.__file__), "exec"), namespace)
+        # Late terminal registry values cannot erase a known earlier failure.
+        for path in paths.values(): metadata(path, "exited")
+        namespace.update(remaining={role: [] for role in owned}, live=[], sockets=0, handler_threads=[], top=top, violations=[])
+        exec(compile(ast.Module(body=deepcopy(final[safe:safe + 4]), type_ignores=[]), str(priority.__file__), "exec"), namespace)
+        return data, waits, sleeps, events
+
+    def test_graceful_roles_share_deadline_reenumerate_and_terminal_has_no_quiet_wait(self):
+        data, waits, sleeps, events = self.graceful_block("positive")
+        manager = data["launches"]["manager"]["owned_graceful_stop"]
+        worker = data["launches"]["worker"]["owned_graceful_stop"]
+        self.assertEqual(manager["stop_request_ns"], worker["stop_request_ns"])
+        self.assertEqual(manager["termination_deadline_ns"], worker["termination_deadline_ns"])
+        self.assertEqual(manager["termination_deadline_ns"] - manager["stop_request_ns"], 5_000_000_000)
+        self.assertIn("missing metadata/unobserved writers unknown", manager["registry_view"])
+        self.assertEqual(waits["manager"], 5)
+        self.assertAlmostEqual(waits["worker"], 4.19)
+        self.assertLess(events.index("marker:worker"), events.index("wait:manager"))
+        self.assertEqual(len(manager["last_registry_metadata"]), 2)
+        self.assertEqual(sleeps, [.01])
+        self.assertEqual(worker["barrier_started_ns"], worker["barrier_returned_ns"])
+        self.assertGreater(manager["wait_returned_ns"], manager["wait_started_ns"])
+        self.assertGreater(manager["barrier_returned_ns"], manager["barrier_started_ns"])
+        self.assertNotEqual(manager["wait_started_wall_ms"], manager["wait_started_ns"] // 1_000_000)
+        self.assertTrue(data["cleanup"]["complete"])
+        self.assertEqual(data["errors"], [])
+        print("graceful_common_budget=" + json.dumps({"parent_wait_seconds": waits, "barrier_sleeps": sleeps,
+            "boundary": "actual_AST_block_controlled_parent_clock_not_native"}, sort_keys=True))
+
+    def test_known_graceful_failures_stay_failed_after_late_terminal_and_wrapper_retains(self):
+        observations = []
+        for case in ("deadline", "parse", "fallback"):
+            with self.subTest(case=case):
+                data, waits, sleeps, events = self.graceful_block(case)
+                self.assertFalse(data["cleanup"]["complete"])
+                self.assertFalse(data["coverage_complete"])
+                self.assertTrue(any(error.startswith("cleanup:") for error in data["errors"]))
+                observed, root = self.observe_fixture("graceful-report-" + case,
+                    report={key: data[key] for key in ("cleanup", "coverage_complete", "errors")})
+                self.assertTrue(observed["containment"]["owned_daemon_metadata"]["all_observed_exited"])
+                self.assertEqual([observed["cleanup_complete"], observed["containment"]["cleanup_complete"],
+                    observed["cleanup"]["complete"]], [False, False, False])
+                self.assertEqual(observed["retained_private_root"], str(root))
+                self.assertTrue(root.exists())
+                observations.append({"case": case, "known_errors": data["errors"], "late_terminal_stays_failed": True})
+        print("graceful_known_failure_observations=" + json.dumps(observations, sort_keys=True))
 
 
 class PartialPriorityAggregationTests(unittest.TestCase):

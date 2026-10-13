@@ -5,6 +5,7 @@ store, sandbox, trace facility or development runtime is used by this verifier.
 """
 from __future__ import annotations
 
+from copy import deepcopy
 from hashlib import sha256
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
@@ -13,6 +14,7 @@ from pathlib import Path
 import shutil
 import signal
 import socket
+import sqlite3
 import stat
 import subprocess
 import sys
@@ -20,11 +22,12 @@ import tempfile
 import threading
 import time
 from typing import Any
+from uuid import uuid4
 
 from workbench.backend.paths import DataLayout, write_private_json
 from workbench.contracts.logs_v1 import canonical_json, decode_json
 from workbench.storage.important_log import ImportantLogCatalog, ImportantLogStore
-from workbench.tasks.repository import TaskRepository
+from workbench.tasks.repository import InvalidTransitionError, TaskRepository
 
 DEADLINE_SECONDS = 90
 SUMMARY = {"facts": ["소유 private scripted fixture의 연결을 확인했다."],
@@ -168,7 +171,100 @@ class _Server(ThreadingHTTPServer):
             return len(self._accepted_sockets)
 
 
-def _handler(root: Path, posts: list[dict], violations: list[str]):
+class _RecoveryControl:
+    """Owned journal control only; no disconnect, restart or pause claim."""
+    def __init__(self, root: Path):
+        self.root = root
+        self.request_id: str | None = None
+        self.observations: dict[str, Any] = {}
+
+    def before_response(self, expected: dict, body: dict, text) -> None:
+        users = [row for row in body.get("messages", []) if row.get("role") == "user"]
+        if len(users) != 1:
+            raise ValueError("recovery_prompt_binding_mismatch")
+        content = users[0].get("content")
+        if isinstance(content, str):
+            parts = [{"type": "text", "text": content}]
+        elif isinstance(content, list):
+            parts = content
+        else:
+            raise ValueError("prompt_envelope_unrecognized")
+        matched = []
+        other_parts = []
+        for part in parts:
+            is_text = isinstance(part, dict) and part.get("type") == "text" and isinstance(part.get("text"), str)
+            raw = part["text"].encode("utf-8") if is_text else canonical_json(part)
+            digest = sha256(raw).hexdigest()
+            if is_text and len(raw) == expected.get("promptBytes") and digest == expected.get("promptSha256"):
+                matched.append(raw)
+            else:
+                other_parts.append({"type": part.get("type") if isinstance(part, dict) else type(part).__name__,
+                                    "bytes": len(raw), "sha256": digest})
+        self.observations.update(prompt_matching_parts=len(matched),
+                                 sdk_envelope_parts_unattributed=other_parts)
+        if len(matched) != 1:
+            raise ValueError("prompt_envelope_unrecognized")
+        prompt = decode_json(matched[0], max_bytes=32768)
+        with TaskRepository(DataLayout(self.root / "data").tasks) as journal:
+            record = journal.get_summary_request(expected["requestId"])
+            if (not isinstance(prompt, dict) or record is None or record["state"] != "sending"
+                    or canonical_json(prompt.get("request")) != canonical_json(record["request"])):
+                raise ValueError("recovery_prompt_binding_mismatch")
+            self.request_id = expected["requestId"]
+            self.observations.update(kind="owner_controlled_recovery", result="inconclusive",
+                request_id=self.request_id, request_binding_matches=True, pause_restart="not_run")
+            journal.record_summary_state(self.request_id, "unknown",
+                                         detail="owner_controlled_unknown_before_response")
+            self.observations.update(unknown_before_response=True,
+                                     unknown_detail="owner_controlled_unknown_before_response")
+            replay = deepcopy(record["request"])
+            replay["requestId"] = str(uuid4())
+            refused = False
+            try:
+                journal.reserve_summary_request(replay)
+            except InvalidTransitionError:
+                refused = True
+            present = journal.get_summary_request(replay["requestId"]) is not None
+            self.observations.update(replay_request_id=replay["requestId"], replay_reserve_refused=refused,
+                                     replay_row_present=present)
+            if not refused or present:
+                raise ValueError("recovery_replay_reservation_not_refused")
+
+    def after_result(self, completed: dict, catalog: ImportantLogCatalog) -> None:
+        if (self.request_id != completed["requestId"]
+                or self.observations.get("unknown_before_response") is not True):
+            raise ValueError("recovery_control_unobserved")
+        outcome = completed["outcome"]
+        with TaskRepository(DataLayout(self.root / "data").tasks) as journal:
+            states = [row[0] for row in journal._connection.execute(
+                "SELECT state FROM summary_request_events_v1 WHERE request_id=? ORDER BY event_id",
+                (self.request_id,))]
+            if states != ["prepared", "sending", "unknown", "stored"]:
+                raise ValueError("recovery_state_order_mismatch")
+            first_receipt = journal.get_summary_request(self.request_id)["receipt"]
+            accepted = journal.record_summary_result_receipt(outcome["result"], outcome["writer"]["entryId"])
+            receipts = journal._connection.execute(
+                "SELECT COUNT(*) FROM summary_result_receipts_v1 WHERE request_id=?", (self.request_id,)).fetchone()[0]
+            drops = journal._connection.execute(
+                "SELECT COUNT(*) FROM summary_result_drops_v1 WHERE request_id=?", (self.request_id,)).fetchone()[0]
+            after = journal.get_summary_request(self.request_id)
+            state_after = after["state"]
+            receipt_unchanged = after["receipt"] == first_receipt
+            states_after = [row[0] for row in journal._connection.execute(
+                "SELECT state FROM summary_request_events_v1 WHERE request_id=? ORDER BY event_id",
+                (self.request_id,))]
+        with ImportantLogStore.open(DataLayout(self.root / "data").important_logs,
+                                    catalog.active_uuid(), readonly=True) as store:
+            entries = store._connection.execute("SELECT COUNT(*) FROM entries").fetchone()[0]
+        self.observations.update(state_order=states_after, state_after_duplicate=state_after,
+            duplicate_receipt_accepted=accepted, receipt_unchanged=receipt_unchanged,
+            receipt_count=receipts, duplicate_drop_count=drops, catalog_entries_after_duplicate=entries)
+        if (accepted is not False or receipts != 1 or drops != 1 or entries != 1
+                or state_after != "stored" or states_after != states or not receipt_unchanged):
+            raise ValueError("recovery_duplicate_observation_mismatch")
+
+
+def _handler(root: Path, posts: list[dict], violations: list[str], recovery: _RecoveryControl | None = None):
     class Handler(BaseHTTPRequestHandler):
         def setup(self):
             super().setup()
@@ -207,6 +303,8 @@ def _handler(root: Path, posts: list[dict], violations: list[str]):
                 continuation = any(row.get("role") == "tool" for row in body.get("messages", []))
                 if continuation != (len(posts) == 2):
                     raise ValueError("unexpected_continuation")
+                if recovery is not None and len(posts) == 1:
+                    recovery.before_response(expected, body, text)
                 delta = {"role": "assistant", "content": "완료"} if continuation else {
                     "role": "assistant", "tool_calls": [{"index": 0, "id": "owned-save-1",
                     "type": "function", "function": {"name": "db_summary_save",
@@ -224,13 +322,13 @@ def _handler(root: Path, posts: list[dict], violations: list[str]):
                 self.send_header("Content-Length", str(len(payload)))
                 self.end_headers()
                 self.wfile.write(payload)
-            except (OSError, ValueError, KeyError, TypeError) as error:
+            except (OSError, ValueError, KeyError, TypeError, sqlite3.Error, InvalidTransitionError) as error:
                 violations.append(type(error).__name__ + ":" + str(error))
                 self.send_error(400)
     return Handler
 
 
-def _execute(source: Path, binary: Path, root: Path) -> dict[str, Any]:
+def _execute(source: Path, binary: Path, root: Path, *, recovery_control: bool = False) -> dict[str, Any]:
     _private_root(root)
     for name in ("home", "agent", "config", "project", "data", "tmp", "xdg-config",
                  "xdg-data", "xdg-state", "xdg-cache"):
@@ -243,7 +341,8 @@ def _execute(source: Path, binary: Path, root: Path) -> dict[str, Any]:
     catalog = ImportantLogCatalog(layout.important_logs, create=True)
     posts: list[dict] = []
     violations: list[str] = []
-    server = _Server(("127.0.0.1", 0), _handler(root, posts, violations))
+    recovery = _RecoveryControl(root) if recovery_control else None
+    server = _Server(("127.0.0.1", 0), _handler(root, posts, violations, recovery))
     server.timeout = 1
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     endpoint = f"http://127.0.0.1:{server.server_port}/v1"
@@ -326,7 +425,9 @@ def _execute(source: Path, binary: Path, root: Path) -> dict[str, Any]:
                         "facts": ["소유 private scripted fixture의 연결을 확인했다."],
                         "interpretations": [], "unknowns": ["실제 MODEL 및 전체 Q01은 미검증이다."]}):
                 raise ValueError("owned_writer_observation_mismatch")
-    except (OSError, ValueError, KeyError, TypeError, RuntimeError, TimeoutError) as failure:
+            if recovery is not None:
+                recovery.after_result(completed, catalog)
+    except (OSError, ValueError, KeyError, TypeError, RuntimeError, TimeoutError, sqlite3.Error, InvalidTransitionError) as failure:
         error = type(failure).__name__ + ":" + str(failure)
     finally:
         if process is not None:
@@ -370,6 +471,8 @@ def _execute(source: Path, binary: Path, root: Path) -> dict[str, Any]:
             "http_handler_threads_alive": handlers_alive, "http_sockets_remaining": sockets_remaining,
             "localhost_model_posts": posts, "credential_environment_entries": 0,
             "completed": completed, "error": error, "elapsed_seconds": time.monotonic() - started}]
+        if recovery is not None:
+            result["observations"][0]["recovery_control"] = recovery.observations
         if completed:
             exercised = completed.get("exercised", [])
             result["items"] = {name: "inconclusive" for name in exercised}
@@ -381,6 +484,8 @@ def _execute(source: Path, binary: Path, root: Path) -> dict[str, Any]:
             for key in ("parentUnchanged", "registryUnchanged", "settingsUnchanged", "childDisposed"):
                 if completed.get(key) is False:
                     result["unknowns"].append(key + "_false")
+        if recovery is not None and recovery.observations:
+            result["items"]["Q01-recovery"] = "inconclusive"
         if error:
             result["unknowns"].append(error)
         if not cleanup_complete:
@@ -392,7 +497,7 @@ def _execute(source: Path, binary: Path, root: Path) -> dict[str, Any]:
     return result
 
 
-def observe_owned(source: Path) -> dict[str, Any]:
+def observe_owned(source: Path, *, recovery_control: bool = False) -> dict[str, Any]:
     binary_name = shutil.which("omp")
     if not binary_name or sys.platform != "linux":
         return unavailable("owned_runtime_unavailable")
@@ -403,9 +508,9 @@ def observe_owned(source: Path) -> dict[str, Any]:
     result = None
     try:
         temporary = Path(tempfile.mkdtemp(prefix="workbench-summary-verify-")).resolve()
-        result = _execute(source, binary, temporary)
+        result = _execute(source, binary, temporary, recovery_control=recovery_control)
         return result
-    except (OSError, ValueError, KeyError, TypeError) as error:
+    except (OSError, ValueError, KeyError, TypeError, sqlite3.Error, InvalidTransitionError) as error:
         result = unavailable(type(error).__name__ + ":" + str(error))
         if temporary is not None and (temporary / "launch.json").exists():
             # A returned exception cannot turn an attempted launch into zero I/O.

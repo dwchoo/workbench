@@ -9,7 +9,7 @@ import { Tokenizer, fitOutputTokensToContextWindow } from "@oh-my-pi/pi-agent-co
 import { getBundledAgent } from "@oh-my-pi/pi-coding-agent/task/agents";
 import { canonicalJson, summaryInputKey } from "../contract/logs_v1.ts";
 import { observeModelMetadata } from "./model_metadata.ts";
-import { dispatchVerificationSummarySDK } from "./summary_sdk.ts";
+import { buildSummaryPrompt, dispatchVerificationSummarySDK } from "./summary_sdk.ts";
 import { publishVerificationCompletion } from "./verification_completion.ts";
 
 const sha = (value: string) => createHash("sha256").update(value).digest("hex");
@@ -103,7 +103,10 @@ async function run(root: string, ctx: any) {
         HOME: root + "/home", PYTHONDONTWRITEBYTECODE: "1" } }, error => error ? reject(error) : resolve());
     reservation.stdin!.end(JSON.stringify(request));
   });
-  writeFileSync(root + "/expected.json", JSON.stringify({ requestId, systemSha: sha(bundled.systemPrompt + "\n\n" + skill) }), { mode: 0o600 });
+  // Match dispatch's detached canonical snapshot without changing its prompt bytes.
+  const prompt = buildSummaryPrompt(JSON.parse(canonicalJson(prepared)));
+  writeFileSync(root + "/expected.json", JSON.stringify({ requestId, systemSha: sha(bundled.systemPrompt + "\n\n" + skill),
+    promptSha256: sha(prompt), promptBytes: Buffer.byteLength(prompt, "utf8") }), { mode: 0o600 });
   let child: any, creates = 0, calls = 0;
   const events: any[] = [];
   const sdk = { AgentRegistry, SessionManager, Settings, toolWireSchema, Tokenizer, fitOutputTokensToContextWindow,

@@ -22,6 +22,13 @@ const boundInput = (prepared: RecordValue) => ({ request: parseSummaryRequest(pr
   selected: prepared.selected, omitted: prepared.omitted, priorCumulative: prepared.priorCumulative,
   definitionDigest: prepared.definitionDigest, metadata: prepared.metadata,
   ...(prepared.countBinding === undefined ? {} : { countBinding: prepared.countBinding }) });
+
+/** Exact host prompt bytes; callers supply the existing detached input snapshot. */
+export function buildSummaryPrompt(input: RecordValue): string {
+  return JSON.stringify({ request: input.request, selected: input.selected, omitted: input.omitted,
+    priorCumulative: input.priorCumulative, resultByteLimit: 8192,
+    instruction: "Use db_summary_save exactly once, then stop." });
+}
 function freezeInput(value: any): any {
   if (value && typeof value === "object") {
     Object.values(value).forEach(freezeInput);
@@ -243,9 +250,7 @@ async function dispatchSDK(options: DispatchOptions, verification: boolean): Pro
     sharedInputEstimate = proof.tokens.reduce((sum: number, n: number) => sum + n, 0) + 2048;
     if (!Number.isSafeInteger(sharedInputEstimate)) return defer("input_count_binding_mismatch");
   }
-  const prompt = JSON.stringify({ request, selected: input.selected, omitted: input.omitted,
-    priorCumulative: input.priorCumulative, resultByteLimit: 8192,
-    instruction: "Use db_summary_save exactly once, then stop." });
+  const prompt = buildSummaryPrompt(input);
   const outputCap = metadata.outputCap;
   const inputLimit = Math.min(8192, Math.floor(metadata.model.contextWindow / 10));
   const tokenBudget = (text: string) => {

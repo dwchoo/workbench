@@ -28,7 +28,7 @@ VM/재부팅·실모델 검증은 별도 승인 작업이며 현재 계획 gate�
 ## 실제 model metadata 관측과 후속 결정
 
 DVL-14 MODEL-metadata는 실모델 호출 없이 실행 중 session의 현재 모델/thinking/tier/context/tokenizer·현재context·output ceiling과 reasoning 포함/예산
-출처를 확인한다. modelRoles는 시작 기본값일 뿐 /model·/fast 뒤 실제 선택의 증거가 아니다. Observer/credential-free verify의 네트워크0·auth store open0·설정쓰기0도 확인한다. Scripted metadata는 실제 session 관측을 대신하지 않는다. 정보를 얻지 못하면
+출처를 확인한다. modelRoles는 시작 기본값일 뿐 /model·/fast 뒤 실제 선택의 증거가 아니다. Observer의 네트워크0·auth store open0·설정쓰기0도 확인한다. Credential-free verify는 LG-D27의 준비·scripted 검증 구간 경계를 따른다. Scripted metadata는 실제 session 관측을 대신하지 않는다. 정보를 얻지 못하면
 unknown preflight 차단을 유지하고 무엇이 없는지/가능한 공개조회와 보수대안의 근거를 보고한다.
 Q-S3-05의 고정fallback 또는 새 설정은 그 관측 뒤 사용자 결정 전 도입하지 않는다. 수치의 안전성은 RM-input-budget에 연결한다.
 
@@ -56,3 +56,13 @@ Scripted verify는 plumbing만 판별한다. 실모델 계약 거부 뒤의 명�
 요청의 새입력만 처리하고 첫계약거부에 재보호한다. 실모델시험 승인으로 해석하지 않는다. 별도 승인된 RM에서
 reasoning 소진/잘림·schema거부·최신stored결과/재발episode를 관측하고 처음 실패를 보존한다.
 Claude의 luna max/8192 한계 예고는 아직 측정되지 않은 가능성이다. 현재 pin을 낮추거나 실패를 확정하지 않는다.
+
+## DVL14-F01 — 검증용 OMP parent의 offline 준비 기능 확보
+
+- 상태: 외부 capability 대기. DVL-14 내부의 미완료 항목이며 별도 완료로 분리하지 않는다. 제품의 `verify --scripted`는 `unavailable`을 유지한다.
+- 요구: LG-D27에 따라 소유한 임시 환경에서 빈 private 저장소 초기화와 소유 localhost scripted provider 통신만 허용하고, 사용자 인증정보·실제 로그·외부 통신·유료 모델을 사용하지 않는 일회성 OMP를 준비해야 한다.
+- 관측: 고정 OMP 18.8.6의 [main.ts](https://github.com/can1357/oh-my-pi/blob/v18.8.6/packages/coding-agent/src/main.ts)는 CLI parent 준비에서 `refreshInBackground()`를 호출한다(2254·2482행). [CLI parser](https://github.com/can1357/oh-my-pi/blob/v18.8.6/packages/coding-agent/src/cli/args.ts)와 확인한 설정에는 discovery-off/전략 선택 option이 없다. SDK child에 private registry를 넘기는 공개 경로는 있지만 parent의 호출을 막지 못한다. 이는 source 판별이며 새 OMP 실행은 0회다.
+- 비채택: 완전성이 확인되지 않은 provider blacklist, cache 내용 작성, 인증이 없으면 통신하지 않을 것이라는 기대, 부팅 타이밍·fetch 변조로 우회하지 않는다. 별도 Bun/SDK host route도 자동 채택하지 않는다.
+- owner: Root가 공개 upstream capability와 설치 binary의 대응을 확인한 뒤 DVL-14의 최소 연결을 구현한다. 재개 조건은 whole parent의 startup discovery/외부 통신을 배제하는 공개 지원 경로 확보다.
+- 재개 검증: private parent 준비 → native registry 주입 child → 소유 scripted provider의 최소 요청을 구간별로 관측한다. 외부/비소유 localhost 통신·사용자 credential 접근·child의 새 auth store open/설정 쓰기 또는 격리·귀속 불명은 통과시키지 않는다. Observer I/O0, 제한 tool·저장·no replay와 process/socket 정리를 독립 검증한다.
+- 영향: G-LG-01·PRODUCT-evidence와 DVL-14 전체 완료, 이를 소비하는 DVL-13 최종46/INT-runtime은 미완료다. 실제 운영 MODEL-metadata unknown과 C2 hold는 별도 남은 조건이다. 이 기록은 Q01 통과·실제 raw 활성화·수치 또는 운영 route 변경이 아니다.

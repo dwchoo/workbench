@@ -34,6 +34,8 @@ SUMMARY = {"facts": ["소유 private scripted fixture의 연결을 확인했다.
            "interpretations": [], "unknowns": ["실제 MODEL 및 전체 Q01은 미검증이다."]}
 IO_KEYS = ("omp_children", "model_calls", "network_requests", "auth_store_open", "settings_writes")
 PAUSE_NO_SEND_DETAIL = "owner_predicate_false_confirmed_before_send"
+DISCONNECT_REQUEST_ID = "fc8416c2-7d8c-46d4-9615-b833b567f9fe"
+RESTART_REQUEST_ID = "a40f9a18-a0fc-4d75-9260-7f83cb06622d"
 
 
 def unavailable(reason: str) -> dict[str, Any]:
@@ -172,6 +174,35 @@ class _Server(ThreadingHTTPServer):
             return len(self._accepted_sockets)
 
 
+def _matched_prompt(expected: dict, body: dict, observations: dict) -> object:
+    users = [row for row in body.get("messages", []) if row.get("role") == "user"]
+    if len(users) != 1:
+        raise ValueError("recovery_prompt_binding_mismatch")
+    content = users[0].get("content")
+    if isinstance(content, str):
+        parts = [{"type": "text", "text": content}]
+    elif isinstance(content, list):
+        parts = content
+    else:
+        raise ValueError("prompt_envelope_unrecognized")
+    matched = []
+    other_parts = []
+    for part in parts:
+        is_text = isinstance(part, dict) and part.get("type") == "text" and isinstance(part.get("text"), str)
+        raw = part["text"].encode("utf-8") if is_text else canonical_json(part)
+        digest = sha256(raw).hexdigest()
+        if is_text and len(raw) == expected.get("promptBytes") and digest == expected.get("promptSha256"):
+            matched.append(raw)
+        else:
+            other_parts.append({"type": part.get("type") if isinstance(part, dict) else type(part).__name__,
+                                "bytes": len(raw), "sha256": digest})
+    observations.update(prompt_matching_parts=len(matched),
+                             sdk_envelope_parts_unattributed=other_parts)
+    if len(matched) != 1:
+        raise ValueError("prompt_envelope_unrecognized")
+    return decode_json(matched[0], max_bytes=32768)
+
+
 class _RecoveryControl:
     """Owned journal control only; no disconnect, restart or pause claim."""
     def __init__(self, root: Path, *, pause_control: bool = False):
@@ -181,32 +212,7 @@ class _RecoveryControl:
         self.observations: dict[str, Any] = {}
 
     def before_response(self, expected: dict, body: dict, text) -> None:
-        users = [row for row in body.get("messages", []) if row.get("role") == "user"]
-        if len(users) != 1:
-            raise ValueError("recovery_prompt_binding_mismatch")
-        content = users[0].get("content")
-        if isinstance(content, str):
-            parts = [{"type": "text", "text": content}]
-        elif isinstance(content, list):
-            parts = content
-        else:
-            raise ValueError("prompt_envelope_unrecognized")
-        matched = []
-        other_parts = []
-        for part in parts:
-            is_text = isinstance(part, dict) and part.get("type") == "text" and isinstance(part.get("text"), str)
-            raw = part["text"].encode("utf-8") if is_text else canonical_json(part)
-            digest = sha256(raw).hexdigest()
-            if is_text and len(raw) == expected.get("promptBytes") and digest == expected.get("promptSha256"):
-                matched.append(raw)
-            else:
-                other_parts.append({"type": part.get("type") if isinstance(part, dict) else type(part).__name__,
-                                    "bytes": len(raw), "sha256": digest})
-        self.observations.update(prompt_matching_parts=len(matched),
-                                 sdk_envelope_parts_unattributed=other_parts)
-        if len(matched) != 1:
-            raise ValueError("prompt_envelope_unrecognized")
-        prompt = decode_json(matched[0], max_bytes=32768)
+        prompt = _matched_prompt(expected, body, self.observations)
         with TaskRepository(DataLayout(self.root / "data").tasks) as journal:
             record = journal.get_summary_request(expected["requestId"])
             if (not isinstance(prompt, dict) or record is None or record["state"] != "sending"
@@ -294,7 +300,115 @@ class _RecoveryControl:
             raise ValueError("recovery_duplicate_observation_mismatch")
 
 
-def _handler(root: Path, posts: list[dict], violations: list[str], recovery: _RecoveryControl | None = None):
+class _RestartControl:
+    """One validated response-free POST and owned process replacement, not backend restart."""
+    def __init__(self, root: Path, deadline: float):
+        self.root, self.deadline = root, deadline
+        self.phase = "disconnect"
+        self.phase_posts = {"disconnect": 0, "between": 0, "restart": 0}
+        self.post_seen, self.release, self.handler_done = threading.Event(), threading.Event(), threading.Event()
+        self.handler_thread: threading.Thread | None = None
+        self.original: dict | None = None
+        self.replay_id: str | None = None
+        self.observations: dict[str, Any] = {}
+
+    def hold(self, expected: dict, body: dict) -> bool:
+        prompt = _matched_prompt(expected, body, self.observations)
+        with TaskRepository(DataLayout(self.root / "data").tasks) as journal:
+            record = journal.get_summary_request(DISCONNECT_REQUEST_ID)
+            if (record is None or record["state"] != "sending" or not isinstance(prompt, dict)
+                    or canonical_json(prompt.get("request")) != canonical_json(record["request"])):
+                raise ValueError("disconnect_prompt_binding_mismatch")
+            self.original = record["request"]
+        self.handler_thread = threading.current_thread()
+        self.observations.update(request_id=DISCONNECT_REQUEST_ID, validated_post=True, response_bytes=0,
+                                 child_disposal="unknown")
+        self.post_seen.set()
+        try:
+            return self.release.wait(timeout=max(0, self.deadline - time.monotonic()))
+        finally:
+            self.handler_done.set()
+
+    def confirm_unknown(self, process: subprocess.Popen, ref: dict, catalog: ImportantLogCatalog) -> None:
+        if not self.handler_done.wait(timeout=max(0, self.deadline - time.monotonic())):
+            raise TimeoutError("disconnect_handler_not_done")
+        if self.handler_thread is not None:
+            self.handler_thread.join(timeout=max(0, self.deadline - time.monotonic()))
+        remaining = _remaining(ref["pgid"])
+        completed_absent = not (self.root / "completed.json").exists()
+        if (not self.post_seen.is_set() or process.returncode != -signal.SIGKILL or remaining
+                or not completed_absent or self.handler_thread is None or self.handler_thread.is_alive()
+                or self.phase_posts != {"disconnect": 1, "between": 0, "restart": 0}):
+            raise ValueError("disconnect_no_response_proof_unavailable")
+        with ImportantLogStore.open(DataLayout(self.root / "data").important_logs, catalog.active_uuid(), readonly=True) as store:
+            entries = store._connection.execute("SELECT COUNT(*) FROM entries").fetchone()[0]
+        with TaskRepository(DataLayout(self.root / "data").tasks) as journal:
+            record = journal.get_summary_request(DISCONNECT_REQUEST_ID)
+            states = [row[0] for row in journal._connection.execute(
+                "SELECT state FROM summary_request_events_v1 WHERE request_id=? ORDER BY event_id", (DISCONNECT_REQUEST_ID,))]
+            receipts = journal._connection.execute("SELECT COUNT(*) FROM summary_result_receipts_v1 WHERE request_id=?", (DISCONNECT_REQUEST_ID,)).fetchone()[0]
+            drops = journal._connection.execute("SELECT COUNT(*) FROM summary_result_drops_v1 WHERE request_id=?", (DISCONNECT_REQUEST_ID,)).fetchone()[0]
+            if (record is None or record["state"] != "sending" or record["receipt"] is not None
+                    or states != ["prepared", "sending"] or receipts != 0 or drops != 0 or entries != 0
+                    or canonical_json(record["request"]) != canonical_json(self.original)):
+                raise ValueError("disconnect_journal_proof_unavailable")
+            self.observations.update(reaped_returncode=process.returncode, remaining_phase1_pgid_members=remaining,
+                completed_artifact_absent=completed_absent, handler_done=True, state_before_unknown=record["state"],
+                receipt_before_unknown=receipts, drops_before_unknown=drops, catalog_before_unknown=entries,
+                child_disposal="not_applicable_process_killed")
+            journal.record_summary_state(DISCONNECT_REQUEST_ID, "unknown", detail="owner_killed_after_post_before_response")
+        # Reopen before replacement launch; refusal must leave no replay row.
+        with TaskRepository(DataLayout(self.root / "data").tasks) as journal:
+            record = journal.get_summary_request(DISCONNECT_REQUEST_ID)
+            unresolved = journal.list_unresolved_summary_requests()
+            if record["state"] != "unknown" or record["receipt"] is not None or not any(
+                    row["request"]["requestId"] == DISCONNECT_REQUEST_ID for row in unresolved):
+                raise ValueError("disconnect_reopen_unknown_unobserved")
+            replay = deepcopy(record["request"])
+            self.replay_id = replay["requestId"] = str(uuid4())
+            refused = False
+            try:
+                journal.reserve_summary_request(replay)
+            except InvalidTransitionError:
+                refused = True
+            row_present = journal.get_summary_request(self.replay_id) is not None
+            self.observations.update(reopened_unknown=True, unresolved_contains_original=True,
+                replay_request_id=self.replay_id, replay_reserve_refused=refused, replay_row_present=row_present)
+            if not refused or row_present:
+                raise ValueError("disconnect_replay_reservation_not_refused")
+
+    def after_result(self, completed: dict) -> None:
+        with TaskRepository(DataLayout(self.root / "data").tasks) as journal:
+            original, fresh = journal.get_summary_request(DISCONNECT_REQUEST_ID), journal.get_summary_request(RESTART_REQUEST_ID)
+            states = [tuple(row) for row in journal._connection.execute(
+                "SELECT state,detail FROM summary_request_events_v1 WHERE request_id=? ORDER BY event_id", (DISCONNECT_REQUEST_ID,))]
+            receipts = journal._connection.execute("SELECT COUNT(*) FROM summary_result_receipts_v1 WHERE request_id=?", (DISCONNECT_REQUEST_ID,)).fetchone()[0]
+            drops = journal._connection.execute("SELECT COUNT(*) FROM summary_result_drops_v1 WHERE request_id=?", (DISCONNECT_REQUEST_ID,)).fetchone()[0]
+            no_replay_row = self.replay_id is not None and journal.get_summary_request(self.replay_id) is None
+            unresolved_contains_original = any(row["request"]["requestId"] == DISCONNECT_REQUEST_ID
+                                               for row in journal.list_unresolved_summary_requests())
+        a, b = original["request"], fresh["request"]
+        adjacent = (a["subject"] == b["subject"] and len(a["sources"]) == len(b["sources"]) == 1
+            and a["sources"][0]["source"] == b["sources"][0]["source"]
+            and a["sources"][0]["end"] == b["sources"][0]["start"]
+            and a["sources"][0]["end"] - a["sources"][0]["start"] == b["sources"][0]["end"] - b["sources"][0]["start"]
+            and a["sources"][0]["digest"] != b["sources"][0]["digest"] and a["inputKey"] != b["inputKey"])
+        self.observations.update(final_original_state=original["state"], original_state_order=[row[0] for row in states],
+            original_receipt_count=receipts, original_drop_count=drops, final_replay_row_absent=no_replay_row,
+            final_unresolved_contains_original=unresolved_contains_original,
+            fresh_adjacent_distinct_input=adjacent, fresh_state=fresh["state"], phase_post_counts=self.phase_posts,
+            original_postrestart_posts=0, post_OMP_restart_late="not_applicable_child_died_in_process",
+            actualBackend="not_run", scheduler_restart="not_run")
+        if (completed["requestId"] != RESTART_REQUEST_ID or original["state"] != "unknown" or original["receipt"] is not None
+                or states != [("prepared", None), ("sending", None), ("unknown", "owner_killed_after_post_before_response")]
+                or receipts != 0 or drops != 0 or not no_replay_row or not unresolved_contains_original
+                or not adjacent or fresh["state"] != "stored"
+                or self.phase_posts != {"disconnect": 1, "between": 0, "restart": 2}):
+            raise ValueError("restart_final_observation_mismatch")
+
+
+def _handler(root: Path, posts: list[dict], violations: list[str], recovery: _RecoveryControl | None = None,
+             restart: _RestartControl | None = None):
     class Handler(BaseHTTPRequestHandler):
         def setup(self):
             super().setup()
@@ -311,6 +425,10 @@ def _handler(root: Path, posts: list[dict], violations: list[str], recovery: _Re
 
         def do_POST(self):
             try:
+                phase = restart.phase if restart is not None else None
+                if restart is not None and phase == "between":
+                    restart.phase_posts[phase] += 1
+                    raise ValueError("between_phase_POST_refused")
                 size = int(self.headers.get("Content-Length", "0"))
                 if not 0 < size <= 32768:
                     raise ValueError("fixture_body_limit")
@@ -327,14 +445,33 @@ def _handler(root: Path, posts: list[dict], violations: list[str], recovery: _Re
                 posts.append({"path": self.path, "model": body.get("model"), "tools": tools,
                               "body_bytes": size, "body_sha256": sha256(raw).hexdigest(),
                               "system_exact": exact, "max_completion_tokens": body.get("max_completion_tokens")})
+                index = len(posts)
+                cap = 2
+                if restart is not None:
+                    restart.phase_posts[phase] += 1
+                    index = restart.phase_posts[phase]
+                    cap = 1 if phase == "disconnect" else 2
+                    posts[-1].update(phase=phase, expected_request_id=expected["requestId"])
+                    required = DISCONNECT_REQUEST_ID if phase == "disconnect" else RESTART_REQUEST_ID
+                    if expected["requestId"] != required or len(posts) > 3:
+                        raise ValueError("restart_phase_request_mismatch")
                 if (self.path != "/v1/chat/completions" or body.get("model") != "scripted"
-                        or tools != ["db_summary_save"] or not exact or len(posts) > 2):
+                        or tools != ["db_summary_save"] or not exact or index > cap):
                     raise ValueError("unexpected_loopback_POST")
                 continuation = any(row.get("role") == "tool" for row in body.get("messages", []))
-                if continuation != (len(posts) == 2):
+                if continuation != (index == 2):
                     raise ValueError("unexpected_continuation")
-                if recovery is not None and len(posts) == 1:
+                if restart is not None and phase == "disconnect":
+                    if not restart.hold(expected, body):
+                        violations.append("disconnect_hold_timeout")
+                    return  # Deliberately no response header/body/error bytes.
+                if recovery is not None and index == 1:
                     recovery.before_response(expected, body, text)
+                if restart is not None and phase == "restart":
+                    prompt = _matched_prompt(expected, body, {})
+                    if not isinstance(prompt, dict) or prompt.get("request", {}).get("requestId") != RESTART_REQUEST_ID:
+                        raise ValueError("restart_phase_prompt_mismatch")
+                    posts[-1]["bound_request_id"] = RESTART_REQUEST_ID
                 delta = {"role": "assistant", "content": "완료"} if continuation else {
                     "role": "assistant", "tool_calls": [{"index": 0, "id": "owned-save-1",
                     "type": "function", "function": {"name": "db_summary_save",
@@ -359,10 +496,13 @@ def _handler(root: Path, posts: list[dict], violations: list[str], recovery: _Re
 
 
 def _execute(source: Path, binary: Path, root: Path, *, recovery_control: bool = False,
-             pause_control: bool = False) -> dict[str, Any]:
+             pause_control: bool = False, restart_control: bool = False) -> dict[str, Any]:
+    restart_started = time.monotonic() if restart_control else None
     _private_root(root)
     if pause_control and not recovery_control:
         raise ValueError("pause_control_requires_recovery")
+    if restart_control and not (recovery_control and pause_control):
+        raise ValueError("restart_control_requires_existing_controls")
     for name in ("home", "agent", "config", "project", "data", "tmp", "xdg-config",
                  "xdg-data", "xdg-state", "xdg-cache"):
         (root / name).mkdir(mode=0o700)
@@ -374,13 +514,18 @@ def _execute(source: Path, binary: Path, root: Path, *, recovery_control: bool =
     catalog = ImportantLogCatalog(layout.important_logs, create=True)
     posts: list[dict] = []
     violations: list[str] = []
+    started = restart_started if restart_started is not None else time.monotonic()
+    restart = _RestartControl(root, started + DEADLINE_SECONDS) if restart_control else None
     recovery = _RecoveryControl(root, pause_control=pause_control) if recovery_control else None
-    server = _Server(("127.0.0.1", 0), _handler(root, posts, violations, recovery))
+    server = _Server(("127.0.0.1", 0), _handler(root, posts, violations, recovery, restart))
     server.timeout = 1
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     endpoint = f"http://127.0.0.1:{server.server_port}/v1"
-    write_private_json(root / "fixture.json", {"root": str(root), "endpoint": endpoint,
-        "dbHealth": catalog.health_snapshot()["active"], **({"pauseControl": True} if pause_control else {})})
+    fixture = {"root": str(root), "endpoint": endpoint, "dbHealth": catalog.health_snapshot()["active"],
+               **({"pauseControl": True} if pause_control else {})}
+    if restart is not None:
+        fixture.update(restartControl=True, phase="disconnect")
+    write_private_json(root / "fixture.json", fixture)
     models = root / "agent/models.yml"
     models.write_text("providers:\n  ownedverify:\n    api: openai-completions\n    auth: none\n"
         + f"    baseUrl: {endpoint}\n" + "    models:\n      - id: scripted\n        name: scripted\n"
@@ -401,26 +546,79 @@ def _execute(source: Path, binary: Path, root: Path, *, recovery_control: bool =
     completed = None
     error = None
     streams = []
+    all_streams = []
+    owned = []
     handler_threads = ()
-    started = time.monotonic()
-    thread.start()
-    try:
-        streams = [(root / name).open("wb") for name in ("stdout.log", "stderr.log")]
-        # If an unexpected exception prevents an observation return after spawn,
-        # the wrapper conservatively retains this launch-attempt evidence.
+    if restart is None:
+        started = time.monotonic()
+
+    def launch():
+        opened = [(root / name).open("wb") for name in ("stdout.log", "stderr.log")]
+        all_streams.extend(opened)
         write_private_json(root / "launch.json", {"launch_requested": True})
-        process = subprocess.Popen(argv, cwd=root / "project", env=env, stdin=subprocess.PIPE,
-                                   stdout=streams[0], stderr=streams[1], start_new_session=True)
-        ref = {"pid": process.pid, "pgid": process.pid, "start_ticks": _identity(process.pid)}
+        child = subprocess.Popen(argv, cwd=root / "project", env=env, stdin=subprocess.PIPE,
+                                 stdout=opened[0], stderr=opened[1], start_new_session=True)
+        identity = {"pid": child.pid, "pgid": child.pid, "start_ticks": None}
+        owned.append((child, identity))
         result["level"] = "inconclusive"
         result["io"] = dict.fromkeys(IO_KEYS)
-        result["io"].update(omp_children=1)
-        if ref["start_ticks"] is None:
+        result["io"].update(omp_children=len(owned))
+        if restart is not None:
+            identity["phase"] = restart.phase
+        identity["start_ticks"] = _identity(child.pid)
+        if identity["start_ticks"] is None:
+            for stream in opened:
+                stream.close()
             raise RuntimeError("owned_process_identity_unavailable")
-        ref["binary_sha256"] = sha256(binary.read_bytes()).hexdigest()
-        write_private_json(root / "launch.json", ref)
-        process.stdin.write(b'{"id":"owned-state","type":"get_state"}\n')
-        process.stdin.flush()
+        identity["binary_sha256"] = sha256(binary.read_bytes()).hexdigest()
+        write_private_json(root / "launch.json", identity)
+        child.stdin.write(b'{"id":"owned-state","type":"get_state"}\n')
+        child.stdin.flush()
+        return child, identity, opened
+
+    thread.start()
+    try:
+        process, ref, streams = launch()
+        if restart is not None:
+            while not restart.post_seen.wait(timeout=min(0.02, max(0, restart.deadline - time.monotonic()))):
+                if violations:
+                    raise ValueError(violations[0])
+                if (root / "completed.json").exists():
+                    raise ValueError("disconnect_completed_before_POST")
+                if process.poll() is not None:
+                    raise RuntimeError("disconnect_OMP_exited_before_POST")
+                if time.monotonic() >= restart.deadline:
+                    raise TimeoutError("owned_verification_timeout")
+            if time.monotonic() >= restart.deadline or not _signal_leader(process, ref, signal.SIGKILL):
+                raise ValueError("disconnect_owned_identity_unavailable")
+            process.wait(timeout=max(0.001, min(3, restart.deadline - time.monotonic())))
+            restart.release.set()
+            restart.confirm_unknown(process, ref, catalog)
+            restart.phase = "between"
+            try:
+                process.stdin.close()
+            except OSError:
+                pass
+            for stream in streams:
+                stream.close()
+            streams = []
+            destination = root / "phases/disconnect"
+            destination.mkdir(mode=0o700, parents=True)
+            artifacts = {}
+            for name in ("stdout.log", "stderr.log", "launch.json", "expected.json", "fixture.json"):
+                target = destination / name
+                (root / name).rename(target)
+                data = target.read_bytes()
+                artifacts[name] = {"path": str(target.relative_to(root)), "bytes": len(data), "sha256": sha256(data).hexdigest()}
+                if name in {"launch.json", "expected.json", "fixture.json"}:
+                    artifacts[name]["facts"] = json.loads(data)
+            restart.observations["phase1_artifacts"] = artifacts
+            if violations or time.monotonic() >= restart.deadline:
+                raise ValueError("restart_preparation_unavailable")
+            restart.phase = "restart"
+            fixture["phase"] = "restart"
+            write_private_json(root / "fixture.json", fixture)
+            process, ref, streams = launch()
         while True:
             if (root / "completed.json").exists():
                 completed = json.loads((root / "completed.json").read_text())
@@ -460,24 +658,28 @@ def _execute(source: Path, binary: Path, root: Path, *, recovery_control: bool =
                 raise ValueError("owned_writer_observation_mismatch")
             if recovery is not None:
                 recovery.after_result(completed, catalog)
+            if restart is not None:
+                restart.after_result(completed)
     except (OSError, ValueError, KeyError, TypeError, RuntimeError, TimeoutError, sqlite3.Error, InvalidTransitionError) as failure:
         error = type(failure).__name__ + ":" + str(failure)
     finally:
-        if process is not None:
+        if restart is not None:
+            restart.release.set()  # Event wait must be released before server_close join.
+        for child, identity in owned:
             try:
-                cleanup_error = _stop_leader(process, ref)
+                cleanup_error = _stop_leader(child, identity)
                 if cleanup_error:
                     error = cleanup_error
             except ProcessLookupError:
                 error = "owned_cleanup_identity_lost"
             except (OSError, subprocess.TimeoutExpired) as failure:
                 error = "owned_cleanup_incomplete:" + str(failure)
-            if process.stdin:
+            if child.stdin:
                 try:
-                    process.stdin.close()
+                    child.stdin.close()
                 except OSError:
                     pass
-        for stream in streams:
+        for stream in all_streams:
             stream.close()
         server.shutdown()
         server.shutdown_accepted()
@@ -486,14 +688,15 @@ def _execute(source: Path, binary: Path, root: Path, *, recovery_control: bool =
             handler_threads = tuple(server._threads)
         server.server_close()
         thread.join(timeout=3)
-    remaining = _remaining(ref["pgid"]) if ref else []
+    remaining_by_phase = [{"owned_process": identity, "remaining_pgid_members": _remaining(identity["pgid"])} for child, identity in owned]
+    remaining = [pid for row in remaining_by_phase for pid in row["remaining_pgid_members"]]
     handlers_alive = sum(handler.is_alive() for handler in handler_threads)
     sockets_remaining = server.accepted_count()
     cleanup_complete = (not remaining and not thread.is_alive() and not handlers_alive and not sockets_remaining
-                        and (process is None or process.returncode is not None)
+                        and all(child.returncode is not None for child, identity in owned)
                         and not (error or "").startswith(("owned_cleanup", "owned_process_identity")))
     # Even a successful local C1 control has no complete Q01 item or C2 proof.
-    if process is not None or not cleanup_complete:
+    if owned or not cleanup_complete:
         result["level"] = "inconclusive"
         result["io"].update(model_calls=len(posts), network_requests=None)
         result["unknowns"] = ["complete_q01_unverified", "observer_child_io_unattributed",
@@ -506,6 +709,11 @@ def _execute(source: Path, binary: Path, root: Path, *, recovery_control: bool =
             "completed": completed, "error": error, "elapsed_seconds": time.monotonic() - started}]
         if recovery is not None:
             result["observations"][0]["recovery_control"] = recovery.observations
+        if restart is not None:
+            restart.observations.update(phase_post_counts=restart.phase_posts)
+            result["observations"][0].update(restart_control=restart.observations,
+                                             owned_processes=[identity for child, identity in owned],
+                                             remaining_by_phase=remaining_by_phase)
         if completed:
             exercised = completed.get("exercised", [])
             result["items"] = {name: "inconclusive" for name in exercised}
@@ -519,6 +727,8 @@ def _execute(source: Path, binary: Path, root: Path, *, recovery_control: bool =
                     result["unknowns"].append(key + "_false")
         if recovery is not None and recovery.observations:
             result["items"]["Q01-recovery"] = "inconclusive"
+        if restart is not None and restart.observations:
+            result["items"]["Q01-recovery"] = "inconclusive"
         if error:
             result["unknowns"].append(error)
         if not cleanup_complete:
@@ -530,7 +740,8 @@ def _execute(source: Path, binary: Path, root: Path, *, recovery_control: bool =
     return result
 
 
-def observe_owned(source: Path, *, recovery_control: bool = False, pause_control: bool = False) -> dict[str, Any]:
+def observe_owned(source: Path, *, recovery_control: bool = False, pause_control: bool = False,
+                  restart_control: bool = False) -> dict[str, Any]:
     binary_name = shutil.which("omp")
     if not binary_name or sys.platform != "linux":
         return unavailable("owned_runtime_unavailable")
@@ -544,6 +755,8 @@ def observe_owned(source: Path, *, recovery_control: bool = False, pause_control
         options = {"recovery_control": recovery_control}
         if pause_control:
             options["pause_control"] = True
+        if restart_control:
+            options["restart_control"] = True
         result = _execute(source, binary, temporary, **options)
         return result
     except (OSError, ValueError, KeyError, TypeError, sqlite3.Error, InvalidTransitionError) as error:

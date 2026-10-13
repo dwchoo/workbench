@@ -300,7 +300,7 @@ class PauseControlIndependentTests(unittest.TestCase):
         unavailable = runtime.unavailable("owned_runtime_unavailable")
         with patch("workbench.backend.summary_compat_provider.observe_owned", return_value=unavailable) as observe:
             self.assertEqual(ScriptedCompatibilityProvider().observe(), unavailable)
-        observe.assert_called_once_with(ROOT, recovery_control=True, pause_control=True)
+        observe.assert_called_once_with(ROOT, recovery_control=True, pause_control=True, restart_control=True)
         for pause_control in (False, True):
             with self.subTest(pause_control=pause_control):
                 with patch.object(runtime.shutil, "which", return_value=str(Path(sys.executable).resolve())), \

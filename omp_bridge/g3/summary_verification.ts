@@ -43,6 +43,9 @@ export default function verification(pi: any) {
 
 async function run(root: string, ctx: any) {
   const fixture = JSON.parse(readFileSync(root + "/fixture.json", "utf8"));
+  const restartPhase = fixture.restartControl === true ? fixture.phase : undefined;
+  if (restartPhase !== undefined && !["disconnect", "restart"].includes(restartPhase))
+    throw Error("owned_restart_phase_unavailable");
   const endpoint = new URL(fixture.endpoint);
   if (fixture.root !== root || endpoint.protocol !== "http:" || endpoint.hostname !== "127.0.0.1"
       || !endpoint.port || endpoint.pathname !== "/v1" || endpoint.username || endpoint.password
@@ -82,12 +85,17 @@ async function run(root: string, ctx: any) {
   const bundled = getBundledAgent("task");
   if (!bundled) throw Error("bundled_definition_unavailable");
   const skill = readFileSync(fileURLToPath(new URL("../skills/important-log-summary/SKILL.md", import.meta.url)), "utf8");
-  const text = "소유 private 환경에서 합성 입력의 C1 연결을 확인한다.";
+  const originalText = "소유 private 환경에서 합성 입력의 C1 연결을 확인한다.";
+  const originalBytes = Buffer.byteLength(originalText);
+  const text = restartPhase === "restart" ? originalText.replace("C1", "C3") : originalText;
+  if (Buffer.byteLength(text) !== originalBytes) throw Error("owned_restart_fixture_mismatch");
+  const offset = restartPhase === "restart" ? originalBytes : 0;
   const commandId = "cfa0abb4-03c6-4c1f-9366-a7b9d48ac9f7";
   const subject = { schemaVersion: 1, kind: "command", id: commandId };
   const span = { schemaVersion: 1, source: { schemaVersion: 1, sourceKind: "terminal", collectorEpoch: 1, commandId },
-    start: 0, end: Buffer.byteLength(text), digest: sha(text) };
-  const requestId = "fc8416c2-7d8c-46d4-9615-b833b567f9fe", skillDigest = sha(skill);
+    start: offset, end: offset + Buffer.byteLength(text), digest: sha(text) };
+  const requestId = restartPhase === "restart" ? "a40f9a18-a0fc-4d75-9260-7f83cb06622d" : "fc8416c2-7d8c-46d4-9615-b833b567f9fe";
+  const skillDigest = sha(skill);
   const request = { schemaVersion: 1, requestId, subject, revision: null,
     authorizationRef: "0f3015c7-dae8-4dc3-9194-2cf770b14cf0", authorizationEpoch: 1,
     inputKey: summaryInputKey(subject as any, null, [span] as any, [], skillDigest),
@@ -125,7 +133,7 @@ async function run(root: string, ctx: any) {
       return actual;
     } };
   let pauseControl: any;
-  if (fixture.pauseControl === true) {
+  if (fixture.pauseControl === true && restartPhase !== "disconnect") {
     const pausedRequest = { ...request, requestId: "96a816b4-a6fd-4d66-a562-c928f6871796" };
     const pausedPrepared = { ...prepared, request: pausedRequest };
     await journal("--hold", pausedRequest);
@@ -153,6 +161,7 @@ async function run(root: string, ctx: any) {
     observeMetadata: metadata, emit: event => events.push(event) });
   const after = state(), registryAfter = registry(), settingsAfter = settings();
   publishVerificationCompletion(root, { requestId, version: VERSION, outcome, events,
+    ...(restartPhase ? { ownedPhase: restartPhase } : {}),
     ...(pauseControl ? { pauseControl } : {}),
     parentBefore: before, parentAfter: after, parentUnchanged: stable(before) === stable(after),
     registryBefore, registryAfter, registryUnchanged: stable(registryBefore) === stable(registryAfter),

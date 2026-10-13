@@ -13,7 +13,11 @@ Summary_compatibility·좁은 사용자 CLI logs summary-compat verify --scripte
 검증용 local provider와 일회성 OMP는 credential-free temp home/project/data/socket의 기존 agent/skill을 사용하고
 종료/정리한다. 새 agent/상주 프로세스/유료 모델을 추가하거나 일회성 운영 요약 route를 자동 채택하지 않는다.
 MODEL-metadata는 요청이 실제 사용할 대상 context의 해석된 model/thinking/tier/context/tokenizer 또는 검증 estimator·현재context·output ceiling·reasoning 의미/예산
-출처를 읽기 전용으로 관측한다. Observer/credential-free verify는 모델 호출·대화 입력·네트워크·auth store open·설정 쓰기0이고 sanitized 정보만 기록한다.
+출처를 읽기 전용으로 관측한다. Observer는 모델 호출·대화 입력·네트워크·auth store open·설정 쓰기0이고 sanitized 정보만 기록한다.
+LG-D27에 따라 검증 환경 준비의 빈 private 저장소 생성·열기, scripted 검증의 소유 localhost provider
+통신·임시 DB 기록을 허용한다. 외부 통신·유료 모델 호출·사용자 인증정보/실제 로그 접근은 전 구간 금지한다.
+SDK child의 새 auth store open·설정 쓰기는 금지하며 준비 I/O와 observer/child 관측은 분리한다.
+금지 동작 또는 격리/귀속 불명은 unavailable/inconclusive로 남긴다. 운영 route·caps·raw 활성화 권한은 유지한다.
 필수unknown이면 inconclusive/preflight 차단, 임의 fallback/새 설정 없이 관측 뒤 Q-S3-05 결정을 요청한다.
 
 OMP 소유 binary/version/bundled asset만 바뀌면 매 요청의 유효 guard·기존 권한·preflight·활성화 아래 운영을 계속하며 version_drift_unverified로 기록한다.
@@ -54,8 +58,8 @@ arch/Pythonminor이며kernel/patch와무관UI변경은기록만하고요약을�
 Guard 확인 불능/stale receipt/epoch교체는전송0·즉시보호/newsourcelegacy·진행cohort유지·사건당알림1회다.
 등록되나미작동hook 음성도 포함한다. 공개 확인 불가능route는후속채택 전blocked_adoption이다.
 10의연속3계약거부보호를실제admission에연결하되원인불명과OMPcompat실패를구분한다.명시verify복구를검증한다.
-MODEL-metadata의현재session/모델교체/누락catalog·reasoning 포함/예산을관측하고네트워크0/auth-store open0/
-설정쓰기0를음성assertion으로확인한다.없는offline정보는예상inconclusive→Q-S3-05다. thinking/tier변경은
+MODEL-metadata의현재session/모델교체/누락catalog·reasoning 포함/예산을관측하고observer 네트워크0/auth-store open0/
+설정쓰기0를음성assertion으로확인한다. Credential-free verify 구간은 LG-D27을 따른다. 없는offline정보는예상inconclusive→Q-S3-05다. thinking/tier변경은
 Q-S3-06 관측뒤결정이며현재pin불변. Guard/예산값의fake성공은실제route나모델의pass가아니다.
 
 ## p5 운영 감시·복구 시도·정책 대조 (R1~R4)

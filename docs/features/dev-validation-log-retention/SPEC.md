@@ -308,6 +308,10 @@ OMP를 종료/정리한다. 기존 agent 정의·skill을 재사용하며 새 ag
 형태만 사용한다. LG-D22의 요청별 제한 SDK session 채택은 기존 OMP 프로세스 내부 경로에 한정하며,
 별도 일회성 요약 OMP/TS direct completion 대안은 여전히 별도 사용자 채택이 필요하다.
 Credential/실제 로그를 검증 자식에 전달하지 않는다. 격리를 이 runtime 집합만으로 재현 못 하면 unavailable다.
+LG-D27에 따라 검증 환경 준비에서 소유한 임시 환경의 빈 private 저장소 생성·열기를 허용한다.
+Scripted 검증에서는 소유 localhost provider 통신·임시 DB 기록을 허용한다. 외부 통신·유료 모델 호출·
+사용자 인증정보/실제 로그 접근은 준비와 검증 모두 금지한다. 허용 동작은 구간별로 기록하고, 금지 동작이나
+격리/귀속 불명이 있으면 pass로 판정하지 않는다. 운영 요약 route와 실제 raw 활성화 권한은 바뀌지 않는다.
 
 제품 record v1은 UUID, schema/검증기 version, 전체 checkout runtime 집합 digest와 별도 관련 closure/policy digest,
 OMP binary/version 및 OMP 소유 bundled agent/tool/prompt identity, 안정 host fingerprint와 별도 변동 정보,
@@ -406,7 +410,10 @@ modelRoles 표는 시작 기본값의 출처이지 /model·/fast 뒤 실제 선�
 검증 가능한 보수 estimator·현재 context 여유·enforce output ceiling·reasoning 포함 여부/예산 출처를 함께 관측한다.
 공개 로컬 OMP 조회 또는 이미 보유한 검증 metadata만 사용한다. Metadata observer는 모델 호출·대화 입력·
 네트워크 요청0·auth store open0·설정 쓰기0이며 provider /models나 로그인 경로로 보충하지 않는다.
-Credential-free verify 자식도 이 음성 조건을 확인한다. 기존 운영 OMP의 정상 모델 호출 인증을 금지한다는 뜻은 아니다.
+Credential-free verify는 LG-D27의 구간 경계를 따른다. Metadata observer의 위 음성 조건은 그대로이며,
+검증용 SDK child의 새 auth store open·설정 쓰기는 금지한다. 소유 localhost scripted provider 통신과
+임시 DB 기록은 검증 동작으로 별도 기록한다. 준비 구간의 빈 private 저장소 초기화는 observer/child의
+무부작용 근거로 합산하지 않는다. 기존 운영 OMP의 정상 모델 호출 인증을 금지한다는 뜻은 아니다.
 관측 snapshot은 요청/session/model epoch에 묶고 전송 전 변경이면 다시 확인한다. 비밀값은 기록하지 않으며
 검증 자식에는 sanitized model descriptor만 넘긴다. 실제 session을 로컬에서 확인할 수 없거나 offline catalog가
 없는 것은 예상 가능한 inconclusive이지 provider 실패/성공이 아니다. Q-S3-05로 넘기고 임의 fallback을 넣지 않는다.

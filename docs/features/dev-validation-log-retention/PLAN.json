@@ -2601,6 +2601,24 @@
       "current_spec_sha256": "a8ceeef67ab0358f074827561f0fc658133467095fc940fae9b21e916f391da6",
       "history": "원 p5 planning/bundle/requirements identity는 보존하고 이번 명시 방향 변경을 해당 조건의 후속 승인으로 적용한다. 기존 조사/실패/검증 결과를 새 기준의 pass로 재표시하지 않는다.",
       "alignment_pending": "08 frozen 판정facts/probe와05/09/10 작업참조를bounded follow-up에서정렬·독립시험/리뷰/재동결. 문서수정은 Q01pass/09ready/rawactivation아님."
+    },
+    {
+      "decision_id": "LG-D27",
+      "date": "2026-10-13",
+      "record": "../../../.workflow/dev-validation-log-retention/runs/dvl14-20261013/io-boundary01/decision.json",
+      "direction": "검증 환경 준비의 빈 private 저장소 생성/열기, scripted 검증의 소유 localhost 통신/임시 DB 기록 허용. 사용자 credential/실제 로그/외부 통신/유료 모델은 전 구간 금지. Observer I/O0 및 child 새 auth store open/설정 쓰기0 유지.",
+      "affected": [
+        "DVL-14",
+        "DVL-13",
+        "G-LG-01",
+        "PRODUCT-evidence",
+        "MODEL-metadata"
+      ],
+      "preserved": "기존 operating route/caps/DB-only/no replay/C2 hold/actual raw 비활성화, gate IDs/levels 및 의존 graph",
+      "current_brief_sha256": "05e39e4e4bf61eb2352f0b7e5872ca372a8e39be2f56333eacc90d051100faf9",
+      "current_spec_sha256": "06376cf01beab1f5c2ea9d0ae10413efc9b06c55587ff3c111b693bc8e5fd63b",
+      "history": "원 p5 bundle/requirements identity 보존; 명시 후속 승인 적용; 기존 실패 또는 scripted metadata를 operating pass로 재표시하지 않음",
+      "alignment_pending": "실제 SDK capability와 격리/관측 feasibility 먼저 확인; 부족하면 unavailable 유지. 독립 검증 후 근거 재동결."
     }
   ]
 }

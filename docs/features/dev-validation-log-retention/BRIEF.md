@@ -496,3 +496,10 @@ LG-D15는 LG-AC-13/20의 조회 구현 해석, LG-D16은 LG-AC-01~04의 preserva
 - 최초 전송 전에 필수 후속 turn의 증가분까지 수용 가능한지 검사한다. 후속 turn은 최대 output 전량 예약·기존 context/고정 instructions·전체 contextWindow와 전송 body 32KiB로 판별한다. 결과 8KiB와 output ceiling 초기8192 이하 등 숫자는 유지한다.
 - bytes 보수 estimator에서 token ceiling을 임의 byte 비율로 변환하지 않는다. 확인된 결과 byte 상한과 실제 framing·고정 tool 결과를 사용한다. 필수 envelope·모델/tokenizer/output 의미를 확인하지 못하거나 예산이 부족하면 전송 전에 사유를 표시하고 보류한다.
 - 이 결정은 U1 해석을 확정하며 실제 모델 적합성·운영 metadata·Q01 통과·DVL10 통합 완료·raw 활성화가 아니다. 기존 C2 hold·조회 결정·no replay·승인/pause·제외 범위를 유지한다.
+
+## LG-D27 — 검증용 OMP의 준비·scripted 검증·observer I/O 경계 (2026-10-13)
+
+- 사용자 결정: 검증 환경의 허용 동작을 구분하는 제안에 “좋아 그렇게 해줘.”로 동의했다. [승인 기록](../../../.workflow/dev-validation-log-retention/runs/dvl14-20261013/io-boundary01/decision.json)을 따른다.
+- 소유한 임시 환경 준비에서 빈 private 저장소 생성·열기를 허용한다. Scripted 검증에서는 소유 localhost provider 통신·임시 DB 기록을 허용한다. 사용자 인증정보·실제 로그 접근, 외부 통신, 유료 모델 호출은 전 구간 금지한다.
+- Metadata observer의 모델 호출·대화 입력·네트워크·auth store open·설정 쓰기0는 유지한다. 검증용 SDK child의 새 auth store open·설정 쓰기는 금지한다. 준비 I/O와 observer/child 관측은 분리하며 금지 동작이나 격리/귀속 불명은 pass로 판정하지 않는다.
+- 이 결정은 DVL-14 검증 경계의 후속 승인이다. 공개 capability를 먼저 확인하고 최소 구현·독립 테스트·리뷰를 진행한다. 기존 실패를 새 기준의 pass로 재표시하지 않고, 운영 MODEL unknown·Q01 나머지 기준/caps·LG-D22 route·DB-only·no replay·C2 hold·실제 raw 미활성화를 유지한다.

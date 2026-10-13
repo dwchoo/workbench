@@ -241,9 +241,11 @@ class OwnedC1Tests(unittest.TestCase):
 
     def test_provider_uses_product_runtime_and_unavailable_never_launches(self):
         expected = runtime.unavailable("owned_runtime_unavailable")
-        with patch("workbench.backend.summary_compat_provider.observe_owned", return_value=expected) as observer:
+        with patch("workbench.backend.summary_compat_provider.observe_owned", return_value=expected) as observer, \
+             patch("workbench.backend.summary_compat_provider.observe_priority") as priority_observer:
             self.assertEqual(ScriptedCompatibilityProvider().observe(), expected)
         observer.assert_called_once_with(ROOT, recovery_control=True, pause_control=True, restart_control=True)
+        priority_observer.assert_not_called()
         with patch.object(runtime.shutil, "which", return_value=None), patch.object(runtime.subprocess, "Popen") as launch:
             self.assertEqual(runtime.observe_owned(ROOT)["level"], "unavailable")
         launch.assert_not_called()

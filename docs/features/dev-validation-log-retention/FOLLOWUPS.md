@@ -91,3 +91,9 @@ Claude의 luna max/8192 한계 예고는 아직 측정되지 않은 가능성이
 - 독립 리뷰에서 시험의 cleanup 실패 반환값을 놓칠 수 있는 경로를 찾아 정정했다. 정리 성공 반환과 임시 root 삭제를 단언하며, 본문·닫기·정리가 모두 끝난 뒤에만 passed를 기록한다. 수정본의 [최종 전체 재시험](../../../.workflow/dev-validation-log-retention/runs/dvl14-20261013/mixed-volume01/green05/result.json)은 269.4초에 같은 500,000,000 bytes와 위 검사를 통과했다. 이전 성공 실행에서 정리가 실제 완료된 관측은 보존한다.
 - 이전 범위 밖 fixture 출력, 240초 감독 제한 중단, gap 병합을 요구했던 시험 실패는 보존한다. Gap 기대만 반환 순서의 연속 coverage 검사로 바로잡았으며 제품 코드·용량·fsync·수락 기준은 바꾸지 않았다. 내부 600초/감독 660초는 시험 비용 상한이며 성능 수락 기준이 아니다.
 - 이 시험에는 scheduler/model dispatch가 없으므로 긴급 추가 호출 수는 미검증이다. 전체 혼합 제품 실행·Q01·운영 MODEL·DVL-14 완료 근거로 확장하지 않는다. 제품 verifier의 I/O 근거와 DVL-13 최종46은 계속 미완료이며 실제 사용자 raw 활성화는 하지 않았다.
+
+## DVL14-F02 — 제품 priority 부분 관측과 내부 daemon 종료 확인 (2026-10-14)
+
+- tools/tests/docs/.workflow 없는 runtime-only 복사본의 [새 조합 실행](../../../.workflow/dev-validation-log-retention/runs/dvl14-20261014/priority-core01/root-native04/result.json)에서 명시적으로 시작한 OMP 4회와 소유 localhost 모델 POST 9회를 관측했다. 기존 복구 관측을 유지하며, 실제 Core의 periodic QUESTION과 Manager end·Worker check 전달이 요약 child의 응답 보류 중 완료됐고 요약·receipt 각 1건이 저장됐다. Parent 상태·기존 entry view는 불변이었다. 주입 clock의 due 판별이며 실제 60초 대기·운영 모델 지연·전체 Backend/TaskFlow 실행 근거는 아니다.
+- OMP 내부 text-predict의 종료 기록 writer가 등록된 process group 종료 이후에도 동작해 임시 root를 다시 만드는 [이전 정리 오판](../../../.workflow/dev-validation-log-retention/runs/dvl14-20261014/priority-core01/root-native03/late-cleanup-disposition.json)을 보존했다. 수정본은 소유 root의 daemon metadata가 미종료·불명일 때 삭제하지 않고 cleanup false·경로 보존·inconclusive를 반환한다. 새 실행에서도 cleanup 시점의 `ready` 기록을 거부했으며 이를 정리 성공으로 표시하지 않았다.
+- [DVL-FOLLOWUP-02](tickets/DVL-FOLLOWUP-02.md)에 종료 확인의 남은 범위를 기록한다. 부분 연결 관측과 종료 불명 거부의 근거이며, 전체 native I/O/process 부재·observer/child I/O·운영 MODEL·Q01/전체 DVL-14 완료를 뜻하지 않는다. C2 hold·no-replay·caps·운영 route와 실제 raw 비활성은 유지한다.

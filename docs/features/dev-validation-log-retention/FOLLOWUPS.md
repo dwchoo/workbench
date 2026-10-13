@@ -68,3 +68,11 @@ Claude의 luna max/8192 한계 예고는 아직 측정되지 않은 가능성이
 - 후속 관측(2026-10-13): 설치 OMP 18.8.6의 검증 전용 SDK entry에서 POST 2건 모두 `db_summary_save`만 노출했고, 고정 writer가 중요 로그 entry와 receipt를 각 1건 저장했다. Child 종료와 parent 상태·registry·설정 불변을 확인했다. 검증 child만 registry 재사용과 isolated power off를 적용하며 운영 생성 옵션은 유지한다. [실행 근거](../../../.workflow/dev-validation-log-retention/runs/dvl14-20261013/normal-startup01/smoke-private01/result.json)는 개발 capability이며 제품 8개 pass·운영 MODEL·전체 DVL-14 완료를 뜻하지 않는다. 미지원 관측 getter와 임시 DB 권한 오류로 실패한 이전 실행은 보존했다.
 - 재개 검증: private parent 준비 → native registry 주입 child → 소유 scripted provider의 최소 요청을 구간별로 관측한다. 사용자 credential/실제 로그 접근·유료 요청·child의 새 auth store open/설정 쓰기 또는 격리·귀속 불명은 통과시키지 않는다. 정상 시작·목록 갱신 통신을 observer/child가 유발한 요청으로 혼동하지 않으며 귀속 불명은 그대로 남긴다. Observer I/O0, 제한 tool·저장·no replay와 process/socket 정리를 독립 검증한다.
 - 영향: G-LG-01·PRODUCT-evidence와 DVL-14 전체 완료, 이를 소비하는 DVL-13 최종46/INT-runtime은 미완료다. 실제 운영 MODEL-metadata unknown과 C2 hold는 별도 남은 조건이다. 이 기록은 Q01 통과·실제 raw 활성화·수치 또는 운영 route 변경이 아니다.
+
+## DVL-14 혼합 raw 용량 국소 검증 (2026-10-13)
+
+- 독립 시험에서 소유한 임시 저장소에 run/command payload 합계 500,000,000 bytes를 기록했다. 실제 producer·Backend reader·collector를 사용하되 display drain과 policy admission은 fixture다. [실행 결과](../../../.workflow/dev-validation-log-retention/runs/dvl14-20261013/mixed-volume01/green04/result.json)는 268.9초에 통과했다.
+- Append 뒤 관측한 최대 raw 파일 합계는 497,421,608 bytes, 파일 수는 5개, 개별 최대는 100,000,000 bytes였다. Command의 recent/since/unseen buffer 최대는 각각 32,768 bytes였다. Eviction gap의 순서·범위·귀속과 영속 기록, retained tail의 bytes/digest, condition proof 및 기존 legacy 파일 불변을 확인했고 임시 저장소를 정리했다.
+- 독립 리뷰에서 시험의 cleanup 실패 반환값을 놓칠 수 있는 경로를 찾아 정정했다. 정리 성공 반환과 임시 root 삭제를 단언하며, 본문·닫기·정리가 모두 끝난 뒤에만 passed를 기록한다. 수정본의 [최종 전체 재시험](../../../.workflow/dev-validation-log-retention/runs/dvl14-20261013/mixed-volume01/green05/result.json)은 269.4초에 같은 500,000,000 bytes와 위 검사를 통과했다. 이전 성공 실행에서 정리가 실제 완료된 관측은 보존한다.
+- 이전 범위 밖 fixture 출력, 240초 감독 제한 중단, gap 병합을 요구했던 시험 실패는 보존한다. Gap 기대만 반환 순서의 연속 coverage 검사로 바로잡았으며 제품 코드·용량·fsync·수락 기준은 바꾸지 않았다. 내부 600초/감독 660초는 시험 비용 상한이며 성능 수락 기준이 아니다.
+- 이 시험에는 scheduler/model dispatch가 없으므로 긴급 추가 호출 수는 미검증이다. 전체 혼합 제품 실행·Q01·운영 MODEL·DVL-14 완료 근거로 확장하지 않는다. 제품 verifier의 I/O 근거와 DVL-13 최종46은 계속 미완료이며 실제 사용자 raw 활성화는 하지 않았다.

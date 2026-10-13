@@ -1,7 +1,10 @@
 """Product verification capability, separate from development probe verdicts.
 
-No CLI child is launched until a supported credential/network-free preparation
-path is established. Unavailability is an observation, never eight passes.
+LG-D28 permits owned private OMP startup/catalog preparation. The verifier-only
+SDK creation seam reuses its native private registry and disables child power
+assertions; this alone does not establish complete observer/child I/O evidence.
+This provider remains unavailable, and never copies development capability
+observations into eight product passes or operating model metadata.
 """
 from __future__ import annotations
 

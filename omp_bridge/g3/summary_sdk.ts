@@ -100,12 +100,23 @@ export async function fixedSummaryWriter(writer: RecordValue, requestId: string,
   });
 }
 
-export async function dispatchSummarySDK(options: {
+type DispatchOptions = {
   role: string; context: any; prepared: RecordValue; writer: RecordValue;
   observeMetadata: () => RecordValue | undefined;
   current: () => boolean; emit?: (event: RecordValue) => void;
   sdk?: SDK; save?: typeof fixedSummaryWriter;
-}): Promise<Result> {
+};
+
+export async function dispatchSummarySDK(options: DispatchOptions): Promise<Result> {
+  return dispatchSDK(options, false);
+}
+
+/** Host-owned private verification context only; never selected by operating options. */
+export async function dispatchVerificationSummarySDK(options: DispatchOptions): Promise<Result> {
+  return dispatchSDK(options, true);
+}
+
+async function dispatchSDK(options: DispatchOptions, verification: boolean): Promise<Result> {
   const { role, context, prepared, writer, observeMetadata, current } = options;
   const emit = options.emit ?? (() => {});
   const defer = (reason: string): Result => ({ status: "deferred", sent: false, protected: false, reason });
@@ -129,7 +140,33 @@ export async function dispatchSummarySDK(options: {
   let sdk: SDK;
   let policy: string;
   let bundled: RecordValue;
+  let verificationRegistry: any;
   try {
+    if (verification) {
+      const endpoint = new URL(context.model?.baseUrl);
+      const host = endpoint.hostname;
+      if (endpoint.protocol !== "http:" || endpoint.username || endpoint.password || endpoint.search || endpoint.hash
+          || !(host === "localhost" || host === "[::1]" || /^127(?:\.\d{1,3}){3}$/.test(host)))
+        return defer("startup_configuration_unavailable");
+      verificationRegistry = context.modelRegistry;
+      if (!verificationRegistry || typeof verificationRegistry.awaitInitialBackgroundRefresh !== "function")
+        return defer("startup_configuration_unavailable");
+      const abort = new AbortController();
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      try {
+        const timeout = new Promise<boolean>(resolve => {
+          timer = setTimeout(() => { abort.abort(); resolve(false); }, 25000);
+        });
+        const ready = Promise.resolve(verificationRegistry.awaitInitialBackgroundRefresh(abort.signal))
+          .then(() => !abort.signal.aborted, error => {
+            if (abort.signal.aborted) return false;
+            throw error;
+          });
+        if (!await Promise.race([ready, timeout])) return defer("preparation_not_settled");
+      } finally { clearTimeout(timer); }
+      if (!inputMatches()) return { status: "deferred", sent: false, protected: true, reason: "request_mismatch" };
+      if (context.modelRegistry !== verificationRegistry) return defer("startup_configuration_unavailable");
+    }
     // Copy the observer result before validation can call any other host callback.
     metadata = freezeInput(JSON.parse(stable(observeMetadata() ?? null)));
     if (!metadata || metadata.source !== "parent_session_readback" || !current()
@@ -287,13 +324,15 @@ export async function dispatchSummarySDK(options: {
     for (let attempt = 1; attempt <= 2; attempt++) {
       const registry = new sdk.AgentRegistry();
       const settings = sdk.Settings.isolated({ externalThinking: false, "prewalk.enabled": false,
-        "tools.intentTracing": false, "retry.usageAwareFallback": false });
+        "tools.intentTracing": false, "retry.usageAwareFallback": false,
+        ...(verification ? { "power.sleepPrevention": "off" } : {}) });
       const agentId = "workbench-summary-" + randomUUID();
       state.armed = false;
       state.receipt = undefined;
       let admitted = false;
       try {
         child = (await sdk.createAgentSession({ cwd: process.cwd(), model: structuredClone(context.model),
+          ...(verification ? { modelRegistry: verificationRegistry } : {}),
           thinkingLevel: metadata.thinkingLevel,
           resolveServiceTierByFamily: () => structuredClone(metadata.serviceTierByFamily),
           settings, sessionManager: sdk.SessionManager.inMemory(process.cwd()), agentRegistry: registry, agentId,

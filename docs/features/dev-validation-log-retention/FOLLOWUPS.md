@@ -77,7 +77,9 @@ Claude의 luna max/8192 한계 예고는 아직 측정되지 않은 가능성이
 - 제품의 명시 `verify --scripted`에서 소유한 임시 journal의 요청을 첫 응답 전에 `unknown`으로 기록했다. 같은 입력·범위의 새 요청 예약은 거부되고 행도 추가되지 않았다. 실제 SDK tool과 고정 writer가 낸 늦은 유효 결과는 `stored`가 됐으며, 같은 receipt의 재기록은 거부됐다. [새 제품 실행](../../../.workflow/dev-validation-log-retention/runs/dvl14-20261013/recovery-partial01/root-owned02/result.json)에서 상태 순서는 `prepared → sending → unknown → stored`, catalog·receipt는 각각 1개, duplicate drop은 1개였다.
 - 이는 owner가 제어한 상태 전이의 직접 관측이다. 실제 연결 끊김 분류·Backend 재시작·pause의 제품 연결을 시험한 결과는 아니다. 같은 실행의 SDK child 1개·localhost POST 2회와 90초 상한을 유지했다. Parent·registry·설정 불변, child 종료와 소유 자원 정리도 확인했다.
 - 첫 실행은 SDK가 붙인 별도 안내 text part와 prompt를 합쳐 JSON으로 읽으려다 실패했다. 그 [실패 기록](../../../.workflow/dev-validation-log-retention/runs/dvl14-20261013/recovery-partial01/root-owned01/result.json)은 보존한다. 기존 prompt 바이트를 공유 순수 함수로 유지하고 SHA·byte 길이가 정확히 일치하는 part 하나만 읽도록 관측 경계를 수정했다. 일치하는 part가 없거나 두 개이면 journal 변경 전에 거부하며, substring·정규화·fallback은 사용하지 않는다. 다른 SDK part는 type·길이·SHA만 기록한다.
-- Q01-recovery는 부분 관측으로 `inconclusive`다. Priority·pause·restart는 미실행이고 observer/child I/O와 운영 MODEL은 unknown이다. 이전 current8이나 전체 Q01 pass로 합치지 않으며 보호 해제·raw 활성화도 만들지 않는다. DVL-14 전체와 DVL-13 최종46은 계속 미완료다.
+- Q01-recovery는 부분 관측으로 `inconclusive`다. 당시 Priority·pause·restart는 미실행이고 observer/child I/O와 운영 MODEL은 unknown이었다. 이전 current8이나 전체 Q01 pass로 합치지 않으며 보호 해제·raw 활성화도 만들지 않는다. DVL-14 전체와 DVL-13 최종46은 계속 미완료다.
+- 후속 [제품 실행](../../../.workflow/dev-validation-log-retention/runs/dvl14-20261013/pause-partial01/root-owned01/result.json)에서는 검증용 owner predicate를 false로 호출해 child 생성·prompt 시작·전송 0을 확인한 뒤 고정 helper로 `prepared → not_sent`를 기록했다. Predicate는 1회 호출됐고 해당 요청의 receipt·drop은 0개였다. 같은 metadata·입력·범위의 새 요청은 기존 정상 경로를 통과해 늦은 저장·중복 거부를 유지했다. Child 1개·POST 2회 상한과 소유 자원 정리도 유지했다.
+- 이 원인 귀속은 owner predicate 호출과 정상 대조에 근거한다. SDK가 반환한 `model_metadata_unavailable` 사유는 변경하지 않았다. 실제 AutomationController의 pause·pause_store·restart·priority 연결은 미검증이고 I/O·운영 MODEL은 unknown이다. 따라서 이 후속 결과도 부분 관측이며 전체 pass·보호 해제·raw 활성화가 아니다.
 
 ## DVL-14 혼합 raw 용량 국소 검증 (2026-10-13)
 

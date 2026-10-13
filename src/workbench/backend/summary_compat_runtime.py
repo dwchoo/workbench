@@ -25,7 +25,7 @@ from typing import Any
 from uuid import uuid4
 
 from workbench.backend.paths import DataLayout, write_private_json
-from workbench.contracts.logs_v1 import canonical_json, decode_json
+from workbench.contracts.logs_v1 import canonical_json, decode_json, parse_summary_request
 from workbench.storage.important_log import ImportantLogCatalog, ImportantLogStore
 from workbench.tasks.repository import InvalidTransitionError, TaskRepository
 
@@ -33,6 +33,7 @@ DEADLINE_SECONDS = 90
 SUMMARY = {"facts": ["소유 private scripted fixture의 연결을 확인했다."],
            "interpretations": [], "unknowns": ["실제 MODEL 및 전체 Q01은 미검증이다."]}
 IO_KEYS = ("omp_children", "model_calls", "network_requests", "auth_store_open", "settings_writes")
+PAUSE_NO_SEND_DETAIL = "owner_predicate_false_confirmed_before_send"
 
 
 def unavailable(reason: str) -> dict[str, Any]:
@@ -173,8 +174,9 @@ class _Server(ThreadingHTTPServer):
 
 class _RecoveryControl:
     """Owned journal control only; no disconnect, restart or pause claim."""
-    def __init__(self, root: Path):
+    def __init__(self, root: Path, *, pause_control: bool = False):
         self.root = root
+        self.pause_control = pause_control
         self.request_id: str | None = None
         self.observations: dict[str, Any] = {}
 
@@ -236,6 +238,34 @@ class _RecoveryControl:
             raise ValueError("recovery_control_unobserved")
         outcome = completed["outcome"]
         with TaskRepository(DataLayout(self.root / "data").tasks) as journal:
+            if self.pause_control:
+                pause = completed.get("pauseControl")
+                if (not isinstance(pause, dict) or pause.get("control") != "owner_predicate_false_control"
+                        or type(pause.get("predicateCalls")) is not int or pause["predicateCalls"] < 1
+                        or pause.get("status") != "deferred" or pause.get("sent") is not False
+                        or pause.get("childCreates") != 0 or pause.get("promptStarts") != 0
+                        or pause.get("noSendConfirmed") is not True or pause.get("positiveControlSameMetadata") is not True
+                        or pause.get("requestId") == self.request_id):
+                    raise ValueError("pause_no_send_control_unobserved")
+                held = journal.get_summary_request(pause["requestId"])
+                fresh = journal.get_summary_request(self.request_id)
+                history = [tuple(row) for row in journal._connection.execute(
+                    "SELECT state,detail FROM summary_request_events_v1 WHERE request_id=? ORDER BY event_id",
+                    (pause["requestId"],))]
+                receipt_count = journal._connection.execute(
+                    "SELECT COUNT(*) FROM summary_result_receipts_v1 WHERE request_id=?", (pause["requestId"],)).fetchone()[0]
+                drop_count = journal._connection.execute(
+                    "SELECT COUNT(*) FROM summary_result_drops_v1 WHERE request_id=?", (pause["requestId"],)).fetchone()[0]
+                matches = (held is not None and fresh is not None and held["request"]["inputKey"] == fresh["request"]["inputKey"]
+                           and held["request"]["sources"] == fresh["request"]["sources"]
+                           and held["request"]["sourceGaps"] == fresh["request"]["sourceGaps"])
+                self.observations["owner_predicate_false_control"] = {**pause, "state_order": [row[0] for row in history],
+                    "detail": PAUSE_NO_SEND_DETAIL, "receipt_count": receipt_count, "drop_count": drop_count,
+                    "same_input_and_ranges": matches, "actualAutomationController": "not_run", "pause_store": "not_run", "restart": "not_run"}
+                if (not matches or held["state"] != "not_sent" or held["receipt"] is not None
+                        or history != [("prepared", None), ("not_sent", PAUSE_NO_SEND_DETAIL)]
+                        or receipt_count != 0 or drop_count != 0):
+                    raise ValueError("pause_journal_observation_mismatch")
             states = [row[0] for row in journal._connection.execute(
                 "SELECT state FROM summary_request_events_v1 WHERE request_id=? ORDER BY event_id",
                 (self.request_id,))]
@@ -328,8 +358,11 @@ def _handler(root: Path, posts: list[dict], violations: list[str], recovery: _Re
     return Handler
 
 
-def _execute(source: Path, binary: Path, root: Path, *, recovery_control: bool = False) -> dict[str, Any]:
+def _execute(source: Path, binary: Path, root: Path, *, recovery_control: bool = False,
+             pause_control: bool = False) -> dict[str, Any]:
     _private_root(root)
+    if pause_control and not recovery_control:
+        raise ValueError("pause_control_requires_recovery")
     for name in ("home", "agent", "config", "project", "data", "tmp", "xdg-config",
                  "xdg-data", "xdg-state", "xdg-cache"):
         (root / name).mkdir(mode=0o700)
@@ -341,13 +374,13 @@ def _execute(source: Path, binary: Path, root: Path, *, recovery_control: bool =
     catalog = ImportantLogCatalog(layout.important_logs, create=True)
     posts: list[dict] = []
     violations: list[str] = []
-    recovery = _RecoveryControl(root) if recovery_control else None
+    recovery = _RecoveryControl(root, pause_control=pause_control) if recovery_control else None
     server = _Server(("127.0.0.1", 0), _handler(root, posts, violations, recovery))
     server.timeout = 1
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     endpoint = f"http://127.0.0.1:{server.server_port}/v1"
     write_private_json(root / "fixture.json", {"root": str(root), "endpoint": endpoint,
-        "dbHealth": catalog.health_snapshot()["active"]})
+        "dbHealth": catalog.health_snapshot()["active"], **({"pauseControl": True} if pause_control else {})})
     models = root / "agent/models.yml"
     models.write_text("providers:\n  ownedverify:\n    api: openai-completions\n    auth: none\n"
         + f"    baseUrl: {endpoint}\n" + "    models:\n      - id: scripted\n        name: scripted\n"
@@ -497,7 +530,7 @@ def _execute(source: Path, binary: Path, root: Path, *, recovery_control: bool =
     return result
 
 
-def observe_owned(source: Path, *, recovery_control: bool = False) -> dict[str, Any]:
+def observe_owned(source: Path, *, recovery_control: bool = False, pause_control: bool = False) -> dict[str, Any]:
     binary_name = shutil.which("omp")
     if not binary_name or sys.platform != "linux":
         return unavailable("owned_runtime_unavailable")
@@ -508,7 +541,10 @@ def observe_owned(source: Path, *, recovery_control: bool = False) -> dict[str, 
     result = None
     try:
         temporary = Path(tempfile.mkdtemp(prefix="workbench-summary-verify-")).resolve()
-        result = _execute(source, binary, temporary, recovery_control=recovery_control)
+        options = {"recovery_control": recovery_control}
+        if pause_control:
+            options["pause_control"] = True
+        result = _execute(source, binary, temporary, **options)
         return result
     except (OSError, ValueError, KeyError, TypeError, sqlite3.Error, InvalidTransitionError) as error:
         result = unavailable(type(error).__name__ + ":" + str(error))
@@ -539,7 +575,31 @@ def _reserve(root: Path) -> None:
         journal.record_summary_state(request["requestId"], "sending")
 
 
+def _pause_request(root: Path) -> dict:
+    _private_root(root)
+    if Path(os.environ.get("HOME", "")).resolve() != root / "home":
+        raise ValueError("unsafe_verification_root")
+    return parse_summary_request(decode_json(sys.stdin.buffer.read(32769), max_bytes=32768))
+
+
+def _hold(root: Path) -> None:
+    request = _pause_request(root)
+    with TaskRepository(DataLayout(root / "data").tasks) as journal:
+        journal.reserve_summary_request(request)
+
+
+def _confirm_not_sent(root: Path) -> None:
+    request = _pause_request(root)
+    with TaskRepository(DataLayout(root / "data").tasks) as journal:
+        stored = journal.get_summary_request(request["requestId"])
+        if (stored is None or stored["state"] != "prepared" or stored["receipt"] is not None
+                or canonical_json(stored["request"]) != canonical_json(request)):
+            raise ValueError("pause_confirmation_binding_mismatch")
+        journal.record_summary_state(request["requestId"], "not_sent", detail=PAUSE_NO_SEND_DETAIL)
+
+
 if __name__ == "__main__":
-    if len(sys.argv) != 3 or sys.argv[1] != "--reserve":
+    modes = {"--reserve": _reserve, "--hold": _hold, "--confirm-not-sent": _confirm_not_sent}
+    if len(sys.argv) != 3 or sys.argv[1] not in modes:
         raise SystemExit(2)
-    _reserve(Path(sys.argv[2]))
+    modes[sys.argv[1]](Path(sys.argv[2]))

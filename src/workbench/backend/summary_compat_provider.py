@@ -9,4 +9,4 @@ from workbench.backend.summary_compat_runtime import observe_owned
 
 class ScriptedCompatibilityProvider:
     def observe(self) -> dict[str, Any]:
-        return observe_owned(Path(__file__).resolve().parents[3], recovery_control=True)
+        return observe_owned(Path(__file__).resolve().parents[3], recovery_control=True, pause_control=True)

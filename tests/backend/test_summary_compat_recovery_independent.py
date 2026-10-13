@@ -277,7 +277,7 @@ class RecoveryControlIndependentTests(unittest.TestCase):
         unavailable = runtime.unavailable("owned_runtime_unavailable")
         with patch("workbench.backend.summary_compat_provider.observe_owned", return_value=unavailable) as observe:
             self.assertEqual(ScriptedCompatibilityProvider().observe(), unavailable)
-        observe.assert_called_once_with(ROOT, recovery_control=True)
+        observe.assert_called_once_with(ROOT, recovery_control=True, pause_control=True)
 
     def test_product_partial_recovery_observation_never_admits_or_clears_protection(self):
         owned = self.root / "runtime-owned"

@@ -97,16 +97,19 @@ async function run(root: string, ctx: any) {
     priorCumulative: null, definitionDigest: sha(bundled.systemPrompt) };
   const python = process.env.WORKBENCH_SUMMARY_VERIFY_PYTHON!;
   const moduleRoot = root + "/runtime/src";
-  await new Promise<void>((resolve, reject) => {
-    const reservation = execFile(python, ["-m", "workbench.backend.summary_compat_runtime", "--reserve", root],
+  const journal = (mode: "--reserve" | "--hold" | "--confirm-not-sent", item: any) => new Promise<void>((resolve, reject) => {
+    const reservation = execFile(python, ["-m", "workbench.backend.summary_compat_runtime", mode, root],
       { timeout: 5000, maxBuffer: 4096, env: { PATH: process.env.PATH!, PYTHONPATH: moduleRoot,
         HOME: root + "/home", PYTHONDONTWRITEBYTECODE: "1" } }, error => error ? reject(error) : resolve());
-    reservation.stdin!.end(JSON.stringify(request));
+    reservation.stdin!.end(JSON.stringify(item));
   });
-  // Match dispatch's detached canonical snapshot without changing its prompt bytes.
-  const prompt = buildSummaryPrompt(JSON.parse(canonicalJson(prepared)));
-  writeFileSync(root + "/expected.json", JSON.stringify({ requestId, systemSha: sha(bundled.systemPrompt + "\n\n" + skill),
-    promptSha256: sha(prompt), promptBytes: Buffer.byteLength(prompt, "utf8") }), { mode: 0o600 });
+  const expected = (input: any) => {
+    // Match dispatch's detached canonical snapshot without changing its prompt bytes.
+    const prompt = buildSummaryPrompt(JSON.parse(canonicalJson(input)));
+    writeFileSync(root + "/expected.json", JSON.stringify({ requestId: input.request.requestId,
+      systemSha: sha(bundled.systemPrompt + "\n\n" + skill), promptSha256: sha(prompt),
+      promptBytes: Buffer.byteLength(prompt, "utf8") }), { mode: 0o600 });
+  };
   let child: any, creates = 0, calls = 0;
   const events: any[] = [];
   const sdk = { AgentRegistry, SessionManager, Settings, toolWireSchema, Tokenizer, fitOutputTokensToContextWindow,
@@ -121,11 +124,36 @@ async function run(root: string, ctx: any) {
         globalAbsent: !AgentRegistry.global().get(options.agentId), active: child.getEnabledToolNames() });
       return actual;
     } };
+  let pauseControl: any;
+  if (fixture.pauseControl === true) {
+    const pausedRequest = { ...request, requestId: "96a816b4-a6fd-4d66-a562-c928f6871796" };
+    const pausedPrepared = { ...prepared, request: pausedRequest };
+    await journal("--hold", pausedRequest);
+    expected(pausedPrepared);
+    let predicateCalls = 0;
+    const paused = await dispatchVerificationSummarySDK({ role: "manager", context: ctx, prepared: pausedPrepared,
+      writer: { python, moduleRoot, dataRoot: root + "/data" }, sdk,
+      current: () => { predicateCalls++; return false; }, observeMetadata: metadata,
+      emit: event => events.push(event) });
+    const promptStarts = events.filter(event => event.event === "prompt_start").length;
+    if (predicateCalls < 1 || paused.status !== "deferred" || paused.sent !== false || creates !== 0 || promptStarts !== 0)
+      throw Error("pause_no_send_control_unobserved");
+    // Confirmation follows the observed no-send outcome; hold alone stays prepared.
+    await journal("--confirm-not-sent", pausedRequest);
+    pauseControl = { control: "owner_predicate_false_control", requestId: pausedRequest.requestId,
+      status: paused.status, reason: paused.reason ?? null, sent: paused.sent,
+      predicateCalls, childCreates: creates, promptStarts, noSendConfirmed: true,
+      metadataSha256: sha(stable(pausedPrepared.metadata)),
+      positiveControlSameMetadata: stable(pausedPrepared.metadata) === stable(prepared.metadata) };
+  }
+  await journal("--reserve", request);
+  expected(prepared);
   const outcome = await dispatchVerificationSummarySDK({ role: "manager", context: ctx, prepared,
     writer: { python, moduleRoot, dataRoot: root + "/data" }, sdk, current: () => true,
     observeMetadata: metadata, emit: event => events.push(event) });
   const after = state(), registryAfter = registry(), settingsAfter = settings();
   publishVerificationCompletion(root, { requestId, version: VERSION, outcome, events,
+    ...(pauseControl ? { pauseControl } : {}),
     parentBefore: before, parentAfter: after, parentUnchanged: stable(before) === stable(after),
     registryBefore, registryAfter, registryUnchanged: stable(registryBefore) === stable(registryAfter),
     settingsBefore, settingsAfter, settingsUnchanged: stable(settingsBefore) === stable(settingsAfter),

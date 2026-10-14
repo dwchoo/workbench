@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ast
+from copy import deepcopy
 import json
 import os
 from pathlib import Path
@@ -10,13 +11,159 @@ import re
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from unittest.mock import patch
 
 from tools import dev_validate as runner
 
 
+def fixture_worker_argv(item, index, invocation, nonce, parent_pid, parent_start,
+                        control_fd, result_fd, namespace, report_dir, omp):
+    """Fixed unit-only Items use the same cell worker without adding production registry IDs."""
+    definition = (f"r.Item({item.key!r}, {item.assertion_ids!r}, {item.modules!r}, {item.evidence_level!r}, "
+                  f"env={item.env!r}, outer={item.outer!r})")
+    script = ("from pathlib import Path; from tools import dev_validate as r; "
+              f"raise SystemExit(r._cell_worker_main({definition}, {index!r}, {invocation!r}, {nonce!r}, "
+              f"{parent_pid!r}, {parent_start!r}, {control_fd!r}, {result_fd!r}, "
+              f"Path({str(namespace)!r}), Path({str(report_dir)!r}), Path({str(omp)!r})))")
+    return [sys.executable, "-B", "-c", script]
+
+
 class RunnerContractTests(unittest.TestCase):
+    def test_two_python_cells_overlap_with_private_env_and_complete_owned_cleanup(self):
+        items = tuple(runner.Item(key, ("DV-AC-04",),
+                                 ("tests.dev_validation.fixture_items.RunnerFixture.test_hang",), "fixture",
+                                 env={"WB_CW16_SHELLS": shell}, outer="tmux")
+                      for key, shell in (("cell-a", "bash"), ("cell-b", "dash")))
+        with tempfile.TemporaryDirectory() as root, patch.object(runner, "_worker_argv", fixture_worker_argv):
+            rows = runner._parallel_items(items, Path(root), Path("/usr/bin/true"), "unit-overlap", 0)
+        self.assertEqual([row["id"] for row in rows], ["cell-a", "cell-b"])
+        self.assertEqual([row["status"] for row in rows], ["passed", "passed"], rows)
+        first, second = (row["cellWorker"] for row in rows)
+        self.assertNotEqual(first["pid"], second["pid"])
+        self.assertNotEqual(first["namespace"], second["namespace"])
+        self.assertGreater(min(first["finishedMonotonic"], second["finishedMonotonic"])
+                           - max(first["startedMonotonic"], second["startedMonotonic"]), 0)
+        for row in rows:
+            worker = row["cellWorker"]
+            self.assertEqual(worker["remaining"], [])
+            self.assertTrue(worker["namespaceRemoved"])
+            self.assertEqual(worker["sentinelBeforeSha256"], worker["sentinelAfterSha256"])
+            self.assertTrue(row["cleanup"]["namespaceRemoved"])
+            self.assertTrue(worker["ownedIdentities"])
+
+    def test_parent_death_signal_runs_cell_finally_for_doublefork_backend(self):
+        script = '''
+import os,sys,time
+from pathlib import Path
+from tools import dev_validate as r
+root=Path(sys.argv[1])
+namespace=root/'worker'; namespace.mkdir(mode=0o700)
+item=r.Item('death-fixture', ('DV-AC-04',), ('tests.dev_validation.fixture_items_independent.IndependentFixture.test_product_doublefork_backend_waits_without_progress',), 'fixture')
+control_read,control_write=os.pipe(); result_read,result_write=os.pipe()
+child_code="""
+import sys
+from pathlib import Path
+from tools import dev_validate as r
+item=r.Item('death-fixture', ('DV-AC-04',), ('tests.dev_validation.fixture_items_independent.IndependentFixture.test_product_doublefork_backend_waits_without_progress',), 'fixture')
+root=Path(sys.argv[1])
+original=r.tempfile.mkdtemp
+def private_item(*args, **kwargs):
+    if kwargs.get('prefix', '').startswith('dvl01-'):
+        path=root/'item'; path.mkdir(mode=0o700); return str(path)
+    return original(*args, **kwargs)
+r.tempfile.mkdtemp=private_item
+raise SystemExit(r._cell_worker_main(item,0,'unit-death','unit-nonce',int(sys.argv[2]),int(sys.argv[3]),int(sys.argv[4]),int(sys.argv[5]),root/'worker',root,Path('/usr/bin/true')))
+"""
+proc=r.subprocess.Popen([sys.executable,'-B','-c',child_code,str(root),str(os.getpid()),str(r.harness.ticks(os.getpid())),str(control_write),str(result_write)],env=r._base_env(namespace/'home',namespace,Path('/usr/bin/true'),item),stdin=r.subprocess.DEVNULL,stdout=r.subprocess.DEVNULL,stderr=r.subprocess.DEVNULL,pass_fds=(control_write,result_write),start_new_session=True)
+print(proc.pid, r.harness.ticks(proc.pid), flush=True)
+while True: time.sleep(0.05)
+'''
+        with tempfile.TemporaryDirectory() as temporary, runner._owned_subreaper():
+            root = Path(temporary)
+            supervisor = subprocess.Popen([sys.executable, "-B", "-c", script, str(root)], cwd=runner.REPO,
+                                          env=runner.harness.clean_base_env(PYTHONPATH=str(runner.REPO / "src")),
+                                          stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                          start_new_session=True)
+            supervisor_start = runner.harness.ticks(supervisor.pid)
+            worker_pid = worker_start = backend_pid = backend_start = None
+            try:
+                worker_pid, worker_start = map(int, supervisor.stdout.readline().split())
+                ready = root / "item" / "backend.ready"
+                deadline = time.monotonic() + 5
+                while not ready.exists() and time.monotonic() < deadline:
+                    time.sleep(0.01)
+                self.assertTrue(ready.exists(), "controlled backend never became ready")
+                backend_pid, backend_start = map(int, ready.read_text().split())
+                self.assertTrue(runner.harness.alive(backend_pid, backend_start))
+                self.assertTrue(runner.harness.kill_exact(supervisor.pid, supervisor_start))
+                supervisor.wait(timeout=2)
+                deadline = time.monotonic() + 5
+                while time.monotonic() < deadline and (runner.harness.alive(worker_pid, worker_start)
+                                                      or runner.harness.alive(backend_pid, backend_start)):
+                    time.sleep(0.02)
+                self.assertFalse(runner.harness.alive(worker_pid, worker_start), "cell ignored parent-death signal")
+                self.assertFalse(runner.harness.alive(backend_pid, backend_start), "cell finally orphaned backend")
+                self.assertFalse((root / "item").exists(), "interrupted item namespace survived")
+            finally:
+                for pid, start in ((supervisor.pid, supervisor_start), (worker_pid, worker_start),
+                                   (backend_pid, backend_start)):
+                    if pid is not None:
+                        runner.harness.kill_exact(pid, start)
+                supervisor.wait(timeout=2)
+                runner._reap_adopted({pid: start for pid, start in ((worker_pid, worker_start), (backend_pid, backend_start))
+                                     if pid is not None and start is not None})
+                supervisor.stdout.close()
+                supervisor.stderr.close()
+
+    def test_strict_cost_identity_and_failed_zero_cleanup_baseline_rejection(self):
+        item = runner.Item("cost-fixture", ("DV-AC-04",),
+                           ("tests.dev_validation.fixture_items.RunnerFixture.test_pass",), "fixture")
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            row = runner._run_item(item, 0, root, Path("/usr/bin/true"))
+            original = {"schemaVersion": 1, "attemptId": "old", "inputBefore": {"sha256": "same"},
+                        "inputAfter": {"sha256": "same"}, "versionsBefore": {"omp": "fixture"},
+                        "versionsAfter": {"omp": "fixture"}, "mode": "precise", "cwd": str(runner.REPO),
+                        "ompPath": "/usr/bin/true", "costIdentity": runner._cost_identity((item,), Path("/usr/bin/true")),
+                        "execution": {"jobs": 1}, "elapsedSeconds": 3, "result": "inconclusive", "items": [row],
+                        "firstFailure": {"item": runner.PRECISE_PENDING[0], "status": "not_run"}}
+            current = deepcopy(original)
+            current.update(attemptId="new", execution={"jobs": 2}, elapsedSeconds=2)
+            path = root / "baseline.json"
+            path.write_text(json.dumps(original))
+            comparison = runner._compare_cost(current, path)
+            self.assertEqual(comparison["status"], "comparable", comparison)
+            self.assertEqual(comparison["wallDeltaSeconds"], -1)
+            self.assertEqual((comparison["baselineJobs"], comparison["currentJobs"]), (1, 2))
+            variants = []
+            for field, value in (("inputBefore", {"sha256": "changed"}), ("ompPath", "/elsewhere/omp")):
+                variant = deepcopy(original); variant[field] = value; variants.append(variant)
+            for field, value in (("status", "failed"), ("collectedTests", 0)):
+                variant = deepcopy(original); variant["items"][0][field] = value; variants.append(variant)
+            variant = deepcopy(original); variant["items"][0]["cleanup"]["namespaceRemoved"] = False; variants.append(variant)
+            variant = deepcopy(original); variant["costIdentity"]["selectedItems"][0]["modules"] = ["changed"]; variants.append(variant)
+            for index, variant in enumerate(variants):
+                with self.subTest(index=index):
+                    path.write_text(json.dumps(variant))
+                    self.assertEqual(runner._compare_cost(current, path)["status"], "unknown")
+
+    def test_jobs_two_fast_still_calls_direct_serial_items(self):
+        def passed(item, *args):
+            return {"id": item.key, "required": True, "status": "passed", "durationSeconds": 0,
+                    "expectedWaitSeconds": item.expected_wait_seconds}
+        with tempfile.TemporaryDirectory() as temporary:
+            with patch.object(runner, "_run_item", side_effect=passed) as run_item, \
+                 patch.object(runner, "_parallel_items", side_effect=AssertionError("FAST must stay serial")), \
+                 patch.object(runner, "_input_manifest", return_value={"sha256": "fixture"}), \
+                 patch.object(runner.harness, "tool_versions", return_value={"omp": "fixture"}), \
+                 patch.object(runner.subprocess, "run", return_value=subprocess.CompletedProcess([], 0, "fixture-head")):
+                code = runner.main(["--mode", "fast", "--jobs", "2", "--report-dir", str(Path(temporary) / "report"),
+                                    "--omp", "/usr/bin/true"])
+            self.assertEqual(code, 0)
+            self.assertEqual([call.args[0] for call in run_item.call_args_list], list(runner.FAST_ITEMS))
+
     def test_precise_registry_resolves_exact_legacy_ids_without_live_execution(self):
         ids = [name for item in runner.PRECISE_ITEMS for name in item.modules]
         self.assertEqual((len(runner.PRECISE_ITEMS), len(ids), len(set(ids))), (17, 19, 19))

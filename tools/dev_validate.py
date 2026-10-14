@@ -12,6 +12,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass, field
 from hashlib import sha256
 import json
+import math
 import os
 from pathlib import Path
 import platform
@@ -41,6 +42,38 @@ CONTROL_BYTES = 1_000_000
 CONTROL_LINE_BYTES = 1024
 _PR_SET_CHILD_SUBREAPER = 36
 _PR_GET_CHILD_SUBREAPER = 37
+_PR_SET_PDEATHSIG = 1
+CELL_RESULT_BYTES = 4 * 1024 * 1024
+BASELINE_REPORT_BYTES = 32 * 1024 * 1024
+_CELL_OBSERVER = None
+
+
+class _Interrupted(BaseException):
+    pass
+
+
+@contextmanager
+def _interrupt_signals():
+    """One interruption initiates cleanup; repeated signals cannot cut it short."""
+    interrupted = False
+
+    def stop(signum, frame):
+        nonlocal interrupted
+        if not interrupted:
+            interrupted = True
+            raise _Interrupted(f"signal {signum}")
+
+    previous = {sig: signal.signal(sig, stop) for sig in (signal.SIGINT, signal.SIGTERM)}
+    try:
+        yield
+    finally:
+        for sig, handler in previous.items():
+            signal.signal(sig, handler)
+
+
+def _cell_observe(event: str, **fields: Any) -> None:
+    if _CELL_OBSERVER is not None:
+        _CELL_OBSERVER(event, **fields)
 
 
 @contextmanager
@@ -244,6 +277,9 @@ def _append_bounded(existing: bytearray, chunk: bytes) -> int:
 def _driver_main(invocation: str, item_key: str, nonce: str,
                  control_fd: int, modules: list[str]) -> int:
     """Trusted unittest result/ownership channel, separate from test-controlled stdout/stderr."""
+    # The parent defers interruption until its Popen cleanup guard is installed.
+    # A driver/test/Native descendant must not inherit that temporary mask.
+    signal.pthread_sigmask(signal.SIG_UNBLOCK, {signal.SIGINT, signal.SIGTERM})
     import unittest
 
     sequence = 0
@@ -573,12 +609,52 @@ def _scenario_evidence(item: Item, index: int, namespace: Path,
 def _run_item_scoped(item: Item, index: int, report_dir: Path, omp: Path,
                      invocation_id: str | None = None,
                      baseline_children: dict[int, int] | None = None) -> dict[str, Any]:
+    """Install a cleanup guard before spawn, including post-Popen setup failures/signals."""
+    lifetime: dict[str, Any] = {"mask": signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGINT, signal.SIGTERM}),
+                               "maskRestored": False, "cleanupDone": False, "returned": False}
+    try:
+        row = _run_item_body(item, index, report_dir, omp, invocation_id, baseline_children, lifetime)
+        lifetime["returned"] = True
+        return row
+    finally:
+        proc = lifetime.get("proc")
+        namespace = lifetime.get("namespace")
+        if proc is not None and not lifetime["cleanupDone"]:
+            owned = lifetime["control"].owned
+            stop = _stop_owned(proc, lifetime.get("start"), namespace, owned,
+                               baseline_children=baseline_children,
+                               adopted_seen=lifetime.get("adopted", {}))
+            try:
+                proc.wait(timeout=CLEANUP_SECONDS)
+            except subprocess.TimeoutExpired:
+                pass
+            _reap_adopted({**owned, **lifetime.get("adopted", {})})
+            selector = lifetime.get("selector")
+            if selector is not None:
+                selector.close()
+            for fd in lifetime.get("fds", ()):
+                os.close(fd)
+            for pipe in (proc.stdout, proc.stderr):
+                if pipe is not None:
+                    pipe.close()
+        if not lifetime["returned"] and namespace is not None and not harness.processes_mentioning(str(namespace)):
+            shutil.rmtree(namespace, ignore_errors=True)
+        if not lifetime["maskRestored"]:
+            signal.pthread_sigmask(signal.SIG_SETMASK, lifetime["mask"])
+
+
+def _run_item_body(item: Item, index: int, report_dir: Path, omp: Path,
+                   invocation_id: str | None, baseline_children: dict[int, int] | None,
+                   lifetime: dict[str, Any]) -> dict[str, Any]:
     # AF_UNIX paths in the installed Workbench must stay short even when report-dir is deep.
     namespace = Path(tempfile.mkdtemp(prefix=f"dvl01-{index:02d}-", dir="/tmp"))
+    lifetime["namespace"] = namespace
+    _cell_observe("namespace", path=str(namespace))
     started = time.monotonic()
     invocation = invocation_id or str(uuid4())
     nonce = str(uuid4())
     control = _ControlState(invocation, item.key, nonce)
+    lifetime["control"] = control
     argv: list[str] = []
     control_read = control_write = None
     out, err = bytearray(), bytearray()
@@ -594,6 +670,9 @@ def _run_item_scoped(item: Item, index: int, report_dir: Path, omp: Path,
         proc = subprocess.Popen(argv, cwd=REPO, env=env, stdin=subprocess.DEVNULL,
                                 stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                                 pass_fds=(control_write,), start_new_session=True)
+        lifetime["proc"] = proc
+        fields = harness.stat_fields(proc.pid)
+        lifetime["start"] = int(fields[19]) if fields is not None else None
     except (OSError, ValueError, AssertionError) as exc:
         for fd in (control_read, control_write):
             if fd is not None:
@@ -619,16 +698,23 @@ def _run_item_scoped(item: Item, index: int, report_dir: Path, omp: Path,
                 "namespace": str(namespace)}
     assert control_read is not None and control_write is not None
     os.close(control_write)
+    lifetime["fds"] = (control_read,)
     ticks = harness.ticks(proc.pid)
     control.bind_root(proc.pid, ticks)
+    if ticks is not None:
+        _cell_observe("owned", pid=proc.pid, startTicks=ticks)
     adopted_seen: dict[int, int] = {}
+    lifetime["adopted"] = adopted_seen
     adopted_zombies: set[int] = set()
 
     def owned_now() -> dict[int, int]:
-        return _owned_members(proc, namespace, control.owned,
+        members = _owned_members(proc, namespace, control.owned,
                               baseline_children=baseline_children,
                               adopted_seen=adopted_seen, adopted_zombies=adopted_zombies,
                               driver_start=ticks)
+        for pid, start in {**control.owned, **adopted_seen, **members}.items():
+            _cell_observe("owned", pid=pid, startTicks=start)
+        return members
 
     def stop_now() -> dict[str, Any]:
         return _stop_owned(proc, ticks, namespace, control.owned,
@@ -636,7 +722,13 @@ def _run_item_scoped(item: Item, index: int, report_dir: Path, omp: Path,
                            adopted_zombies=adopted_zombies)
 
     selector = selectors.DefaultSelector()
+    lifetime["selector"] = selector
+    interrupted = False
+    observed_completed = 0
+    observed_suite = False
     try:
+        lifetime["maskRestored"] = True
+        signal.pthread_sigmask(signal.SIG_SETMASK, lifetime["mask"])
         for pipe, label in ((proc.stdout, "stdout"), (proc.stderr, "stderr")):
             assert pipe is not None
             os.set_blocking(pipe.fileno(), False)
@@ -659,6 +751,13 @@ def _run_item_scoped(item: Item, index: int, report_dir: Path, omp: Path,
                 else:
                     if control.feed(chunk):
                         last_progress = time.monotonic()
+                    for _ in range(control.completed - observed_completed):
+                        _cell_observe("completed")
+                    observed_completed = control.completed
+                    if control.suite is not None and not observed_suite:
+                        _cell_observe("suite", **control.suite)
+                        observed_suite = True
+                    owned_now()
             if time.monotonic() - last_progress > SCENARIO_IDLE_SECONDS + item.expected_wait_seconds:
                 timed_out = True
                 stop = stop_now()
@@ -669,8 +768,11 @@ def _run_item_scoped(item: Item, index: int, report_dir: Path, omp: Path,
             exit_code = proc.wait(timeout=CLEANUP_SECONDS)
         except subprocess.TimeoutExpired:
             exit_code = None
+    except BaseException:
+        interrupted = True
+        raise
     finally:
-        if proc.poll() is None:
+        if interrupted or proc.poll() is None:
             stop = stop_now()
         try:
             proc.wait(timeout=CLEANUP_SECONDS)
@@ -678,11 +780,17 @@ def _run_item_scoped(item: Item, index: int, report_dir: Path, omp: Path,
             pass
         owned_now()  # Include a backend that became adopted Z before the first cleanup scan.
         stop["reapedPids"] = _reap_adopted({**control.owned, **adopted_seen})
-        selector.close()
-        os.close(control_read)
-        for pipe in (proc.stdout, proc.stderr):
-            if pipe is not None:
-                pipe.close()
+        close_mask = signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGINT, signal.SIGTERM})
+        try:
+            selector.close()
+            lifetime["selector"] = None
+            os.close(control_read)
+            lifetime["fds"] = ()
+            for pipe in (proc.stdout, proc.stderr):
+                if pipe is not None:
+                    pipe.close()
+        finally:
+            signal.pthread_sigmask(signal.SIG_SETMASK, close_mask)
     elapsed = round(time.monotonic() - started, 3)
     transcript = err.decode("utf-8", "replace")
     collected = control.suite["testsRun"] if control.valid() else 0
@@ -750,6 +858,7 @@ def _run_item_scoped(item: Item, index: int, report_dir: Path, omp: Path,
     if not remaining and not unattributed:
         shutil.rmtree(namespace)
     namespace_removed = not namespace.exists()
+    lifetime["cleanupDone"] = True
     return {"id": item.key, "assertionIds": list(item.assertion_ids), "required": True,
             "evidenceLevel": item.evidence_level, "status": status, "reason": reason,
             "failureClass": failure_class,
@@ -761,7 +870,7 @@ def _run_item_scoped(item: Item, index: int, report_dir: Path, omp: Path,
             "progressEvents": control.completed,
             "stdoutTail": out.decode("utf-8", "replace"), "stderrTail": transcript,
             "stdoutDroppedBytes": dropped_out, "stderrDroppedBytes": dropped_err,
-            "cleanup": {**stop, "adoptedPids": sorted(adopted_seen),
+            "cleanup": {"remaining": sorted(remaining), **stop, "adoptedPids": sorted(adopted_seen),
                         "adoptedZombiePids": sorted(adopted_zombies),
                         "unknownNamespaceUsers": sorted(unattributed),
                         "namespaceRemoved": namespace_removed}, "namespace": str(namespace),
@@ -801,6 +910,501 @@ def _run_item(item: Item, index: int, report_dir: Path, omp: Path,
                 "namespace": None}
 
 
+def _unknown_item(item: Item, reason: str, *, status: str = "inconclusive") -> dict[str, Any]:
+    return {"id": item.key, "assertionIds": list(item.assertion_ids), "testIds": list(item.modules),
+            "required": True, "evidenceLevel": item.evidence_level, "status": status, "reason": reason,
+            "failureClass": "cell_worker", "collectedTests": 0, "skippedTests": 0,
+            "durationSeconds": 0, "expectedWaitSeconds": item.expected_wait_seconds,
+            "cleanup": {"remaining": [], "namespaceRemoved": None}, "scenarioEvidence": []}
+
+
+def _cell_worker_main(item: Item, index: int, invocation: str, nonce: str,
+                      parent_pid: int, parent_start: int, control_fd: int, result_fd: int,
+                      namespace: Path, report_dir: Path, omp: Path) -> int:
+    """One single-cell subreaper in a fresh interpreter; parent death uses its normal finally."""
+    global _CELL_OBSERVER
+    sequence = 0
+    seen: set[tuple[int, int]] = set()
+    item_namespace: Path | None = None
+    worker_start = harness.ticks(os.getpid())
+
+    def observe(event: str, **fields: Any) -> None:
+        nonlocal sequence, item_namespace
+        if event == "namespace":
+            item_namespace = Path(fields["path"])
+            return
+        if event == "owned":
+            identity = (fields["pid"], fields["startTicks"])
+            if identity in seen:
+                return
+            seen.add(identity)
+            fields.update(emitterPid=os.getpid(), emitterTicks=worker_start, origin="popen")
+        else:
+            sequence += 1
+        frame = {"version": 1, "invocation": invocation, "item": item.key, "nonce": nonce,
+                 "sequence": 0 if event == "owned" else sequence, "event": event, **fields}
+        try:
+            os.write(control_fd, json.dumps(frame, separators=(",", ":")).encode() + b"\n")
+        except OSError:
+            pass  # Parent may already be dead; this must never interrupt owned cleanup.
+
+    _CELL_OBSERVER = observe
+    try:
+        with _interrupt_signals():
+            signal.pthread_sigmask(signal.SIG_UNBLOCK, {signal.SIGINT, signal.SIGTERM})
+            libc = ctypes.CDLL(None, use_errno=True)
+            if libc.prctl(_PR_SET_PDEATHSIG, signal.SIGTERM, 0, 0, 0) != 0:
+                raise OSError(ctypes.get_errno(), "cannot set cell parent-death signal")
+            # Close the fork/exec -> prctl race before any scenario can start.
+            if os.getppid() != parent_pid or harness.ticks(parent_pid) != parent_start:
+                raise _Interrupted("cell parent identity changed before start")
+            try:
+                result = _run_item(item, index, report_dir, omp, invocation)
+            except _Interrupted as exc:
+                result = _unknown_item(item, "cell interrupted: " + str(exc))
+                residue = _direct_children(os.getpid())
+                unknown = harness.processes_mentioning(str(item_namespace)) if item_namespace else {}
+                if item_namespace and not residue and not unknown:
+                    shutil.rmtree(item_namespace, ignore_errors=True)
+                result["cleanup"] = {"remaining": sorted(residue), "unknownNamespaceUsers": sorted(unknown),
+                                     "namespaceRemoved": item_namespace is None or not item_namespace.exists()}
+                if residue:
+                    result.update(status="failed", failureClass="cleanup")
+    except (_Interrupted, OSError) as exc:
+        result = _unknown_item(item, "cell setup/interruption: " + str(exc))
+    finally:
+        _CELL_OBSERVER = None
+    envelope = {"invocation": invocation, "item": item.key, "nonce": nonce,
+                "workerPid": os.getpid(), "workerStartTicks": worker_start, "result": result}
+    try:
+        payload = json.dumps(envelope, ensure_ascii=False).encode()
+        if len(payload) > CELL_RESULT_BYTES:
+            raise ValueError("cell result exceeded bound")
+        while payload:
+            sent = os.write(result_fd, payload)
+            payload = payload[sent:]
+    except (OSError, ValueError):
+        return 2
+    finally:
+        os.close(control_fd)
+        os.close(result_fd)
+    return 0
+
+
+def _worker_argv(item: Item, index: int, invocation: str, nonce: str, parent_pid: int,
+                 parent_start: int, control_fd: int, result_fd: int, namespace: Path,
+                 report_dir: Path, omp: Path) -> list[str]:
+    return [sys.executable, "-B", "-m", "tools.dev_validate", "--_cell-worker", item.key, str(index),
+            invocation, nonce, str(parent_pid), str(parent_start), str(control_fd), str(result_fd),
+            str(namespace), str(report_dir), str(omp)]
+
+
+def _run_cell_batch(batch: list[tuple[int, Item]], report_dir: Path, omp: Path,
+                    invocation: str) -> tuple[list[dict[str, Any]], bool]:
+    """At most two cells. Only this dispatcher creates direct children in this subreaper window."""
+    workers: list[dict[str, Any]] = []
+    results: dict[int, dict[str, Any]] = {}
+    selector = selectors.DefaultSelector()
+    interrupted = False
+    baseline = _direct_children(os.getpid())
+    adopted: dict[int, int] = {}
+    unknown_adoptions: dict[int, int] = {}
+    owned_sessions: dict[int, int] = {}
+    observed_owned: dict[int, int] = {}
+    signalled: set[int] = set()
+
+    def members() -> dict[int, int]:
+        # Adoption/freshness alone grants nothing: an unrelated ancestor can
+        # also exit during this subreaper window. Retain receipt-backed SID proof
+        # while its exact leader is observable, including after that leader exits.
+        receipts: dict[int, int] = {}
+        for worker in workers:
+            receipts.update(worker["control"].owned)
+            if worker["start"] is not None:
+                receipts[worker["proc"].pid] = worker["start"]
+        for pid, start in receipts.items():
+            fields = harness.stat_fields(pid)
+            if fields is not None and int(fields[19]) == start and int(fields[3]) == pid:
+                owned_sessions[pid] = start
+        owned = {**observed_owned, **receipts, **harness.session_members(owned_sessions)}
+        for pid, start in _direct_children(os.getpid()).items():
+            if baseline.get(pid) == start:
+                continue
+            fields = harness.stat_fields(pid)
+            if fields is None or int(fields[19]) != start:
+                continue
+            sid = int(fields[3])
+            if sid in receipts:
+                owned_sessions[sid] = receipts[sid]  # Actual member SID corroborates a receipt-backed leader.
+            if owned.get(pid) == start or sid in owned_sessions:
+                adopted[pid] = start
+                owned[pid] = start
+                unknown_adoptions.pop(pid, None)
+            else:
+                unknown_adoptions[pid] = start
+        observed_owned.update(owned)
+        return {pid: start for pid, start in owned.items() if start is not None and harness.alive(pid, start)}
+
+    with _owned_subreaper():
+        try:
+            for index, item in batch:
+                previous_mask = signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGINT, signal.SIGTERM})
+                namespace = Path(tempfile.mkdtemp(prefix=f"dvl02-worker-{index:02d}-", dir="/tmp"))
+                os.chmod(namespace, 0o700)
+                control_read, control_write = os.pipe()
+                result_read, result_write = os.pipe()
+                nonce = str(uuid4())
+                sentinel = namespace / "sentinel"
+                sentinel.write_bytes(nonce.encode())
+                sentinel_before = sha256(sentinel.read_bytes()).hexdigest()
+                try:
+                    env = _base_env(namespace / "home", namespace, omp, item)
+                    argv = _worker_argv(item, index, invocation, nonce, os.getpid(), harness.ticks(os.getpid()),
+                                        control_write, result_write, namespace, report_dir, omp)
+                    proc = subprocess.Popen(argv, cwd=REPO, env=env, stdin=subprocess.DEVNULL,
+                                            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                            pass_fds=(control_write, result_write), start_new_session=True)
+                except (OSError, ValueError, AssertionError) as exc:
+                    for fd in (control_read, control_write, result_read, result_write):
+                        os.close(fd)
+                    results[index] = _unknown_item(item, "cell worker spawn failed: " + type(exc).__name__)
+                    shutil.rmtree(namespace)
+                    signal.pthread_sigmask(signal.SIG_SETMASK, previous_mask)
+                    continue
+                os.close(control_write)
+                os.close(result_write)
+                start = harness.ticks(proc.pid)
+                control = _ControlState(invocation, item.key, nonce)
+                control.bind_root(proc.pid, start)
+                worker = {"index": index, "item": item, "namespace": namespace, "proc": proc,
+                          "start": start, "control": control, "nonce": nonce, "argv": argv,
+                          "result": bytearray(), "stdout": bytearray(), "stderr": bytearray(),
+                          "error": None, "fds": [], "lastProgress": time.monotonic(),
+                          "started": time.monotonic(), "finished": None,
+                          "stopRequested": None, "sentinelBefore": sentinel_before}
+                workers.append(worker)
+                for fd, label in ((control_read, "control"), (result_read, "result"),
+                                  (proc.stdout.fileno(), "stdout"), (proc.stderr.fileno(), "stderr")):
+                    os.set_blocking(fd, False)
+                    worker["fds"].append(fd)
+                    selector.register(fd, selectors.EVENT_READ, (worker, label))
+                signal.pthread_sigmask(signal.SIG_SETMASK, previous_mask)
+            while selector.get_map() or any(w["proc"].poll() is None for w in workers):
+                members()
+                for key, _ in selector.select(0.1):
+                    worker, label = key.data
+                    chunk = os.read(key.fd, 65536)
+                    if not chunk:
+                        selector.unregister(key.fd)
+                    elif label == "control":
+                        if worker["control"].feed(chunk):
+                            worker["lastProgress"] = time.monotonic()
+                    elif label == "result":
+                        if len(worker["result"]) + len(chunk) > CELL_RESULT_BYTES:
+                            worker["error"] = "cell result exceeded bound"
+                        else:
+                            worker["result"].extend(chunk)
+                    else:
+                        _append_bounded(worker[label], chunk)
+                for worker in workers:
+                    if worker["proc"].poll() is not None and worker["finished"] is None:
+                        worker["finished"] = time.monotonic()
+                    allowance = SCENARIO_IDLE_SECONDS + worker["item"].expected_wait_seconds + 3 * CLEANUP_SECONDS
+                    if worker["proc"].poll() is None and time.monotonic() - worker["lastProgress"] > allowance:
+                        worker["error"] = "cell supervisor watchdog after inner cleanup allowance"
+                        harness.kill_exact(worker["proc"].pid, worker["start"], signal.SIGTERM)
+                        worker["stopRequested"] = worker["stopRequested"] or time.monotonic()
+                        # A stopped cell never prevents the other selected cell from finishing.
+                        worker["lastProgress"] = time.monotonic()
+                    if (worker["proc"].poll() is None and worker["stopRequested"] is not None
+                            and time.monotonic() - worker["stopRequested"] > 3 * CLEANUP_SECONDS):
+                        harness.kill_exact(worker["proc"].pid, worker["start"])
+        except _Interrupted:
+            interrupted = True
+        finally:
+            for worker in workers:
+                if worker["proc"].poll() is None and harness.kill_exact(worker["proc"].pid, worker["start"], signal.SIGTERM):
+                    signalled.add(worker["proc"].pid)
+            deadline = time.monotonic() + 3 * CLEANUP_SECONDS
+            while any(w["proc"].poll() is None for w in workers) and time.monotonic() < deadline:
+                # Keep draining ownership receipts during cooperative signal cleanup.
+                for key, _ in selector.select(0.05):
+                    worker, label = key.data
+                    chunk = os.read(key.fd, 65536)
+                    if not chunk:
+                        selector.unregister(key.fd)
+                    elif label == "control":
+                        worker["control"].feed(chunk)
+                    elif label == "result" and len(worker["result"]) + len(chunk) <= CELL_RESULT_BYTES:
+                        worker["result"].extend(chunk)
+                members()
+            for pid, start in members().items():
+                if harness.kill_exact(pid, start):
+                    signalled.add(pid)
+            for worker in workers:
+                try:
+                    worker["proc"].wait(timeout=CLEANUP_SECONDS)
+                except subprocess.TimeoutExpired:
+                    worker["error"] = "cell worker survived cleanup"
+            members()
+            reaped = _reap_adopted(adopted)
+            remaining = members()
+            for worker in workers:
+                item = worker["item"]
+                try:
+                    envelope = json.loads(worker["result"])
+                    expected = {"invocation": invocation, "item": item.key, "nonce": worker["nonce"],
+                                "workerPid": worker["proc"].pid, "workerStartTicks": worker["start"]}
+                    if any(envelope.get(key) != value for key, value in expected.items()):
+                        raise ValueError("cell result identity mismatch")
+                    row = envelope["result"]
+                    if not isinstance(row, dict) or row.get("id") != item.key:
+                        raise ValueError("cell result item mismatch")
+                    if row.get("status") == "passed" and not worker["control"].valid():
+                        raise ValueError("missing trusted cell suite/ownership receipts")
+                    if worker["proc"].returncode != 0 or worker["error"]:
+                        raise ValueError(worker["error"] or "cell worker exit error")
+                except (ValueError, TypeError, KeyError) as exc:
+                    row = _unknown_item(item, "cell result unavailable/invalid: " + str(exc))
+                sentinel = worker["namespace"] / "sentinel"
+                try:
+                    with os.fdopen(os.open(sentinel, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK), "rb") as stream:
+                        if not stat.S_ISREG(os.fstat(stream.fileno()).st_mode):
+                            raise ValueError("sentinel not regular")
+                        sentinel_bytes = stream.read(1025)
+                    after_sha = sha256(sentinel_bytes).hexdigest() if len(sentinel_bytes) <= 1024 else None
+                except (OSError, ValueError):
+                    after_sha = None
+                worker_meta = {"pid": worker["proc"].pid, "startTicks": worker["start"],
+                               "namespace": str(worker["namespace"]), "home": str(worker["namespace"] / "home"),
+                               "startedMonotonic": worker["started"],
+                               "finishedMonotonic": worker["finished"] or time.monotonic(),
+                               "command": worker["argv"], "exitCode": worker["proc"].returncode,
+                               "sentinelBeforeSha256": worker["sentinelBefore"], "sentinelAfterSha256": after_sha,
+                               "ownedIdentities": worker["control"].owned,
+                               "ownedSessions": owned_sessions, "unknownAdoptions": unknown_adoptions,
+                               "remaining": sorted(remaining), "signalledPids": sorted(signalled),
+                               "reapedPids": reaped, "interrupted": interrupted}
+                if row.get("status") == "failed":
+                    pass  # Preserve the confirmed failure and its original reason across cleanup/interruption.
+                elif remaining or (signalled and not interrupted) or after_sha != worker["sentinelBefore"]:
+                    row.update(status="failed", reason="cell parent cleanup/sentinel failure", failureClass="cleanup")
+                elif interrupted:
+                    row.update(status="inconclusive", reason="runner interrupted; cell cleanup completed")
+                if not remaining:
+                    shutil.rmtree(worker["namespace"])
+                worker_meta["namespaceRemoved"] = not worker["namespace"].exists()
+                row["cellWorker"] = worker_meta
+                results[worker["index"]] = row
+                for fd in worker["fds"][:2]:
+                    os.close(fd)
+                worker["proc"].stdout.close()
+                worker["proc"].stderr.close()
+            selector.close()
+    return [results.get(index, _unknown_item(item, "runner interrupted before cell registration", status="not_run"))
+            for index, item in batch], interrupted
+
+
+def _parallel_items(items: tuple[Item, ...], report_dir: Path, omp: Path,
+                    invocation: str, offset: int) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    cursor = 0
+    with _interrupt_signals():
+        while cursor < len(items):
+            item = items[cursor]
+            count = 2 if (item.outer == "tmux" and cursor + 1 < len(items)
+                          and items[cursor + 1].outer == "tmux") else 1
+            batch = [(offset + index, items[index]) for index in range(cursor, cursor + count)]
+            completed, interrupted = _run_cell_batch(batch, report_dir, omp, invocation)
+            rows.extend(completed)
+            cursor += count
+            if interrupted:
+                rows.extend(_unknown_item(item, "runner interrupted before cell start", status="not_run")
+                            for item in items[cursor:])
+                break
+    return rows
+
+
+def _item_identity(item: Item) -> dict[str, Any]:
+    return {"id": item.key, "modules": list(item.modules), "testIds": list(item.modules),
+            "assertionIds": list(item.assertion_ids), "required": True,
+            "evidenceLevel": item.evidence_level, "expectedWaitSeconds": item.expected_wait_seconds,
+            "env": item.env, "requiredSteps": {name: list(steps) for name, steps in item.scenario_steps.items()},
+            "allowedNa": [list(pair) for pair in item.allowed_na], "outer": item.outer}
+
+
+def _cost_identity(items: tuple[Item, ...], omp: Path) -> dict[str, Any]:
+    # Only concrete private namespace names and requested jobs are excluded.
+    # Actual tool/interpreter paths and every item/env/assertion definition remain.
+    return {"selectedItems": [_item_identity(item) for item in items],
+            "environmentTemplate": {"builder": "harness.clean_base_env + _base_env/v1",
+                "HOME": "<namespace>/home", "XDG": "<namespace>/home/{config,data,state,cache,runtime}",
+                "TMPDIR": "<namespace>", "reportDir": "<namespace>/reports", "runId": "<item.id>",
+                "PATH": f"/usr/bin:/bin:{omp.parent}", "PYTHONPATH": str(REPO / "src"),
+                "pythonExecutable": sys.executable, "ompPath": str(omp),
+                "tmuxPath": harness.find_tool("tmux"), "herdrPath": harness.find_tool("herdr"),
+                "proxy": harness.BLOCKED_PROXY, "proxyKeys": list(harness.PROXY_KEYS),
+                "userAuthInherited": False, "provider": "scripted loopback only",
+                "readinessSeconds": READINESS_SECONDS, "idleSeconds": SCENARIO_IDLE_SECONDS,
+                "cleanupSeconds": CLEANUP_SECONDS},
+            "measurement": "wall before input snapshot through after tool versions; comparison/serialization excluded"}
+
+
+def _scope_cost(report: dict[str, Any]) -> tuple[dict[str, Any] | None, list[str]]:
+    reasons: list[str] = []
+    identity = report.get("costIdentity")
+    if not isinstance(identity, dict) or not isinstance(identity.get("selectedItems"), list):
+        return None, ["canonical executable scope missing"]
+    definitions = identity["selectedItems"]
+    if not definitions or any(not isinstance(item, dict) for item in definitions):
+        return None, ["canonical executable scope invalid"]
+    keys = [item.get("id") for item in definitions]
+    if any(not isinstance(key, str) for key in keys) or len(set(keys)) != len(keys):
+        return None, ["canonical executable scope duplicate/invalid IDs"]
+    rows = report.get("items")
+    if not isinstance(rows, list) or any(not isinstance(row, dict) for row in rows):
+        return None, ["full item evidence missing"]
+    if any(not isinstance(row.get("id"), str) for row in rows):
+        return None, ["invalid item evidence ID"]
+    by_key = {row.get("id"): row for row in rows}
+    if len(by_key) != len(rows):
+        reasons.append("duplicate item evidence")
+    costs: dict[str, float] = {}
+    for definition in definitions:
+        key = definition["id"]
+        row = by_key.get(key, {})
+        count, seconds = row.get("collectedTests"), row.get("durationSeconds")
+        if row.get("status") != "passed":
+            reasons.append(f"{key}: executable item is not passed")
+        if type(count) is not int or count <= 0 or row.get("skippedTests") != 0:
+            reasons.append(f"{key}: positive complete collection missing")
+        if (type(seconds) not in (int, float) or not math.isfinite(seconds) or seconds < 0):
+            reasons.append(f"{key}: measured item duration invalid")
+        else:
+            costs[key] = seconds
+        for field in ("testIds", "assertionIds", "required", "evidenceLevel", "expectedWaitSeconds"):
+            if row.get(field) != definition.get(field):
+                reasons.append(f"{key}: {field} evidence differs from selected definition")
+        cleanup = row.get("cleanup")
+        if (not isinstance(cleanup, dict) or cleanup.get("remaining") != []
+                or cleanup.get("namespaceRemoved") is not True or cleanup.get("unknownNamespaceUsers")):
+            reasons.append(f"{key}: successful owned cleanup missing")
+        worker = row.get("cellWorker")
+        digests = (worker.get("sentinelBeforeSha256"), worker.get("sentinelAfterSha256")) if isinstance(worker, dict) else ()
+        valid_digests = len(digests) == 2 and all(isinstance(value, str) and len(value) == 64
+                                                and all(char in "0123456789abcdef" for char in value)
+                                                for value in digests)
+        if worker is not None and (not isinstance(worker, dict) or worker.get("remaining") != []
+                                  or worker.get("namespaceRemoved") is not True
+                                  or not valid_digests
+                                  or worker.get("sentinelBeforeSha256") != worker.get("sentinelAfterSha256")):
+            reasons.append(f"{key}: cell-worker cleanup/sentinel failed")
+        required = definition.get("requiredSteps", {})
+        if not isinstance(required, dict) or any(not isinstance(key, str) or not isinstance(value, list)
+                                                for key, value in required.items()):
+            reasons.append(f"{key}: invalid required step definition")
+            continue
+        evidence = row.get("scenarioEvidence", [])
+        if not isinstance(evidence, list) or any(not isinstance(value, dict) for value in evidence):
+            reasons.append(f"{key}: full scenario evidence missing")
+            continue
+        if any(not isinstance(value.get("scenario"), str) for value in evidence):
+            reasons.append(f"{key}: invalid scenario identity")
+            continue
+        observed = {value.get("scenario"): value for value in evidence}
+        if len(observed) != len(evidence) or set(observed) != set(required):
+            reasons.append(f"{key}: required scenario inventory differs")
+        for scenario, steps in required.items():
+            value = observed.get(scenario, {})
+            if value.get("status") != "passed" or value.get("requiredSteps") != steps:
+                reasons.append(f"{key}/{scenario}: required steps not passed")
+            path, digest = value.get("reportPath"), value.get("sha256")
+            try:
+                if not isinstance(path, str) or not isinstance(digest, str):
+                    raise ValueError("raw report reference missing")
+                fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+                with os.fdopen(fd, "rb") as stream:
+                    if not stat.S_ISREG(os.fstat(stream.fileno()).st_mode):
+                        raise ValueError("raw report is not regular")
+                    raw = stream.read(CONTROL_BYTES + 1)
+                if len(raw) > CONTROL_BYTES or sha256(raw).hexdigest() != digest:
+                    raise ValueError("raw report changed or exceeded bound")
+            except (OSError, ValueError) as exc:
+                reasons.append(f"{key}/{scenario}: retained raw evidence unavailable: {type(exc).__name__}")
+    wall = report.get("elapsedSeconds")
+    if type(wall) not in (int, float) or not math.isfinite(wall) or wall < 0:
+        reasons.append("measured wall duration invalid")
+    if report.get("result") == "failed" or any(row.get("status") == "failed" for row in rows):
+        reasons.append("report contains a confirmed failure")
+    if any(row.get("required") and row.get("status") != "passed" and row.get("id") not in PRECISE_PENDING
+           for row in rows):
+        reasons.append("report contains required unknown outside future pending scope")
+    failure = report.get("firstFailure")
+    if failure and (not isinstance(failure, dict) or failure.get("status") != "not_run"
+                    or failure.get("item") not in PRECISE_PENDING):
+        reasons.append("original failed/unknown attempt is still unresolved")
+    return ({"wallSeconds": wall, "itemSumSeconds": round(sum(costs.values()), 3), "items": costs}
+            if not reasons else None), reasons
+
+
+def _compare_cost(report: dict[str, Any], baseline_path: Path | None) -> dict[str, Any]:
+    if baseline_path is None:
+        return {"status": "not_requested", "reasons": []}
+    result: dict[str, Any] = {"status": "unknown", "baselineReport": str(baseline_path.absolute()), "reasons": []}
+    try:
+        fd = os.open(baseline_path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+        with os.fdopen(fd, "rb") as stream:
+            if not stat.S_ISREG(os.fstat(stream.fileno()).st_mode):
+                raise ValueError("baseline report must be regular")
+            raw = stream.read(BASELINE_REPORT_BYTES + 1)
+        if len(raw) > BASELINE_REPORT_BYTES:
+            raise ValueError("baseline report exceeded bound")
+        baseline = json.loads(raw)
+        if (not isinstance(baseline, dict) or type(baseline.get("schemaVersion")) is not int
+                or baseline.get("schemaVersion") != SCHEMA_VERSION
+                or not isinstance(baseline.get("attemptId"), str) or not baseline["attemptId"]):
+            raise ValueError("invalid baseline schema")
+    except (OSError, ValueError) as exc:
+        result["reasons"] = ["baseline unavailable/invalid: " + str(exc)]
+        return result
+    reasons = result["reasons"]
+    for label, value in (("current", report), ("baseline", baseline)):
+        if not value.get("inputBefore") or value.get("inputBefore") != value.get("inputAfter"):
+            reasons.append(f"{label}: source identity changed or absent")
+        if not value.get("versionsBefore") or value.get("versionsBefore") != value.get("versionsAfter"):
+            reasons.append(f"{label}: tool versions changed or absent")
+    for field in ("inputBefore", "versionsBefore", "ompPath", "mode", "cwd", "costIdentity"):
+        if field not in baseline or baseline[field] != report.get(field):
+            reasons.append("different comparison identity: " + field)
+    old_cost, old_reasons = _scope_cost(baseline)
+    new_cost, new_reasons = _scope_cost(report)
+    reasons.extend("baseline: " + reason for reason in old_reasons)
+    reasons.extend("current: " + reason for reason in new_reasons)
+    if old_cost is not None and new_cost is not None:
+        old_counts = {row["id"]: row["collectedTests"] for row in baseline["items"]
+                      if row["id"] in old_cost["items"]}
+        new_counts = {row["id"]: row["collectedTests"] for row in report["items"]
+                      if row["id"] in new_cost["items"]}
+        if old_counts != new_counts:
+            reasons.append("different comparison identity: collectedTests map")
+    old_execution, new_execution = baseline.get("execution"), report.get("execution")
+    if (not isinstance(old_execution, dict) or not isinstance(new_execution, dict)
+            or type(old_execution.get("jobs")) is not int or old_execution["jobs"] not in (1, 2)
+            or type(new_execution.get("jobs")) is not int or new_execution["jobs"] not in (1, 2)):
+        reasons.append("verified jobs metadata missing/invalid")
+    result.update(baselineAttemptId=baseline.get("attemptId"), baselineFirstFailure=baseline.get("firstFailure"),
+                  baselineJobs=old_execution.get("jobs") if isinstance(old_execution, dict) else None,
+                  currentJobs=new_execution.get("jobs") if isinstance(new_execution, dict) else None)
+    if not reasons:
+        result.update(status="comparable", before=old_cost, after=new_cost,
+                      wallDeltaSeconds=round(new_cost["wallSeconds"] - old_cost["wallSeconds"], 3),
+                      itemSumDeltaSeconds=round(new_cost["itemSumSeconds"] - old_cost["itemSumSeconds"], 3),
+                      itemCosts=[{"id": key, "beforeSeconds": value, "afterSeconds": new_cost["items"][key],
+                                  "deltaSeconds": round(new_cost["items"][key] - value, 3)}
+                                 for key, value in old_cost["items"].items()])
+    return result
+
+
 def _prior(path: Path | None) -> tuple[list[dict[str, Any]], dict[str, Any] | None]:
     if path is None:
         return [], None
@@ -828,9 +1432,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--omp", type=Path)
     parser.add_argument("--jobs", type=int, default=1)
     parser.add_argument("--prior-report", type=Path)
+    parser.add_argument("--baseline-report", type=Path)
     args = parser.parse_args(argv)
-    if args.jobs != 1:
-        parser.error("DVL-01 only verifies one isolated cell at a time; --jobs must be 1")
+    if args.jobs not in (1, 2):
+        parser.error("only --jobs 1/2 is verified; jobs 2 overlaps the two tmux cells only")
     omp = args.omp or (Path(shutil.which("omp")) if shutil.which("omp") else None)
     if omp is None or not omp.is_absolute() or not omp.is_file() or not os.access(omp, os.X_OK):
         parser.error("an installed absolute executable --omp is required")
@@ -848,8 +1453,14 @@ def main(argv: list[str] | None = None) -> int:
                           text=True, check=True, env=harness.clean_base_env()).stdout.strip()
     items: list[dict[str, Any]] = []
     selected_items = FAST_ITEMS + (PRECISE_ITEMS if args.mode == "precise" else ())
-    for index, item in enumerate(selected_items):
-        items.append(_run_item(item, index, report_dir, omp, invocation_id))
+    if args.jobs == 1:
+        for index, item in enumerate(selected_items):
+            items.append(_run_item(item, index, report_dir, omp, invocation_id))
+    else:
+        for index, item in enumerate(FAST_ITEMS):
+            items.append(_run_item(item, index, report_dir, omp, invocation_id))
+        if args.mode == "precise":
+            items.extend(_parallel_items(PRECISE_ITEMS, report_dir, omp, invocation_id, len(FAST_ITEMS)))
     if args.mode == "precise":
         items.extend({"id": name, "assertionIds": ["DV-AC-03"], "required": True,
                       "evidenceLevel": "runtime", "status": "not_run", "reason": "DVL-13/final product registry pending",
@@ -886,7 +1497,13 @@ def main(argv: list[str] | None = None) -> int:
               "result": status, "exitCode": exit_code,
               "environment": {"privateNamespace": str(report_dir), "allowlistChildEnv": True,
                               "provider": "scripted loopback only", "userAuthInherited": False,
-                              "parallelCells": 1},
+                              "parallelCells": 2 if args.jobs == 2 and args.mode == "precise" else 1},
+              "execution": {"jobs": args.jobs, "fastSerial": True,
+                            "parallelEligibility": ["compat_tmux_bash", "compat_tmux_dash"] if args.jobs == 2 and args.mode == "precise" else [],
+                            "otherCells": "serialized", "herdrSerial": True},
+              "costIdentity": _cost_identity(selected_items, omp),
+              "measuredCost": {"wallSeconds": elapsed,
+                               "itemSumSeconds": round(sum(item["durationSeconds"] for item in items), 3)},
               "baselineIdentity": baseline_identity,
               "baseline": {item["id"]: {"durationSeconds": item["durationSeconds"],
                                         "expectedWaitSeconds": item["expectedWaitSeconds"]} for item in items}}
@@ -900,6 +1517,18 @@ def main(argv: list[str] | None = None) -> int:
             {"id": "legacy_full_regression", "status": "not_run", "reason": "remaining legacy flow/policy/fault assertions require separate regression"},
             {"id": "VM_GUI_paid_model", "status": "not_run", "reason": "outside local scripted-provider scope"},
         ]
+    comparison = _compare_cost(report, args.baseline_report)
+    report["costComparison"] = comparison
+    if comparison["status"] == "unknown":
+        items.append({"id": "cost_comparison", "assertionIds": ["DV-AC-03", "DV-AC-05"], "required": True,
+                      "evidenceLevel": "static", "status": "inconclusive", "reason": comparison["reasons"],
+                      "collectedTests": 0, "durationSeconds": 0, "expectedWaitSeconds": 0})
+        if first_failure is None:
+            first_failure = {"item": "cost_comparison", "status": "inconclusive",
+                             "reason": comparison["reasons"], "attemptId": attempt_id}
+        status, exit_code = _overall(items, first_failure)
+        report.update(result=status, exitCode=exit_code, firstFailure=first_failure)
+        report["attemptChain"][-1]["status"] = status
     target = report_dir / "report.json"
     descriptor = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
     with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
@@ -913,6 +1542,11 @@ def main(argv: list[str] | None = None) -> int:
 
 
 if __name__ == "__main__":
+    if len(sys.argv) == 13 and sys.argv[1] == "--_cell-worker":
+        registry = {item.key: item for item in (*FAST_ITEMS, *PRECISE_ITEMS)}
+        raise SystemExit(_cell_worker_main(registry[sys.argv[2]], int(sys.argv[3]), sys.argv[4], sys.argv[5],
+                                          int(sys.argv[6]), int(sys.argv[7]), int(sys.argv[8]), int(sys.argv[9]),
+                                          Path(sys.argv[10]), Path(sys.argv[11]), Path(sys.argv[12])))
     if len(sys.argv) >= 7 and sys.argv[1] == "--_driver":
         raise SystemExit(_driver_main(sys.argv[2], sys.argv[3], sys.argv[4],
                                       int(sys.argv[5]), sys.argv[6:]))

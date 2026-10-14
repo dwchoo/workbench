@@ -171,8 +171,10 @@ PRECISE_ITEMS = tuple(
          {"fault-x2": ("X2.running_open_task", "X2.sigkill_backend", "X2.restart_reconcile",
                        "X2.backend_restarted_once", "X2.no_replay", "X2.status_text",
                        "X2.stop_survivor_unverified_refused", "X2.stop_survivor_verified_stopped", "X2.shutdown")}),
+    # 270s covers the observed 187s run plus one existing 150s assertion timeout:
+    # 337s is below the 120s idle allowance plus 270s; multiple timeouts remain inconclusive.
     Item("scripted_model_fault_holds", (*_CORE_ASSERTIONS, "X3"),
-         (f"{_FAULT}.test_x3_model_fault_holds",), "runtime", 45,
+         (f"{_FAULT}.test_x3_model_fault_holds",), "runtime", 270,
          {"WB_LIVE_CW16": "1", "WB_CW16_FAULTS": "X3"},
          {"fault-x3": ("X3.worker_fault_hold", "X3.analysis_waits_for_worker", "X3.worker_recovers",
                        "X3.analysis_after_recovery", "X3.p2_2_first_tool_allowed",

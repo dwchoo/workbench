@@ -1,4 +1,4 @@
-"""Repository-only fast validation runner; precise registry is completed by DVL-02.
+"""Repository-only fast and representative core precise validation runner.
 
 Every child gets a fresh credential-free environment and a private namespace.
 This is developer evidence, never a product compatibility/adoption verdict.
@@ -68,6 +68,9 @@ class Item:
     evidence_level: str
     expected_wait_seconds: float = 0
     env: dict[str, str] = field(default_factory=dict)
+    scenario_steps: dict[str, tuple[str, ...]] = field(default_factory=dict)
+    allowed_na: tuple[tuple[str, str], ...] = ()
+    outer: str | None = None
 
 
 FAST_ITEMS = (
@@ -78,9 +81,73 @@ FAST_ITEMS = (
     Item("installed_plain_bash", ("DV-AC-02", "DV-AC-04"),
          ("tests.dev_validation.test_fast_smoke",), "runtime", env={"WB_DVL_REAL_SMOKE": "1"}),
 )
+_COMPAT = "tests.integration.live_cw16_compat"
+_POLICY = "tests.integration.live_cw16_flow_policy.Cw16PolicyScenarios"
+_FAULT = "tests.integration.live_cw16_fault.Cw16FaultScenarios"
+_CORE_ASSERTIONS = ("DV-AC-02", "DV-AC-03", "DV-AC-04", "DV-AC-05")
+_COMPAT_STEPS = ("C1", "C2", "C3", "C4", "C5", "C6", "C7")
+
+# Exact existing Bash and sh(dash) unittest IDs, not module discovery:
+# VM/model/full regression suites are never implicitly selected here.
+PRECISE_ITEMS = tuple(
+    Item(f"compat_{outer}_{shell}", (*_CORE_ASSERTIONS, *_COMPAT_STEPS),
+         (f"{_COMPAT}.Cw16CompatMatrix.test_{outer}_{shell}",), "runtime", 65,
+         {"WB_LIVE_CW16": "1", "WB_CW16_OUTERS": outer, "WB_CW16_SHELLS": shell,
+          "WB_CW16_DETACH_SECONDS": "65"},
+         {f"compat-{outer}-{shell}": _COMPAT_STEPS},
+         ((f"compat-plain-{shell}", "C6"),) if outer == "plain" else (), outer)
+    for outer in ("plain", "tmux", "herdr") for shell in ("bash", "dash")
+) + (
+    Item("shell_selection", (*_CORE_ASSERTIONS, "SEL1", "SEL2", "SEL3"), (
+        f"{_COMPAT}.Cw16ShellSelection.test_sel1_bash_first_fake_zsh_never_executed",
+        f"{_COMPAT}.Cw16ShellSelection.test_sel2_no_bash_falls_back_to_dash",
+        f"{_COMPAT}.Cw16ShellSelection.test_sel3_neither_bash_nor_sh_guidance_nonzero_nothing_started",
+    ), "runtime", env={"WB_LIVE_CW16": "1", "WB_CW16_SHELLS": "bash"},
+         scenario_steps={"sel-1": ("start", "operate", "shutdown"),
+                         "sel-2": ("start", "operate", "shutdown"), "sel-3": ("start_refused",)}),
+    Item("review_busy_end", (*_CORE_ASSERTIONS, "P1", "P7"),
+         (f"{_POLICY}.test_p1_periodic_reviews_merge_and_p7_usage",), "runtime", 200,
+         {"WB_LIVE_CW16": "1", "WB_CW16_SCENARIOS": "P1"},
+         {"policy-P1-P7": ("start", "P1_reviews_60s_merge_when_busy",
+                           "P7_usage_in_review_facts_and_display", "shutdown")}),
+    Item("pause_end_no_replay", (*_CORE_ASSERTIONS, "P2"),
+         (f"{_POLICY}.test_p2_pause_holds_automatic_work",), "runtime", 90,
+         {"WB_LIVE_CW16": "1", "WB_CW16_SCENARIOS": "P2"},
+         {"policy-P2": ("start", "P2_pause_holds_sends_and_terminal",
+                        "P2_run_end_shown_no_review_while_paused", "P2_resume_reconciled_no_replay", "shutdown")}),
+    Item("backend_restart_no_replay", (*_CORE_ASSERTIONS, "X2"),
+         (f"{_FAULT}.test_x2_backend_sigkill_restart",), "runtime", 25,
+         {"WB_LIVE_CW16": "1", "WB_CW16_FAULTS": "X2"},
+         {"fault-x2": ("X2.running_open_task", "X2.sigkill_backend", "X2.restart_reconcile",
+                       "X2.backend_restarted_once", "X2.no_replay", "X2.status_text",
+                       "X2.stop_survivor_unverified_refused", "X2.stop_survivor_verified_stopped", "X2.shutdown")}),
+    Item("scripted_model_fault_holds", (*_CORE_ASSERTIONS, "X3"),
+         (f"{_FAULT}.test_x3_model_fault_holds",), "runtime", 45,
+         {"WB_LIVE_CW16": "1", "WB_CW16_FAULTS": "X3"},
+         {"fault-x3": ("X3.worker_fault_hold", "X3.analysis_waits_for_worker", "X3.worker_recovers",
+                       "X3.analysis_after_recovery", "X3.p2_2_first_tool_allowed",
+                       "X3.p2_1_manager_fault_report_kept", "X3.p2_1_delivered_once", "X3.shutdown")}),
+    Item("shutdown_confirmation", (*_CORE_ASSERTIONS, "X4"),
+         (f"{_FAULT}.test_x4_shutdown_confirmation",), "runtime",
+         env={"WB_LIVE_CW16": "1", "WB_CW16_FAULTS": "X4"},
+         scenario_steps={"fault-x4": ("X4.no_yes_refused_active_listed", "X4.yes_verified_nothing_left",
+                                     "X4.owned_broker_not_alive_at_verified", "X4.survivor_unverified_exit1")}),
+    Item("core_metadata_raw_faults", (*_CORE_ASSERTIONS, "X6"),
+         (f"{_FAULT}.test_x6_storage_faults",), "runtime",
+         env={"WB_LIVE_CW16": "1", "WB_CW16_FAULTS": "X6"},
+         scenario_steps={"fault-x6": ("X6.run_cap_64mib_run_continues", "X6.restart_keeps_task_spec_worktree",
+                                     "X6.project_cap_reduced_fixture", "X6.start_fault_sandbox",
+                                     "X6.raw_log_store_failure_shown", "X6.metadata_hold_and_pause_store_failure",
+                                     "X6.pause_store_failure_visible_at_170", "X6.metadata_restored", "X6.shutdown")}),
+    Item("takeover_restart_no_replay", (*_CORE_ASSERTIONS, "X7"),
+         (f"{_FAULT}.test_x7_takeover_during_delivery_restart",), "runtime", 15,
+         {"WB_LIVE_CW16": "1", "WB_CW16_FAULTS": "X7"},
+         {"fault-x7": ("X7.command_delivered", "X7.takeover_holds_new_sends", "X7.backend_restart",
+                       "X7.old_command_unknown_no_replay", "X7.shutdown")}),
+)
 PRECISE_PENDING = (
-    "plain_dash_outer_matrix", "tmux_herdr_matrix", "review_60s_and_detach_65s",
-    "fault_recovery_matrix", "q01_and_storage_product_gates", "model_metadata",
+    "q01_product_adapter_recheck", "new_storage_summary_raw_product_gates",
+    "model_metadata", "product_full_dvl14",
 )
 
 
@@ -136,6 +203,12 @@ def _base_env(home: Path, namespace: Path, omp: Path, item: Item) -> dict[str, s
         **{key: harness.BLOCKED_PROXY for key in harness.PROXY_KEYS},
         NO_PROXY="127.0.0.1", no_proxy="127.0.0.1", **item.env,
     )
+    if item.scenario_steps:
+        env.update(WB_CW16_OMP=str(omp), WB_CW16_RUN_ID=item.key)
+        if item.outer in ("tmux", "herdr"):
+            tool = harness.find_tool(item.outer)
+            if tool:
+                env[f"WB_CW16_{item.outer.upper()}"] = tool
     # The harness's guard only permits its own WORKBENCH data paths, never inherited ones.
     harness.assert_env_isolated(env, home.parent)
     return env
@@ -416,6 +489,70 @@ def _reap_adopted(owned: dict[int, int]) -> list[int]:
     return sorted(reaped)
 
 
+def _scenario_evidence(item: Item, index: int, namespace: Path,
+                       report_dir: Path) -> list[dict[str, Any]]:
+    """Check and retain fresh legacy assertions, in addition to control/ownership evidence."""
+    evidence: list[dict[str, Any]] = []
+    for scenario, required_steps in item.scenario_steps.items():
+        row: dict[str, Any] = {"scenario": scenario, "requiredSteps": list(required_steps),
+                               "status": "inconclusive", "steps": {}, "reason": None}
+        path = namespace / "reports" / item.key / f"{scenario}.json"
+        try:
+            if not path.resolve().is_relative_to(namespace.resolve()) or path.is_symlink():
+                raise ValueError("legacy report escaped the owned namespace")
+            descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+            with os.fdopen(descriptor, "rb") as stream:
+                if not stat.S_ISREG(os.fstat(stream.fileno()).st_mode):
+                    raise ValueError("legacy report is not a regular file")
+                raw = stream.read(CONTROL_BYTES + 1)
+            if len(raw) > CONTROL_BYTES:
+                raise ValueError("legacy report exceeds 1 MiB")
+            data = json.loads(raw)
+            target = report_dir / f"{index:02d}-{item.key}-{scenario}.json"
+            descriptor = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+            with os.fdopen(descriptor, "wb") as stream:
+                stream.write(raw)
+            row.update(reportPath=str(target), sha256=sha256(raw).hexdigest())
+            if not isinstance(data, dict) or data.get("run_id") != item.key or data.get("scenario") != scenario:
+                raise ValueError("legacy report scenario/invocation identity mismatch")
+            steps = data.get("steps")
+            if not isinstance(steps, dict) or any(not isinstance(step, dict) for step in steps.values()):
+                raise ValueError("legacy report has invalid steps")
+            row["steps"] = steps
+            missing = [name for name in required_steps if name not in steps]
+            failed = [name for name, step in steps.items() if step.get("status") == harness.FAIL]
+            if failed:
+                row.update(status="failed", reason=f"legacy assertion failure: {failed}")
+            unknown = [name for name, step in steps.items()
+                       if step.get("status") != harness.PASS
+                       and not (step.get("status") == harness.NA and (scenario, name) in item.allowed_na)
+                       and name not in failed]
+            cleanups = data.get("cleanups", [data.get("cleanup")])
+            if not isinstance(cleanups, list) or not cleanups or any(not isinstance(c, dict) for c in cleanups):
+                raise ValueError("legacy report is missing cleanup evidence")
+            row["cleanups"] = cleanups
+            dirty_cleanup = any(c.get("residue_before_fallback") or c.get("residue_after_fallback")
+                                or c.get("cleanup_errors") or c.get("shutdown_error")
+                                or c.get("root_removed") is not True
+                                or c.get("shutdown_exit", 0) != 0 for c in cleanups)
+            row["cleanupFailed"] = dirty_cleanup
+            provider = data.get("provider", {})  # SEL reports do not contain provider snapshots.
+            if not isinstance(provider, dict):
+                raise ValueError("legacy report has invalid provider evidence")
+            if failed or dirty_cleanup:
+                row.update(status="failed", reason=f"legacy assertion/cleanup failure: {failed}")
+            elif missing or unknown or data.get("unknowns") or provider.get("errors"):
+                row.update(reason=f"legacy missing/not_run/unknown/provider error: {missing + unknown}")
+            elif data.get("result") != harness.PASS:
+                row.update(reason="legacy scenario result is not pass")
+            else:
+                row["status"] = "passed"
+        except (OSError, ValueError, TypeError) as exc:
+            row["reason"] = f"legacy report unavailable/invalid: {type(exc).__name__}: {exc}"
+        evidence.append(row)
+    return evidence
+
+
 def _run_item_scoped(item: Item, index: int, report_dir: Path, omp: Path,
                      invocation_id: str | None = None,
                      baseline_children: dict[int, int] | None = None) -> dict[str, Any]:
@@ -568,6 +705,31 @@ def _run_item_scoped(item: Item, index: int, report_dir: Path, omp: Path,
         status, reason, failure_class = "failed", "unittest assertion/error", "product_assertion"
     else:
         status, reason, failure_class = "inconclusive", "probe/provider/environment error or unclassified exit", "probe_environment"
+    scenario_evidence = _scenario_evidence(item, index, namespace, report_dir)
+    if item.scenario_steps:
+        failed_scenarios = [row for row in scenario_evidence if row["status"] == "failed"]
+        unknown_scenarios = [row for row in scenario_evidence if row["status"] != "passed"]
+        if failed_scenarios:
+            status, reason, failure_class = "failed", failed_scenarios[0]["reason"], "legacy_assertion_cleanup"
+        elif status == "passed" and (unknown_scenarios or skipped):
+            status, reason, failure_class = ("inconclusive", "required legacy evidence missing/not_run/skipped",
+                                           "legacy_evidence")
+        elif (item.outer and failure_class == "product_assertion" and unknown_scenarios
+              and all(row["steps"] and all(step.get("status") == harness.NOT_RUN
+                                          for step in row["steps"].values()) for row in unknown_scenarios)):
+            # Legacy unittest reports a mismatch for an uninstalled/unisolatable
+            # outer's not_run steps. Preserve those steps as required unknown.
+            status, reason, failure_class = "inconclusive", unknown_scenarios[0]["reason"], "legacy_evidence"
+        if (item.outer in ("tmux", "herdr") and failure_class == "legacy_assertion_cleanup"
+                and not remaining and not unattributed and exit_code is not None
+                and not any(row.get("cleanupFailed") for row in scenario_evidence)):
+            c1 = next(iter(scenario_evidence), {}).get("steps", {}).get("C1", {})
+            assertion = c1.get("assertion", "")
+            if isinstance(assertion, str) and assertion.startswith(("herdr isolation preflight failed:",
+                                                                    "isolated tmux did not start:")):
+                # Keep the original failed assertion in evidence while reporting
+                # unavailable isolation as required unknown, never a product pass.
+                status, reason, failure_class = "inconclusive", assertion, "probe_environment"
     if not remaining and not unattributed:
         shutil.rmtree(namespace)
     namespace_removed = not namespace.exists()
@@ -585,12 +747,24 @@ def _run_item_scoped(item: Item, index: int, report_dir: Path, omp: Path,
             "cleanup": {**stop, "adoptedPids": sorted(adopted_seen),
                         "adoptedZombiePids": sorted(adopted_zombies),
                         "unknownNamespaceUsers": sorted(unattributed),
-                        "namespaceRemoved": namespace_removed}, "namespace": str(namespace)}
+                        "namespaceRemoved": namespace_removed}, "namespace": str(namespace),
+            "testIds": list(item.modules), "scenarioEvidence": scenario_evidence}
 
 
 def _run_item(item: Item, index: int, report_dir: Path, omp: Path,
               invocation_id: str | None = None) -> dict[str, Any]:
     """One Linux-owned cell, restoring this process's prior child-adoption mode."""
+    if item.outer in ("tmux", "herdr") and not harness.find_tool(item.outer):
+        shell_label = "sh(dash)" if item.env.get("WB_CW16_SHELLS", "bash") == "dash" else "Bash"
+        return {"id": item.key, "assertionIds": list(item.assertion_ids), "required": True,
+                "evidenceLevel": item.evidence_level, "status": "not_run",
+                "reason": f"required {item.outer}/{shell_label} cell: outer is not installed",
+                "failureClass": "probe_environment", "testIds": list(item.modules), "command": [],
+                "collectedTests": 0, "skippedTests": 0, "durationSeconds": 0,
+                "expectedWaitSeconds": item.expected_wait_seconds,
+                "watchdogSeconds": SCENARIO_IDLE_SECONDS + item.expected_wait_seconds,
+                "scenarioEvidence": [], "cleanup": {"remaining": [], "namespaceRemoved": None},
+                "namespace": None}
     try:
         baseline_children = _direct_children(os.getpid())
         with _owned_subreaper():
@@ -656,11 +830,12 @@ def main(argv: list[str] | None = None) -> int:
     head = subprocess.run(["git", "rev-parse", "HEAD"], cwd=REPO, capture_output=True,
                           text=True, check=True, env=harness.clean_base_env()).stdout.strip()
     items: list[dict[str, Any]] = []
-    for index, item in enumerate(FAST_ITEMS):
+    selected_items = FAST_ITEMS + (PRECISE_ITEMS if args.mode == "precise" else ())
+    for index, item in enumerate(selected_items):
         items.append(_run_item(item, index, report_dir, omp, invocation_id))
     if args.mode == "precise":
         items.extend({"id": name, "assertionIds": ["DV-AC-03"], "required": True,
-                      "evidenceLevel": "runtime", "status": "not_run", "reason": "DVL-02/DVL-13 registry pending",
+                      "evidenceLevel": "runtime", "status": "not_run", "reason": "DVL-13/final product registry pending",
                       "collectedTests": 0, "durationSeconds": 0, "expectedWaitSeconds": 0}
                      for name in PRECISE_PENDING)
     after = _input_manifest()
@@ -681,7 +856,9 @@ def main(argv: list[str] | None = None) -> int:
     report = {"schemaVersion": SCHEMA_VERSION, "invocationId": invocation_id, "attemptId": attempt_id,
               "attemptChain": [*chain, {"attemptId": attempt_id, "status": status,
                                        "inputSha256": before["sha256"]}],
-              "mode": args.mode, "scope": "developer fast subset; not product compatibility pass",
+              "mode": args.mode, "scope": ("developer fast subset; not product compatibility pass"
+                                             if args.mode == "fast" else
+                                             "developer fast + representative core Bash/sh precise; DVL-13/product gates pending"),
               "cwd": str(REPO), "gitHead": head, "inputBefore": before, "inputAfter": after,
               "versionsBefore": versions_before, "versionsAfter": versions_after,
               "ompPath": str(omp), "targetSeconds": TARGET_SECONDS[args.mode],
@@ -696,6 +873,17 @@ def main(argv: list[str] | None = None) -> int:
               "baselineIdentity": baseline_identity,
               "baseline": {item["id"]: {"durationSeconds": item["durationSeconds"],
                                         "expectedWaitSeconds": item["expectedWaitSeconds"]} for item in items}}
+    if args.mode == "precise":
+        report["matrix"] = {"outers": ["plain", "tmux", "herdr"], "shells": ["bash", "dash"],
+                            "shellLabels": {"bash": "Bash", "dash": "sh(dash)"},
+                            "selection": ["SEL1", "SEL2", "SEL3"], "decision": "LG-D29",
+                            "shFallback": "existing dash cells exercise this host's sh fallback; historical failures/holds retained",
+                            "testIds": [name for item in PRECISE_ITEMS for name in item.modules]}
+        report["notRunCoverage"] = [
+            {"id": "X1", "status": "not_run", "reason": "active/takeover/paused detach scenario not selected in representative subset; C5 is distinct"},
+            {"id": "legacy_full_regression", "status": "not_run", "reason": "remaining legacy flow/policy/fault assertions require separate regression"},
+            {"id": "VM_GUI_paid_model", "status": "not_run", "reason": "outside local scripted-provider scope"},
+        ]
     target = report_dir / "report.json"
     descriptor = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
     with os.fdopen(descriptor, "w", encoding="utf-8") as stream:

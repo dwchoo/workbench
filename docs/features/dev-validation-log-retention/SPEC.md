@@ -59,7 +59,7 @@ pyte 가용성, herdr 격리, runtime 호환성과 소요시간은 미검증이�
 | src/workbench/backend/automation.py | 프로젝트 paused + Task별 승인/실행 사실. 별도 전역 summary-on 설정을 만들지 않음 |
 | src/workbench/backend/launcher.py, omp_bridge/g3/bridge.ts | role skill filter, notice의 idle/composer/pause 검사, main-session sendUserMessage, subagent bridge 거부. 현 경로 자체는 안전한 요약 경로라는 증거가 아님 |
 | tests/integration/cw16_harness.py | isolated Sandbox, scripted local provider, owned PID/start-ticks, outer adapters를 재사용 |
-| tests/integration/live_cw16_compat.py | plain/tmux/herdr × bash/dash, 기본 65초 detach, C1~C7/SEL1~3. historical 고정 버전 probe와 구분 |
+| tests/integration/live_cw16_compat.py | plain/설치된 tmux/herdr × Bash/sh(dash), 기본 65초 detach, C1~C7/SEL1~3. LG-D29의 sh 필요 정정을 반영하며 historical 고정 버전 probe와 구분 |
 
 기존 동작 기준은 Core BRIEF C-AC-07/12/21/24/28/29/30, OC §1/5/6 및
 [ADR-0001](../../adr/0001-no-external-multiplexer.md)·[ADR-0002](../../adr/0002-managed-shell-control-wait.md)이다.
@@ -77,7 +77,9 @@ ADR의 과거 미검증 문구를 현재 runtime pass로 해석하지 않는다.
 | 모드 | 필수 범위 | 제외/보고 |
 |---|---|---|
 | fast | runner/harness fixture, launcher/skill filter, 실제 설치 OMP의 isolation/bridge 시작, plain Bash의 세 pane 입력·한글/paste·resize·짧은 host 명령·pause 신규 호출 차단·shutdown | 실제 60초 점검·65초 detach, full outer/shell 장애 matrix는 미검증 |
-| precise | fast 의미를 포함한 현 후보 점검, plain 및 설치된 tmux/herdr × bash/dash C1~C7/SEL1~3, 대표 60초 Worker 점검·busy 병합·종료 처리, pause/restart/no replay, metadata/raw/중요 DB 장애 | VM 재부팅, 유료 모델, GUI terminal fidelity, 없는 outer/shell은 미검증 |
+| precise | fast 의미를 포함한 현 후보 점검, plain 및 설치된 tmux/herdr × Bash/sh(dash) C1~C7/SEL1~3, 대표 60초 Worker 점검·busy 병합·종료 처리, pause/restart/no replay, metadata/raw/중요 DB 장애 | VM 재부팅, 유료 모델, GUI terminal fidelity, 없는 outer/shell은 미검증 |
+
+LG-D29의 최초 dash 제외는 사용자의 같은 날 sh 필요 정정으로 철회됐다. Bash와 sh 경로를 모두 필수 matrix에 포함하며, 이 호스트의 sh 경로는 기존 dash 셀로 판별한다. Bash 우선·`/bin/sh` fallback·shell 부재 진단(SEL1~3)도 유지한다. tmux를 우선하고 설치된 Herdr도 확인한다. 과거 tmux/dash C2 실패와 C2 hold는 그대로 남으며, 이 정정만으로 기존 실패나 미실행 셀을 pass로 표시하지 않는다.
 
 DVL-02는 기존 core matrix를 등록한다. DVL-13이 새 중요 DB·요약·raw 정책·Q01 8개 재판정 항목을
 registry에 추가해 precise에서 반복 실행할 수 있게 한다. INT-runtime 일회성 시험으로 등록을 대신하지 않는다.

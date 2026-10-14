@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ast
 import json
 import os
 from pathlib import Path
@@ -16,6 +17,97 @@ from tools import dev_validate as runner
 
 
 class RunnerContractTests(unittest.TestCase):
+    def test_precise_registry_resolves_exact_legacy_ids_without_live_execution(self):
+        ids = [name for item in runner.PRECISE_ITEMS for name in item.modules]
+        self.assertEqual((len(runner.PRECISE_ITEMS), len(ids), len(set(ids))), (14, 16, 16))
+        for test_id in ids:
+            module, class_name, method = test_id.rsplit(".", 2)
+            tree = ast.parse((runner.REPO / (module.replace(".", "/") + ".py")).read_text())
+            cls = next(node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == class_name)
+            self.assertIn(method, {node.name for node in cls.body if isinstance(node, ast.FunctionDef)})
+        cells = [item for item in runner.PRECISE_ITEMS if item.outer]
+        self.assertEqual([(item.outer, item.env["WB_CW16_SHELLS"]) for item in cells],
+                         [(outer, shell) for outer in ("plain", "tmux", "herdr") for shell in ("bash", "dash")])
+        for item in cells:
+            self.assertEqual(item.env["WB_CW16_DETACH_SECONDS"], "65")
+            self.assertEqual(item.expected_wait_seconds, 65)
+            self.assertTrue(all(tuple(steps) == tuple(f"C{i}" for i in range(1, 8))
+                                for steps in item.scenario_steps.values()))
+            scenario, = item.scenario_steps
+            self.assertEqual(item.allowed_na, ((scenario, "C6"),) if item.outer == "plain" else ())
+        self.assertEqual(next(i for i in runner.PRECISE_ITEMS if i.key == "review_busy_end").expected_wait_seconds, 200)
+        self.assertEqual(next(i for i in runner.PRECISE_ITEMS if i.key == "pause_end_no_replay").expected_wait_seconds, 90)
+
+    def test_legacy_report_unknown_assertions_and_cleanup_never_pass(self):
+        item = runner.Item("legacy", ("DV-AC-03",), (), "runtime",
+                           scenario_steps={"scenario": ("required",)})
+        cases = [
+            ("passed", {"required": {"status": "pass"}}, {}, {}),
+            ("inconclusive", {}, {}, {}),
+            ("inconclusive", {"required": {"status": "not_run", "reason": "unisolatable"}}, {}, {}),
+            ("inconclusive", {"required": {"status": "n/a"}}, {}, {}),
+            ("failed", {"required": {"status": "fail"}}, {}, {}),
+            ("failed", {"required": {"status": "pass"}}, {"residue_before_fallback": {"pid": 123}}, {}),
+            ("failed", {"required": {"status": "pass"}}, {"root_removed": False}, {}),
+            ("inconclusive", {"required": {"status": "pass"}}, {}, {"errors": ["scripted error"]}),
+        ]
+        with tempfile.TemporaryDirectory() as root:
+            namespace = Path(root) / "namespace"
+            reports = namespace / "reports" / item.key
+            reports.mkdir(parents=True)
+            output = Path(root) / "retained"
+            output.mkdir()
+            for index, (expected, steps, cleanup, provider) in enumerate(cases):
+                with self.subTest(index=index):
+                    payload = {"run_id": item.key, "scenario": "scenario", "result": "pass", "steps": steps,
+                               "cleanup": {"root_removed": True, **cleanup}, "provider": provider}
+                    path = reports / "scenario.json"
+                    path.write_text(json.dumps(payload))
+                    row, = runner._scenario_evidence(item, index, namespace, output)
+                    self.assertEqual(row["status"], expected, row)
+                    self.assertEqual(json.loads(Path(row["reportPath"]).read_text()), payload)
+            path.unlink()
+            row, = runner._scenario_evidence(item, 20, namespace, output)
+            self.assertEqual(row["status"], "inconclusive")
+            path.symlink_to(Path(root) / "outside.json")
+            row, = runner._scenario_evidence(item, 21, namespace, output)
+            self.assertEqual(row["status"], "inconclusive")
+
+    def test_missing_outer_is_explicit_required_not_run(self):
+        for item in (item for item in runner.PRECISE_ITEMS if item.outer == "tmux"):
+            with self.subTest(item=item.key), patch.object(runner.harness, "find_tool", return_value=None), \
+                    patch.object(runner, "_owned_subreaper", side_effect=AssertionError("must not launch")):
+                result = runner._run_item(item, 0, Path("/unused"), Path("/usr/bin/true"))
+            self.assertEqual((result["status"], result["collectedTests"]), ("not_run", 0))
+            self.assertTrue(result["required"])
+            self.assertIn("sh(dash)" if item.env["WB_CW16_SHELLS"] == "dash" else "Bash", result["reason"])
+            self.assertEqual(runner._overall([result], None), ("inconclusive", 2))
+
+    def test_precise_main_executes_core_registry_but_future_gates_remain_pending(self):
+        def passed(item, *args):
+            return {"id": item.key, "required": True, "status": "passed",
+                    "durationSeconds": 0, "expectedWaitSeconds": item.expected_wait_seconds}
+
+        with tempfile.TemporaryDirectory() as root:
+            report_dir = Path(root) / "report"
+            with patch.object(runner, "_run_item", side_effect=passed) as run_item, \
+                    patch.object(runner, "_input_manifest", return_value={"sha256": "fixture"}), \
+                    patch.object(runner.harness, "tool_versions", return_value={"omp": "fixture"}), \
+                    patch.object(runner.subprocess, "run", return_value=subprocess.CompletedProcess([], 0, "fixture-head")):
+                exit_code = runner.main(["--mode", "precise", "--report-dir", str(report_dir), "--omp", "/usr/bin/true"])
+            self.assertEqual([call.args[0] for call in run_item.call_args_list],
+                             list(runner.FAST_ITEMS + runner.PRECISE_ITEMS))
+            report = json.loads((report_dir / "report.json").read_text())
+            self.assertEqual((exit_code, report["result"]), (2, "inconclusive"))
+            self.assertEqual(report["matrix"]["shells"], ["bash", "dash"])
+            self.assertEqual(report["matrix"]["shellLabels"]["dash"], "sh(dash)")
+            self.assertNotIn("dashOuterCells", report["matrix"])
+            self.assertEqual(report["scope"], "developer fast + representative core Bash/sh precise; DVL-13/product gates pending")
+            self.assertEqual(len(report["matrix"]["testIds"]), 16)
+            self.assertEqual({item["id"] for item in report["items"] if item["status"] == "not_run"},
+                             set(runner.PRECISE_PENDING))
+            self.assertEqual(report["firstFailure"]["item"], runner.PRECISE_PENDING[0])
+
     def test_normal_cross_exec_backend_zombie_is_reaped_without_unrelated_child(self):
         import ctypes
 
@@ -107,10 +199,18 @@ class RunnerContractTests(unittest.TestCase):
                                       "WORKBENCH_DATA_DIR": "/home/user", "PI_CONFIG_DIR": "/home/user/pi",
                                       "HERDR_SOCKET": "/home/user/socket", "HOME": "/home/user"}):
                 env = runner._base_env(namespace / "home", namespace, omp, item)
-            for key in ("OPENAI_API_KEY", "TMUX", "WORKBENCH_DATA_DIR", "PI_CONFIG_DIR", "HERDR_SOCKET"):
-                self.assertNotIn(key, env)
+                sh_item = next(i for i in runner.PRECISE_ITEMS if i.key == "compat_plain_dash")
+                sh_env = runner._base_env(namespace / "sh-home", namespace, omp, sh_item)
+            for child_env in (env, sh_env):
+                for key in ("OPENAI_API_KEY", "TMUX", "WORKBENCH_DATA_DIR", "PI_CONFIG_DIR", "HERDR_SOCKET"):
+                    self.assertNotIn(key, child_env)
             self.assertEqual(env["HOME"], str(namespace / "home"))
             self.assertTrue(all(env[key] == runner.harness.BLOCKED_PROXY for key in runner.harness.PROXY_KEYS))
+            self.assertEqual(sh_env["HOME"], str(namespace / "sh-home"))
+            self.assertEqual(sh_env["WB_CW16_SHELLS"], "dash")
+            self.assertEqual(sh_env["WB_CW16_RUN_ID"], "compat_plain_dash")
+            self.assertEqual(sh_env["WB_CW16_REPORT_DIR"], str(namespace / "reports"))
+            self.assertTrue(all(sh_env[key] == runner.harness.BLOCKED_PROXY for key in runner.harness.PROXY_KEYS))
 
     def test_zero_collection_failure_and_watchdog_are_not_pass(self):
         with tempfile.TemporaryDirectory() as root:

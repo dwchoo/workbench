@@ -510,3 +510,9 @@ LG-D15는 LG-AC-13/20의 조회 구현 해석, LG-D16은 LG-AC-01~04의 preserva
 - LG-D27의 전 구간 외부 통신 금지는 검증 환경 준비의 정상 시작·모델 목록 갱신에 한해 대체한다. 사용자 인증정보·실제 로그를 넘기지 않으며 유료 모델 호출은 금지한다. 검증 모델 요청은 소유 localhost scripted provider로 처리하고 결과는 임시 DB에만 기록한다.
 - OS sandbox·provider blacklist·새 상주 서비스를 추가하지 않는다. 시작·목록 갱신 I/O는 준비 동작으로 분리해 기록하고, metadata observer의 기존 무부작용 조건 및 SDK child의 새 auth store open·설정 쓰기0는 유지한다. 귀속 불명은 pass로 판정하지 않는다.
 - 기존 운영 route·DB-only·no replay·caps·C2 hold·실제 raw 미활성화와 gate ID/level·의존 graph는 유지한다. LG-D27과 최초 실패·과거 검증은 이력으로 보존하며 새 기준의 pass로 재표시하지 않는다. 이 결정만으로 제품 verifier·MODEL-metadata·DVL-14 전체 또는 DVL-13 최종 검증이 완료되지는 않는다.
+
+## LG-D29 — Bash 중심의 외부 terminal 검증 (2026-10-14)
+
+- 최초 결정은 “tmux는 검증이 중요하지만 dash는 안해도 될거 같아. 난 그걸 사용해본적이 없어. herdr는 몰라도.”에 따른 dash 셀 제외였다. 같은 날 사용자가 “미안 dash가 sh인줄 몰랐어. sh는 필요해.”라고 정정해 제외를 철회했다. 현재 필수 범위는 plain 및 설치된 tmux/Herdr의 Bash·sh 경로이며 tmux 검증을 우선한다. 이 호스트의 sh fallback은 dash이므로 기존 dash 셀을 그대로 사용한다.
+- 기존 Bash 우선·`/bin/sh` fallback·shell 부재 진단과 외부 tmux/Herdr 지원 계약을 유지한다. C1~C7의 입력·복사·resize·실제65초 detach·소유 자원 정리와 실제60초 점검 등 시간 의미도 유지한다. 없는 outer 또는 격리 불가는 미검증 사유로 보고한다.
+- 최초 제외 결정에 따른 후보·fixture 결과와 과거 tmux/dash C2 실패·보류 기록을 보존하며 현재 범위의 pass로 재표시하지 않는다. 기존 C2 hold는 해제하지 않는다. DVL-02·DVL-13의 적용 범위를 정렬하며 gate ID·evidence level·의존 graph, Q01/caps/no-replay·실제 raw 비활성은 유지한다.

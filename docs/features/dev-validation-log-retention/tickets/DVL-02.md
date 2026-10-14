@@ -9,7 +9,7 @@
 
 precise의 설치 outer/shell·시간 의미·장애 경계를 제공하고 같은 항목의 전후 비용을 비교한다.
 
-DVL-01 registry를 소비해 plain/설치된 tmux/herdr × bash/dash와 대표 장애·pause/restart/no replay 항목을 실행한다.
+DVL-01 registry를 소비해 plain/설치된 tmux/herdr × Bash/sh(dash)와 대표 장애·pause/restart/no replay 항목을 실행한다. LG-D29의 최초 dash 제외는 사용자의 sh 필요 정정으로 철회됐으며 tmux를 우선한다. 기존 Bash/sh fallback·shell 부재 진단도 유지한다. 과거 결과와 tmux/dash C2 실패·hold를 현재 범위의 통과로 바꾸지 않는다.
 실제60초 review와65초 detach를 남기고 fast에는 제외 항목 미검증을 표시한다. scripted provider와 real OMP를 구분한다.
 설치되어 있으나 격리 불가인 outer는 pass/skip으로 숨기지 말고 미검증 이유/종합 판정을 표시한다.
 기존 assertion inventory를 대응시킨 상태에서 중복 시작·suite·비의미 sleep을 줄인다. 실제 latency/candidate/항목 일치 전후 비교를 남긴다.

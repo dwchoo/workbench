@@ -1405,7 +1405,7 @@
         "DVL-02"
       ],
       "required_evidence_level": "runtime",
-      "check": "실제 설치 OMP의 core plain/설치 outer×shell smoke/장애 matrix; missing/격리불가 미검증. 새 중요DB 전체 통합은 INT-runtime",
+      "check": "실제 설치 OMP의 LG-D29 정정 core plain/설치 tmux·Herdr×Bash/sh(dash), Bash/sh fallback 유지 smoke/장애 matrix; missing/격리불가 미검증. 새 중요DB 전체 통합은 INT-runtime",
       "coverage_scope": "local_behavior; 해당 AC의 교차 ticket 실제 통합은 INT-runtime",
       "evidence_status": "pending"
     },
@@ -2637,6 +2637,24 @@
       "current_spec_sha256": "4f1c654ef09e3d24afa3c93075f67f26f978dd98fc4351154033af10f065c70b",
       "history": "원 p5 bundle/requirements와 LG-D27 이력 보존; 명시 후속 승인 적용; 기존 실패/scripted metadata를 operating pass로 재표시하지 않음",
       "alignment_pending": "현재 설치 SDK의 private parent/registry/child/localhost 최소 runtime 먼저 판별; 독립 시험/리뷰/실제 제품 근거 전 unavailable 유지."
+    },
+    {
+      "decision_id": "LG-D29",
+      "date": "2026-10-14",
+      "record": "BRIEF.md#lg-d29--bash-중심의-외부-terminal-검증-2026-10-14",
+      "user_answer": "tmux는 검증이 중요하지만 dash는 안해도 될거 같아. 난 그걸 사용해본적이 없어. herdr는 몰라도.",
+      "direction": "최초 dash 제외 철회; plain/설치tmux·Herdr × Bash/sh(dash) 필수, tmux 우선; SEL1-3/Bash/sh fallback 유지",
+      "affected": [
+        "DVL-02",
+        "DVL-13",
+        "G-DV-03",
+        "INT-runtime",
+        "DV-registry"
+      ],
+      "preserved": "gate IDs/evidence levels/dependency graph, 시간 의미·C1-C7/SEL1-3, 과거 dash/C2 실패와 C2 hold, Q01/caps/no-replay/actual raw off",
+      "history": "기존 s5/p5 approval와 방향 변경 이력을 보존; 새 명시 사용자 결정으로 shell matrix 범위만 변경; 미실행 또는 기존 실패를 pass로 재표시하지 않음; 같은날 사용자 sh 필요 정정으로 제외 철회. 최초 후보/fixture 결과 보존하며 현재 범위 통과로 재표시하지 않음",
+      "superseded_direction": "dash 전용 outer×shell runtime 셀 필수 제외; plain/tmux Bash 우선, 설치 Herdr Bash 및 Bash/sh fallback·shell 부재 진단 유지",
+      "followup_user_answer": "미안 dash가 sh인줄 몰랐어. sh는 필요해."
     }
   ]
 }

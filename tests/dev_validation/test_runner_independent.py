@@ -57,6 +57,7 @@ class IndependentRunnerContract(unittest.TestCase):
         targets = {"fast": 0, "precise": 600} if short_target else runner.TARGET_SECONDS
         capture = io.StringIO()
         with patch.object(runner, "FAST_ITEMS", (item,)), \
+             patch.object(runner, "PRECISE_ITEMS", ()), \
              patch.object(runner, "_input_manifest", side_effect=inputs if changed_input else [inputs[0], inputs[0]]), \
              patch.object(runner.harness, "tool_versions", return_value=versions), \
              patch.object(runner, "TARGET_SECONDS", targets), redirect_stdout(capture):
@@ -75,7 +76,13 @@ class IndependentRunnerContract(unittest.TestCase):
         self.assertTrue(precise["firstFailure"])
         self.assertTrue(any(row["required"] and row["status"] == "not_run"
                             for row in precise["items"]))
-        self.assertEqual(precise["scope"], "developer fast subset; not product compatibility pass")
+        self.assertEqual(precise["scope"],
+                         "developer fast + representative core Bash/sh precise; DVL-13/product gates pending")
+        self.assertEqual(precise["firstFailure"]["item"], "q01_product_adapter_recheck")
+        self.assertEqual({row["id"] for row in precise["items"]},
+                         {"fixture-pass", "q01_product_adapter_recheck", "new_storage_summary_raw_product_gates",
+                          "model_metadata", "product_full_dvl14"})
+        self.assertEqual(precise["matrix"]["testIds"], [])
 
     def test_zero_and_fully_skipped_collections_never_pass(self) -> None:
         empty = runner.Item("empty", ("DV-AC-04",),

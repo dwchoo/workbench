@@ -2,6 +2,7 @@
 
 from contextlib import ExitStack, redirect_stdout
 from hashlib import sha256
+import ast
 import io
 import json
 import os
@@ -30,6 +31,9 @@ EXPECTED_IDS = (
     f"{COMPAT}.Cw16ShellSelection.test_sel3_neither_bash_nor_sh_guidance_nonzero_nothing_started",
     f"{POLICY}.test_p1_periodic_reviews_merge_and_p7_usage",
     f"{POLICY}.test_p2_pause_holds_automatic_work",
+    f"{POLICY}.test_p3_pause_interrupts_manager_turn",
+    f"{POLICY}.test_p6_restart_worker_stop_survivor_kill_host",
+    f"{FAULT}.test_x1_detach_with_active_work",
     f"{FAULT}.test_x2_backend_sigkill_restart",
     f"{FAULT}.test_x3_model_fault_holds",
     f"{FAULT}.test_x4_shutdown_confirmation",
@@ -63,6 +67,29 @@ class PreciseRegistryIndependent(unittest.TestCase):
     def cell(self, outer="tmux", shell="bash"):
         return next(item for item in runner.PRECISE_ITEMS
                     if item.outer == outer and item.key == f"compat_{outer}_{shell}")
+
+    def restored_legacy_scenarios(self):
+        # Derive requirements from the existing legacy methods, independently of
+        # runner.scenario_steps. X1's unittest delegates to X1Detach.steps.
+        definitions = (
+            (f"{POLICY}.test_p3_pause_interrupts_manager_turn", "policy-P3",
+             "live_cw16_flow_policy.py", "Cw16PolicyScenarios", "test_p3_pause_interrupts_manager_turn", "step", 100),
+            (f"{POLICY}.test_p6_restart_worker_stop_survivor_kill_host", "policy-P6",
+             "live_cw16_flow_policy.py", "Cw16PolicyScenarios", "test_p6_restart_worker_stop_survivor_kill_host", "step", 0),
+            (f"{FAULT}.test_x1_detach_with_active_work", "fault-x1",
+             "live_cw16_fault.py", "X1Detach", "steps", "run", 515),
+        )
+        for test_id, scenario, filename, class_name, method_name, verb, wait in definitions:
+            tree = ast.parse((runner.REPO / "tests" / "integration" / filename).read_text())
+            cls = next(node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == class_name)
+            method = next(node for node in cls.body if isinstance(node, ast.FunctionDef) and node.name == method_name)
+            steps = tuple(node.value.args[0].value for node in method.body
+                          if isinstance(node, ast.Expr) and isinstance(node.value, ast.Call)
+                          and isinstance(node.value.func, ast.Attribute) and node.value.func.attr == verb
+                          and isinstance(node.value.args[0], ast.Constant))
+            self.assertTrue(steps)
+            item = next(item for item in runner.PRECISE_ITEMS if item.modules == (test_id,))
+            yield item, scenario, steps, wait
 
     def fixture_item(self, item, index=0, report_dir=None, omp=None, invocation_id=None,
                      *, mutate=None, missing=False, collected=None, skipped=0, exit_code=0):
@@ -155,8 +182,8 @@ class PreciseRegistryIndependent(unittest.TestCase):
         _, report, _ = self.main_report()
         launched = tuple(name for key, ids in self.commands if key not in dict(EXPECTED_FAST) for name in ids)
         self.assertEqual(launched, EXPECTED_IDS)
-        self.assertEqual((len(launched), len(set(launched))), (16, 16))
-        self.assertEqual(len(runner.PRECISE_ITEMS), 14)
+        self.assertEqual((len(launched), len(set(launched))), (19, 19))
+        self.assertEqual(len(runner.PRECISE_ITEMS), 17)
         self.assertEqual(tuple(report["matrix"]["testIds"]), EXPECTED_IDS)
         self.assertEqual(report["matrix"]["shells"], ["bash", "dash"])
         self.assertEqual(report["matrix"]["shellLabels"], {"bash": "Bash", "dash": "sh(dash)"})
@@ -179,16 +206,31 @@ class PreciseRegistryIndependent(unittest.TestCase):
         self.assertEqual({row["id"] for row in pending}, FUTURE)
         self.assertTrue(all(row["required"] and row["collectedTests"] == 0 for row in pending))
         core = [row for row in report["items"] if row["id"] not in FUTURE]
-        self.assertEqual(len(core), 17)
+        self.assertEqual(len(core), 20)
         self.assertTrue(all(row["status"] == "passed" and row["collectedTests"] > 0 for row in core))
         self.assertEqual(report["firstFailure"]["item"], "q01_product_adapter_recheck")
 
-    def test_precise_labels_x1_and_full_regression_as_unverified(self):
-        _, report, _ = self.main_report()
+    def test_precise_restored_legacy_steps_are_required_and_full_regression_remains_unverified(self):
+        _, report, report_dir = self.main_report()
         omitted = {row["id"]: row for row in report["notRunCoverage"]}
-        self.assertEqual(omitted["X1"]["status"], "not_run")
-        self.assertIn("C5 is distinct", omitted["X1"]["reason"])
+        self.assertNotIn("X1", omitted)
+        rows = {row["id"]: row for row in report["items"]}
+        for item, scenario, steps, _ in self.restored_legacy_scenarios():
+            with self.subTest(scenario=scenario):
+                self.assertEqual(item.scenario_steps, {scenario: steps})
+                self.assertEqual(item.allowed_na, ())
+                row = rows[item.key]
+                self.assertTrue(row["required"])
+                self.assertEqual((row["status"], row["collectedTests"]), ("passed", 1))
+                evidence, = row["scenarioEvidence"]
+                self.assertEqual(evidence["scenario"], scenario)
+                self.assertEqual(tuple(evidence["requiredSteps"]), steps)
+                self.assertEqual(tuple(evidence["steps"]), steps)
+                retained = Path(evidence["reportPath"])
+                self.assertTrue(retained.is_relative_to(report_dir))
+                self.assertEqual(evidence["sha256"], sha256(retained.read_bytes()).hexdigest())
         self.assertEqual(omitted["legacy_full_regression"]["status"], "not_run")
+        self.assertEqual(omitted["VM_GUI_paid_model"]["status"], "not_run")
         self.assertIn("representative", report["scope"])
         self.assertEqual(report["targetSeconds"], 600)
 
@@ -226,6 +268,41 @@ class PreciseRegistryIndependent(unittest.TestCase):
         pause = rows["pause_end_no_replay"]
         self.assertEqual(pause["expectedWaitSeconds"], 90)
         self.assertGreaterEqual(pause["watchdogSeconds"], 120 + 90)
+        for item, scenario, _, wait in self.restored_legacy_scenarios():
+            with self.subTest(scenario=scenario):
+                self.assertEqual(rows[item.key]["expectedWaitSeconds"], wait)
+                self.assertEqual(rows[item.key]["watchdogSeconds"], 120 + wait)
+                if scenario == "fault-x1":
+                    self.assertEqual(wait, 320 + 3 * 65)
+                    self.assertEqual(item.env["WB_CW16_DETACH_SECONDS"], "65")
+
+    def test_restored_legacy_missing_required_step_cannot_pass(self):
+        for item, scenario, steps, _ in self.restored_legacy_scenarios():
+            with self.subTest(scenario=scenario):
+                row = self.fixture_item(item, mutate=lambda payload: payload["steps"].pop(steps[1]))
+                self.assertEqual((row["status"], row["collectedTests"]), ("inconclusive", 1))
+                self.assertEqual(row["failureClass"], "legacy_evidence")
+
+    def test_restored_legacy_failed_required_step_cannot_pass(self):
+        for item, scenario, steps, _ in self.restored_legacy_scenarios():
+            with self.subTest(scenario=scenario):
+                row = self.fixture_item(item, mutate=lambda payload: payload["steps"][steps[1]].update(status="fail"))
+                self.assertEqual((row["status"], row["collectedTests"]), ("failed", 1))
+                self.assertEqual(row["failureClass"], "legacy_assertion_cleanup")
+
+    def test_restored_legacy_unapproved_na_cannot_pass(self):
+        for item, scenario, steps, _ in self.restored_legacy_scenarios():
+            with self.subTest(scenario=scenario):
+                row = self.fixture_item(item, mutate=lambda payload: payload["steps"][steps[1]].update(status="n/a"))
+                self.assertEqual((row["status"], row["collectedTests"]), ("inconclusive", 1))
+                self.assertEqual(row["failureClass"], "legacy_evidence")
+
+    def test_restored_legacy_unknown_cleanup_cannot_pass(self):
+        for item, scenario, _, _ in self.restored_legacy_scenarios():
+            with self.subTest(scenario=scenario):
+                row = self.fixture_item(item, mutate=lambda payload: payload.pop("cleanup"))
+                self.assertEqual((row["status"], row["collectedTests"]), ("inconclusive", 1))
+                self.assertEqual(row["failureClass"], "legacy_evidence")
 
     def assert_not_success(self, **kwargs):
         rows = []

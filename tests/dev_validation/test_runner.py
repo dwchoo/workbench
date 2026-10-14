@@ -19,7 +19,11 @@ from tools import dev_validate as runner
 class RunnerContractTests(unittest.TestCase):
     def test_precise_registry_resolves_exact_legacy_ids_without_live_execution(self):
         ids = [name for item in runner.PRECISE_ITEMS for name in item.modules]
-        self.assertEqual((len(runner.PRECISE_ITEMS), len(ids), len(set(ids))), (14, 16, 16))
+        self.assertEqual((len(runner.PRECISE_ITEMS), len(ids), len(set(ids))), (17, 19, 19))
+        keys = [item.key for item in runner.PRECISE_ITEMS]
+        p2_index = keys.index("pause_end_no_replay")
+        self.assertEqual(keys[p2_index + 1:p2_index + 4], [
+            "pause_interrupts_manager_turn", "restart_worker_survivor_host", "detach_active_work"])
         for test_id in ids:
             module, class_name, method = test_id.rsplit(".", 2)
             tree = ast.parse((runner.REPO / (module.replace(".", "/") + ".py")).read_text())
@@ -37,6 +41,28 @@ class RunnerContractTests(unittest.TestCase):
             self.assertEqual(item.allowed_na, ((scenario, "C6"),) if item.outer == "plain" else ())
         self.assertEqual(next(i for i in runner.PRECISE_ITEMS if i.key == "review_busy_end").expected_wait_seconds, 200)
         self.assertEqual(next(i for i in runner.PRECISE_ITEMS if i.key == "pause_end_no_replay").expected_wait_seconds, 90)
+        by_key = {item.key: item for item in runner.PRECISE_ITEMS}
+        expected = {
+            "pause_interrupts_manager_turn": (
+                100, {"WB_LIVE_CW16": "1", "WB_CW16_SCENARIOS": "P3"},
+                {"policy-P3": ("start", "P3_pause_aborts_streaming_manager_turn",
+                                "P3_running_manager_tool_recorded_unknown", "shutdown")}),
+            "restart_worker_survivor_host": (
+                0, {"WB_LIVE_CW16": "1", "WB_CW16_SCENARIOS": "P6"},
+                {"policy-P6": ("start", "P6_restart_worker_verified", "P6_stop_survivor_unknown_refused",
+                                "P6_host_terminal_force_kill", "shutdown")}),
+            "detach_active_work": (
+                515, {"WB_LIVE_CW16": "1", "WB_CW16_FAULTS": "X1", "WB_CW16_DETACH_SECONDS": "65"},
+                {"fault-x1": ("X1.start_run", "X1.detach_active_review_continues", "X1.takeover_requested",
+                               "X1.detach_takeover_state_kept", "X1.detach_paused_pause_kept",
+                               "X1.resume_no_replay", "X1.shutdown")}),
+        }
+        for key, (wait_seconds, env, scenario_steps) in expected.items():
+            with self.subTest(item=key):
+                item = by_key[key]
+                self.assertEqual(item.expected_wait_seconds, wait_seconds)
+                self.assertEqual(item.env, env)
+                self.assertEqual(item.scenario_steps, scenario_steps)
 
     def test_legacy_report_unknown_assertions_and_cleanup_never_pass(self):
         item = runner.Item("legacy", ("DV-AC-03",), (), "runtime",
@@ -103,10 +129,12 @@ class RunnerContractTests(unittest.TestCase):
             self.assertEqual(report["matrix"]["shellLabels"]["dash"], "sh(dash)")
             self.assertNotIn("dashOuterCells", report["matrix"])
             self.assertEqual(report["scope"], "developer fast + representative core Bash/sh precise; DVL-13/product gates pending")
-            self.assertEqual(len(report["matrix"]["testIds"]), 16)
+            self.assertEqual(len(report["matrix"]["testIds"]), 19)
             self.assertEqual({item["id"] for item in report["items"] if item["status"] == "not_run"},
                              set(runner.PRECISE_PENDING))
             self.assertEqual(report["firstFailure"]["item"], runner.PRECISE_PENDING[0])
+            self.assertEqual({item["id"] for item in report["notRunCoverage"]},
+                             {"legacy_full_regression", "VM_GUI_paid_model"})
 
     def test_normal_cross_exec_backend_zombie_is_reaped_without_unrelated_child(self):
         import ctypes

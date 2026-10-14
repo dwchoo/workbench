@@ -162,7 +162,7 @@ WORKER_TOOLS = ("read", "grep", "glob", "edit", "write", "web_search", "todo", "
 WORKER_FORBIDDEN_TOOLS = frozenset({"bash", "eval"})
 # The Workbench bridge tools of the worker (extension tools, not affected by --tools). p27-cd68-fix-01 P3-3:
 # any other worker tool (e.g. python/notebook/computer re-enabled by an --omp-arg --tools) is a leak.
-WORKER_BRIDGE_TOOLS = frozenset({"to_manager", "terminal"})
+WORKER_BRIDGE_TOOLS = frozenset({"to_manager", "terminal", "workbench_logs"})
 OMP_MODEL_ROLES = ("default", "slow", "plan", "smol", "task", "tiny", "memory", "commit")
 THINKING_LEVELS = ("minimal", "low", "medium", "high", "xhigh", "max")
 FAST_SERVICE_TIER = "priority"

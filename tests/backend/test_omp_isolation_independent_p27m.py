@@ -200,16 +200,17 @@ class StaticOverlayContractTests(unittest.TestCase):
         self.assertNotIn(str(Path.home()), self.text)
         self.assertNotIn("/home/", self.text)
 
-    def test_workbench_skills_directory_holds_exactly_the_two_role_skills(self):
-        # CW-18 (C-D64/C-D65): the role skills are to-worker (manager) and to-manager (worker); C-D70 (5) adds the
-        # manager's agent-only recovery skill workbench-recovery (p27-cd70-test-01 edit).
+    def test_workbench_skills_inventory_has_two_role_recovery_and_host_summary_assets(self):
+        # CW-18 role skills + C-D70 recovery + LG-D22 host-only summary asset.
+        # The summary asset is supplied to restricted task@Manager, not a normal role skill.
         self.assertTrue(SKILLS_DIR.is_dir())
         self.assertEqual(launcher.default_skills_dir(), SKILLS_DIR)
         self.assertEqual(launcher.default_isolation_overlay(), STATIC_OVERLAY)
         self.assertEqual(sorted(p.name for p in SKILLS_DIR.iterdir() if (p / "SKILL.md").exists()),
-                         ["to-manager", "to-worker", "workbench-recovery"],
-                         "exactly the two CW-18 role skills and the C-D70 recovery skill, nothing else")
-        self.assertEqual(launcher.workbench_skill_names(SKILLS_DIR), ("to-manager", "to-worker", "workbench-recovery"),
+                         ["important-log-summary", "to-manager", "to-worker", "workbench-recovery"],
+                         "exactly two role assets, recovery, and the LG-D22 host summary asset")
+        self.assertEqual(launcher.workbench_skill_names(SKILLS_DIR),
+                         ("important-log-summary", "to-manager", "to-worker", "workbench-recovery"),
                          "front matter names must equal the directory names")
         self.assertTrue((SKILLS_DIR / "README.md").is_file())
 

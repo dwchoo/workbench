@@ -1330,6 +1330,15 @@ class X7TakeoverRestart(Fault):
             return out
 
         def restart() -> dict:
+            old_members = h.session_members(sb.sessions)
+            for pid, ticks in old_members.items():
+                def stop_old(pid=pid, ticks=ticks) -> None:
+                    h.kill_exact(pid, ticks)
+                    deadline = time.monotonic() + 25
+                    while h.alive(pid, ticks):
+                        assert time.monotonic() < deadline, ("old X7 process did not exit within 25 s", pid, ticks)
+                        time.sleep(0.1)
+                sb.cleanups.append(stop_old)
             killed = self.kill_backend(sb)
             time.sleep(2)
             done = sb.start()
@@ -1372,6 +1381,18 @@ class X7TakeoverRestart(Fault):
             out = {"exit": done.returncode, "verified": result.get("verified"), "problems": result.get("problems")}
             # the old shell's processes (the 400 s sleep) are previous survivors: unverified is the right answer
             assert (done.returncode == 0) == (result.get("verified") is True), out
+            backend = sb.known.get("backend")
+            assert (isinstance(backend, (tuple, list)) and len(backend) == 2
+                    and all(type(value) is int and value > 0 for value in backend)), ("known restarted backend identity required", out)
+            pid, start_ticks = backend
+            deadline = time.monotonic() + 25
+            while True:
+                backend_alive = h.alive(pid, start_ticks)
+                out["backend_exit"] = {"pid": pid, "start_ticks": start_ticks, "alive": backend_alive}
+                if not backend_alive:
+                    break
+                assert time.monotonic() < deadline, ("X7 shutdown backend did not exit within 25 s", out)
+                time.sleep(0.1)
             return out
 
         r.run("X7.command_delivered", delivered)

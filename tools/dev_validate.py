@@ -190,7 +190,8 @@ PRECISE_ITEMS = tuple(
                                      "X6.raw_log_store_failure_shown", "X6.metadata_hold_and_pause_store_failure",
                                      "X6.pause_store_failure_visible_at_170", "X6.metadata_restored", "X6.shutdown")}),
     Item("takeover_restart_no_replay", (*_CORE_ASSERTIONS, "X7"),
-         (f"{_FAULT}.test_x7_takeover_during_delivery_restart",), "runtime", 15,
+         # Existing terminal fixed 120 s wait plus the original 15 s no-replay observation.
+         (f"{_FAULT}.test_x7_takeover_during_delivery_restart",), "runtime", 135,
          {"WB_LIVE_CW16": "1", "WB_CW16_FAULTS": "X7"},
          {"fault-x7": ("X7.command_delivered", "X7.takeover_holds_new_sends", "X7.backend_restart",
                        "X7.old_command_unknown_no_replay", "X7.shutdown")}),

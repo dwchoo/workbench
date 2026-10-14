@@ -155,7 +155,7 @@ def _plain(value: Any) -> str:
     return " ".join("".join(ch if ch.isprintable() else " " for ch in text).split())
 
 
-def summary_compatibility_text(observation: Any) -> str:
+def summary_compatibility_text(observation: Any, *, compact: bool = False) -> str:
     """Pure CLI/TUI label for a previous observation, never an admission claim."""
     value = observation if isinstance(observation, dict) else {}
     state = _plain(value.get("state"))
@@ -169,6 +169,8 @@ def summary_compatibility_text(observation: Any) -> str:
     }
     checked = _plain(value.get("lastCheckedAt"))
     label = labels.get(state, "미확인") if checked else "미확인 · 아직 검사하지 않음"
+    if compact:
+        return "요약 호환: " + (label if checked else "미확인")
     parts = ["중요 로그 요약 호환: " + label,
              "마지막 검사 " + (checked or "없음")]
     reason = _plain(value.get("reason"))

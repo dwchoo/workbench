@@ -6,6 +6,7 @@ import io
 import json
 import os
 from pathlib import Path
+import re
 import subprocess
 import tempfile
 import unittest
@@ -330,6 +331,51 @@ class PreciseRegistryIndependent(unittest.TestCase):
         self.assertEqual((code, current["result"]), (1, "failed"))
         self.assertEqual(len(current["attemptChain"]), 2)
         self.assertEqual(current["attemptChain"][0]["attemptId"], first["attemptId"])
+
+
+class PauseVisibleStateIndependent(unittest.TestCase):
+    """P2 표시 조건만 검사하며 실제 pause 동작·시간은 runtime 시험에 남긴다."""
+
+    def setUp(self):
+        from tests.integration.live_cw16_flow_policy import PAUSED_UI_PATTERN
+        from workbench.contracts.ui_v1 import ClientType
+        from workbench.ui.product.model import ProductModel
+
+        self.pattern = PAUSED_UI_PATTERN
+        self.pause = ClientType.PAUSE
+        self.model = ProductModel(object(), rows=40, cols=170)
+
+    def screen_text(self):
+        return "\n".join((*self.model.status_lines(), self.model.notice))
+
+    def test_latest_paused_state_visible_despite_prior_pausing_response_notice(self):
+        self.model._automation_result(self.pause, {"state": "pausing", "paused": True})
+        self.assertIn("요청됨", self.model.notice)
+        self.model.apply_snapshot({"automation": {"state": "paused", "paused": True}})
+        visible = "\n".join((self.model.status_lines()[0], self.model.notice))
+        self.assertIn("자동화: paused", self.model.status_lines()[0])
+        self.assertIsNone(re.search(r"일시정지됨", visible))
+        self.assertIsNotNone(re.search(self.pattern, visible))
+
+    def test_requested_notice_and_pausing_state_do_not_confirm_completed_pause(self):
+        self.model._automation_result(self.pause, {"state": "pausing", "paused": True})
+        self.assertIn("요청됨", self.model.notice)
+        self.assertIsNone(re.search(self.pattern, self.model.notice))
+        self.assertIsNone(re.search(self.pattern, self.screen_text()))
+
+    def test_paused_token_must_be_complete_current_automation_state(self):
+        self.model._automation_result(self.pause, {"state": "pausing", "paused": True})
+        for state in ("paused_error", "not_paused", "paused-pending", "paused.requested",
+                      "unpaused", "pausing", "resuming", "active"):
+            with self.subTest(state=state):
+                self.model.apply_snapshot({"automation": {"state": state, "paused": True}})
+                self.assertIsNone(re.search(self.pattern, self.screen_text()))
+        self.assertIsNone(re.search(self.pattern, "자동화: paused"))
+
+    def test_existing_korean_completed_pause_notice_is_still_accepted(self):
+        self.model._automation_result(self.pause, {"state": "paused", "paused": True})
+        self.assertEqual(self.model.notice, "자동화 일시정지됨")
+        self.assertIsNotNone(re.search(self.pattern, self.model.notice))
 
 
 if __name__ == "__main__":

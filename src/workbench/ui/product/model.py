@@ -1973,7 +1973,7 @@ class ProductModel:
             line1 = f"{important_warning} | {line1}"
         line2 = (f"backend: {self.state.get('phase', 'unknown')} | bridge manager={peer('manager')} "
                  f"worker={peer('worker')} | 마지막 확인 {seen} | Ctrl-] ? 도움말")
-        extra = " | ".join(part for part in (self.recovery_text(include_boot=False), self.task_text(),
+        extra = " | ".join(part for part in (self.recovery_text(include_boot=False, compact_compatibility=True), self.task_text(),
                                              self.usage_text(), self.automation_text(include_store_error=False))
                            if part)
         if extra:
@@ -2016,11 +2016,11 @@ class ProductModel:
             return "중요 로그 요약 상태 미확인"
         return ""
 
-    def important_compatibility_text(self) -> str:
+    def important_compatibility_text(self, *, compact: bool = False) -> str:
         important = self.state.get("important_logs")
         if not isinstance(important, dict):
             return ""
-        return summary_compatibility_text(important.get("compatibility"))
+        return summary_compatibility_text(important.get("compatibility"), compact=compact)
 
     # -- CW-18 U5: current Task / worker / automation (all fields optional; unknown values are shown as sent) --------
     def worker_text(self) -> str:
@@ -2105,7 +2105,7 @@ class ProductModel:
             return BOOT_UNKNOWN_TEXT
         return BOOT_WAIT_TEXT
 
-    def backend_recovery_text(self, *, include_boot: bool = True) -> str:
+    def backend_recovery_text(self, *, include_boot: bool = True, compact_compatibility: bool = False) -> str:
         """CW-19: boot confirmation wait, restart reconcile, previous survivors and fault holds (all optional)."""
         parts: list[str] = []
         boot_wait = self.boot_wait_text() if include_boot else ""
@@ -2146,7 +2146,7 @@ class ProductModel:
         summary = self.important_summary_text()
         if summary:
             parts.append(summary)
-        compatibility = self.important_compatibility_text()
+        compatibility = self.important_compatibility_text(compact=compact_compatibility)
         if compatibility:
             parts.append(compatibility)
         important = self.state.get("important_logs")
@@ -2155,10 +2155,10 @@ class ProductModel:
             parts.append(f"중요 로그 저장 상태 {important['state']} (logs important status)")
         return " · ".join(parts)
 
-    def recovery_text(self, *, include_boot: bool = True) -> str:
+    def recovery_text(self, *, include_boot: bool = True, compact_compatibility: bool = False) -> str:
         """C-D70: a worker report waiting on the manager's composer, and a worker restart the manager asked for."""
         parts = []
-        backend = self.backend_recovery_text(include_boot=include_boot)
+        backend = self.backend_recovery_text(include_boot=include_boot, compact_compatibility=compact_compatibility)
         if backend:
             parts.append(backend)
         recovery = self.state.get("recovery")

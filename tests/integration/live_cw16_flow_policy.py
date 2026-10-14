@@ -67,6 +67,10 @@ import cw16_flow_rig as fr  # noqa: E402
 from cw16_flow_rig import Rig, execution, spec, stage_of  # noqa: E402
 
 SKIP = fr.skip_reason()
+PAUSED_UI_PATTERN = (
+    r"일시정지됨|(?m:^.*focus: (?:MANAGER OMP|WORKER OMP|HOST SHELL) \| "
+    r"[^\n]*\| 자동화: paused[ \t]*$)"
+)
 
 
 def judge_from_facts(facts: dict) -> str:
@@ -904,7 +908,7 @@ class Cw16PolicyScenarios(unittest.TestCase):
             pause_at = time.time()
             ctx["pause_at"] = pause_at
             assert snap["automation"]["paused"] is True
-            assert rig.ui.wait_text(r"일시정지됨", 10), rig.ui.excerpt("자동화")
+            assert rig.ui.wait_text(PAUSED_UI_PATTERN, 10), rig.ui.excerpt("자동화")
             rig.say("manager_omp", "p2-send")
             assert rig.pump_until(lambda: "call" in sent and rig.result(sent["call"]), 60)
             held = rig.result(sent["call"])

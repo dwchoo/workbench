@@ -12,13 +12,51 @@ from support import FakeSender, snapshot
 from workbench.backend.cli import _print_important_warning, main
 from workbench.backend.service import Backend
 from workbench.backend.summary_compatibility import SummaryCompatibility
-from workbench.ui.product.model import ProductModel
+from workbench.ui.product.model import ProductModel, _clip
 from workbench.ui.status_workbench.projection import summary_compatibility_text
 
 STAMP = "2026-10-12T01:00:00+00:00"
 
 
 class CompatibilityStatusTests(unittest.TestCase):
+    def test_170_columns_keep_task_end_pause_and_observed_compatibility(self):
+        states = {"verified": "검증 완료", "version_drift_unverified": "현재 버전 미검증",
+                  "unrelated_change_observed": "비관련 변경 관측", "revalidation_required": "재검증 필요",
+                  "protected": "보호 상태", "unavailable": "확인 불가"}
+        for state, label in [*states.items(), ("unchecked", "미확인")]:
+            with self.subTest(state=state):
+                observation = {"state": state if state != "unchecked" else "unavailable",
+                               "lastCheckedAt": STAMP if state != "unchecked" else None,
+                               "reason": "compatibility_not_checked" if state == "unchecked" else "fixture_reason"}
+                value = snapshot(automation="paused")
+                value["task"] = {"kind": "experiment", "summary": "P2 ticking run", "status": "waiting_report",
+                                 "held_reason": "paused"}
+                value["usage"] = {"retries_used": 0, "retry_limit": 3, "review_count": 2,
+                                  "model": {"tokens_observed": "unknown", "tokens_estimated": "unknown"}}
+                value["important_logs"] = {"countState": "known", "databaseCount": 1,
+                                           "compatibility": observation}
+                sender = FakeSender()
+                model = ProductModel(sender, 30, 170, clock=lambda: 1000.0)
+                model.apply_snapshot(value)
+                before = deepcopy(model.state)
+                sent_before = deepcopy(sender.sent)
+                # The renderer gives each header cols - 1; use the product's
+                # display-column clip so Korean glyph widths count accurately.
+                visible = _clip(model.status_lines()[1], model.cols - 1)
+                self.assertIn("보고 대기", visible)
+                self.assertIn("일시정지됨", visible)
+                self.assertIn(label, visible)
+                if state == "unchecked":
+                    self.assertNotIn("검증 완료", visible)
+                full = summary_compatibility_text(observation)
+                self.assertEqual(model.important_compatibility_text(), full)
+                self.assertIn(full, model.backend_recovery_text())
+                output = StringIO()
+                _print_important_warning(value, output)
+                self.assertIn(full, output.getvalue())
+                self.assertEqual(model.state, before)
+                self.assertEqual(sender.sent, sent_before)
+
     def test_unchecked_snapshot_is_read_only_without_runtime_hash_or_directory(self):
         with tempfile.TemporaryDirectory() as temporary:
             directory = Path(temporary) / "not-created"

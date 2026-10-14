@@ -379,3 +379,111 @@ test("SDK tier getter returns independent writable maps while normal result rema
     assert.equal(fixture.observe().record.state, "stored");
   } finally { fixture.cleanup(); }
 });
+
+// P5: public assistant provider errors are transient; a safety violation still
+// wins, while an already received valid result survives a resolving prompt.
+test("resolving prompt with public assistant error and no result stays sent unknown without storage", async () => {
+  const fixture = privateFixture();
+  const events: any[] = [];
+  const mock = controlledSDK({ run: async (_tool, emit) => {
+    const message = { role: "assistant", content: [], stopReason: "error",
+      errorMessage: "Owned fixture HTTP 400 provider failure" };
+    emit({ type: "message_end", message });
+    emit({ type: "agent_end", messages: [message] });
+  } });
+  try {
+    const result = await dispatchSummarySDK({ ...fixture.input, sdk: mock.sdk,
+      emit: event => events.push(event) });
+    assert.equal(result.status, "unknown");
+    assert.equal(result.reason, "summary_outcome_unknown");
+    assert.equal(result.sent, true);
+    assert.equal(result.protected, false);
+    assert.equal(result.writer, undefined);
+    assert.ok(mock.history.includes("prompt_settled:1"));
+    assert.ok(mock.history.includes("dispose:1"));
+    assert.equal(events.filter(event => event.event === "saved").length, 0);
+    assert.deepEqual(mock.submitted, []);
+    const observed = fixture.observe();
+    assert.deepEqual(observed.entries, []);
+    assert.equal(observed.record.receipt, null);
+    // This dispatch fixture starts in sending; scheduler journal classification
+    // is a separate caller boundary, not performed by dispatchSummarySDK.
+    assert.equal(observed.record.state, "sending");
+  } finally { fixture.cleanup(); }
+});
+
+test("resolving prompt without provider error or DB result remains a missing-result rejection", async () => {
+  const fixture = privateFixture();
+  const mock = controlledSDK({ run: async (_tool, emit) => {
+    emit({ type: "message_end", message: { role: "assistant",
+      content: [{ type: "text", text: "No summary was submitted." }], stopReason: "stop" } });
+    emit({ type: "agent_end", messages: [] });
+  } });
+  try {
+    const result = await dispatchSummarySDK({ ...fixture.input, sdk: mock.sdk });
+    assert.equal(result.status, "rejected");
+    assert.equal(result.reason, "result_unavailable");
+    assert.equal(result.sent, true);
+    assert.equal(result.protected, false);
+    assert.equal(result.writer, undefined);
+    assert.deepEqual(fixture.observe().entries, []);
+    assert.equal(fixture.observe().record.receipt, null);
+    assert.ok(mock.history.includes("dispose:1"));
+  } finally { fixture.cleanup(); }
+});
+
+test("successful forbidden-tool event retains compatibility protection despite a provider error", async () => {
+  const fixture = privateFixture();
+  const events: any[] = [];
+  const mock = controlledSDK({ run: async (_tool, emit) => {
+    emit({ type: "message_end", message: { role: "assistant", content: [],
+      stopReason: "error", errorMessage: "Owned fixture provider failure" } });
+    // Observed successful tool event only: no bash command is actually executed.
+    emit({ type: "tool_execution_end", toolName: "bash", isError: false,
+      result: { content: [{ type: "text", text: "controlled successful tool event" }] } });
+    emit({ type: "agent_end", messages: [] });
+  } });
+  try {
+    const result = await dispatchSummarySDK({ ...fixture.input, sdk: mock.sdk,
+      emit: event => events.push(event) });
+    assert.equal(result.status, "rejected");
+    assert.equal(result.reason, "compatibility_failed");
+    assert.equal(result.sent, true);
+    assert.equal(result.protected, true);
+    assert.equal(result.writer, undefined);
+    assert.ok(events.some(event => event.event === "compatibility_failed"));
+    assert.equal(events.filter(event => event.event === "saved").length, 0);
+    assert.deepEqual(fixture.observe().entries, []);
+    assert.equal(fixture.observe().record.receipt, null);
+    assert.ok(mock.history.includes("dispose:1"));
+  } finally { fixture.cleanup(); }
+});
+
+test("valid sole DB result survives a later provider error when the prompt resolves", async () => {
+  const fixture = privateFixture();
+  const events: any[] = [];
+  const mock = controlledSDK({ run: async (tool, emit) => {
+    await tool.execute("result-before-error", { facts: ["valid received result"],
+      interpretations: [], unknowns: ["provider followup unavailable"] });
+    const message = { role: "assistant", content: [], stopReason: "error",
+      errorMessage: "Owned fixture followup provider failure" };
+    emit({ type: "message_end", message });
+    emit({ type: "agent_end", messages: [message] });
+  } });
+  try {
+    const result = await dispatchSummarySDK({ ...fixture.input, sdk: mock.sdk,
+      emit: event => events.push(event) });
+    assert.equal(result.status, "summary_result");
+    assert.equal(result.sent, true);
+    assert.equal(result.protected, false);
+    assert.equal(result.writer?.saved, true);
+    assert.equal(mock.submitted.length, 1);
+    assert.equal(events.filter(event => event.event === "saved").length, 1);
+    const observed = fixture.observe();
+    assert.equal(observed.entries.length, 1);
+    assert.equal(observed.record.state, "stored");
+    assert.equal(observed.record.receipt.entry_id, result.writer?.entryId);
+    assert.equal(result.receipt?.entryId, observed.record.receipt.entry_id);
+    assert.ok(mock.history.indexOf("dispose:1") > mock.history.indexOf("prompt_settled:1"));
+  } finally { fixture.cleanup(); }
+});

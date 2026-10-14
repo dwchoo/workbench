@@ -325,6 +325,7 @@ async function dispatchSDK(options: DispatchOptions, verification: boolean): Pro
   let unsubscribe: (() => void) | undefined;
   let abortPromise: Promise<unknown> | undefined;
   let promptError = false;
+  let providerError = false;
   try {
     for (let attempt = 1; attempt <= 2; attempt++) {
       const registry = new sdk.AgentRegistry();
@@ -422,6 +423,8 @@ async function dispatchSDK(options: DispatchOptions, verification: boolean): Pro
     }
     if (!child || !state.armed) return defer("startup_validation_failed");
     unsubscribe = child.subscribe((event: any) => {
+      if (event.type === "message_end" && event.message?.role === "assistant"
+          && event.message?.stopReason === "error") providerError = true;
       const badTool = (event.type === "tool_execution_start" || event.type === "tool_execution_end")
         && event.toolName !== SUMMARY_TOOL_NAME;
       const badMessage = event.type === "message_end" && event.message?.role === "assistant"
@@ -445,7 +448,8 @@ async function dispatchSDK(options: DispatchOptions, verification: boolean): Pro
     await child.dispose(); child = undefined;
     emit({ event: "disposed", requestId: request.requestId });
     if (!inputMatches()) requestMismatch();
-    if (promptError && !state.protected) return { status: "unknown", sent: state.sent,
+    if ((promptError || (providerError && !state.result)) && !state.protected) return {
+      status: "unknown", sent: state.sent,
       protected: false, reason: "summary_outcome_unknown" };
     if (state.protected || promptError || !state.result) return {
       status: state.sent ? "rejected" : "deferred", sent: state.sent,

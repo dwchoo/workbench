@@ -38,6 +38,7 @@ WB_CW16_DETACH_SECONDS (default 65). Reports: $WB_CW16_REPORT_DIR/<run id>/fault
 """
 from __future__ import annotations
 
+from hashlib import sha256
 import json
 import os
 from pathlib import Path
@@ -998,6 +999,21 @@ class X6Storage(Fault):
 
     name = "X6"
 
+    def run_exit_evidence(self, sb: h.Sandbox, task_id: str, run_id: str) -> dict:
+        assert isinstance(task_id, str) and task_id, ("missing actual Task identity", task_id)
+        assert (isinstance(run_id, str) and run_id and Path(run_id).name == run_id
+                and run_id not in (".", "..")), ("missing/invalid actual run identity", run_id)
+        path = sb.data / "workflow" / "runs" / run_id / "run.json"
+        raw = path.read_bytes()
+        record = json.loads(raw)
+        evidence = {"record_ref": str(path.relative_to(sb.data)), "record_sha256": sha256(raw).hexdigest(),
+                    "expected_task_id": task_id, "expected_run_id": run_id,
+                    **{key: record.get(key) for key in ("task_id", "run_id", "shell_state", "exit_confirmed", "exit_status")}}
+        # Retain the bounded projection/hash even if same-run validation fails before return.
+        self.report.data.setdefault("run_exit_evidence", []).append(evidence)
+        assert evidence["task_id"] == task_id and evidence["run_id"] == run_id, ("exit record identity mismatch", evidence)
+        return evidence
+
     def steps(self) -> None:
         r = self.runner
         state: dict[str, Any] = {}
@@ -1029,8 +1045,11 @@ class X6Storage(Fault):
             assert size == 64 * MIB and raw.get("stored_bytes") == 64 * MIB, out
             assert raw.get("truncated") is True and raw.get("cap_source") in ("run", "run+project"), out
             assert "64 MiB" in (raw.get("text") or "") and out["status_text"], out
-            judged = (done["task"].get("last_result") or {}).get("judged") or {}
-            assert judged.get("exit_confirmed") is True and judged.get("exit_status") == 0, ("the run continued to "
+            assert done["task"].get("task_id") == state["task"]["task_id"], ("the same Task must finish", out)
+            out["run_exit"] = self.run_exit_evidence(a, state["task"]["task_id"], run_id)
+            exited = out["run_exit"]
+            assert (exited["shell_state"] == "exited" and exited["exit_confirmed"] is True
+                    and type(exited["exit_status"]) is int and exited["exit_status"] == 0), ("the run continued to "
                                                                                              "its end after the cap", out)
             return out
 
@@ -1176,8 +1195,12 @@ class X6Storage(Fault):
             out = {"raw_log": raw, "task": {k: (done.get("task") or {}).get(k) for k in ("status", "last_result")},
                    "raw_dir_mode_during": "0500"}
             assert raw.get("storage_error") and "raw log 저장 장애" in (raw.get("text") or ""), out
-            judged = (((done.get("task") or {}).get("last_result") or {}).get("judged") or {})
-            assert judged.get("exit_confirmed") is True and judged.get("exit_status") == 0, ("the run must "
+            task = done.get("task") or {}
+            run_id = (task.get("last_result") or {}).get("run_id")
+            out["run_exit"] = self.run_exit_evidence(b, task.get("task_id"), run_id)
+            exited = out["run_exit"]
+            assert (exited["shell_state"] == "exited" and exited["exit_confirmed"] is True
+                    and type(exited["exit_status"]) is int and exited["exit_status"] == 0), ("the run must "
                                                                                              "continue", out)
             return out
 

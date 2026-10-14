@@ -975,14 +975,21 @@ class X4Shutdown(Fault):
             #     product can see it (left_session) -> the shutdown must not be verified;
             # (2) a double-forked daemon (``setsid`` without -w re-parents to init): outside the shell's process
             #     tree, recorded as an observation only (CW-19 test-01 O1: not identifiable).
-            self.type_to(b, "host_shell", f"setsid -w sleep 900 >/dev/null 2>&1 < /dev/null & echo $! > {pid_file}")
+            self.type_to(b, "host_shell", "setsid -w sh -c 'echo $$ > " + str(pid_file) + "; exec sleep 900' "
+                         ">/dev/null 2>&1 < /dev/null &")
             assert h.wait_file(pid_file, pump=[self.ui], timeout=15)
+            session_pid = int(pid_file.read_text().split()[0])
+            session_ticks = h.ticks(session_pid)
+            assert session_pid > 0 and type(session_ticks) is int and session_ticks > 0, ("unknown owned setsid identity", session_pid, session_ticks)
+            b.cleanups.append(lambda pid=session_pid, ticks=session_ticks: h.kill_exact(pid, ticks))
             self.type_to(b, "host_shell", "setsid sh -c 'echo $$ > " + str(daemon_file) + "; exec sleep 901' "
                          ">/dev/null 2>&1 < /dev/null")
             assert h.wait_file(daemon_file, pump=[self.ui], timeout=15)
-            time.sleep(1.5)
             daemon = int(daemon_file.read_text().split()[0])
             daemon_ticks = h.ticks(daemon)
+            assert daemon > 0 and type(daemon_ticks) is int and daemon_ticks > 0, ("unknown owned daemon identity", daemon, daemon_ticks)
+            b.cleanups.append(lambda pid=daemon, ticks=daemon_ticks: h.kill_exact(pid, ticks))
+            time.sleep(1.5)
             self.ui.close()
             self.ui = None
             done = b.cli("shutdown", "--data-dir", str(b.data), "--yes", timeout=120)
@@ -993,6 +1000,8 @@ class X4Shutdown(Fault):
             out = {"exit": done.returncode, "stderr": done.stderr[-400:], "verified": payload.get("verified"),
                    "problems": payload.get("problems"), "left_running": payload.get("left_running"),
                    "active_listed": [l for l in done.stdout.splitlines() if "left_session" in l][:3],
+                   "owned_fixture_processes": [{"pid": session_pid, "start_ticks": session_ticks},
+                                               {"pid": daemon, "start_ticks": daemon_ticks}],
                    "observation_double_forked_daemon": {
                        "alive_after_shutdown": h.alive(daemon, daemon_ticks),
                        "in_left_running": any(item.get("pid") == daemon for item in payload.get("left_running") or []),

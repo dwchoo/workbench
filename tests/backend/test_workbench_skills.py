@@ -12,7 +12,7 @@ import unittest
 from workbench.backend import flow, flow_tasks, launcher
 
 SKILLS = launcher.default_skills_dir()
-BRIDGE = Path(launcher.default_bridge_extension()).read_text(encoding="utf-8")
+BRIDGE = Path(launcher.default_bridge_extension()).with_name("bridge.ts").read_text(encoding="utf-8")
 FLOW_TASKS = Path(inspect.getsourcefile(flow_tasks)).read_text(encoding="utf-8")
 
 
@@ -46,7 +46,18 @@ class SkillFileTests(unittest.TestCase):
 
     def test_only_these_skill_directories_exist(self):
         dirs = sorted(entry.name for entry in SKILLS.iterdir() if entry.is_dir())
-        self.assertEqual(dirs, ["to-manager", "to-worker", "workbench-recovery"])  # C-D70 (7)
+        self.assertEqual(dirs, ["important-log-summary", "to-manager", "to-worker", "workbench-recovery"])  # C-D70 (7)
+
+    def test_default_entry_imports_and_forwards_to_actual_bridge(self):
+        entry = Path(launcher.default_bridge_extension())
+        self.assertEqual(entry, SKILLS.parent / "g3" / "entry.ts")
+        text = entry.read_text(encoding="utf-8")
+        self.assertIn('import workbenchG3Extension from "./bridge.ts";', text)
+        self.assertIn(
+            "workbenchG3Extension(pi, { AgentRegistry, createAgentSession, SessionManager, Settings, "
+            "toolWireSchema, Tokenizer, fitOutputTokensToContextWindow, getBundledAgent });",
+            " ".join(text.split()),
+        )
 
     def test_to_worker_documents_every_tool_field(self):
         text = body("to-worker")
@@ -195,6 +206,8 @@ class RoleFilterTests(unittest.TestCase):
     def test_allowlists_follow_the_filter(self):
         self.assertEqual(launcher.role_skill_allowlist("manager"), ("to-worker", "workbench-recovery"))
         self.assertEqual(launcher.role_skill_allowlist("worker"), ("to-manager",))
+        for role in ("manager", "worker"):
+            self.assertNotIn("important-log-summary", launcher.role_skill_allowlist(role))
 
     def test_overlay_carries_the_role_filter_and_the_skills_dir(self):
         for role, expected in (("manager", ["to-worker", "workbench-recovery"]), ("worker", ["to-manager"])):

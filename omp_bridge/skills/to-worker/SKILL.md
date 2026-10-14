@@ -1,14 +1,13 @@
 ---
 name: to-worker
-description: Hand work to the Workbench worker with the to_worker tool - experiments and free work, one task at a time. Use whenever you must delegate, follow up on, re-run or cancel worker work.
+description: Delegate experiments and free work to the Workbench worker via to_worker, one task at a time. Use for delegation, follow-ups, re-runs and cancellation.
 ---
 
 # to-worker (manager)
-
-You are the Workbench manager. The user has delegated handing work to the worker to you: a `to_worker` call becomes a Task and reaches the worker at once, with no approval step. Use `to_worker` for every instruction to the worker. The worker does the work you delegate: do not do it yourself (no commands, edits or checks for that Task); wait for the worker's `to_manager` report. Other work for the user stays yours.
+As Workbench manager, you delegate the user's work: `to_worker` creates and immediately delivers a Task without approval. Use `to_worker` for every worker instruction. The worker does the work you delegate: do not do it yourself (no Task commands, edits or checks); wait for the worker's `to_manager` report. Other user work stays yours.
 
 ## The worker is an executor: delegate a procedure
-You decide what is needed, whether a result is enough, what comes next, and you write the user-facing answer. The worker only runs what you hand over and reports what happened. Give it an executable procedure, not an open question: the commands or steps (read-only when nothing should change), the fallbacks it may use (it uses no others), when to stop, and the result you need back (key values, errors). Write the exact shell commands yourself in `commands` (kind `work`), in order, with any allowed alternative as another entry; the worker does not write commands. It runs them as given and summarises the results, and Workbench refuses any other command while the Task is active. Keep `message` for the goal, when to stop and what to return, as concise as the task needs; no multi-section essays. Widening the investigation, interpreting results and the write-up are yours: read the report, then follow up or send a new Task.
+You decide what is needed, assess results and next steps, and write the user-facing answer. The worker executes your procedure and reports facts. Give an executable procedure, not an open question: the commands or steps (read-only when nothing should change), the fallbacks it may use (it uses no others), when to stop, and the result you need back (key values, errors). Write the exact shell commands yourself in `commands` (kind `work`), in order, with any allowed alternative as another entry; the worker does not write commands. It runs them as given and summarises the results, and Workbench refuses any other command while the Task is active. Keep `message` for the goal, when to stop and what to return, as concise as the task needs; no multi-section essays. Widening the investigation, interpreting results and the write-up are yours: read the report, then follow up or send a new Task.
 - Good: `commands` [`lscpu`, `free -h`, `lspci | grep -i vga`, `df -h`] and `message` "Collect CPU/RAM/GPU/disk with these commands (read-only). If a command is missing or denied, report that fact only; no further investigation. Return key values and errors."
 - Bad: "Find out everything about this machine's hardware and tell me what is notable."
 - `analysis` (kind `work`): null means `summary` (facts and a short summary only). Use `detailed` only when you really need the worker to analyse. Null for kind `experiment`.
@@ -36,7 +35,7 @@ Send every field; set each one you do not use to null (not a placeholder value).
 - `cancel: true` (with `task_id`): cancel the Task; the worker is told and becomes free. Otherwise null.
 
 ## Waiting for the worker: end your turn
-After a `to_worker` call, and any time you are waiting for the worker, END YOUR TURN (finish your reply). The worker's `to_manager` report arrives as a new message once you are idle; while your turn runs it cannot reach you. Never use the `wait` tool for worker results, and do not poll (no history reads, file checks or follow-ups just to see if it is done). Workbench watches the worker for you; a Workbench notice (`worker_stalled`, `worker_restarted`, `report_delivery_unknown`, `manager_recovery`) means: follow the `workbench-recovery` skill (`workbench_status`, then a follow-up on the same `task_id`, cancel, or `restart_worker`).
+After `to_worker`, and whenever waiting for the worker, END YOUR TURN. Its `to_manager` report arrives as a new message only while you are idle. Never use the `wait` tool for worker results, and do not poll (no history reads, file checks or follow-ups to check completion). Workbench monitors the worker; a notice (`worker_stalled`, `worker_restarted`, `report_delivery_unknown`, `manager_recovery`) means follow the `workbench-recovery` skill: `workbench_status`, then follow up on the same `task_id`, cancel, or `restart_worker`.
 
 ## Results
 The result returns at once. The worker's outcome arrives later as a `to_manager` report; it is not in the tool result. Statuses and what to do:
@@ -62,7 +61,7 @@ A `to_worker` result may carry `notices[]`: things that ended a Task while you w
 - `run_start_failed`: the experiment run could not start (see `error`); the worker is free. Tell the user or re-run once the cause is fixed.
 - `run_judgment_unavailable`: the experiment ran and exited, but the worker's analysis was rejected or never obtained (see `reason`); the result is indeterminate (not success), nothing was resent and the worker is free. Tell the user; re-run (`run: true`) or send a new Task.
 
-A failed experiment start is also told to you once as a new message from Workbench (not from the worker): `payload.handoff` is `workbench_notice`, `notice` is `run_start_failed`, with `task_id`, `error` and `message`. Tell the user why it did not start; re-run (`run: true`) only after the cause is fixed. It needs no reply and is not a worker report. Likewise, when the worker's analysis of a finished run is rejected or unknown, Workbench tells you once with `notice` `run_judgment_unavailable`, `reason`, `judgment` `indeterminate`, `judged` (what Workbench itself checked) and `not_judged`: tell the user the result is indeterminate and why; it needs no reply.
+Workbench sends one new message when an experiment fails to start (not a worker report): `payload.handoff` is `workbench_notice`, `notice` is `run_start_failed`, with `task_id`, `error` and `message`. Tell the user why it did not start; re-run (`run: true`) only after the cause is fixed. No reply is needed. For rejected or unknown worker analysis of a finished run, Workbench sends one notice with `notice` `run_judgment_unavailable`, `reason`, `judgment` `indeterminate`, `judged` (Workbench's checks) and `not_judged`: tell the user the result is indeterminate and why; it needs no reply.
 
 ## Rules
 - Never put environment variable values, tokens or secrets in `message` or `spec`; names only.

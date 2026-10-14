@@ -24,6 +24,8 @@ import time
 from typing import Any
 from uuid import uuid4
 
+from workbench.backend.launcher import LaunchPlan, load_model_table, omp_environment
+from workbench.terminal.shell_g2.prototype import ShellChoice
 from workbench.backend.paths import DataLayout, write_private_json
 from workbench.contracts.logs_v1 import canonical_json, decode_json, parse_summary_request
 from workbench.storage.important_log import ImportantLogCatalog, ImportantLogStore
@@ -112,6 +114,25 @@ def _environment(root: Path) -> dict[str, str]:
     for name in ("CONFIG", "DATA", "STATE", "CACHE"):
         env[f"XDG_{name}_HOME"] = str(root / ("xdg-" + name.lower()))
     return env
+
+
+def _owned_model_table(runtime: Path) -> dict:
+    # Detached controlled snapshot; never rewrite the shipped/copied model table.
+    table = load_model_table(runtime / "omp_bridge/omp-models.yml")
+    table["worker"]["models"]["default"] = "ownedverify/worker:high"
+    return table
+
+
+def _write_owned_models(root: Path, endpoint: str, *, tokenizer: str | None = None) -> None:
+    models = root / "agent/models.yml"
+    text = "providers:\n  ownedverify:\n    api: openai-completions\n    auth: none\n" + f"    baseUrl: {endpoint}\n    models:\n"
+    for name in ("scripted", "worker"):
+        text += (f"      - id: {name}\n        name: {name}\n"
+                 "        contextWindow: 131072\n        maxTokens: 8192\n        reasoning: true\n")
+        if tokenizer is not None:
+            text += f"        tokenizer: {tokenizer}\n"
+    models.write_text(text)
+    models.chmod(0o600)
 
 
 def _copy_runtime(source: Path, root: Path) -> Path:
@@ -455,7 +476,7 @@ def _handler(root: Path, posts: list[dict], violations: list[str], recovery: _Re
                     required = DISCONNECT_REQUEST_ID if phase == "disconnect" else RESTART_REQUEST_ID
                     if expected["requestId"] != required or len(posts) > 3:
                         raise ValueError("restart_phase_request_mismatch")
-                if (self.path != "/v1/chat/completions" or body.get("model") != "scripted"
+                if (self.path != "/v1/chat/completions" or body.get("model") != "worker"
                         or tools != ["db_summary_save"] or not exact or index > cap):
                     raise ValueError("unexpected_loopback_POST")
                 continuation = any(row.get("role") == "tool" for row in body.get("messages", []))
@@ -477,9 +498,9 @@ def _handler(root: Path, posts: list[dict], violations: list[str], recovery: _Re
                     "type": "function", "function": {"name": "db_summary_save",
                     "arguments": json.dumps(SUMMARY, ensure_ascii=False)}}]}
                 frames = [{"id": "owned-scripted", "object": "chat.completion.chunk", "created": 0,
-                           "model": "scripted", "choices": [{"index": 0, "delta": delta, "finish_reason": None}]},
+                           "model": "worker", "choices": [{"index": 0, "delta": delta, "finish_reason": None}]},
                           {"id": "owned-scripted", "object": "chat.completion.chunk", "created": 0,
-                           "model": "scripted", "choices": [{"index": 0, "delta": {},
+                           "model": "worker", "choices": [{"index": 0, "delta": {},
                            "finish_reason": "stop" if continuation else "tool_calls"}],
                            "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2}}]
                 payload = b"".join(("data: " + json.dumps(frame, ensure_ascii=False) + "\n\n").encode()
@@ -526,15 +547,16 @@ def _execute(source: Path, binary: Path, root: Path, *, recovery_control: bool =
     if restart is not None:
         fixture.update(restartControl=True, phase="disconnect")
     write_private_json(root / "fixture.json", fixture)
-    models = root / "agent/models.yml"
-    models.write_text("providers:\n  ownedverify:\n    api: openai-completions\n    auth: none\n"
-        + f"    baseUrl: {endpoint}\n" + "    models:\n      - id: scripted\n        name: scripted\n"
-        + "        contextWindow: 131072\n        maxTokens: 8192\n        reasoning: false\n")
-    models.chmod(0o600)
+    _write_owned_models(root, endpoint)
     overlay = root / "overlay.yml"
     overlay.write_text("startup:\n  setupWizard: false\n")
     overlay.chmod(0o600)
-    env = _environment(root)
+    plan = LaunchPlan(ShellChoice("bash", "/bin/bash"), str(binary), "18.8.6",
+                      str(runtime / "omp_bridge/g3/summary_verification.ts"))
+    env = omp_environment(_environment(root), plan, role="manager", token=uuid4().hex,
+                          bridge_socket=root / "absent.sock",
+                          home={"PI_CODING_AGENT_DIR": str(root / "agent"), "PI_CONFIG_DIR": str(root / "config")},
+                          models=_owned_model_table(runtime))
     argv = [str(binary), "--thinking", "off", "--mode", "rpc", "--no-session", "--no-title",
             "--no-extensions", "--no-skills", "--no-rules", "--no-pty", "--no-lsp", "--no-prewalk",
             "--no-tools", "--config", str(overlay), "--extension",

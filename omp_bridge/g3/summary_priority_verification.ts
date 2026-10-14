@@ -87,7 +87,16 @@ export default function observer(pi: any) {
             .sort().map(name => [name, sha(readFileSync(root + "/" + name, "utf8"))]))
         };
       };
-      const metadata = observeModelMetadata(ctx, { AgentRegistry });
+      if (process.env.WORKBENCH_G3_ROLE !== "manager") {
+        record = { label: "owned_product_priority_capability",
+          parent: { parentSessionId: String(parent.sessionManager.getSessionId()),
+            model: Object.fromEntries(fields.map(key => [key, parent.model?.[key] ?? null])) },
+          before: snapshot(), nativeRegistrySame: true };
+        publish("ready");
+        return;
+      }
+      const selection = JSON.parse(process.env.WORKBENCH_G3_SUMMARY_SELECTION ?? "null");
+      const metadata = observeModelMetadata(ctx, { AgentRegistry }, selection);
       const definition = getBundledAgent("task")?.systemPrompt;
       if (!metadata || typeof definition !== "string" || !definition) throw Error("native_definition_metadata_unavailable");
       record = { label: "owned_product_priority_capability", metadata, definition,
@@ -95,7 +104,6 @@ export default function observer(pi: any) {
         helperSha256: sha(readFileSync(fileURLToPath(import.meta.url), "utf8")),
         before: snapshot(), nativeRegistrySame: true };
       publish("ready");
-      if (process.env.WORKBENCH_G3_ROLE !== "manager") return;
       const preparedPath = root + "/prepared.json";
       let preparedText: string | undefined;
       while (!stopping) {
@@ -109,12 +117,7 @@ export default function observer(pi: any) {
           || (preparedInfo.mode & 0o777) !== 0o600 || preparedInfo.size > 131072)
         throw Error("unsafe_owned_prepared_file");
       const prepared = JSON.parse(preparedText);
-      const liveMetadata = () => {
-        const value = observeModelMetadata(ctx, { AgentRegistry });
-        return value ? { ...value, existingContextTokens: 0, outputCap: 8192, reasoningTokens: 0,
-          visibleResultTokens: 8192, outputMeaning: "reasoning_and_visible", outputLimitEnforced: true,
-          outputLimitSource: "controlled-owned-count-fixture-not-operating-proof" } : undefined;
-      };
+      const liveMetadata = () => observeModelMetadata(ctx, { AgentRegistry }, selection);
       if (prepared.definitionDigest !== sha(definition) || prepared.metadata.epoch !== liveMetadata()?.epoch)
         throw Error("owned_prepared_binding_mismatch");
       const skill = readFileSync(fileURLToPath(new URL("../skills/important-log-summary/SKILL.md", import.meta.url)), "utf8");

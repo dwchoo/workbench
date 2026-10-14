@@ -31,6 +31,7 @@ SOURCE = Path(__file__).resolve().parents[3]
 from workbench.backend import summary_compat_runtime as rt
 from workbench.backend.flow import HandoffJournal
 from workbench.backend.flow_terminal import TerminalService, _Command
+from workbench.backend.launcher import LaunchPlan, omp_environment
 from workbench.backend.paths import DataLayout, ensure_private_dir, write_private_json
 from workbench.backend.summary_adapter import SDKSummaryAdapter, SKILL_NAME, prepare_summary, skill_bytes
 from workbench.backend.summary_scheduler import SummarySourceCollector
@@ -368,7 +369,7 @@ def _execute(top: Path, binary: Path, body_budget_seconds: float):
             "Owner invokes public experiment_started; Backend boot and TaskFlow notify/eventproducer unverified.",
             "Native G3 notices are owned fixtures; Core periodic QUESTION uses actual TaskMailbox delivery.",
             "Injected review clock0/60; internal mutex wait unavailable; only Python monotonic_ns is compared.",
-            "Output8192/context0/reasoning0/ClaudeV3 are controlled fixture semantics, not operating proof.",
+            "Host output default and current context/reasoning/enforcement unknowns are retained; ClaudeV3 is controlled model metadata, not operating proof.",
             "Native entry JSON.stringify view only; memory/storage serialization equality unknown.",
             "COMMON5s shutdown budget is a technical bound, not universal completion proof; missing daemon metadata/unobserved writers remain unknown.",
             "Upper summary subject is its separately bound owned producer command, not the Core Task grant.",
@@ -424,7 +425,7 @@ def _execute(top: Path, binary: Path, body_budget_seconds: float):
                         'body_sha256': sha256(raw).hexdigest(), 'tools': tools, 'provider_post_ns': now(),
                         'model': body.get('model'), 'max_completion_tokens': body.get('max_completion_tokens')}
                     data['POSTs'].append(row)
-                    if len(data['POSTs']) > 6 or self.path != '/v1/chat/completions' or body.get('model') != 'scripted':
+                    if len(data['POSTs']) > 6 or self.path != '/v1/chat/completions' or body.get('model') != ('worker' if stage == 'child' else 'scripted'):
                         raise ValueError('owned_provider_request_boundary')
                     if stage == 'child':
                         if role != 'manager':
@@ -566,17 +567,19 @@ def _execute(top: Path, binary: Path, body_budget_seconds: float):
             serve.start()
             endpoint = f'http://127.0.0.1:{server.server_port}/v1'
             write_private_json(root / 'fixture.json', {'root': str(root), 'endpoint': endpoint})
-            models = root / 'agent/models.yml'
-            models.write_text('providers:\n  ownedverify:\n    api: openai-completions\n    auth: none\n' + f'    baseUrl: {endpoint}\n'
-                + '    models:\n      - id: scripted\n        name: scripted\n        contextWindow: 131072\n        maxTokens: 8192\n        reasoning: false\n        tokenizer: claude-v3\n')
-            models.chmod(0o600)
+            rt._write_owned_models(root, endpoint, tokenizer='claude-v3')
             overlay = root / 'overlay.yml'
             overlay.write_text('startup:\n  setupWizard: false\n')
             overlay.chmod(0o600)
-            env = rt._environment(root)
+            runtime = root / 'runtime'
+            plan = LaunchPlan(ShellChoice('bash', '/bin/bash'), str(binary), '18.8.6',
+                              str(runtime / 'omp_bridge/g3/entry.ts'))
+            env = omp_environment(rt._environment(root), plan, role=role, token=tokens[role],
+                                  bridge_socket=socket_path,
+                                  home={"PI_CODING_AGENT_DIR": str(root / "agent"), "PI_CONFIG_DIR": str(root / "config")},
+                                  models=rt._owned_model_table(runtime))
             env.update(PATH=main_env['PATH'], GIT_CONFIG_NOSYSTEM='1', GIT_CONFIG_GLOBAL='/dev/null', GIT_TERMINAL_PROMPT='0',
-                TERM='xterm-256color', COLORTERM='truecolor', WORKBENCH_G3_BRIDGE_SOCKET=str(socket_path),
-                WORKBENCH_G3_ROLE=role, WORKBENCH_G3_TOKEN=tokens[role], WORKBENCH_G3_GENERATION='1', WORKBENCH_G3_EXPECTED_OMP_VERSION='18.8.6')
+                TERM='xterm-256color', COLORTERM='truecolor')
             argv = ['/usr/bin/setsid', '--ctty', str(binary), '--thinking', 'off', '--no-session', '--no-title', '--no-extensions',
                 '--no-skills', '--no-rules', '--no-lsp', '--no-prewalk', '--no-tools', '--config', str(overlay), '--extension',
                 str(root / 'runtime/omp_bridge/g3/entry.ts'), '--extension', str(root / 'runtime/omp_bridge/g3/summary_priority_verification.ts'),
@@ -636,15 +639,14 @@ def _execute(top: Path, binary: Path, body_budget_seconds: float):
                 raise RuntimeError(role + ':' + ready['error'])
             readies[role] = ready
             peers[role] = bridge.peer(role, timeout=1)
-            assert peers[role].pid == owned[role][0].pid and peers[role].session_id == ready['metadata']['parentSessionId']
-            assert ready['metadata']['model']['tokenizer'] == 'claude-v3'
+            parent_ready = ready['metadata'] if role == 'manager' else ready['parent']
+            assert peers[role].pid == owned[role][0].pid and peers[role].session_id == parent_ready['parentSessionId']
+            assert parent_ready['model']['tokenizer'] == 'claude-v3'
             state = probe(role, 'ready_before_child')
             assert state['idle'] is True and state['pending'] is False and state['editorKnown'] is True and state['editorEmpty'] is True
             data.setdefault('hello', {})[role] = {'session_id': peers[role].session_id, 'generation': peers[role].generation, 'pid': peers[role].pid}
         ready = readies['manager']
         metadata = deepcopy(ready['metadata'])
-        metadata.update(existingContextTokens=0, outputCap=8192, reasoningTokens=0, visibleResultTokens=8192,
-            outputMeaning='reasoning_and_visible', outputLimitEnforced=True, outputLimitSource='controlled-owned-count-fixture-not-operating-proof')
         class Authority:
             def current(self):
                 if violations or time.monotonic() >= deadline:
@@ -669,10 +671,13 @@ def _execute(top: Path, binary: Path, body_budget_seconds: float):
         prepared = prepare_summary(original_request, pieces, metadata=metadata, instructions=ready['definition'], prior_cumulative=None, count_fragments=count)
         selected = [span for item in prepared['selected'] for span in item.get('ranges', [item.get('range')])]
         omitted = [item['range'] for item in prepared['omitted']]
-        assert len(selected) == 1 and len(omitted) == 2 and sorted(selected + omitted, key=lambda span: span['start']) == originals
+        assert selected and sorted(selected + omitted, key=lambda span: span['start']) == originals
+        assert len({canonical_json(span) for span in selected + omitted}) == len(originals)
         data['prepared'] = {'request': prepared['request'], 'budget': prepared['budget'], 'countBinding': prepared.get('countBinding'),
             'selected_ranges': selected, 'omitted': prepared['omitted'], 'definitionDigest': prepared['definitionDigest'],
-            'metadata': metadata, 'whole_range_identity_preserved': True}
+            'metadata': metadata, 'whole_range_identity_preserved': True,
+            'selected_count': len(selected), 'omitted_count': len(omitted),
+            'omission_observed': bool(omitted)}
         encoded = canonical_json(prepared)
         data['prepared_owner_file'] = {'bytes': len(encoded), 'sha256': sha256(encoded).hexdigest(), 'writes': 1}
         database = operator / 'tasks.sqlite3'

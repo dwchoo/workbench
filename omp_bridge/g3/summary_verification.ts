@@ -73,17 +73,10 @@ async function run(root: string, ctx: any) {
       "models.yml", "overlay.yml"].includes(name.split("/").at(-1)!))
     .sort().map(name => [name, sha(readFileSync(root + "/" + name, "utf8"))]));
   const before = state(), registryBefore = registry(), settingsBefore = settings();
-  const observed = observeModelMetadata(ctx, { AgentRegistry });
+  const selection = JSON.parse(process.env.WORKBENCH_G3_SUMMARY_SELECTION ?? "null");
+  const observed = observeModelMetadata(ctx, { AgentRegistry }, selection);
   if (!observed) throw Error("public_metadata_unavailable");
-  // These are declared semantics of the owned no-reasoning scripted response,
-  // empty fixture context and 8192-token cap, never operating getter evidence.
-  // Native model/tokenizer fields are kept verbatim; budget refusal stays refusal.
-  const metadata = () => {
-    const current = observeModelMetadata(ctx, { AgentRegistry });
-    return current ? { ...current, existingContextTokens: 0, outputCap: 8192, reasoningTokens: 0,
-      visibleResultTokens: 8192, outputMeaning: "reasoning_and_visible", outputLimitEnforced: true,
-      outputLimitSource: "owned-scripted-fixture-declaration-not-operating-proof" } : undefined;
-  };
+  const metadata = () => observeModelMetadata(ctx, { AgentRegistry }, selection);
   const bundled = getBundledAgent("task");
   if (!bundled) throw Error("bundled_definition_unavailable");
   const skill = readFileSync(fileURLToPath(new URL("../skills/important-log-summary/SKILL.md", import.meta.url)), "utf8");

@@ -731,6 +731,35 @@ export default function workbenchG3Extension(pi: any, summarySDK?: Record<string
 			ack(frame.requestId, "state", { state: snapshot() });
 			return;
 		}
+		if (frame.kind === "summary_runtime" && typeof frame.requestId === "string") {
+			const defer = (reason: string) => ack(frame.requestId as string, "deferred",
+				{ sent: false, protected: false, reason });
+			const expected = frame.expectedPeer as any;
+			if (role !== "manager") { defer("role_not_allowed"); return; }
+			if (!expected || expected.sessionId !== sessionId || expected.generation !== sessionGeneration) {
+				defer("authority_changed_before_submission"); return;
+			}
+			const ctx = context;
+			const current = () => connected && isCurrentConnection(client, sessionId, sessionGeneration)
+				&& context === ctx && ctx?.sessionManager?.getSessionId?.() === sessionId;
+			try {
+				if (!current()) { defer("authority_changed_before_submission"); return; }
+				const observed = readSummaryMetadata();
+				if (!observed) { defer("model_metadata_unavailable"); return; }
+				const metadata = JSON.parse(canonicalJson(observed));
+				if (metadata.source !== "parent_session_readback" || metadata.parentSessionId !== sessionId) {
+					defer("model_metadata_unavailable"); return;
+				}
+				if (typeof summarySDK?.getBundledAgent !== "function") { defer("sdk_api_unavailable"); return; }
+				const bundled = summarySDK.getBundledAgent("task");
+				if (!bundled || bundled.source !== "bundled" || bundled.filePath !== "embedded:task.md"
+					|| typeof bundled.systemPrompt !== "string") { defer("agent_definition_mismatch"); return; }
+				if (!current()) { defer("authority_changed_before_submission"); return; }
+				ack(frame.requestId, "summary_runtime", { sent: false, protected: false, sessionId,
+					generation: sessionGeneration, runtime: { metadata, instructions: bundled.systemPrompt } });
+			} catch { defer("model_metadata_unavailable"); }
+			return;
+		}
 		if (frame.kind === "summary_count" && typeof frame.requestId === "string") {
 			const defer = (reason: string) => ack(frame.requestId as string, "deferred",
 				{ sent: false, protected: false, reason });

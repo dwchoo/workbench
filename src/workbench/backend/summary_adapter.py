@@ -285,6 +285,37 @@ class SDKSummaryAdapter:
         self.bridge = bridge
         self.timeout = timeout
 
+    def read_runtime(self, *, expected_peer: tuple[str, int]) -> dict[str, Any]:
+        """Read the current Manager's descriptor and bundled definition, without input."""
+        from workbench.ipc.bridge_g3.mailbox import BridgeBoundMismatch
+        try:
+            response = self.bridge.request("manager", {"kind": "summary_runtime",
+                "expectedPeer": {"sessionId": expected_peer[0], "generation": expected_peer[1]}},
+                timeout=self.timeout, expected_peer=expected_peer)
+        except BridgeBoundMismatch as exc:
+            raise SummaryDeferred("authority_changed_before_submission") from exc
+        if not isinstance(response, Mapping):
+            raise SummaryDeferred("model_metadata_unavailable")
+        if response.get("status") == "deferred" and response.get("sent") is False:
+            raise SummaryDeferred(str(response.get("reason", "model_metadata_unavailable")))
+        runtime = response.get("runtime")
+        metadata = runtime.get("metadata") if isinstance(runtime, Mapping) else None
+        instructions = runtime.get("instructions") if isinstance(runtime, Mapping) else None
+        if (response.get("status") != "summary_runtime" or response.get("sent") is not False
+                or response.get("protected") is not False
+                or type(response.get("generation")) is not int
+                or (response.get("sessionId"), response.get("generation")) != expected_peer
+                or not isinstance(metadata, Mapping)
+                or metadata.get("source") != "parent_session_readback"
+                or metadata.get("parentSessionId") != expected_peer[0]
+                or type(instructions) is not str or not instructions):
+            raise SummaryDeferred("model_metadata_unavailable")
+        peer = self.bridge.peer("manager")
+        if (peer.session_id, peer.generation) != expected_peer:
+            raise SummaryDeferred("authority_changed_before_submission")
+        return {"metadata": deepcopy(dict(metadata)), "instructions": instructions,
+                "expected_peer": expected_peer}
+
     def count_fragments(self, query: dict[str, Any], *, expected_peer: tuple[str, int],
                         authority_token: object) -> Mapping[str, Any] | None:
         """Pure local native count via the existing bound Manager connection."""

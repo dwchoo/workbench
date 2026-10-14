@@ -125,3 +125,10 @@ Claude의 luna max/8192 한계 예고는 아직 측정되지 않은 가능성이
 
 - 기존 격리 시험은 Workbench skill 디렉터리에 정확히 세 개만 있어야 한다고 기대했으나, LG-D22의 host 전용 `important-log-summary`가 추가돼 실패했다. 독립 시험의 inventory 이름·주석·정확한 네 개 literal 기대값만 정정했다. 일반 Manager의 `to-worker/workbench-recovery`와 Worker의 `to-manager` 허용 목록은 그대로이며 요약 skill을 일반 역할에 추가하지 않았다.
 - [독립 결과](../../../.workflow/dev-validation-log-retention/runs/dvl14-20261014/skill-inventory-alignment01/test01/result.json)에 원래 한 case의 실패를 보존하고 관련 세 case의 통과를 기록했다. 제품·skill·정책은 불변이다. SPEC의 후보 경로명 `workbench-important-log`와 실제 asset 명칭의 차이는 문서 정합 잔여 항목이며, 이번에 경로나 승인 bytes를 바꾸지 않는다.
+
+## Backend 기본 runtime 공급 연결 (2026-10-14)
+
+- 기존 Backend는 명시적 supplier가 없으면 runtime을 항상 None으로 넘겼다. 현재 Manager 연결의 session/generation에 묶인 읽기 전용 `summary_runtime` 조회로 metadata와 설치 SDK의 bundled task 본문을 공급하도록 연결했다. 명시적 callable은 반환값이 None이어도 우선하며, None이 아닌 비호출 객체는 기존처럼 차단한다. 조회는 scheduler 작업 경로에서만 실행하고 UI/status는 기존 관측 cache를 읽는다.
+- [일반 entry.ts의 실제 RPC 실행](../../../.workflow/dev-validation-log-retention/runs/dvl14-20261014/default-runtime-supplier01/feasibility01/result.json)에서 parent metadata와 820 bytes의 bundled task 본문을 읽었다. 모델 prompt·요약 child·모델 POST는 0이며 context/output/reasoning의 null과 unknown 세 항목을 보존했다. 기존 preflight는 `output_budget_unavailable`로 차단한다. 기본 공급 연결과 운영 예산 의미의 확보는 별개이며, 값이나 pass record를 만들어 채우지 않는다.
+- 실행은 3.680초에 끝나 알려진 group·thread·socket 잔여물 0과 private root 삭제를 확인했다. 별도 outer90 supervisor는 실제 설치되지 않았으므로 선언된 전체 상한 보장으로 주장하지 않는다. 실제 RPC 조회 뒤 Backend 기본 callback 연결과 response 검사를 보강했으며, 최종 조합의 실제 Backend 실행은 이 근거에 포함되지 않는다.
+- [독립 시험](../../../.workflow/dev-validation-log-retention/runs/dvl14-20261014/default-runtime-supplier01/test01/result.json)의 새 9개 case가 통과했다. 실제 bridge handler와 observer를 controlled SDK getter에 연결하고 실제 Unix G3 transport·Backend 생성자 및 scheduler에 연결해 현재 peer 거부·snapshot/epoch 갱신·기존 supplier 우선·예산 미확인 시 예약/dispatch 0을 확인했다. Native/model 실행은 없다. 준비 통신·auth/settings I/O 귀속, 운영 MODEL, 제품 verifier/full14·DVL-13 최종46은 계속 미확인이다. 기존 정책 bytes·caps·C2 hold·no-replay·실제 raw 비활성은 유지한다.

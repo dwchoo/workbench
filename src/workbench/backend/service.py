@@ -503,7 +503,7 @@ class Backend:
                                              segmented=self.segmented_raw_port, raw_query_port=self._raw_source_query),
             authority_flags=self._summary_authority_flags, paused=self._automation_paused,
             priority=self._summary_priority, dispatch_ready=self._summary_dispatch_ready,
-            runtime=lambda: self.summary_runtime() if callable(self.summary_runtime) else None,
+            runtime=self._summary_runtime,
             storage_ready=lambda: self.important_catalog is not None
                 and self.important_storage_status.get("state") in ("ok", "ready", "healthy"),
             compatibility=self.summary_compatibility)
@@ -886,6 +886,14 @@ class Backend:
                                    "summary": (self.summary_scheduler.status() if getattr(self, "summary_scheduler", None)
                                                else {"state": "unknown", "latencySeconds": None,
                                                      "newInfo": None, "usage": None, "lastHealthy": None})}}
+
+    def _summary_runtime(self) -> dict[str, Any] | None:
+        if callable(self.summary_runtime):
+            return self.summary_runtime()
+        if self.summary_runtime is not None:
+            return None
+        peer = self.bridge.peer("manager")
+        return self.summary_adapter.read_runtime(expected_peer=(peer.session_id, peer.generation))
 
     def _summary_compatibility_observation(self) -> dict:
         """Snapshots read the last check only; never invoke admission or hash runtime."""

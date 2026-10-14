@@ -46,14 +46,22 @@ class CompatibilityCoreTests(unittest.TestCase):
                   "created_at": "2026-10-12T00:00:00+00:00",
                   "identity": deepcopy(self.ident), "omp": deepcopy(self.omp),
                   "boundary": deepcopy(self.boundary), "unknowns": [],
-                  "model_metadata": {"status": "pass", "unknowns": [], "source": "parent_session_readback",
+                  "model_metadata": {"status": "inconclusive", "unknowns": ["current_context_unavailable",
+                     "output_ceiling_enforcement_unavailable", "reasoning_budget_semantics_unavailable"],
+                     "source": "parent_session_readback",
                      "epoch": "synthetic-validator-only", "parentSessionId": "synthetic-parent",
                      "model": {"id": "fixture", "provider": "scripted", "api": "openai-completions",
                                "baseUrl": "http://127.0.0.1:1/v1", "contextWindow": 131072, "maxTokens": 8192},
-                     "thinkingLevel": "off", "serviceTierByFamily": {}, "existingContextTokens": 0,
-                     "outputCap": 8192, "reasoningTokens": 0, "visibleResultTokens": 8192,
-                     "outputMeaning": "reasoning_and_visible", "outputLimitEnforced": True,
-                     "outputLimitSource": "synthetic-validator-only", "estimator": "utf8_bytes_upper_bound"},
+                     "childSelection": {"source": "configured_worker_default", "selector": "scripted/worker-light:max",
+                         "modelTableDigest": "a" * 64, "thinkingLevel": "max",
+                         "descriptorSource": "manager_model_registry_getAll_all",
+                         "serviceTierSource": "parent_session_readback",
+                         "model": {"id": "worker-light", "provider": "scripted", "api": "openai-completions",
+                             "baseUrl": "http://127.0.0.1:1/v1", "contextWindow": 131072, "maxTokens": 8192}},
+                     "thinkingLevel": "off", "serviceTierByFamily": {}, "existingContextTokens": None,
+                     "outputCap": 8192, "reasoningTokens": None, "visibleResultTokens": None,
+                     "outputMeaning": "unknown", "outputLimitEnforced": None,
+                     "outputLimitSource": "host_default", "estimator": "utf8_bytes_upper_bound"},
                   "observations": [{"item": name, "result": "pass", "fixture": True} for name in Q01_ITEMS],
                   "evidence": [{"path": log.name, "sha256": sha256(log.read_bytes()).hexdigest()}],
                   "items": {name: "pass" for name in Q01_ITEMS}}
@@ -125,7 +133,9 @@ class CompatibilityCoreTests(unittest.TestCase):
         with patch("builtins.print"):
             self.assertEqual(main(["logs", "summary-compat", "status", "--data-dir", str(directory), "--json"]), 0)
             self.assertFalse(directory.exists())
-            self.assertEqual(main(["logs", "summary-compat", "verify", "--scripted", "--data-dir", str(directory), "--json"]), 1)
+            with patch("workbench.backend.summary_compat_runtime.shutil.which", return_value=None), \
+                    patch("subprocess.Popen", side_effect=AssertionError("unexpected launch")):
+                self.assertEqual(main(["logs", "summary-compat", "verify", "--scripted", "--data-dir", str(directory), "--json"]), 1)
         self.assertFalse((directory / "raw-v2").exists())
 
     def persist_fixture(self, ref, record):
@@ -168,13 +178,30 @@ class CompatibilityCoreTests(unittest.TestCase):
                 self.assertFalse(self.service.verify_reference(ref))
         self.omp = old_omp
 
-    def test_pass_metadata_requires_the_existing_resolved_output_contract(self):
+    def test_current_metadata_requires_actual_selection_cap_and_wellformed_unknowns(self):
         ref, original = self.fixture_verified_record()
         changes = [lambda m: m.pop("model"), lambda m: m.update(source="profile"),
-                   lambda m: m.update(unknowns=None), lambda m: m.update(unknowns=["required_unknown"]),
-                   lambda m: m.update(outputLimitEnforced=False), lambda m: m.update(outputMeaning="unknown"),
-                   lambda m: m.update(outputCap=9000), lambda m: m.update(reasoningTokens=None),
-                   lambda m: m.update(existingContextTokens=None), lambda m: m.update(estimator="unknown")]
+                   lambda m: m.pop("epoch"), lambda m: m.pop("childSelection"),
+                   lambda m: m["childSelection"].update(source="parent_fallback"),
+                   lambda m: m["childSelection"].update(selector="scripted/other:max"),
+                   lambda m: m["childSelection"]["model"].update(contextWindow=0),
+                   lambda m: m["childSelection"]["model"].pop("maxTokens"),
+                   lambda m: m.update(outputLimitSource="synthetic-validator-only"),
+                   lambda m: m.update(outputCap=9000), lambda m: m.update(estimator="unknown"),
+                   lambda m: m.pop("unknowns"), lambda m: m.update(unknowns=None),
+                   lambda m: m.update(unknowns="current_context_unavailable"),
+                   lambda m: m.update(unknowns=[None]), lambda m: m.update(unknowns=[{}]),
+                   lambda m: m.update(unknowns=["required_unknown"]),
+                   lambda m: m.update(unknowns=["current_context_unavailable"] * 2),
+                   lambda m: m.update(status="pass"), lambda m: m.update(unknowns=[]),
+                   lambda m: m.pop("status"), lambda m: m.update(status="unknown"),
+                   lambda m: m.pop("existingContextTokens"),
+                   lambda m: m.update(existingContextTokens=0), lambda m: m.update(existingContextTokens=1),
+                   lambda m: m.update(outputLimitEnforced=True), lambda m: m.update(outputLimitEnforced=False),
+                   lambda m: m.pop("outputLimitEnforced"), lambda m: m.update(reasoningTokens=0),
+                   lambda m: m.pop("reasoningTokens"), lambda m: m.update(visibleResultTokens=0),
+                   lambda m: m.pop("visibleResultTokens"), lambda m: m.update(outputMeaning="reasoning_and_visible"),
+                   lambda m: m.pop("outputMeaning")]
         for index, change in enumerate(changes):
             with self.subTest(metadata=index):
                 bad = deepcopy(original)
@@ -182,6 +209,54 @@ class CompatibilityCoreTests(unittest.TestCase):
                 self.persist_fixture(ref, bad)
                 self.assertFalse(self.service.admission())
                 self.assertFalse(self.service.verify_reference(ref))
+
+    def test_budget_unknowns_are_informational_without_rewriting_observed_metadata(self):
+        ref, original = self.fixture_verified_record()
+        for unknowns in (["current_context_unavailable"], ["output_ceiling_enforcement_unavailable"],
+                         ["reasoning_budget_semantics_unavailable"], original["model_metadata"]["unknowns"]):
+            with self.subTest(unknowns=unknowns):
+                record = deepcopy(original)
+                record["model_metadata"]["unknowns"] = list(unknowns)
+                self.persist_fixture(ref, record)
+                self.assertTrue(self.service.verify_reference(ref))
+                self.assertTrue(self.service.admission())
+                self.assertEqual(json.loads((self.service.directory / (ref + ".json")).read_text()), record)
+        complete = deepcopy(original)
+        complete["model_metadata"].update(status="pass", unknowns=[], existingContextTokens=0,
+            outputMeaning="reasoning_and_visible", outputLimitEnforced=True, reasoningTokens=0, visibleResultTokens=8192)
+        for enforcement in (True, False):
+            complete["model_metadata"]["outputLimitEnforced"] = enforcement
+            self.persist_fixture(ref, complete)
+            self.assertTrue(self.service.verify_reference(ref))
+            self.assertTrue(self.service.admission())
+        for key in ("existingContextTokens", "outputLimitEnforced", "reasoningTokens", "visibleResultTokens", "outputMeaning"):
+            for absent in (False, True):
+                with self.subTest(pass_field=key, absent=absent):
+                    bad = deepcopy(complete)
+                    if absent:
+                        bad["model_metadata"].pop(key)
+                    else:
+                        bad["model_metadata"][key] = None
+                    self.persist_fixture(ref, bad)
+                    self.assertFalse(self.service.verify_reference(ref))
+                    self.assertFalse(self.service.admission())
+        malformed = [(key, value) for key in ("existingContextTokens", "reasoningTokens", "visibleResultTokens")
+                     for value in (True, -1, 1.5)] + [("outputLimitEnforced", 0), ("outputMeaning", "unknown"),
+                     ("outputMeaning", ""), ("outputMeaning", 0)]
+        for key, value in malformed:
+            with self.subTest(pass_field=key, value=value):
+                bad = deepcopy(complete)
+                bad["model_metadata"][key] = value
+                self.persist_fixture(ref, bad)
+                self.assertFalse(self.service.verify_reference(ref))
+                self.assertFalse(self.service.admission())
+        for change in (lambda r: r.update(unknowns=["current_context_unavailable"]),
+                       lambda r: r["observations"][0].update(unknowns=["current_context_unavailable"]),
+                       lambda r: r["items"].update({Q01_ITEMS[0]: "not_run"})):
+            bad = deepcopy(original)
+            change(bad)
+            self.persist_fixture(ref, bad)
+            self.assertFalse(self.service.verify_reference(ref))
 
     def test_malformed_private_state_and_public_reference_fail_closed_without_crash(self):
         ref, _ = self.fixture_verified_record()
@@ -231,7 +306,9 @@ class CompatibilityCoreTests(unittest.TestCase):
         state.write_text("broken")
         state.chmod(0o600)
         with patch("builtins.print"):
-            self.assertEqual(main(["logs", "summary-compat", "verify", "--scripted", "--json", "--data-dir", str(directory)]), 1)
+            with patch("workbench.backend.summary_compat_runtime.shutil.which", return_value=None), \
+                    patch("subprocess.Popen", side_effect=AssertionError("unexpected launch")):
+                self.assertEqual(main(["logs", "summary-compat", "verify", "--scripted", "--json", "--data-dir", str(directory)]), 1)
         self.assertEqual(state.read_text(), "broken")
 
     def test_runtime_only_copy_same_policy_and_closure_without_development_inputs(self):

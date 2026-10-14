@@ -377,12 +377,38 @@ class SummaryCompatibility:
                 or record.get("unknowns") != [] or record.get("items") != {key: "pass" for key in Q01_ITEMS}
                 or not _complete_identity(record.get("identity")) or not _complete_omp(record.get("omp"))
                 or not isinstance(record.get("model_metadata"), dict)
-                or record["model_metadata"].get("status") != "pass"
-                or record["model_metadata"].get("unknowns") != []
                 or not record.get("observations") or not record.get("boundary")):
             return None
+        metadata = record["model_metadata"]
+        unknowns = metadata.get("unknowns")
+        budget_unknowns = {"current_context_unavailable", "output_ceiling_enforcement_unavailable",
+                           "reasoning_budget_semantics_unavailable"}
+        if (not isinstance(unknowns, list) or any(not isinstance(reason, str) for reason in unknowns)
+                or len(unknowns) != len(set(unknowns)) or not set(unknowns) <= budget_unknowns
+                or metadata.get("status") not in ("pass", "inconclusive")
+                or (metadata["status"] == "pass" and unknowns)
+                or (metadata["status"] == "inconclusive" and not unknowns)):
+            return None
+        if metadata["status"] == "pass":
+            meaning = metadata.get("outputMeaning")
+            if (any(type(metadata.get(key)) is not int or metadata[key] < 0
+                    for key in ("existingContextTokens", "reasoningTokens", "visibleResultTokens"))
+                    or type(metadata.get("outputLimitEnforced")) is not bool
+                    or not isinstance(meaning, str) or not meaning.strip() or meaning.strip() == "unknown"):
+                return None
+        if ("current_context_unavailable" in unknowns
+                and ("existingContextTokens" not in metadata or metadata["existingContextTokens"] is not None)):
+            return None
+        if ("output_ceiling_enforcement_unavailable" in unknowns
+                and ("outputLimitEnforced" not in metadata or metadata["outputLimitEnforced"] is not None)):
+            return None
+        if ("reasoning_budget_semantics_unavailable" in unknowns
+                and (any(key not in metadata or metadata[key] is not None
+                         for key in ("reasoningTokens", "visibleResultTokens"))
+                     or metadata.get("outputMeaning") != "unknown")):
+            return None
         try:
-            _resolved_metadata(record["model_metadata"])
+            _resolved_metadata(metadata)
         except SummaryDeferred:
             return None
         created = record.get("created_at")

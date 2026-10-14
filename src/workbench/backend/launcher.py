@@ -44,6 +44,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 import fnmatch
+from hashlib import sha256
 import json
 import os
 from pathlib import Path
@@ -74,7 +75,8 @@ BRIDGE_GENERATION = 1
 DISPLAY_TERM = "xterm-256color"
 # Bridge variables are set per OMP child only and never exported to the shell.
 _BRIDGE_KEYS = ("WORKBENCH_G3_BRIDGE_SOCKET", "WORKBENCH_G3_ROLE", "WORKBENCH_G3_TOKEN",
-                "WORKBENCH_G3_GENERATION", "WORKBENCH_G3_EXPECTED_OMP_VERSION")
+                "WORKBENCH_G3_GENERATION", "WORKBENCH_G3_EXPECTED_OMP_VERSION",
+                "WORKBENCH_G3_SUMMARY_SELECTION")
 # Ambient environment that overrides the isolation overlay inside OMP: the
 # PI_AUTO_QA env value wins over dev.autoqa (OMP 18.4.4), so OMP children do
 # not inherit it (the user shell keeps it). Profile and path overrides are
@@ -707,7 +709,8 @@ def write_role_overlay(directory: Path, role: str, overlay: Mapping[str, Any]) -
 
 
 def omp_environment(base: Mapping[str, str], plan: LaunchPlan, *, role: str, token: str,
-                    bridge_socket: Path, home: Mapping[str, str] | None = None) -> dict[str, str]:
+                    bridge_socket: Path, home: Mapping[str, str] | None = None,
+                    models: Mapping[str, Mapping[str, Any]] | None = None) -> dict[str, str]:
     """The OMP child environment: ``home`` is ``OmpHome.environment()`` (C-D64).
 
     Profile/path overrides are always dropped; the user shell keeps them.
@@ -723,6 +726,13 @@ def omp_environment(base: Mapping[str, str], plan: LaunchPlan, *, role: str, tok
         "WORKBENCH_G3_GENERATION": str(BRIDGE_GENERATION),
         "WORKBENCH_G3_EXPECTED_OMP_VERSION": plan.omp_version,
     })
+    if role == "manager":
+        table = models if models is not None else load_model_table()
+        env["WORKBENCH_G3_SUMMARY_SELECTION"] = json.dumps({
+            "source": "configured_worker_default", "selector": table["worker"]["models"]["default"],
+            "modelTableDigest": sha256(json.dumps(table, sort_keys=True, ensure_ascii=False,
+                separators=(",", ":")).encode()).hexdigest(),
+        }, sort_keys=True, separators=(",", ":"))
     return env
 
 

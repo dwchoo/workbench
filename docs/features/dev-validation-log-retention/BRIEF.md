@@ -516,3 +516,16 @@ LG-D15는 LG-AC-13/20의 조회 구현 해석, LG-D16은 LG-AC-01~04의 preserva
 - 최초 결정은 “tmux는 검증이 중요하지만 dash는 안해도 될거 같아. 난 그걸 사용해본적이 없어. herdr는 몰라도.”에 따른 dash 셀 제외였다. 같은 날 사용자가 “미안 dash가 sh인줄 몰랐어. sh는 필요해.”라고 정정해 제외를 철회했다. 현재 필수 범위는 plain 및 설치된 tmux/Herdr의 Bash·sh 경로이며 tmux 검증을 우선한다. 이 호스트의 sh fallback은 dash이므로 기존 dash 셀을 그대로 사용한다.
 - 기존 Bash 우선·`/bin/sh` fallback·shell 부재 진단과 외부 tmux/Herdr 지원 계약을 유지한다. C1~C7의 입력·복사·resize·실제65초 detach·소유 자원 정리와 실제60초 점검 등 시간 의미도 유지한다. 없는 outer 또는 격리 불가는 미검증 사유로 보고한다.
 - 최초 제외 결정에 따른 후보·fixture 결과와 과거 tmux/dash C2 실패·보류 기록을 보존하며 현재 범위의 pass로 재표시하지 않는다. 기존 C2 hold는 해제하지 않는다. DVL-02·DVL-13의 적용 범위를 정렬하며 gate ID·evidence level·의존 graph, Q01/caps/no-replay·실제 raw 비활성은 유지한다.
+
+## LG-D30 — Worker 모델 재사용과 단순한 요약 예산 (2026-10-14)
+
+사용자는 의사결정 설명의 1번 A(실제 운영 metadata 공개 getter 관측), 2번 B(예산 정보 미확인 시 단순 기본값), 3번 A 다음 B(개발 검증 뒤 작은 실제 요약 시험)를 선택했다. 요약은 Worker와 같은 가벼운 모델을 사용하며, 현재 Workbench 모델 구성이 저렴하므로 과도한 비용 통제·복잡한 예산 정책을 원하지 않는다고 재확인했다.
+
+- 기존 Manager OMP 안의 요청별 제한 SDK session과 기존 task 정의·요약 skill을 유지한다. 시작 시 같은 모델 표 snapshot의 `worker.default` selector를 재사용하고, Manager registry에 실제 해석된 descriptor가 정확히 하나 있을 때 선택한다. 새 모델 설정·agent 정의·상주 프로세스는 추가하지 않는다.
+- Manager 부모의 실제 model/thinking/tier/session 관측과 선택한 child 모델·설정 출처를 구분하고 요청 epoch에 묶는다. Child thinking은 Worker selector에서, tier는 기존 부모 상속에서 가져오며 출처를 기록한다. 사용자 설정이나 부모 session은 수정하지 않는다.
+- 최초 입력의 `min(8192, context 10%)` 비용 quota와 출력 ceiling/reasoning 의미의 입증을 호출 필수 조건에서 제외한다. 입력은 선택한 모델의 context fit과 기존 32KiB 전송 경계로 선정한다. `maxTokens` 요청 기본값은 `min(8192, model.maxTokens)`이며 host 기본값임을 기록한다. 모델이 실제로 이를 enforce한다는 사실을 위조하지 않는다.
+- 격리된 새 child는 부모 대화 context를 가져오지 않는다. 부모의 미확인 context 점유량을 0으로 기록하지 않으며 child 입력의 실제 context fit을 확인한다. Output/reasoning/과금 의미의 미확인 값은 그대로 남기되, 그 값만으로 요약을 영구 보류하지 않는다. 실제 모델·context 정보 부재, 요청/도구/권한 불일치는 계속 보류하거나 차단한다.
+- DB 결과 8KiB, DB-only 도구, 입력 범위 결속·시작 검사·실행 중 보호·no replay는 유지한다. 잘림/미완결 결과는 기존 계약 거부로 처리한다. 비용 계산기·추가 budget 설정·fallback chain·별도 복구 정책은 추가하지 않는다.
+- 개발/scripted/runtime 검증을 먼저 하고 준비 뒤 작은 실제 요약 시험으로 품질·잘림·사용량을 관측한다. 관측하지 않은 실제 provider 의미나 비용은 pass로 표시하지 않는다. 기존 실패와 C2 hold, 실제 raw 비활성은 유지한다.
+
+이는 Q-S3-05/06의 해당 사용자 결정이며, LG-D22의 child 모델 부모 복제와 LG-D26의 최초 비용 quota·엄격한 output 의미 요구에 대한 후속 변경이다. 기존 record를 새 기준의 성공으로 재표시하거나 전체 gate 완료를 선언하는 결정은 아니다.

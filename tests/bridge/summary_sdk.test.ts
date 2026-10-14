@@ -26,11 +26,14 @@ function fixture() {
   const model = { id: "scripted", provider: "fixture", api: "openai-completions",
     baseUrl: "http://127.0.0.1:1/v1", contextWindow: 131072, maxTokens: 8192 };
   const metadata = { source: "parent_session_readback", parentSessionId: parentId, epoch: "readback-1",
+    childSelection: { source: "configured_worker_default", selector: "fixture/scripted:max",
+      modelTableDigest: "a".repeat(64), model, thinkingLevel: "max",
+      descriptorSource: "manager_model_registry_getAll_all", serviceTierSource: "parent_session_readback" },
     model, thinkingLevel: "off", serviceTierByFamily: {}, existingContextTokens: 0,
     outputCap: 8192, reasoningTokens: 0, visibleResultTokens: 8192,
     outputMeaning: "reasoning_and_visible", outputLimitEnforced: true,
-    outputLimitSource: "fixture-contract", estimator: "utf8_bytes_upper_bound" };
-  return { role: "manager", context: { model, sessionManager: { getSessionId: () => parentId } },
+    outputLimitSource: "host_default", estimator: "utf8_bytes_upper_bound" };
+  return { role: "manager", context: { model, modelRegistry: { getAll: () => [metadata.childSelection.model] }, sessionManager: { getSessionId: () => parentId } },
     prepared: { request, metadata, selected: [{ range: span, text: "work" }], omitted: [],
       priorCumulative: null, definitionDigest: sha(definition) }, metadata,
     writer: { python: "/fixed/python", moduleRoot: "/fixed/src", dataRoot: "/fixed/data" } };
@@ -377,8 +380,8 @@ test("first and followup stream budget reasons survive disposal with no write", 
         tools: [{ name: options.customTools[0].name, description: options.customTools[0].description,
           parameters: options.customTools[0].parameters }] };
       if (followup) await child.agent.streamFn(child.model, context, {});
-      // LG-D26 removes only the continuation quota; followup still has a wire ceiling.
-      if (reason === "input_budget_unavailable") context.messages[0].content = "x".repeat(followup ? 30000 : 9000);
+      // First and followup actual projections both keep the transport ceiling.
+      if (reason === "input_budget_unavailable") context.messages[0].content = "x".repeat(30000);
       else mock.sdk.fitOutputTokensToContextWindow = (_m: any, _c: any, cap: number) => cap - 1;
       await child.agent.streamFn(child.model, context, {});
     });
@@ -449,7 +452,7 @@ test("provider exception is unknown while successful completion without a result
   }
 });
 
-test("LG-D26 continuation above initial quota writes once after actual wire and context checks", async () => {
+test("continuation above the old quota writes once after actual wire and context checks", async () => {
   const input = fixture(); const preflights: any[] = []; let writes = 0;
   const mock = fakeSDK("normal", undefined, async (child, options) => {
     const context: any = { systemPrompt: options.systemPrompt,
@@ -476,9 +479,9 @@ test("LG-D26 continuation above initial quota writes once after actual wire and 
     }, save: async () => { writes++; assert.equal(mock.events.at(-1), "dispose"); return { saved: true }; } });
   assert.equal(outcome.status, "summary_result"); assert.equal(writes, 1);
   assert.equal(mock.events.filter(x => x === "stream").length, 2);
-  const later = preflights.find(p => p.initialInputQuota === false);
+  const later = preflights.find(p => p.initialInvocation === false);
   assert.ok(later.inputEstimate > 8192); assert.ok(later.conservativeWireBytes <= 32768);
-  for (const early of preflights.filter(p => p.initialInputQuota)) {
+  for (const early of preflights.filter(p => p.initialInvocation)) {
     assert.equal(early.mandatoryArgumentsBytes, 8192);
     assert.equal(early.previousOutputReserve, 8192); assert.equal(early.nextOutputReserve, 8192);
     assert.equal(early.mandatoryWireBytes, early.mandatoryContinuationEstimate + 8192);
@@ -501,7 +504,7 @@ test("mandatory next full output reservation or fitted cap refuses before prompt
   for (const failFit of [false, true]) {
     const input = fixture(); const mock = fakeSDK(); let writes = 0;
     // A single output fits; the required second full output plus receipt does not.
-    if (!failFit) input.metadata.existingContextTokens = 118000;
+    if (!failFit) input.metadata.childSelection.model.contextWindow = 20000;
     else mock.sdk.fitOutputTokensToContextWindow = (_m: any, c: any, cap: number) =>
       c.messages.length >= 3 ? cap - 1 : cap;
     const preflights: any[] = [];
@@ -511,12 +514,12 @@ test("mandatory next full output reservation or fitted cap refuses before prompt
     assert.equal(outcome.status, "deferred"); assert.equal(outcome.sent, false); assert.equal(writes, 0);
     assert.equal(outcome.reason, failFit ? "output_budget_unavailable" : "input_budget_unavailable");
     assert.deepEqual(mock.events, ["dispose"]);
-    if (!failFit) assert.ok(preflights[0].inputEstimate + input.metadata.existingContextTokens + 8192 <= 131072);
+    if (!failFit) assert.ok(preflights[0].inputEstimate + 8192 <= 20000);
   }
 });
 
 test("actual later context overflow is still rejected with sent true and no write", async () => {
-  const input = fixture(); input.metadata.existingContextTokens = 108000;
+  const input = fixture(); input.metadata.childSelection.model.contextWindow = 25000;
   let writes = 0; const preflights: any[] = [];
   const mock = fakeSDK("normal", undefined, async (child, options) => {
     const context = { systemPrompt: options.systemPrompt, messages: [{ role: "user", content: "work" }],
@@ -531,9 +534,9 @@ test("actual later context overflow is still rejected with sent true and no writ
     save: async () => { writes++; return { saved: true }; } });
   assert.equal(outcome.status, "rejected"); assert.equal(outcome.sent, true);
   assert.equal(outcome.reason, "input_budget_unavailable"); assert.equal(writes, 0);
-  const later = preflights.find(p => !p.initialInputQuota);
+  const later = preflights.find(p => !p.initialInvocation);
   assert.ok(later.conservativeWireBytes <= 32768);
-  assert.ok(later.inputEstimate + input.metadata.existingContextTokens + 8192 > 131072);
+  assert.ok(later.inputEstimate + 8192 > 25000);
 });
 
 // These counters are contract stand-ins. The owned installed-SDK conformance
@@ -597,9 +600,9 @@ test("native binding is checked before child creation and participates in mutati
   assert.equal(result.reason, "request_mismatch"); assert.equal(result.sent, false);
 });
 
-test("shared native quota never replaces the actual initial full-projection quota", async () => {
+test("shared native count never replaces the actual full-projection context guard", async () => {
   const input: any = fixture();
-  const mock = nativeContractSDK(fakeSDK(), text => text.startsWith('{"systemPrompt":') ? 9000 : 100);
+  const mock = nativeContractSDK(fakeSDK(), text => text.startsWith('{"systemPrompt":') ? 130000 : 100);
   attachNativeProof(input, mock.sdk);
   const observed: any[] = [];
   const result = await dispatchSummarySDK({ ...input, sdk: mock.sdk, current: () => true,
@@ -608,7 +611,7 @@ test("shared native quota never replaces the actual initial full-projection quot
   assert.equal(mock.prompts.length, 0);
   const preflight = observed.find(x => x.event === "dispatch_preflight");
   assert.equal(preflight.sharedInputEstimate, 2248);
-  assert.equal(preflight.inputEstimate, 9000);
+  assert.equal(preflight.inputEstimate, 130000);
   assert.equal(preflight.sharedQuotaIsFullProjectionBound, false);
 });
 
@@ -647,4 +650,35 @@ test("native-advertising metadata without an optional proof does not rewrite obs
   const result = await dispatchSummarySDK({ ...input, sdk: mock.sdk, current: () => true,
     observeMetadata: () => input.metadata, save: async () => ({ saved: true, entryId: randomUUID() }) });
   assert.equal(result.status, "summary_result"); assert.deepEqual(input.metadata, original);
+});
+
+
+test("configured child selection and unknown observed budgets use a fresh context host default", async () => {
+  const input: any = fixture(); const mock = fakeSDK();
+  const selected = { ...input.metadata.model, id: "worker-light", maxTokens: 4000 };
+  Object.assign(input.metadata.childSelection, { model: selected, selector: "fixture/worker-light:max" });
+  Object.assign(input.metadata, { outputCap: 4000, outputMeaning: "unknown", outputLimitEnforced: null,
+    existingContextTokens: null, reasoningTokens: null, visibleResultTokens: null });
+  const before = structuredClone(input.metadata);
+  const create = mock.sdk.createAgentSession;
+  mock.sdk.createAgentSession = async options => {
+    assert.equal(options.model.id, "worker-light"); assert.notStrictEqual(options.model, selected);
+    assert.equal(options.thinkingLevel, "max"); assert.equal(input.context.model.id, "scripted");
+    return create(options);
+  };
+  const result = await dispatchSummarySDK({ ...input, sdk: mock.sdk, current: () => true,
+    observeMetadata: () => input.metadata, save: async () => ({ saved: true }) });
+  assert.equal(result.status, "summary_result"); assert.deepEqual(input.metadata, before);
+  const counted: any[] = [];
+  selected.tokenizer = "claude-v3";
+  mock.sdk.Tokenizer = class { encoding = "ClaudeV3"; constructor(model: any) { counted.push(model); }
+    countTokens() { return 1; } checkTokenBudget() { return { exact: true, tokens: 1 }; } };
+  const proof = countSummaryFragments(input.metadata, ["fact"], mock.sdk);
+  assert.equal(proof.exact, true); assert.equal(counted[0].id, "worker-light");
+  delete input.metadata.childSelection;
+  const legacyMock = fakeSDK();
+  const legacy = await dispatchSummarySDK({ ...input, sdk: legacyMock.sdk, current: () => true,
+    observeMetadata: () => input.metadata });
+  assert.equal(legacy.sent, false); assert.equal(legacy.reason, "model_metadata_unavailable");
+  assert.equal(legacyMock.count(), 0);
 });

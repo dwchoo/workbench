@@ -62,7 +62,7 @@ from workbench.backend.flow_terminal import (
 )
 from workbench.backend.launcher import (
     ISOLATION_PROVIDER_IDS, LaunchPlan, check_isolation, default_skills_dir, isolation_check_environment,
-    omp_command, omp_environment, pending_isolation, role_overlay, role_skill_allowlist, shell_environment,
+    load_model_table, omp_command, omp_environment, pending_isolation, role_overlay, role_skill_allowlist, shell_environment,
     summarize_isolation, write_role_overlay,
 )
 from workbench.backend.omp_home import (
@@ -517,11 +517,12 @@ class Backend:
         home = Path(self.environment.get("HOME") or Path.home())
         home_env = omp_home.environment()
         checks: dict[str, tuple[list[str], dict[str, str], tuple[str, ...]]] = {}
+        models = load_model_table()
         for role, pane_id in OMP_ROLES:
             env = omp_environment(self.environment, self.plan, role=role, token=tokens[role],
-                                  bridge_socket=layout.bridge_socket, home=home_env)
+                                  bridge_socket=layout.bridge_socket, home=home_env, models=models)
             # The Workbench home reads no user OMP config: nothing of the user's is unioned in.
-            overlay_content = role_overlay(role, project_dir=self.project_dir, home=home, environment=env)
+            overlay_content = role_overlay(role, project_dir=self.project_dir, home=home, environment=env, models=models)
             overlay = write_role_overlay(layout.root, role, overlay_content)
             command = omp_command(self.plan, overlay)
             self.panes[pane_id] = OmpPane(pane_id, role, command, env, cwd=self.project_dir)

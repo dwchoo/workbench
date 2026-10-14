@@ -9,6 +9,7 @@ from copy import deepcopy
 from dataclasses import dataclass
 from hashlib import sha256
 from pathlib import Path
+import re
 from typing import Any, Callable, Mapping, Sequence
 
 from workbench.contracts.logs_v1 import (
@@ -69,24 +70,27 @@ def _resolved_metadata(value: Mapping[str, Any] | None) -> dict[str, Any]:
             or not isinstance(result["thinkingLevel"], str)
             or not isinstance(result["serviceTierByFamily"], dict)):
         raise SummaryDeferred("model_metadata_unavailable")
-    model = result["model"]
-    if not isinstance(model, dict) or any(not isinstance(model.get(key), str) or not model[key]
-                                          for key in ("id", "provider", "api", "baseUrl")):
+    selection = result.get("childSelection")
+    if (not isinstance(selection, dict) or selection.get("source") != "configured_worker_default"
+            or not isinstance(selection.get("modelTableDigest"), str)
+            or re.fullmatch(r"[0-9a-f]{64}", selection["modelTableDigest"]) is None
+            or selection.get("descriptorSource") != "manager_model_registry_getAll_all"
+            or selection.get("serviceTierSource") != "parent_session_readback"):
         raise SummaryDeferred("model_metadata_unavailable")
-    for key in ("contextWindow", "maxTokens"):
-        if type(model.get(key)) is not int or model[key] <= 0:
+    for model in (result["model"], selection.get("model")):
+        if not isinstance(model, dict) or any(not isinstance(model.get(key), str) or not model[key]
+                                              for key in ("id", "provider", "api", "baseUrl")):
             raise SummaryDeferred("model_metadata_unavailable")
-    for key in ("existingContextTokens", "outputCap", "reasoningTokens", "visibleResultTokens"):
-        if type(result.get(key)) is not int or result[key] < 0:
-            raise SummaryDeferred("output_budget_unavailable")
-    cap = result["outputCap"]
-    if (not 0 < cap <= min(8192, model["maxTokens"])
-            or result.get("outputMeaning") != "reasoning_and_visible"
-            or result.get("outputLimitEnforced") is not True
-            or not isinstance(result.get("outputLimitSource"), str)
-            or not result["outputLimitSource"]
-            or result["visibleResultTokens"] <= 0
-            or result["reasoningTokens"] + result["visibleResultTokens"] > cap):
+        for key in ("contextWindow", "maxTokens"):
+            if type(model.get(key)) is not int or model[key] <= 0:
+                raise SummaryDeferred("model_metadata_unavailable")
+    model = selection["model"]
+    if (selection.get("thinkingLevel") not in ("minimal", "low", "medium", "high", "xhigh", "max")
+            or selection.get("selector") != f"{model['provider']}/{model['id']}:{selection['thinkingLevel']}"):
+        raise SummaryDeferred("model_metadata_unavailable")
+    if (type(result.get("outputCap")) is not int
+            or result["outputCap"] != min(8192, model["maxTokens"])
+            or result.get("outputLimitSource") != "host_default"):
         raise SummaryDeferred("output_budget_unavailable")
     if result.get("estimator") not in (BYTES_ESTIMATOR, NATIVE_ESTIMATOR):
         raise SummaryDeferred("input_budget_unavailable")
@@ -147,7 +151,7 @@ def prepare_summary(request: dict[str, Any], pieces: Sequence[SourcePiece], *,
                                canonical_json(p.range)))
     selected: list[SourcePiece] = []
     omitted: list[dict[str, Any]] = []
-    limit = min(8192, resolved["model"]["contextWindow"] // 10)
+    limit = resolved["childSelection"]["model"]["contextWindow"]
 
     def envelope(keep: list[SourcePiece], omissions: list[dict[str, Any]]) -> dict[str, Any]:
         current = {**item, "sources": [span for p in keep for span in p.source_ranges]}
@@ -170,7 +174,7 @@ def prepare_summary(request: dict[str, Any], pieces: Sequence[SourcePiece], *,
     arguments = {"facts": [""], "interpretations": [], "unknowns": []}
     arguments["facts"][0] = "x" * (RESULT_BYTES - len(canonical_json(arguments)))
     arguments_bytes = len(canonical_json(arguments))
-    model = resolved["model"]
+    model = resolved["childSelection"]["model"]
     call_id = "summary-preflight"  # Placeholder; arbitrary provider extras are not bounded.
     continuation = [
         {"role": "assistant", "content": [{"type": "toolCall", "id": call_id,
@@ -191,7 +195,7 @@ def prepare_summary(request: dict[str, Any], pieces: Sequence[SourcePiece], *,
 
     def count(payload: dict[str, Any]) -> tuple[int, dict[str, Any] | None, str | None]:
         # This shared host-fragment estimate is NOT a bound for the SDK's full
-        # projection. The SDK keeps its independent initial quota/context checks.
+        # projection. The SDK keeps its independent actual context/output checks.
         if count_fragments is None:
             return size(payload), None, "count_port_absent"
         encoding = (TOKENIZER_ENCODINGS.get(model.get("tokenizer"))
@@ -233,7 +237,7 @@ def prepare_summary(request: dict[str, Any], pieces: Sequence[SourcePiece], *,
         wire_estimate = size(payload)
         return (estimate <= limit
                 and wire_estimate + continuation_bytes + RESULT_BYTES <= WIRE_BYTES
-                and estimate + fixed_framing + resolved["existingContextTokens"]
+                and estimate + fixed_framing
                 + resolved["outputCap"] + resolved["outputCap"] <= model["contextWindow"])
 
     for piece in checked:

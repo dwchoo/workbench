@@ -39,14 +39,17 @@ def request_fixture(directory: Path, texts: list[str]):
                 "thinkingLevel": "off", "serviceTierByFamily": {}, "existingContextTokens": 0,
                 "outputCap": 8192, "reasoningTokens": 0, "visibleResultTokens": 8192,
                 "outputMeaning": "reasoning_and_visible", "outputLimitEnforced": True,
-                "outputLimitSource": "scripted-provider-test-contract", "estimator": "utf8_bytes_upper_bound"}
+                "outputLimitSource": "host_default", "estimator": "utf8_bytes_upper_bound"}
+    metadata["childSelection"] = {"source": "configured_worker_default", "selector": "scripted/test:max",
+        "modelTableDigest": "a" * 64, "model": metadata["model"], "thinkingLevel": "max",
+        "descriptorSource": "manager_model_registry_getAll_all", "serviceTierSource": "parent_session_readback"}
     return request, metadata
 
 
 class SummaryAdapterTests(unittest.TestCase):
     def test_omission_is_explicit_and_request_binds_only_selected_complete_ranges(self):
         with TemporaryDirectory() as name:
-            texts = ["x" * 7000, "승인된 변경과 시험 성공"]
+            texts = ["x" * 22000, "승인된 변경과 시험 성공"]
             request, metadata = request_fixture(Path(name), texts)
             pieces = [SourcePiece(request["sources"][0], texts[0]),
                       SourcePiece(request["sources"][1], texts[1], "report")]
@@ -59,7 +62,7 @@ class SummaryAdapterTests(unittest.TestCase):
 
     def test_utf8_group_uses_original_ranges_once_and_is_omitted_whole(self):
         with TemporaryDirectory() as name:
-            for text, omitted in (("가\n", False), ("가" + "x" * 6997, True)):
+            for text, omitted in (("가\n", False), ("가" + "x" * 21997, True)):
                 with self.subTest(omitted=omitted):
                     request, metadata = request_fixture(Path(name) / str(omitted), [text, "report"])
                     original = request["sources"][0]
@@ -93,15 +96,38 @@ class SummaryAdapterTests(unittest.TestCase):
                 with self.assertRaises(LogContractError):
                     prepare_summary(request, pieces, metadata=metadata, instructions="task")
 
-    def test_unknown_parent_or_output_semantics_prevents_dispatch(self):
+    def test_parent_only_metadata_is_unavailable_but_unknown_observed_budgets_keep_host_default(self):
         with TemporaryDirectory() as name:
             request, metadata = request_fixture(Path(name), ["new fact"])
             piece = SourcePiece(request["sources"][0], "new fact")
-            for update, reason in (({"source": "profile"}, "model_metadata_unavailable"),
-                                   ({"outputMeaning": "unknown"}, "output_budget_unavailable"),
-                                   ({"outputLimitEnforced": False}, "output_budget_unavailable")):
-                with self.subTest(update=update), self.assertRaisesRegex(SummaryDeferred, reason):
-                    prepare_summary(request, [piece], metadata={**metadata, **update}, instructions="task")
+            for value in ({**metadata, "source": "profile"}, {k: v for k, v in metadata.items() if k != "childSelection"}):
+                with self.assertRaisesRegex(SummaryDeferred, "model_metadata_unavailable"):
+                    prepare_summary(request, [piece], metadata=value, instructions="task")
+            metadata.update(outputMeaning="unknown", outputLimitEnforced=None,
+                reasoningTokens=None, visibleResultTokens=None, existingContextTokens=None)
+            original = deepcopy(metadata)
+            prepared = prepare_summary(request, [piece], metadata=metadata, instructions="task")
+            self.assertEqual(prepared["metadata"], original)
+            self.assertEqual(prepared["budget"]["outputReserve"], 8192)
+
+    def test_count_owner_and_encoding_follow_selected_child_not_parent(self):
+        with TemporaryDirectory() as name:
+            request, metadata = request_fixture(Path(name), ["new fact"])
+            child = {**metadata["model"], "id": "worker-light", "tokenizer": "claude-v3", "maxTokens": 4000}
+            metadata["childSelection"].update(model=child, selector="scripted/worker-light:max")
+            metadata.update(outputCap=4000, outputMeaning="unknown", outputLimitEnforced=None,
+                reasoningTokens=None, visibleResultTokens=None, existingContextTokens=None)
+            seen = []
+            def port(query):
+                seen.append(deepcopy(query))
+                return self.contract_counter(query)
+            value = prepare_summary(request, [SourcePiece(request["sources"][0], "new fact")],
+                metadata=metadata, instructions="task", count_fragments=port)
+            self.assertEqual(seen[-1]["owner"]["model"], child)
+            self.assertEqual(set(seen[-1]["owner"]), {"epoch", "parentSessionId", "model"})
+            self.assertEqual(value["metadata"]["model"]["id"], "test")
+            self.assertEqual(value["countBinding"]["encoding"], "ClaudeV3")
+            self.assertEqual(value["metadata"]["existingContextTokens"], None)
 
     def test_mandatory_continuation_reserves_two_full_outputs_without_double_counting_args(self):
         with TemporaryDirectory() as name:
@@ -115,22 +141,22 @@ class SummaryAdapterTests(unittest.TestCase):
             self.assertEqual(budget["mandatoryWireBytes"], budget["mandatoryContinuationEstimate"] + 8192)
             self.assertEqual(budget["dynamicExtrasReserve"], 32768 - budget["mandatoryWireBytes"])
             # LG-D26: initial+one cap can fit while the mandatory next turn cannot.
-            metadata["existingContextTokens"] = 116000
-            self.assertLessEqual(budget["inputEstimate"] + 116000 + 8192, 131072)
+            metadata["childSelection"]["model"]["contextWindow"] = budget["inputEstimate"] + budget["fixedContinuationEstimate"] + 2 * metadata["outputCap"] - 1
+            self.assertLessEqual(budget["inputEstimate"] + 8192, metadata["childSelection"]["model"]["contextWindow"])
             with self.assertRaisesRegex(SummaryDeferred, "input_budget_unavailable"):
                 prepare_summary(request, [piece], metadata=metadata, instructions="task")
 
     def test_selection_accounts_for_next_turn_context_before_sending(self):
         with TemporaryDirectory() as name:
             request, metadata = request_fixture(Path(name), ["x" * 1000, "short report"])
-            metadata["existingContextTokens"] = 107000
+            metadata["childSelection"]["model"]["contextWindow"] = 24000
             prepared = prepare_summary(request, [SourcePiece(request["sources"][0], "x" * 1000),
                 SourcePiece(request["sources"][1], "short report", "report")],
                 metadata=metadata, instructions="task")
             self.assertEqual(prepared["request"]["sources"], [request["sources"][1]])
             self.assertEqual(prepared["omitted"][0]["range"], request["sources"][0])
             self.assertLessEqual(prepared["budget"]["inputEstimate"] + prepared["budget"]["fixedContinuationEstimate"]
-                + metadata["existingContextTokens"] + 2 * metadata["outputCap"], metadata["model"]["contextWindow"])
+                + 2 * metadata["outputCap"], metadata["model"]["contextWindow"])
 
     @staticmethod
     def contract_counter(query):
@@ -209,7 +235,7 @@ class SummaryAdapterTests(unittest.TestCase):
             value = prepare_summary(request, pieces, metadata=metadata, instructions="task", count_fragments=self.contract_counter)
             self.assertEqual(value["request"]["sources"], [request["sources"][1]])
             self.assertEqual(value["omitted"][0]["range"], request["sources"][0])
-            metadata["existingContextTokens"] = 116000
+            metadata["childSelection"]["model"]["contextWindow"] = value["budget"]["inputEstimate"] + value["budget"]["fixedContinuationEstimate"] + 2 * metadata["outputCap"] - 1
             with self.assertRaisesRegex(SummaryDeferred, "input_budget_unavailable"):
                 prepare_summary(request, pieces, metadata=metadata, instructions="task", count_fragments=self.contract_counter)
 

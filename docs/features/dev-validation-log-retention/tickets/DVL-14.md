@@ -19,7 +19,7 @@ LG-D27/28에 따라 검증 환경 준비의 빈 private 저장소 생성·열기
 provider로만 처리하고 결과는 임시 DB에 기록한다. 유료 모델 호출·사용자 인증정보/실제 로그 접근은 전 구간 금지한다.
 SDK child의 새 auth store open·설정 쓰기는 금지하며 준비 I/O와 observer/child 관측은 분리한다.
 금지 동작 또는 격리/귀속 불명은 unavailable/inconclusive로 남긴다. 운영 route·caps·raw 활성화 권한은 유지한다.
-필수unknown이면 inconclusive/preflight 차단, 임의 fallback/새 설정 없이 관측 뒤 Q-S3-05 결정을 요청한다.
+LG-D30에 따라 실제 선택 model/context/요청 출처 unknown은 preflight 차단한다. 출력 enforce/reasoning 의미·부모 context 점유량 unknown은 그대로 기록하며 단순 host output 요청과 격리 child context fit으로 진행한다. 새 budget 설정/fallback chain은 만들지 않는다.
 
 OMP 소유 binary/version/bundled asset만 바뀌면 매 요청의 유효 guard·기존 권한·preflight·활성화 아래 운영을 계속하며 version_drift_unverified로 기록한다.
 이전 pass를 현재 버전 pass로 표시하거나 업데이트마다 verify 요구·반복 안내·자동검증하지 않는다.
@@ -74,3 +74,7 @@ recovery_attempt이며 다음 새입력 계약거부1회에 재보호·새episod
 PRODUCT-evidence는 digest 불일치/필수 closure 누락 invalidated와backend/mailbox/tasks/storage/workflow 변경의
 개발·제품 판정 동일성을 관측한다. 제품은tools/tests/.workflow에의존하지 않으며 별도policy상수를 만들지 않는다.
 R4는 공유현재session/격리생성context 해석의 전송전 read-back으로관측하며role상속출처도 기록한다.
+
+## LG-D30 후속 승인 (2026-10-14)
+
+요약 child 모델은 기존 model table의 Worker.default를 실제 Manager registry descriptor로 해석하고 부모 readback과 별도로 결속한다. 부모 session·설정·기존 SDK route는 유지한다. 최초10%/8192 비용 quota와 미확인 출력 의미의 차단을 제거하며, 기존 전송32KiB·DB결과8KiB·SDK context fitting/no replay를 유지한다. 출력 요청 min(8192, model.maxTokens)은 host 기본값이고 provider enforce 증거가 아니다. 제품 record/admission 소비자도 이 승인에 맞춰 정렬해야 하며, 이 문서 변경만으로 전체 제품 verifier/운영 MODEL gate를 통과시키지 않는다. 개발 검증 뒤 작은 실제 요약 시험을 진행하고 과도한 예산 정책을 추가하지 않는다.

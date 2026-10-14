@@ -2,7 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import net from "node:net";
 import { parseControlEnvelope } from "../contract/v1.ts";
 import { canonicalJson } from "../contract/logs_v1.ts";
-import { countSummaryFragments, dispatchSummarySDK } from "./summary_sdk.ts";
+import { countSummaryFragments, dispatchSummarySDK, summaryCountOwner } from "./summary_sdk.ts";
 import { modelMetadataObserver } from "./model_metadata.ts";
 
 type Role = "manager" | "worker";
@@ -534,7 +534,9 @@ export default function workbenchG3Extension(pi: any, summarySDK?: Record<string
 	let reconnectAttempt = 0;
 	let agentActive = false;
 	let summaryActive = false;
-	const operationalMetadata = modelMetadataObserver(() => context, summarySDK);
+	let summarySelection: any;
+	try { summarySelection = JSON.parse(process.env.WORKBENCH_G3_SUMMARY_SELECTION ?? "null"); } catch { /* unavailable */ }
+	const operationalMetadata = modelMetadataObserver(() => context, summarySDK, summarySelection);
 	const readSummaryMetadata = () => context?.workbenchSummaryMetadata?.() ?? operationalMetadata();
 	let activeDelivery: DeliveryEvidence | undefined;
 	let turnSequence = 0;
@@ -789,8 +791,7 @@ export default function workbenchG3Extension(pi: any, summarySDK?: Record<string
 				const modelKey = (model: any) => canonicalJson(Object.fromEntries(
 					["provider", "id", "api", "baseUrl", "contextWindow", "maxTokens", "tokenizer"]
 						.map(key => [key, model?.[key] ?? null])));
-				if (query.owner.parentSessionId !== String(context?.sessionManager?.getSessionId())
-					|| (context?.model && modelKey(query.owner.model) !== modelKey(context.model))) {
+				if (query.owner.parentSessionId !== String(context?.sessionManager?.getSessionId())) {
 					defer("input_count_owner_mismatch"); return;
 				}
 				// Native parent identity and G3 channel generation are checked separately.
@@ -807,8 +808,7 @@ export default function workbenchG3Extension(pi: any, summarySDK?: Record<string
 						!Number.isSafeInteger(readback.model?.[key]) || readback.model[key] <= 0)) {
 					defer("model_metadata_unavailable"); return;
 				}
-				const owner = (metadata: any) => ({ epoch: metadata.epoch,
-					parentSessionId: metadata.parentSessionId, model: metadata.model });
+				const owner = summaryCountOwner;
 				const ownerText = canonicalJson(owner(readback));
 				const current = () => isCurrentConnection(client, sessionId, sessionGeneration)
 					&& !paused && pauseEpoch === requestEpoch && isMessageSafe()

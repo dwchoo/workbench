@@ -5,6 +5,8 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { canonicalJson, parseSummaryRequest, parseSummaryResult } from "../contract/logs_v1.ts";
 
+import { resolveSummaryChildModel } from "./model_metadata.ts";
+
 type RecordValue = Record<string, any>;
 type SDK = Record<string, any>;
 type Result = { status: string; sent: boolean; protected: boolean; reason?: string;
@@ -46,21 +48,21 @@ const NATIVE_ESTIMATOR = "native_known_family_strict";
 const TOKENIZER_ENCODINGS: Record<string, string> = { "claude-v3": "ClaudeV3", "claude-v47": "ClaudeV47",
   "claude-v5": "ClaudeV5", "claude-v5-sonnet": "ClaudeV5Sonnet", qwen3: "Qwen3",
   "deepseek-v3": "DeepSeekV3", "kimi-k2": "KimiK2", glm5: "Glm5" };
-const countOwner = (metadata: RecordValue) => ({ epoch: metadata.epoch,
-  parentSessionId: metadata.parentSessionId, model: metadata.model });
+export const summaryCountOwner = (metadata: RecordValue) => ({ epoch: metadata.epoch,
+  parentSessionId: metadata.parentSessionId, model: metadata.childSelection?.model });
 
 /** Count-only optional port implementation; callers provide the already loaded SDK.
  * No provider call, model inference, transport or operating supplier is created here.
  */
 export function countSummaryFragments(metadata: RecordValue, fragments: string[], sdk: SDK): RecordValue {
-  const base = { version: "summary-host-input-v1", ownerDigest: sha(stable(countOwner(metadata))),
+  const base = { version: "summary-host-input-v1", ownerDigest: sha(stable(summaryCountOwner(metadata))),
     fragmentDigests: fragments.map(sha) };
   const fallback = (reason: string): RecordValue => ({ ...base, encoding: null, exact: false,
     estimator: BYTES_ESTIMATOR, tokens: fragments.map(bytes), fallbackReason: reason });
-  const expected = TOKENIZER_ENCODINGS[metadata.model?.tokenizer];
+  const expected = TOKENIZER_ENCODINGS[metadata.childSelection?.model?.tokenizer];
   if (!expected) return fallback("tokenizer_family_unavailable");
   try {
-    const tokenizer = new sdk.Tokenizer(metadata.model);
+    const tokenizer = new sdk.Tokenizer(metadata.childSelection.model);
     if (tokenizer.encoding !== expected) return fallback("native_encoding_unavailable");
     const tokens = fragments.map(fragment => {
       const strict = tokenizer.countTokens(fragment, "strict");
@@ -123,6 +125,13 @@ export async function dispatchVerificationSummarySDK(options: DispatchOptions): 
   return dispatchSDK(options, true);
 }
 
+function verificationModelAllowed(model: any): boolean {
+  const endpoint = new URL(model?.baseUrl);
+  const host = endpoint.hostname;
+  return endpoint.protocol === "http:" && !endpoint.username && !endpoint.password && !endpoint.search && !endpoint.hash
+    && (host === "localhost" || host === "[::1]" || /^127(?:\.\d{1,3}){3}$/.test(host));
+}
+
 async function dispatchSDK(options: DispatchOptions, verification: boolean): Promise<Result> {
   const { role, context, prepared, writer, observeMetadata, current } = options;
   const emit = options.emit ?? (() => {});
@@ -143,6 +152,7 @@ async function dispatchSDK(options: DispatchOptions, verification: boolean): Pro
     catch { return false; }
   };
   let metadata: RecordValue;
+  let selectedModel: any;
   let skill: string;
   let sdk: SDK;
   let policy: string;
@@ -150,10 +160,7 @@ async function dispatchSDK(options: DispatchOptions, verification: boolean): Pro
   let verificationRegistry: any;
   try {
     if (verification) {
-      const endpoint = new URL(context.model?.baseUrl);
-      const host = endpoint.hostname;
-      if (endpoint.protocol !== "http:" || endpoint.username || endpoint.password || endpoint.search || endpoint.hash
-          || !(host === "localhost" || host === "[::1]" || /^127(?:\.\d{1,3}){3}$/.test(host)))
+      if (!verificationModelAllowed(context.model))
         return defer("startup_configuration_unavailable");
       verificationRegistry = context.modelRegistry;
       if (!verificationRegistry || typeof verificationRegistry.awaitInitialBackgroundRefresh !== "function")
@@ -180,6 +187,12 @@ async function dispatchSDK(options: DispatchOptions, verification: boolean): Pro
         || metadata.parentSessionId !== String(context.sessionManager?.getSessionId())
         || stable(metadata) !== stable(input.metadata)
         || modelKey(metadata.model) !== modelKey(context.model)) return defer("model_metadata_unavailable");
+    selectedModel = resolveSummaryChildModel(context, metadata.childSelection);
+    if (!selectedModel || modelKey(selectedModel) !== modelKey(metadata.childSelection?.model)
+        || metadata.childSelection?.thinkingLevel !== metadata.childSelection.selector.split(":").at(-1)
+        || metadata.childSelection?.serviceTierSource !== "parent_session_readback"
+        || metadata.childSelection?.descriptorSource !== "manager_model_registry_getAll_all")
+      return defer("model_metadata_unavailable");
     skill = readFileSync(fileURLToPath(new URL("../skills/important-log-summary/SKILL.md", import.meta.url)), "utf8");
     policy = readFileSync(fileURLToPath(new URL("../../src/workbench/contracts/summary_compat_policy_v1.json", import.meta.url)), "utf8");
     if (!options.sdk) return defer("sdk_api_unavailable");
@@ -252,7 +265,7 @@ async function dispatchSDK(options: DispatchOptions, verification: boolean): Pro
   }
   const prompt = buildSummaryPrompt(input);
   const outputCap = metadata.outputCap;
-  const inputLimit = Math.min(8192, Math.floor(metadata.model.contextWindow / 10));
+  const inputLimit = selectedModel.contextWindow;
   const tokenBudget = (text: string) => {
     const proof = countSummaryFragments(metadata, [text], sdk);
     return { tokens: proof.tokens[0], estimator: proof.estimator, exact: proof.exact,
@@ -281,14 +294,9 @@ async function dispatchSDK(options: DispatchOptions, verification: boolean): Pro
     return { context: { ...sdkContext, messages: [...sdkContext.messages, ...messages] }, argumentsBytes };
   };
   const budgetCheck = (model: any, sdkContext: any, initial: boolean): string | undefined => {
-    if (metadata.outputMeaning !== "reasoning_and_visible" || metadata.outputLimitEnforced !== true
-        || ![BYTES_ESTIMATOR, NATIVE_ESTIMATOR].includes(metadata.estimator) || !Number.isSafeInteger(outputCap)
-        || typeof metadata.outputLimitSource !== "string" || !metadata.outputLimitSource
-        || !Number.isSafeInteger(metadata.existingContextTokens) || metadata.existingContextTokens < 0
-        || outputCap < 1 || outputCap > Math.min(8192, model.maxTokens)
-        || !Number.isSafeInteger(metadata.reasoningTokens) || metadata.reasoningTokens < 0
-        || !Number.isSafeInteger(metadata.visibleResultTokens) || metadata.visibleResultTokens < 1
-        || metadata.reasoningTokens + metadata.visibleResultTokens > outputCap)
+    if (![BYTES_ESTIMATOR, NATIVE_ESTIMATOR].includes(metadata.estimator) || !Number.isSafeInteger(outputCap)
+        || metadata.outputLimitSource !== "host_default"
+        || outputCap < 1 || outputCap !== Math.min(8192, model.maxTokens))
       return "output_budget_unavailable";
     const projected = projection(sdkContext);
     const counted = tokenBudget(projected);
@@ -306,7 +314,7 @@ async function dispatchSDK(options: DispatchOptions, verification: boolean): Pro
       estimator: counted.estimator, exact: counted.exact, encoding: counted.encoding,
       fallbackReason: counted.fallbackReason, sharedInputEstimate: sharedInputEstimate ?? null,
       sharedQuotaIsFullProjectionBound: false, inputLimit, outputCap, fittedCap: fitted,
-      initialInputQuota: initial, conservativeWireBytes: bytes(projected) + 8192,
+      initialInvocation: initial, conservativeWireBytes: bytes(projected) + 8192,
       ...(continuation ? { mandatoryContinuationEstimate: nextEstimate,
         mandatoryArgumentsBytes: continuation.argumentsBytes, fixedContinuationEstimate: fixedFraming,
         previousOutputReserve: outputCap, nextOutputReserve: outputCap, nextFittedCap: nextFitted,
@@ -315,10 +323,10 @@ async function dispatchSDK(options: DispatchOptions, verification: boolean): Pro
         // dynamic IDs, thinking/text and provider metadata have no absolute byte bound.
         dynamicExtrasReserve: 32768 - bytes(nextProjection!) - 8192 } : {}) });
     return fitted !== outputCap || (continuation && nextFitted !== outputCap) ? "output_budget_unavailable" :
-      (initial && (estimate > inputLimit || (sharedInputEstimate !== undefined && sharedInputEstimate > inputLimit))) || bytes(projected) + 8192 > 32768
-      || estimate + metadata.existingContextTokens + outputCap > model.contextWindow
+      bytes(projected) + 8192 > 32768
+      || estimate + outputCap > model.contextWindow
       || (continuation && (bytes(nextProjection!) + 8192 > 32768
-        || estimate + fixedFraming + metadata.existingContextTokens + outputCap + outputCap > model.contextWindow))
+        || estimate + fixedFraming + outputCap + outputCap > model.contextWindow))
         ? "input_budget_unavailable" : undefined;
   };
   let child: any;
@@ -337,9 +345,11 @@ async function dispatchSDK(options: DispatchOptions, verification: boolean): Pro
       state.receipt = undefined;
       let admitted = false;
       try {
-        child = (await sdk.createAgentSession({ cwd: process.cwd(), model: structuredClone(context.model),
-          ...(verification ? { modelRegistry: verificationRegistry } : {}),
-          thinkingLevel: metadata.thinkingLevel,
+        const childModel = structuredClone(selectedModel);
+        if (verification && !verificationModelAllowed(childModel)) return defer("startup_configuration_unavailable");
+        child = (await sdk.createAgentSession({ cwd: process.cwd(), model: childModel,
+          modelRegistry: context.modelRegistry,
+          thinkingLevel: metadata.childSelection.thinkingLevel,
           resolveServiceTierByFamily: () => structuredClone(metadata.serviceTierByFamily),
           settings, sessionManager: sdk.SessionManager.inMemory(process.cwd()), agentRegistry: registry, agentId,
           agentName: "task", bindProcessState: false, systemPrompt: [bundled.systemPrompt, skill],
@@ -369,15 +379,14 @@ async function dispatchSDK(options: DispatchOptions, verification: boolean): Pro
             sha(stable(tools[0].parameters)) !== schemaSha ? "schema_mismatch" :
             sha(readFileSync(fileURLToPath(new URL("../../src/workbench/contracts/summary_compat_policy_v1.json", import.meta.url)), "utf8")) !== policySha
               ? "policy_mismatch" :
-            modelKey(model) !== modelKey(metadata.model) || modelKey(context.model) !== modelKey(metadata.model)
+            modelKey(model) !== modelKey(metadata.childSelection.model) || modelKey(context.model) !== modelKey(metadata.model)
               || stable(observeMetadata() ?? null) !== stable(metadata)
               ? "model_mismatch" : undefined;
         };
         const original = child.agent.streamFn;
         let streamInvocations = 0;
         const wrapper = (model: any, sdkContext: any, streamOptions: any) => {
-          // LG-D26 exempts only subsequent invocations in this same child from
-          // the host-input quota. All actual wire/context/output guards remain.
+          // Each actual fresh-child projection keeps its wire/context/output guards.
           const initial = ++streamInvocations === 1;
           let reason = check(model, sdkContext) ?? budgetCheck(model, sdkContext, initial);
           emit({ event: "stream_guard", requestId: request.requestId, reason: reason ?? null });
@@ -396,24 +405,24 @@ async function dispatchSDK(options: DispatchOptions, verification: boolean): Pro
         const validContext = { tools: [{ name: SUMMARY_TOOL_NAME, parameters: sdk.toolWireSchema(tool) }] };
         const originalReceipt = state.receipt;
         state.receipt = { ...receipt, sessionId: "startup-selfcheck-stale" };
-        const stale = check(context.model, validContext);
+        const stale = check(selectedModel, validContext);
         state.receipt = originalReceipt;
-        const wrong = check(context.model, { tools: [{ name: "bash", parameters: sdk.toolWireSchema(tool) }] });
+        const wrong = check(selectedModel, { tools: [{ name: "bash", parameters: sdk.toolWireSchema(tool) }] });
         const active = child.getEnabledToolNames();
         admitted = child.settings === settings && !child.isDisposed && !!registry.get(agentId)
           && !sdk.AgentRegistry.global().get(agentId) && typeof original === "function"
           && child.agent.streamFn === wrapper && active.length === 1 && active[0] === SUMMARY_TOOL_NAME
-          && modelKey(child.model) === modelKey(metadata.model)
-          && child.thinkingLevel === metadata.thinkingLevel
+          && modelKey(child.model) === modelKey(metadata.childSelection.model)
+          && child.thinkingLevel === metadata.childSelection.thinkingLevel
           && stable(child.serviceTierByFamily) === stable(metadata.serviceTierByFamily)
-          && check(context.model, validContext) === undefined && wrong === "roster_mismatch" && stale === "stale_binding";
+          && check(selectedModel, validContext) === undefined && wrong === "roster_mismatch" && stale === "stale_binding";
         emit({ event: "startup_selfcheck", requestId: request.requestId, attempt, admitted,
           sessionId: receipt.sessionId, active, definitionDigest: sha(bundled.systemPrompt), skillDigest: sha(skill) });
         if (!admitted) continue;
         const preliminary = { systemPrompt: [bundled.systemPrompt, skill],
           messages: [{ role: "user", content: [{ type: "text", text: prompt }], timestamp: Date.now() }],
           tools: [{ name: tool.name, description: tool.description, parameters: sdk.toolWireSchema(tool) }] };
-        const reason = budgetCheck(context.model, preliminary, true);
+        const reason = budgetCheck(selectedModel, preliminary, true);
         if (reason) return defer(reason);
         break;
       } catch { emit({ event: "startup_rejected", requestId: request.requestId, attempt }); }

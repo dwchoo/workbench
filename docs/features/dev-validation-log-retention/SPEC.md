@@ -420,11 +420,9 @@ Credential-free verify는 LG-D27/28의 구간 경계를 따른다. Metadata obse
 무부작용 근거로 합산하지 않는다. 기존 운영 OMP의 정상 모델 호출 인증을 금지한다는 뜻은 아니다.
 관측 snapshot은 요청/session/model epoch에 묶고 전송 전 변경이면 다시 확인한다. 비밀값은 기록하지 않으며
 검증 자식에는 sanitized model descriptor만 넘긴다. 실제 session을 로컬에서 확인할 수 없거나 offline catalog가
-없는 것은 예상 가능한 inconclusive이지 provider 실패/성공이 아니다. Q-S3-05로 넘기고 임의 fallback을 넣지 않는다.
+없는 것은 예상 가능한 inconclusive이지 provider 실패/성공이 아니다. LG-D30의 단순 예산 기본값은 실제 model descriptor나 선택 출처의 부재를 대신하지 않는다.
 요약 경로가 main context를 공유하면 기존 context 점유를 확인하고, 격리 context라면 그 경계를 입증한다.
-얻을 수 없는 항목은 unknown/source unavailable로 product record에 기록하며 해당 gate는 inconclusive,
-affected preflight는 차단한다. Scripted provider의 값만으로 실제 configured model 관측을 pass하지 않는다.
-새 설정이나 임의 고정 fallback을 만들지 않는다. 대체 상한은 실제 관측 뒤 §13 Q-S3-05로 보고/결정한다.
+얻을 수 없는 항목은 unknown/source unavailable로 product record에 기록한다. LG-D30에 따라 실제 선택 model/thinking/tier·context와 요청 결속을 확인할 수 없으면 affected preflight를 차단한다. Output ceiling enforce·reasoning 의미/예산·부모 context 점유량의 unknown만으로는 호출을 막지 않으며, host 기본 output 요청과 격리 child context fit을 사용한다. Scripted provider의 값만으로 실제 configured model 관측을 pass하지 않는다. 이 기본값은 provider 의미의 입증이 아니며 실제 품질/잘림/비용은 미검증으로 남긴다. 새 budget 설정이나 fallback chain은 만들지 않는다.
 명시 verify의 Q01 8개 scripted 판별과 이 metadata 관측은 따로 기록하고 모두 필수 상태를 확인한다.
 이때도 실제 모델 응답 품질·비용은 RM-input-budget 시험 전 미검증이다.
 
@@ -463,8 +461,7 @@ DVL-09는 Q-01에서 통과·채택된 경로만 구현한다. 새 agent 파일/
 기존 to-worker/to-manager/recovery 동작과 repo skill 크기 제약을 유지한다.
 
 1MiB 수집 상한과 별개로 전송 body는 초기 최대32KiB이며 skill·system·기존 context를 포함한 token preflight를 한다.
-LG-D26에 따라 input estimate <= min(8192 tokens, 확인된 model context의10%)는 host가 선정한 최초 입력의 quota다.
-후속 SDK turn에서 모델의 tool 호출과 고정 tool 결과가 추가되면 이 quota를 반복 적용하지 않는다.
+LG-D30에 따라 최초 host 입력의 min(8192 tokens, model context의10%) 비용 quota는 적용하지 않는다. 선택한 child 모델의 context fit과 기존 32KiB 전송 경계를 최초·후속 SDK turn에서 확인한다. 부모 대화 context를 상속하지 않는 새 child이므로 부모의 미확인 context 점유량을 산술에 더하지 않는다.
 최초 전송 전에 필수 후속 turn 증가분까지 예산에 맞는지 확인한다. 이후 매 전송도 최대 output 전량 예약,
 기존 context/고정 instructions 여유, 전체 contextWindow와 전송 body 32KiB를 계속 검사한다.
 Bytes 보수 estimator는 유효 결과의8KiB 상한과 실제 JSON framing·고정 tool 결과를 사용하며,
@@ -474,20 +471,9 @@ output token ceiling을 범용 token/byte 비율로 바꾸지 않는다. 필수 
 provider toolCallId·thinking·text·metadata의 예약 여유이며 무조건적인 byte 상한 보장이 아니다.
 Context는 최초 입력·고정 결과/framing·기존 context와 직전 출력 전량 및 후속 출력 전량을 예약한다.
 실제 후속 전송도 다시 검사하며 초과 시 전송하지 않는다. Provider HTTP body 적합성은 별도 미검증이다.
-결과 전체 JSON은8KiB이고, 출력은 채택 OMP 경로가 실제 enforce하는 최대 output tokens(초기8192 이하)로
-별도 제한한다. Preflight는 그 최대 output token 수 전체와 기존 context/고정 instructions 여유를 예약한다.
-8192는 초기 ceiling의 상한이지 매 요청의 목표 출력량이나 reasoning을 무시한 고정 예약값이 아니다.
-8KiB JSON의 visible token 예산은 채택 모델 tokenizer 또는 검증된 보수 estimator와 envelope를 기준으로 산출하고
-결과 길이 목표/byte cap을 입력에 전달한다. bytes=token의 범용 비율을 가정하지 않는다. Reasoning이 ceiling에
-포함되면 확인된 reasoning 예산과 visible JSON 예산을 합쳐 실제 enforce 한도를 정하고 전량 예약한다.
-별도 ceiling이면 각 한도/과금·context 차감 의미를 확인한다. 동작 의미·필수 reasoning 여유가 불명이거나
-기존 thinking에서 visible 결과가 들어갈 근거가 없으면 output_budget_unavailable로 호출을 차단한다.
-현재 사용자 모델/thinking/tier는 유지하며 summary만 조용히 낮추지 않는다. 필요 변경은 Q-S3-06 관측 뒤 결정이다.
-8KiB는 최종 UTF-8 전체 envelope의 독립 byte cap이다. Token ceiling 안이어도 byte cap 초과/미완결은 거부한다.
-모델별 token/byte 변동 때문에 허용한 여유와 예상 visible/reasoning/전체 ceiling을 요청별 기록한다. 실제 잘림·
-reasoning 소진·비용은 RM-input-budget 전 미검증이며 사후 byte 거부만으로 비용 안전성을 통과시키지 않는다.
-결과 byte cap만 사후 검사하고2048만 예약하는 조합은 금지한다. 공개 API/모델 metadata에서 enforce ceiling을
-확인/설정할 수 없으면 Q01-context와 요청 preflight를 inconclusive로 차단하고 대안을 보고한다.
+결과 전체 JSON은8KiB이며 독립 UTF-8 byte cap을 유지한다. LG-D30의 host 기본 outputCap은 min(8192, 선택 모델 maxTokens)이고 maxTokens option으로 요청한다. SDK context fitting과 전송 시 실제 입력 검사는 유지하되, provider enforce 여부·reasoning 포함/별도 ceiling·visible 결과 token 예산의 unknown은 호출 필수 차단 조건에서 제외한다. Unknown은 true/0 또는 관측값으로 위조하지 않는다.
+요약 child는 configured Worker.default의 실제 registry descriptor와 selector thinking을 사용한다. 부모 model/thinking/tier 관측과 childSelection을 구분하여 epoch에 묶으며, child tier는 기존 부모 상속 출처를 명시한다. 부모 설정·session을 바꾸지 않는다.
+잘림·미완결 또는 8KiB 초과 결과는 기존 계약 거부/no replay로 처리한다. 실제 provider 의미·품질·reasoning 소진·비용은 작은 실모델 시험 전 미검증이며, 사후 결과 거부를 비용 안전성 입증이라고 표현하지 않는다. 별도 비용 추적 정책이나 budget knobs는 추가하지 않는다.
 Provider의 한도 초과 출력·잘린/미완결 JSON은 저장 거부/누락으로 기록하며 no replay를 우회하지 않는다.
 32KiB/8192/10%와8KiB는 개발 기술 기본값이며 실모델 적합성은 미검증이다.
 OMP가 제공하는 모델/tokenizer/context 정보를 먼저 사용한다. tokenizer가 없으면 bytes 기반 보수 추정을 쓰되
@@ -740,8 +726,8 @@ $implement docs/features/dev-validation-log-retention
 | Q-S2-02 (M4) | 합의: cancelled·approval_retired는 수집만, 새 종료 요약 없음 (LG-D14) | 기존에 전송된 유효한 늦은 결과 저장은 별개 |
 | Q-S2-04 (N4) | 합의 수정: OMP 업데이트 후 기본 실행 유지, 실제 문제·관련 제품 변경 때 수동 verify (DV-D03) | 매 업데이트 차단/반복 요구/자동 verify 제안은 채택하지 않음. 검증용 local provider/일회성 OMP는 운영 요약 route나 새 agent가 아님 |
 | Q-S2-03 (M5) | 조건부: 공유 session/turn/lock의 측정·한계 보고 뒤 수용 결정 | 지금 차단 시간을 승인받지 않음. 비공유가 관측된 경로는 불필요한 사용자 대기 없음; 공유 route의 Q01-priority pass와09/10/14 확대는 측정값 채택 전 차단 |
-| Q-S3-05 (N3) | 조건부: 실제 model metadata를 얻을 수 없을 때만 대체 상한 검토 | 현재는 unknown preflight 차단. 임의 고정 상한/새 설정을 도입하지 않음. 관측과 비용·context 한계를 보고한 뒤 사용자 결정 |
-| Q-S3-06 (P4) | 조건부: 실제 thinking/reasoning/tier·결과 잘림/비용 관측 뒤 요약만 조정할지 결정 | 현재 사용자 pin 유지. Paid 측정은 별도 승인·예산 필요; 임의 effort/tier 변경 없음 |
+| Q-S3-05 (N3) | LG-D30 사용자 결정: 단순 host 예산 기본값 사용 | 선택 model/context/출처 부재는 차단. Output/reasoning 의미의 unknown은 기록하고 기본 요청+context fit으로 진행; 실제 provider 의미 pass 아님 |
+| Q-S3-06 (P4) | LG-D30 사용자 결정: 요약에 Worker.default 모델·selector thinking 재사용 | 부모 model/thinking/tier는 유지. Child tier는 기존 부모 상속, 새 모델 설정 없음. 개발 검증 뒤 작은 실제 요약 시험; 과도한 예산 정책 없음 |
 | P1 후속 경로 채택 | 조건부: 요청별 유효 guard 확인이 불가능한 route인 경우만 대안 보고 | 안전 차단 없이 version drift 계속 실행하지 않음. 지금 대안/권한을 새로 확정하지 않음 |
 
 추가 원칙은 사용자의 “1번 A / 2번 A / 3번은 … 기본은 그냥 새 버전에 대해서 동작해보고 문제가 생기거나
@@ -829,3 +815,7 @@ LG-D19의 현실 부하 누락0·중복0·경합 capture_unknown0·watchdog 기�
 ## 2026-10-12 LG-D26 최초 입력 quota 적용 범위
 
 [BRIEF LG-D26](BRIEF.md#lg-d26--최초-host-입력-quota와-후속-turn-예약-2026-10-12)와 [사용자 승인 기록](../../../.workflow/dev-validation-log-retention/runs/dvl10-20261012/u1-host-input-20261012/decision.json)에 따라 §8.2의 최초 host 입력과 필수 후속 turn 판별을 구분한다. 한도 수치·no replay·운영 metadata 요구·PLAN 의존성과 나머지 Q01 기준은 유지한다. 기존 stream별 quota 아래의 실패·측정 기록은 당시 결과로 보존하고 새 해석의 회귀·runtime을 별도로 검증한다.
+
+## 2026-10-14 LG-D30 요약 모델·예산 후속 승인
+
+[BRIEF LG-D30](BRIEF.md#lg-d30--worker-모델-재사용과-단순한-요약-예산-2026-10-14)은 부모 모델 복제·최초 비용 quota·출력 의미 unknown 차단에 대한 현재 승인이다. Gate ID/증거 수준, DB-only·결속·no replay·C2 hold와 실제 raw 비활성은 유지하며 기존 실패/관측을 새 pass로 재표시하지 않는다. 해당 모델/예산 소비자는 이 승인에 맞춰 독립 검증하고, scripted fixture와 실제 운영 관측을 구분한다.

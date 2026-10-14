@@ -653,6 +653,21 @@ class X2Restart(Fault):
                 assert "previous_backend_survivors_alive" in (result.get("problems") or []), out
             else:
                 assert done.returncode == 0 and result.get("verified") is True, out
+                backend = sb.known.get("backend")
+                assert (isinstance(backend, (tuple, list)) and len(backend) == 2
+                        and all(type(value) is int and value > 0 for value in backend)), ("known restarted backend identity required", out)
+                pid, start_ticks = backend
+                deadline = time.monotonic() + 25
+                while True:
+                    backend_alive = h.alive(pid, start_ticks)
+                    remaining = sb.backend_processes()
+                    out["backend_exit"] = {"pid": pid, "start_ticks": start_ticks, "alive": backend_alive,
+                        "remaining_backend_count": len(remaining),
+                        "remaining_backends": [{"pid": other, "start_ticks": h.ticks(other)} for other in remaining[:16]]}
+                    if not backend_alive and not remaining:
+                        break
+                    assert time.monotonic() < deadline, ("verified shutdown backend did not exit within 25 s", out)
+                    time.sleep(0.1)
             return out
 
         r.run("X2.running_open_task", running)

@@ -279,75 +279,57 @@ class Hold:
             self.done.set()
 
 def producer(root, result):
+    """Three real Task spec deliveries, not a fabricated terminal-start event."""
     layout = DataLayout(root / 'data')
-    ensure_private_dir(layout.workflow / 'terminal')
-    with TaskRepository(layout.tasks):
-        pass
+    ensure_private_dir(layout.workflow)
+    with TaskRepository(layout.tasks) as journal:
+        parts = [''.join('private-work-' + sha256(f'dvl14-upper-fixed-{index}-{line}'.encode()).hexdigest() + '\n'
+                         for line in range(64))[:4096] for index in range(3)]
+        task = journal.create_task({'description': 'owned upper input', 'parts': parts})
+        scope = journal.approve_scope(task, 1, {'operation': 'owned upper summary'})
+        grant = journal.proceed(task, 1, 'owned manual upper admission')
+        run = journal.start_run(task, 1)
     layout.tasks.chmod(0o600)
     catalog = ImportantLogCatalog(layout.important_logs, create=True)
     sink = ActiveSubjectLog(catalog)
-    factory = lambda: TaskRepository(layout.tasks)
-    identity = str(uuid4())
-    raw_path = layout.workflow / 'terminal' / (identity + '.log')
-    raw_path.touch(mode=0o600)
-    with_handoff = HandoffJournal(layout.workflow / 'handoffs.jsonl')
+    flow = HandoffJournal(layout.workflow / 'handoffs.jsonl')
     try:
-        event = with_handoff.append({'type': 'terminal_started', 'command_id': identity,
-            'task_id': None, 'command': 'owned synthetic producer fixture', 'started_at': utc()})
+        sink.record_flow(flow.append({'type': 'delegated', 'task_id': task, 'revision': 1,
+            'scope_decision_id': scope, 'proceed_decision_id': grant, 'run_id': run}))
     finally:
-        with_handoff.close()
-    sink.record_terminal(event)
-    command = _Command(identity, 'owned synthetic producer fixture', {}, None, raw_path)
-    command.summary_started = True
-    failures = []
-    service = TerminalService.__new__(TerminalService)
-    service._repository_factory, service._subject_log = factory, sink
-    service._mark_subject_unknown = lambda: failures.append('capture_unknown')
-    service._configure_summary_capture(command)
-    for index in range(3):
-        raw = ''.join('private-work-' + sha256(f'dvl14-upper-fixed-{index}-{line}'.encode()).hexdigest() + '\n'
-            for line in range(64)).encode()[:4096]
-        assert len(raw) == 4096
-        raw.decode('utf-8')
-        command.write(raw)
-    if failures or command.summary_failed or command.log_error:
-        raise RuntimeError('producer_capture_failed')
-    subject = {'schemaVersion': 1, 'kind': 'command', 'id': identity}
+        flow.close()
+    subject = {'schemaVersion': 1, 'kind': 'task', 'id': task}
+    messages = []
+    for text in parts:
+        message = str(uuid4())
+        messages.append(message)
+        sink.record_delivery(subject, message_id=message, revision=1, kind='task_spec', content=text, delivered_at=utc())
+    originals = []
     with TaskRepository(layout.tasks) as journal:
         with ImportantLogStore.open(layout.important_logs, catalog.active_uuid(), readonly=True) as store:
             entries = [store.get_entry(row[0]) for row in store._connection.execute(
-                "SELECT entry_id FROM entries WHERE subject_kind='command' AND subject_id=?", (identity,))]
+                "SELECT entry_id FROM entries WHERE subject_kind='task' AND subject_id=?", (task,))]
             result['catalog_initial_entries'] = store._connection.execute('SELECT COUNT(*) FROM entries').fetchone()[0]
-        originals = []
-        for entry in entries:
-            for span in entry['sources']:
-                if span['source']['sourceKind'] == 'terminal':
-                    originals.append(span)
-                    journal.ingest_summary_source(subject, span, entry['entryId'])
-        originals.sort(key=lambda span: span['start'])
+        for message in messages:
+            entry = next(entry for entry in entries if entry['sources'][0]['source'].get('messageId') == message)
+            span = entry['sources'][0]
+            originals.append(span)
+            journal.ingest_summary_source(subject, span, entry['entryId'])
         records = journal.pending_summary_sources(subject)
-        assert len(originals) == len(records) == 3
-        def observed_raw_query(kind, identity, **kwargs):
-            value = raw_query(layout.root, kind, identity, **kwargs)
-            raw = base64.b64decode(value['read']['dataBase64'], validate=True)
-            result['raw_queries'].append({'kind': kind, 'identity': identity, **kwargs,
-                'read_bytes': len(raw), 'read_sha256': sha256(raw).hexdigest()})
-            return value
-        pieces, gaps = SummarySourceCollector(layout.root, lambda: sink,
-            raw_query_port=observed_raw_query).collect(journal, subject, records)
-        assert not gaps and len(pieces) == 3
-        assert [p.range for p in sorted(pieces, key=lambda p: p.range['start'])] == originals
-        assert all(len(p.text.encode()) == 4096 and sha256(p.text.encode()).hexdigest() == p.range['digest'] for p in pieces)
+        pieces, gaps = SummarySourceCollector(layout.root, lambda: sink).collect(journal, subject, records)
+        if gaps or len(pieces) != 3 or any(len(p.text.encode()) != 4096 or sha256(p.text.encode()).hexdigest() != p.range['digest'] for p in pieces):
+            raise RuntimeError('owned_upper_source_collection_mismatch')
     authority = sink.authority(subject, active=True, paused=False, revoked=False, has_new_input=True)
-    assert authority['allowed'] is True
-    request = {'schemaVersion': 1, 'requestId': str(uuid4()), 'subject': subject, 'revision': None,
+    request = {'schemaVersion': 1, 'requestId': str(uuid4()), 'subject': subject, 'revision': 1,
         'authorizationRef': authority['authorization_ref'], 'authorizationEpoch': authority['authorization_epoch'],
         'skillName': SKILL_NAME, 'skillDigest': sha256(skill_bytes()).hexdigest(), 'sources': originals,
         'sourceGaps': [], 'priorCumulativeEntryId': None, 'dbHealth': catalog.health_snapshot()['active'], 'requestedAt': utc()}
-    request['inputKey'] = summary_input_key(subject, None, originals, [], request['skillDigest'])
+    request['inputKey'] = summary_input_key(subject, 1, originals, [], request['skillDigest'])
+    if sink.authorize_summary_request(request, active=True, paused=False, revoked=False, has_new_input=True)['allowed'] is not True:
+        raise RuntimeError('owned_upper_authority_unavailable')
     result['producer'] = {'original_ranges': originals, 'bytes': 12288, 'collector_pieces': 3,
-        'capture_failures': failures, 'authority': authority,
-        'label': 'owned synthetic producer/lifecycle fixture; no physical terminal-start claim'}
+        'capture_failures': [], 'authority': authority, 'task_id': task, 'run_id': run,
+        'label': 'actual owned Task spec deliveries and collector; manual host admission, not Backend boot'}
     return layout, catalog, sink, authority, request, pieces, originals
 
 def _execute(top: Path, binary: Path, body_budget_seconds: float):
@@ -382,6 +364,7 @@ def _execute(top: Path, binary: Path, body_budget_seconds: float):
     completed = None
     child_posts, violations = [], []
     hold = Hold(top / 'manager')
+    parent_hold, parent_release = threading.Event(), threading.Event()
     notice_ids = {role: str(uuid4()) for role in tokens}
     tty = {role: {'bytes_seen': 0, 'bytes_saved': 0, 'truncated': False} for role in tokens}
     handler_threads = []
@@ -494,6 +477,10 @@ def _execute(top: Path, binary: Path, body_budget_seconds: float):
                             if "response_contract" in injected or row["run_id"] != workflow_run.run_id:
                                 raise ValueError("actual_periodic_contract_or_run_mismatch")
                             text = "Owned periodic review observed. No analysis verdict."
+                    if role == "manager" and row.get("notice_id") == notice_ids["manager"]:
+                        parent_hold.set()
+                        if not parent_release.wait(timeout=max(0, deadline - time.monotonic())):
+                            raise TimeoutError("owned_busy_parent_release_timeout")
                     payload, row["assistant_response_sha256"] = _parent_payload(text)
                     self.send_response(200)
                     self.send_header('Content-Type', 'text/event-stream')
@@ -832,6 +819,13 @@ def _execute(top: Path, binary: Path, body_budget_seconds: float):
         menqueue = now()
         data['end_ack'] = request('manager', mframe)
         wait_for(lambda: any(p.get('notice_id') == notice_ids['manager'] for p in data['POSTs']), 1)
+        wait_for(parent_hold.is_set, 1)
+        busy_parent = probe('manager', 'busy_parent_during_summary')
+        data['busy_parent_during_summary'] = {'state': busy_parent,
+            'child_still_held': not hold.done.is_set(), 'observed_ns': now()}
+        if busy_parent.get('idle') is not False or hold.done.is_set():
+            raise RuntimeError('actual_busy_parent_overlap_unobserved')
+        parent_release.set()
         wait_for(lambda: bool(bridge.accepted_events('manager', 'agent_end', menqueue)), 1)
         if hold.done.is_set():
             raise TimeoutError("child_hold_released_before_priority_observations")
@@ -890,6 +884,7 @@ def _execute(top: Path, binary: Path, body_budget_seconds: float):
         data['errors'].append(type(error).__name__ + ':' + str(error))
     finally:
         signal.setitimer(signal.ITIMER_REAL, 0)
+        parent_release.set()
         hold.release.set()
         if port is not None:
             port.release_hold(HOLD_REASON)

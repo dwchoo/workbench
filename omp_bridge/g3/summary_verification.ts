@@ -1,5 +1,5 @@
 /** Explicit private one-shot C1 entry. This fixture cannot attest operating MODEL. */
-import { execFile } from "node:child_process";
+import { execFile, execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { readFileSync, readdirSync, realpathSync, statSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
@@ -9,7 +9,7 @@ import { Tokenizer, fitOutputTokensToContextWindow } from "@oh-my-pi/pi-agent-co
 import { getBundledAgent } from "@oh-my-pi/pi-coding-agent/task/agents";
 import { canonicalJson, summaryInputKey } from "../contract/logs_v1.ts";
 import { observeModelMetadata } from "./model_metadata.ts";
-import { buildSummaryPrompt, dispatchVerificationSummarySDK } from "./summary_sdk.ts";
+import { buildSummaryPrompt, dispatchVerificationSummarySDK, fixedSummaryWriter } from "./summary_sdk.ts";
 import { publishVerificationCompletion } from "./verification_completion.ts";
 
 const sha = (value: string) => createHash("sha256").update(value).digest("hex");
@@ -45,6 +45,22 @@ export default function verification(pi: any) {
 
 async function run(root: string, ctx: any) {
   const fixture = JSON.parse(readFileSync(root + "/fixture.json", "utf8"));
+  if (fixture.metadataOnly === true) {
+    const parent = AgentRegistry.global().list().find((row: any) =>
+      row.session?.sessionManager.getSessionId() === ctx.sessionManager.getSessionId())?.session;
+    if (fixture.root !== root || !parent || parent.modelRegistry !== ctx.modelRegistry)
+      throw Error("configured_parent_unavailable");
+    const abort = new AbortController(), timer = setTimeout(() => abort.abort(), 25000);
+    try { await ctx.modelRegistry.awaitInitialBackgroundRefresh(abort.signal); }
+    finally { clearTimeout(timer); }
+    if (abort.signal.aborted) throw Error("configured_registry_unavailable");
+    const metadata = observeModelMetadata(ctx, { AgentRegistry }, JSON.parse(process.env.WORKBENCH_G3_SUMMARY_SELECTION!));
+    const definition = getBundledAgent("task")?.systemPrompt;
+    if (!metadata || !definition) throw Error("configured_metadata_unavailable");
+    publishVerificationCompletion(root, { metadata, version: VERSION, definitionDigest: sha(definition),
+      metadataOnly: true, promptSubmissions: 0 }, "ok");
+    return;
+  }
   const restartPhase = fixture.restartControl === true ? fixture.phase : undefined;
   if (restartPhase !== undefined && !["disconnect", "restart"].includes(restartPhase))
     throw Error("owned_restart_phase_unavailable");
@@ -63,7 +79,8 @@ async function run(root: string, ctx: any) {
   finally { clearTimeout(timer); }
   if (abort.signal.aborted) throw Error("preparation_not_settled");
   const state = () => ({ model: model(parent.model), thinkingLevel: parent.thinkingLevel,
-    serviceTierByFamily: structuredClone(parent.serviceTierByFamily), entries: parent.sessionManager.getEntries().length });
+    serviceTierByFamily: structuredClone(parent.serviceTierByFamily), entries: parent.sessionManager.getEntries().length,
+    entriesSha256: sha(JSON.stringify(parent.sessionManager.getEntries())) });
   const registry = () => {
     const rows = ctx.modelRegistry.getAll("all").map(model).sort((a: any, b: any) => stable(a).localeCompare(stable(b)));
     return { count: rows.length, sha256: sha(stable(rows)) };
@@ -91,27 +108,34 @@ async function run(root: string, ctx: any) {
     start: offset, end: offset + Buffer.byteLength(text), digest: sha(text) };
   const requestId = restartPhase === "restart" ? "a40f9a18-a0fc-4d75-9260-7f83cb06622d" : "fc8416c2-7d8c-46d4-9615-b833b567f9fe";
   const skillDigest = sha(skill);
-  const request = { schemaVersion: 1, requestId, subject, revision: null,
+  const primaryName = restartPhase === "disconnect" ? "disconnect" : "restart";
+  const request = fixture.caseControls?.cases[primaryName]?.request ?? { schemaVersion: 1, requestId, subject, revision: null,
     authorizationRef: "0f3015c7-dae8-4dc3-9194-2cf770b14cf0", authorizationEpoch: 1,
     inputKey: summaryInputKey(subject as any, null, [span] as any, [], skillDigest),
     skillName: "important-log-summary", skillDigest, sources: [span], sourceGaps: [], priorCumulativeEntryId: null,
     dbHealth: fixture.dbHealth, requestedAt: new Date().toISOString() };
-  const prepared = { request, metadata: metadata(), selected: [{ range: span, text }], omitted: [],
+  const prepared = { request, metadata: metadata(), selected: [{ range: request.sources[0],
+    text: fixture.caseControls?.cases[primaryName]?.text ?? text }], omitted: [],
     priorCumulative: null, definitionDigest: sha(bundled.systemPrompt) };
   const python = process.env.WORKBENCH_SUMMARY_VERIFY_PYTHON!;
   const moduleRoot = root + "/runtime/src";
+  const ownerEnvironment = { PATH: process.env.PATH!, PYTHONPATH: moduleRoot,
+    HOME: root + "/home", PYTHONDONTWRITEBYTECODE: "1" };
+  const current = (item: any) => !fixture.caseControls || execFileSync(python,
+    ["-m", "workbench.backend.summary_compat_cases", "--current", root],
+    { timeout: 5000, maxBuffer: 4096, env: ownerEnvironment, input: JSON.stringify(item) }).toString() === "true";
   const journal = (mode: "--reserve" | "--hold" | "--confirm-not-sent", item: any) => new Promise<void>((resolve, reject) => {
     const reservation = execFile(python, ["-m", "workbench.backend.summary_compat_runtime", mode, root],
       { timeout: 5000, maxBuffer: 4096, env: { PATH: process.env.PATH!, PYTHONPATH: moduleRoot,
         HOME: root + "/home", PYTHONDONTWRITEBYTECODE: "1" } }, error => error ? reject(error) : resolve());
     reservation.stdin!.end(JSON.stringify(item));
   });
-  const expected = (input: any) => {
+  const expected = (input: any, name?: string) => {
     // Match dispatch's detached canonical snapshot without changing its prompt bytes.
     const prompt = buildSummaryPrompt(JSON.parse(canonicalJson(input)));
     writeFileSync(root + "/expected.json", JSON.stringify({ requestId: input.request.requestId,
       systemSha: sha(bundled.systemPrompt + "\n\n" + skill), promptSha256: sha(prompt),
-      promptBytes: Buffer.byteLength(prompt, "utf8") }), { mode: 0o600 });
+      promptBytes: Buffer.byteLength(prompt, "utf8"), ...(name ? { case: name } : {}) }), { mode: 0o600 });
   };
   let child: any, creates = 0, calls = 0;
   const events: any[] = [];
@@ -150,12 +174,53 @@ async function run(root: string, ctx: any) {
       positiveControlSameMetadata: stable(pausedPrepared.metadata) === stable(prepared.metadata) };
   }
   await journal("--reserve", request);
-  expected(prepared);
+  expected(prepared, fixture.caseControls ? primaryName : undefined);
   const outcome = await dispatchVerificationSummarySDK({ role: "manager", context: ctx, prepared,
-    writer: { python, moduleRoot, dataRoot: root + "/data" }, sdk, current: () => true,
+    writer: { python, moduleRoot, dataRoot: root + "/data" }, sdk, current: () => current(request),
     observeMetadata: metadata, emit: event => events.push(event) });
+  const caseControls: any[] = [];
+  if (fixture.caseControls && restartPhase !== "disconnect") {
+    for (const name of ["normal2", "normal3", "worker", "roster_rebuild", "api_invalid", "stale_invalid", "saved_then_bash"]) {
+      const owned = fixture.caseControls.cases[name];
+      const input = { ...prepared, request: owned.request, metadata: metadata(),
+        selected: [{ range: owned.request.sources[0], text: owned.text }] };
+      const prior = state(), registryPrior = registry(), settingsPrior = settings();
+      const children: any[] = [], caseEvents: any[] = [];
+      let childCreates = 0, writerCalls = 0, disposalBeforeRebuild = true;
+      const native = { ...sdk, async createAgentSession(options: any) {
+        disposalBeforeRebuild &&= children.every(child => child.isDisposed === true);
+        childCreates++;
+        if (childCreates > 2 || options.modelRegistry !== ctx.modelRegistry || Object.hasOwn(options, "authStorage"))
+          throw Error("owned_case_child_limit");
+        const created = await createAgentSession(options);
+        const child = created.session;
+        children.push(child);
+        if (name === "roster_rebuild" && childCreates === 1) child.getEnabledToolNames = () => ["bash"];
+        if (name === "api_invalid") child.agent.streamFn = undefined as any;
+        if (name === "stale_invalid") {
+          const id = String(child.sessionManager.getSessionId()); let read = 0;
+          child.sessionManager.getSessionId = () => id + ":stale:" + (++read);
+        }
+        return created;
+      } };
+      await journal("--reserve", owned.request);
+      expected(input, name);
+      const answer = await dispatchVerificationSummarySDK({ role: name === "worker" ? "worker" : "manager",
+        context: ctx, prepared: input, writer: { python, moduleRoot, dataRoot: root + "/data" }, sdk: native,
+        save: async (...args: Parameters<typeof fixedSummaryWriter>) => { writerCalls++; return fixedSummaryWriter(...args); },
+        current: () => current(owned.request), observeMetadata: metadata, emit: event => caseEvents.push(event) });
+      execFileSync(python, ["-m", "workbench.backend.summary_compat_cases", "--disposition", root],
+        { timeout: 5000, maxBuffer: 4096, env: ownerEnvironment, input: JSON.stringify({ request: owned.request, outcome: answer }) });
+      caseControls.push({ name, requestId: owned.request.requestId, outcome: answer, events: caseEvents,
+        childCreates, writerCalls, childDisposed: children.every(child => child.isDisposed === true), disposalBeforeRebuild,
+        parentUnchanged: stable(prior) === stable(state()), registryUnchanged: stable(registryPrior) === stable(registry()),
+        settingsUnchanged: stable(settingsPrior) === stable(settings()),
+        receiptBytes: answer.receipt ? Buffer.byteLength(stable(answer.receipt)) : 0 });
+    }
+  }
   const after = state(), registryAfter = registry(), settingsAfter = settings();
-  publishVerificationCompletion(root, { requestId, version: VERSION, outcome, events,
+  publishVerificationCompletion(root, { requestId, version: VERSION, definitionDigest: sha(bundled.systemPrompt), outcome, events,
+    ...(fixture.caseControls ? { caseControls } : {}),
     ...(restartPhase ? { ownedPhase: restartPhase } : {}),
     ...(pauseControl ? { pauseControl } : {}),
     parentBefore: before, parentAfter: after, parentUnchanged: stable(before) === stable(after),

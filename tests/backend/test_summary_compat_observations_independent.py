@@ -228,6 +228,25 @@ class CompatibilityObservationsIndependent(unittest.TestCase):
                 for check in ("strict_parent_unchanged", "raw_parent_contamination_absent", "prior_entry_views_unchanged"):
                     self.assertIsNone(row["checks"][check])
 
+        # Reuse the synthetic raw control fixture, not a native pass claim.
+        # All safety/priority facts are known here so the diagnostic itself
+        # must prevent pass, without promoting a transient exception to failed.
+        from tests.backend.summary_compat_record_fixture import complete_record
+        complete = complete_record({"model_metadata": {}, "omp": {}})["observations"][1]
+        complete["provider_violations"] = []
+        positive = observe_priority(complete)
+        self.assertEqual(positive["result"], "pass")
+        self.assertTrue(all(value is True for value in positive["checks"].values()))
+        for diagnostic in ("TimeoutError:owned_busy_parent_release_timeout",
+                           "BrokenPipeError:[Errno 32] Broken pipe"):
+            with self.subTest(transient_provider_diagnostic=diagnostic):
+                observed = {**complete, "errors": [], "provider_violations": [diagnostic]}
+                row = observe_priority(observed)
+                self.assertEqual(row["result"], "inconclusive")
+                self.assertTrue(all(value is True for value in row["checks"].values()))
+                self.assertEqual(observed["errors"], [])
+                self.assertEqual(observed["provider_violations"], [diagnostic])
+
 
 if __name__ == "__main__":
     unittest.main()

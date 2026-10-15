@@ -87,6 +87,7 @@ from workbench.storage.important_log import ActiveSubjectLog, ImportantLogCatalo
 from workbench.contracts.logs_v1 import parse_subject_ref
 from workbench.backend.summary_adapter import SDKSummaryAdapter
 from workbench.backend.summary_compatibility import SummaryCompatibility
+from workbench.backend.summary_compat_identity import compatibility_boundary, current_omp_identity
 from workbench.backend.raw_rotation import RawRotationPolicy
 from workbench.backend.summary_scheduler import SummaryScheduler, SummarySourceCollector
 from workbench.tasks.repository import TaskRepository
@@ -400,6 +401,18 @@ class Backend:
         self.omp_home = home
         return home
 
+    def _summary_omp_identity(self) -> dict:
+        instructions = None
+        try:
+            if self.bridge is not None:
+                peer = self.bridge.peer("manager", timeout=0)
+                runtime = SDKSummaryAdapter(self.bridge, timeout=1).read_runtime(
+                    expected_peer=(peer.session_id, peer.generation))
+                instructions = runtime["instructions"]
+        except Exception:
+            pass  # Missing live readback stays unknown; no cached definition is substituted.
+        return current_omp_identity(self.plan.omp, version=self.plan.omp_version, instructions=instructions)
+
     def _open(self) -> None:
         layout = self.layout
         _log(f"starting in {layout.root} (session {os.getsid(0)}, shell {self.plan.shell.executable})")
@@ -411,7 +424,8 @@ class Backend:
         os.chmod(layout.tasks, 0o600)  # SQLite journals inherit the database mode
         self.raw_logs = RawLogStore(layout.raw_logs)
         if self.summary_compatibility is None:
-            self.summary_compatibility = SummaryCompatibility(layout.summary_compatibility)
+            self.summary_compatibility = SummaryCompatibility(layout.summary_compatibility,
+                omp_identity=self._summary_omp_identity, boundary=compatibility_boundary)
         self.raw_rotation = RawRotationPolicy(layout.raw_rotation, self.summary_compatibility)
         try:
             self.important_catalog = ImportantLogCatalog(

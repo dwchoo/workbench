@@ -244,7 +244,7 @@ class OwnedC1Tests(unittest.TestCase):
         with patch("workbench.backend.summary_compat_provider.observe_owned", return_value=expected) as observer, \
              patch("workbench.backend.summary_compat_provider.observe_priority") as priority_observer:
             self.assertEqual(ScriptedCompatibilityProvider().observe(), expected)
-        observer.assert_called_once_with(ROOT, recovery_control=True, pause_control=True, restart_control=True)
+        observer.assert_called_once_with(ROOT, recovery_control=True, pause_control=True, restart_control=True, cases_control=True)
         priority_observer.assert_not_called()
         with patch.object(runtime.shutil, "which", return_value=None), patch.object(runtime.subprocess, "Popen") as launch:
             self.assertEqual(runtime.observe_owned(ROOT)["level"], "unavailable")

@@ -17,6 +17,7 @@ from uuid import uuid4
 
 from workbench.backend.paths import ensure_private_dir, write_private_json
 from workbench.backend.summary_compatibility import Q01_ITEMS, RECORD_LIMIT, SummaryCompatibility
+from tests.backend.summary_compat_record_fixture import bind_metadata, complete_record
 
 
 def digest(value):
@@ -48,6 +49,7 @@ class PersistedCompatibilityIndependentTests(unittest.TestCase):
                                     boundary=lambda: deepcopy(self.boundary))
 
     def persist(self, record):
+        bind_metadata(record)
         ensure_private_dir(self.directory)
         write_private_json(self.directory / (record["id"] + ".json"), record)
         write_private_json(self.directory / "state.json", {
@@ -61,7 +63,7 @@ class PersistedCompatibilityIndependentTests(unittest.TestCase):
         log = self.directory / "fixture.log"
         log.write_bytes(b"synthetic validator-only observations\n")
         log.chmod(0o600)
-        return {"id": str(uuid4()), "schema_version": 1, "validator_version": 1,
+        return complete_record({"id": str(uuid4()), "schema_version": 1, "validator_version": 1,
                 "created_at": "2026-10-12T00:00:00+00:00", "result": "pass",
                 "identity": deepcopy(self.identity), "omp": deepcopy(self.omp),
                 "boundary": deepcopy(self.boundary), "unknowns": [],
@@ -90,7 +92,7 @@ class PersistedCompatibilityIndependentTests(unittest.TestCase):
                 "items": {name: "pass" for name in Q01_ITEMS},
                 "observations": [{"item": name, "result": "pass", "fixture": True}
                                  for name in Q01_ITEMS],
-                "evidence": [{"path": log.name, "sha256": sha256(log.read_bytes()).hexdigest()}]}
+                "evidence": [{"path": log.name, "sha256": sha256(log.read_bytes()).hexdigest()}]})
 
     def test_incomplete_records_cannot_admit_even_with_self_consistent_digest(self):
         record = self.record()
@@ -161,7 +163,7 @@ class PersistedCompatibilityIndependentTests(unittest.TestCase):
                 self.assertFalse(self.service.verify_reference(record["id"]))
         self.identity = original_identity
 
-    def test_original_and_current_omp_require_digests_before_drift_admission(self):
+    def test_original_complete_and_current_binary_required_before_drift_admission(self):
         original_omp = deepcopy(self.omp)
         for owner in ("original", "current"):
             for field in ("binary_sha256", "bundled_sha256"):
@@ -175,7 +177,14 @@ class PersistedCompatibilityIndependentTests(unittest.TestCase):
                     target.pop(field)
                     self.persist(record)
                     self.omp["version"] = "new-unverified-version"
-                    self.assertFalse(self.service.admission())
+                    if owner == "current" and field == "bundled_sha256":
+                        # Current partial getter is operationally admissible;
+                        # the historical original and strict reference stay complete.
+                        self.assertTrue(self.service.admission())
+                        self.assertFalse(self.service.status()["current_omp_exact"])
+                        self.assertEqual(self.service.status()["state"], "version_drift_unverified")
+                    else:
+                        self.assertFalse(self.service.admission())
                     self.assertFalse(self.service.verify_reference(record["id"]))
         self.omp = original_omp
 

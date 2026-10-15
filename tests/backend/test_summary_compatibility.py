@@ -18,6 +18,7 @@ from workbench.backend.paths import ensure_private_dir, write_private_json
 from workbench.backend.summary_compatibility import (
     POLICY_PATH, Q01_ITEMS, SummaryCompatibility, _digest, collect_runtime_identity,
 )
+from tests.backend.summary_compat_record_fixture import bind_metadata, complete_record
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -42,7 +43,7 @@ class CompatibilityCoreTests(unittest.TestCase):
         log = self.service.directory / "observations.log"
         log.write_bytes(b"synthetic validator-only observations\n")
         log.chmod(0o600)
-        record = {"id": ref, "schema_version": 1, "validator_version": 1, "result": "pass",
+        record = complete_record({"id": ref, "schema_version": 1, "validator_version": 1, "result": "pass",
                   "created_at": "2026-10-12T00:00:00+00:00",
                   "identity": deepcopy(self.ident), "omp": deepcopy(self.omp),
                   "boundary": deepcopy(self.boundary), "unknowns": [],
@@ -64,7 +65,7 @@ class CompatibilityCoreTests(unittest.TestCase):
                      "outputLimitSource": "host_default", "estimator": "utf8_bytes_upper_bound"},
                   "observations": [{"item": name, "result": "pass", "fixture": True} for name in Q01_ITEMS],
                   "evidence": [{"path": log.name, "sha256": sha256(log.read_bytes()).hexdigest()}],
-                  "items": {name: "pass" for name in Q01_ITEMS}}
+                  "items": {name: "pass" for name in Q01_ITEMS}})
         ensure_private_dir(self.service.directory)
         write_private_json(self.service.directory / (ref + ".json"), record)
         write_private_json(self.service.directory / "state.json", {
@@ -139,6 +140,7 @@ class CompatibilityCoreTests(unittest.TestCase):
         self.assertFalse((directory / "raw-v2").exists())
 
     def persist_fixture(self, ref, record):
+        bind_metadata(record)
         write_private_json(self.service.directory / (ref + ".json"), record)
         write_private_json(self.service.directory / "state.json", {
             "latest_record": ref, "record_sha256": _digest(record), "protection": None, "episode": 0})

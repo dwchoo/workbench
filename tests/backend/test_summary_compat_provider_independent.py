@@ -210,7 +210,10 @@ class PartialProviderIndependentTests(unittest.TestCase):
                     "stable_host": {"os_family": "Linux", "architecture": "x86_64", "python_minor": "3.12"}}
         service = SummaryCompatibility(self.base / "compat", identity=lambda: deepcopy(identity))
         service.protect({"episode": "before", "reason": "guard_confirmation_unavailable"})
-        with patch("workbench.backend.summary_compat_provider.observe_owned", return_value=observed):
+        with patch("workbench.backend.summary_compat_provider.observe_owned", return_value=observed), \
+             patch("workbench.backend.summary_compat_provider.observe_priority", return_value={
+                 "kind": "owned_product_priority_partial", "native_launches": 0,
+                 "errors": [], "cleanup_complete": True}):
             result = service.verify_scripted()
         self.assertEqual(result["result"], "inconclusive")
         self.assertEqual(set(result["items"]), set(Q01_ITEMS))

@@ -9,14 +9,38 @@ from __future__ import annotations
 from datetime import datetime
 from hashlib import sha256
 import json
+import math
 from pathlib import Path
 import sqlite3
 from typing import Any, Mapping
 from uuid import UUID, uuid5, NAMESPACE_URL
 
-from workbench.contracts.logs_v1 import (canonical_json, parse_source_range,
+from workbench.contracts.logs_v1 import (LogContractError, canonical_json, parse_source_range,
                                          parse_subject_ref, parse_summary_request)
 from .store import ImportantLogStore, ImportantLogStoreError
+
+
+def source_json(value: Any) -> bytes:
+    """Canonical host journal source bytes; finite durations remain numbers.
+
+    Wire contracts retain their stricter integer-only canonical_json. Validate
+    all its other shared-type constraints here before serializing source data.
+    """
+    def check(item: Any) -> None:
+        if type(item) is float:
+            if not math.isfinite(item):
+                raise LogContractError("journal source number must be finite")
+        elif type(item) is list:
+            for child in item:
+                check(child)
+        elif type(item) is dict and all(type(key) is str for key in item):
+            for key, child in item.items():
+                canonical_json(key)
+                check(child)
+        else:
+            canonical_json(item)
+    check(value)
+    return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False).encode("utf-8")
 
 
 _SCHEMA = """
@@ -176,7 +200,7 @@ class SubjectLifecycle:
         subject = _subject("task", task_id)
         key, source_id = _event_key("flow", record)
         at = _time(record.get("at"))
-        payload = canonical_json(dict(record))
+        payload = source_json(dict(record))
         stale_event = False
         with self._open() as store, store.transaction():
             conn = store._connection
@@ -241,7 +265,7 @@ class SubjectLifecycle:
         command_id = _uuid(record.get("command_id"))
         key, source_id = _event_key("terminal", record)
         at = _time(record.get("started_at") if kind == "terminal_started" else record.get("ended_at"))
-        payload = canonical_json(dict(record))
+        payload = source_json(dict(record))
         with self._open() as store, store.transaction():
             conn = store._connection
             if kind == "terminal_started":

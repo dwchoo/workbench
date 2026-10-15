@@ -42,7 +42,7 @@ class CompatibilityBudgetIndependentTests(unittest.TestCase):
     def test_information_only_unknowns_admit_without_rewriting_budget_facts(self):
         baseline = self.fixture.record()
         self.assertEqual(set(baseline["items"]), REQUIRED_Q01)
-        self.assertEqual(set(row["item"] for row in baseline["observations"]), REQUIRED_Q01)
+        self.assertEqual(set(row["item"] for row in baseline["item_rows"]), REQUIRED_Q01)
         for reasons in ([INFORMATIONAL[0]], [INFORMATIONAL[1]], [INFORMATIONAL[2]], INFORMATIONAL):
             with self.subTest(reasons=reasons):
                 record = deepcopy(baseline)
@@ -148,11 +148,11 @@ class CompatibilityBudgetIndependentTests(unittest.TestCase):
         baseline = self.fixture.record()
         changes = {
             "top_unknown": lambda r: r.update(unknowns=[INFORMATIONAL[0]]),
-            "observation_unknown": lambda r: r["observations"][0].update(unknowns=[INFORMATIONAL[0]]),
+            "observation_unknown": lambda r: r["item_rows"][0].update(unknowns=[INFORMATIONAL[0]]),
             "missing_required_item": lambda r: r["items"].pop("Q01-origin"),
             "failed_required_item": lambda r: r["items"].update({"Q01-recovery": "fail"}),
-            "missing_observation": lambda r: r["observations"].pop(),
-            "duplicate_observation": lambda r: r["observations"].__setitem__(-1, deepcopy(r["observations"][0])),
+            "missing_observation": lambda r: r["item_rows"].pop(),
+            "duplicate_observation": lambda r: r["item_rows"].__setitem__(-1, deepcopy(r["item_rows"][0])),
         }
         for label, change in changes.items():
             with self.subTest(requirement=label):

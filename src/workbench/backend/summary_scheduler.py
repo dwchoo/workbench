@@ -24,6 +24,7 @@ from workbench.backend.summary_adapter import (
 )
 from workbench.contracts.logs_v1 import canonical_json, parse_source_gap, summary_input_key
 from workbench.storage.log_raw.port import raw_query
+from workbench.storage.important_log.lifecycle import source_json
 
 BUDGET_REASONS = frozenset(("input_budget_unavailable", "output_budget_unavailable"))
 
@@ -56,7 +57,7 @@ class SummarySourceCollector:
                     seq = value.get("seq")
                     if type(seq) is int and str(uuid5(NAMESPACE_URL,
                             f"workbench-important-v1:{channel}:{seq}")) == event_id:
-                        return canonical_json(value)
+                        return source_json(value)
         return None
 
     def collect(self, journal: Any, subject: dict, records: list[dict]) -> tuple[list[SourcePiece], list[dict]]:

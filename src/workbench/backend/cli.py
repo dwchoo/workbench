@@ -28,6 +28,7 @@ from workbench.backend.launcher import ISOLATION_CHECK_TIMEOUT, LaunchPlan, Star
 from workbench.backend.omp_home import OmpHomeError, auth_guidance, config_dir_value, omp_root
 from workbench.backend.paths import (BackendLocked, DataDirError, DataLayout, InstanceLock,
                                      ensure_private_dir, resolve_data_dir)
+from workbench.backend.summary_compat_identity import current_omp_identity, compatibility_boundary
 from workbench.contracts.ui_v1 import ClientType
 from workbench.ui.status_workbench.projection import _plain, summary_compatibility_text
 
@@ -347,8 +348,10 @@ def _important_confirmation(args: argparse.Namespace, description: str) -> bool:
 
 def cmd_summary_compat(args: argparse.Namespace) -> int:
     from workbench.backend.summary_compatibility import SummaryCompatibility
+    from workbench.backend.summary_compat_identity import current_omp_identity, compatibility_boundary
     layout = _layout(args, create=args.compat_action == "verify")
-    service = SummaryCompatibility(layout.summary_compatibility)
+    service = SummaryCompatibility(layout.summary_compatibility,
+        omp_identity=current_omp_identity, boundary=compatibility_boundary)
     try:
         result = service.verify_scripted() if args.compat_action == "verify" else service.status()
     except BackendLocked:
@@ -438,7 +441,8 @@ def cmd_raw_rotation(args: argparse.Namespace) -> int:
         return EXIT_FAILURE
     try:
         layout = _layout(args, create=False)
-        policy = RawRotationPolicy(layout.raw_rotation, SummaryCompatibility(layout.summary_compatibility))
+        policy = RawRotationPolicy(layout.raw_rotation, SummaryCompatibility(layout.summary_compatibility,
+            omp_identity=current_omp_identity, boundary=compatibility_boundary))
         result = policy.activate(args.evidence)
         print(json.dumps(result, sort_keys=True, ensure_ascii=False))
         return 0
@@ -463,7 +467,8 @@ def cmd_raw_read(args: argparse.Namespace) -> int:
                 from workbench.backend.raw_rotation import RawRotationPolicy
                 from workbench.backend.summary_compatibility import SummaryCompatibility
                 result["rotation"] = RawRotationPolicy(layout.raw_rotation,
-                    SummaryCompatibility(layout.summary_compatibility)).status()
+                    SummaryCompatibility(layout.summary_compatibility,
+                        omp_identity=current_omp_identity, boundary=compatibility_boundary)).status()
                 result["activation"] = "enabled" if result["rotation"]["activated"] else "disabled"
         else:
             kind, identity = ("run", args.run_id) if args.run_id else ("command", args.command_id)

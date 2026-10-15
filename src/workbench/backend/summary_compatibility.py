@@ -1,8 +1,7 @@
 """Checkout-only policy identity and private compatibility admission records.
 
-The canonical JSON is the sole closure policy. Development files and verdicts
-are never imported. The currently unavailable isolated verifier cannot issue a
-pass, and verification does not grant work authority or activate raw rotation.
+The canonical JSON is the sole closure policy. Development verdicts are never
+imported. Complete owned evidence grants neither work authority nor raw activation.
 """
 from __future__ import annotations
 
@@ -22,14 +21,14 @@ from threading import RLock
 from typing import Any, Callable
 from uuid import UUID, uuid4
 
-from workbench.backend.paths import DataDirError, InstanceLock, ensure_private_dir, write_private_json
+from workbench.backend.paths import DataDirError, InstanceLock, ensure_private_dir, write_private_json, write_private_bytes
 from workbench.backend.summary_adapter import SummaryDeferred, _resolved_metadata
-from workbench.backend.summary_compat_provider import Q01_ITEMS, ScriptedCompatibilityProvider
+from workbench.backend.summary_compat_provider import Q01_ITEMS, REQUIRED_CHECKS, IO_CAVEATS, ScriptedCompatibilityProvider, item_rows as derive_item_rows
 
 POLICY_PATH = "src/workbench/contracts/summary_compat_policy_v1.json"
 RECORD_LIMIT = 1 << 20
 def _canonical(value: Any) -> bytes:
-    return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()
+    return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False, allow_nan=False).encode()
 
 
 def _digest(value: Any) -> str:
@@ -367,20 +366,56 @@ class SummaryCompatibility:
                     unknowns.extend(value for value in row["unknowns"] if isinstance(value, str))
             record = {"id": str(uuid4()), "schema_version": 1, "validator_version": 1,
                       "created_at": datetime.now(timezone.utc).isoformat(), "identity": before,
-                      "omp": self.omp_identity(), "boundary": self.boundary(),
+                      "omp": observed.get("omp") or self.omp_identity(), "boundary": self.boundary(),
                       "result": "inconclusive" if observed["level"] == "inconclusive" else "unavailable",
                       "observations": observed["observations"],
                       "item_rows": item_rows, "items": items,
                       "model_metadata": observed["model_metadata"], "real_model_contract": "unverified",
                       "unknowns": sorted(set(unknowns)), "io": observed["io"]}
+            record["caveats"] = sorted(set(observed.get("caveats", [])) & IO_CAVEATS)
+            configured = next((row for row in record["observations"]
+                               if row.get("kind") == "owned_configured_metadata"), None)
+            metadata_valid = False
+            try:
+                _resolved_metadata(record["model_metadata"])
+                metadata_valid = (configured is not None and configured.get("result") == "pass"
+                    and configured.get("cleanup_complete") is True and configured.get("checks")
+                    and all(value is True for value in configured["checks"].values())
+                    and configured.get("metadata") == record["model_metadata"]
+                    and configured.get("omp") == record["omp"])
+            except SummaryDeferred:
+                pass
+            if not metadata_valid:
+                record["unknowns"] = sorted(set(record["unknowns"] + ["configured_model_readback_unavailable"]))
+            if observed["level"] == "failed" or any(row["result"] == "failed" for row in item_rows):
+                record["result"] = "failed"
+            elif (not record["unknowns"] and before == after and _complete_identity(before)
+                  and _complete_omp(record["omp"]) and record["boundary"] and metadata_valid
+                  and item_rows == derive_item_rows(record["observations"])
+                  and all(row["result"] == "pass" and all(row.get("checks", {}).get(key) is True
+                          for key in REQUIRED_CHECKS[row["item"]]) for row in item_rows)):
+                record["result"] = "pass"
             ensure_private_dir(self.directory)
-            write_private_json(self.directory / (record["id"] + ".json"), record)
+            log = {"record_id": record["id"], "item_rows": item_rows,
+                   "observations": [{"kind": row.get("kind"), "sha256": _digest(row)} for row in record["observations"]],
+                   "model_metadata_sha256": _digest(record["model_metadata"]), "io": record["io"], "caveats": record["caveats"]}
+            log_bytes = _canonical(log) + b"\n"
+            if len(log_bytes) > RECORD_LIMIT:
+                raise ValueError("compatibility evidence exceeds bound")
+            log_name = record["id"] + ".log.jsonl"
+            write_private_bytes(self.directory / log_name, log_bytes)
+            record["evidence"] = [{"path": log_name, "sha256": sha256(log_bytes).hexdigest()}]
+            if len(_canonical(record)) > RECORD_LIMIT:
+                raise ValueError("compatibility record exceeds bound")
+            write_private_bytes(self.directory / (record["id"] + ".json"), _canonical(record))
             state = self._state()
             state.update(latest_record=record["id"], record_sha256=_digest(record))
+            if record["result"] == "pass":
+                state.update(protection=None, notice_pending=False)
             # A failed/inconclusive verify cannot clear a previous protection episode.
             self._save_state(state)
             return {key: record[key] for key in
-                    ("id", "result", "items", "item_rows", "model_metadata", "unknowns", "io")}
+                    ("id", "result", "items", "item_rows", "model_metadata", "unknowns", "caveats", "io")}
 
     def _verified_record(self, ref: str) -> dict | None:
         if not isinstance(ref, str) or str(UUID(ref)) != ref:
@@ -432,11 +467,32 @@ class SummaryCompatibility:
         created = record.get("created_at")
         if not isinstance(created, str) or datetime.fromisoformat(created).utcoffset() is None:
             return None
-        observations = record["observations"]
-        if (not isinstance(observations, list) or len(observations) != len(Q01_ITEMS)
+        raw = record["observations"]
+        observations = record.get("item_rows")
+        if (not isinstance(raw, list) or not raw or not isinstance(observations, list) or len(observations) != len(Q01_ITEMS)
                 or any(not isinstance(row, dict) or row.get("item") not in Q01_ITEMS
-                       or row.get("result") != "pass" or row.get("unknowns") for row in observations)
-                or {row["item"] for row in observations} != set(Q01_ITEMS)):
+                       or row.get("result") != "pass" or row.get("unknowns") != []
+                       or any(row.get("checks", {}).get(key) is not True for key in REQUIRED_CHECKS[row["item"]])
+                       for row in observations)
+                or {row["item"] for row in observations} != set(Q01_ITEMS)
+                or observations != derive_item_rows(raw)):
+            return None
+        for row in observations:
+            refs = row.get("evidence_refs")
+            if not isinstance(refs, list) or not refs:
+                return None
+            for evidence_ref in refs:
+                index = evidence_ref.get("observation_index")
+                if (type(index) is not int or not 0 <= index < len(raw)
+                        or evidence_ref.get("kind") != raw[index].get("kind")
+                        or evidence_ref.get("sha256") != _digest(raw[index])):
+                    return None
+        configured = [row for row in raw if row.get("kind") == "owned_configured_metadata"]
+        if (len(configured) != 1 or configured[0].get("result") != "pass"
+                or configured[0].get("cleanup_complete") is not True
+                or configured[0].get("metadata") != metadata or configured[0].get("omp") != record["omp"]
+                or not configured[0].get("checks") or any(value is not True for value in configured[0]["checks"].values())
+                or not isinstance(record.get("caveats"), list) or not set(record["caveats"]) <= IO_CAVEATS):
             return None
         boundary = record["boundary"]
         if (not isinstance(boundary, dict) or not isinstance(boundary.get("adoption_ref"), str)
@@ -489,15 +545,22 @@ class SummaryCompatibility:
                         or current["stable_host"] != old["stable_host"] or self.boundary() != record["boundary"]):
                     return {"state": "revalidation_required", "reason": "related_boundary_changed", "admitted": False}
                 omp = self.omp_identity()
-                if not _complete_omp(omp):
+                if (not isinstance(omp, dict) or not _hex_digest(omp.get("binary_sha256"))
+                        or (omp.get("version") is not None and (not isinstance(omp["version"], str)
+                            or not omp["version"].strip()))
+                        or (omp.get("bundled_sha256") is not None and not _hex_digest(omp["bundled_sha256"]))):
                     return {"state": "unavailable", "reason": "omp_identity_unavailable", "admitted": False}
                 status = "verified"
-                if omp != record["omp"]:
+                fields = ("version", "binary_sha256", "bundled_sha256")
+                exact = _complete_omp(omp) and all(omp[key] == record["omp"][key] for key in fields)
+                if any(omp.get(key) is not None and omp[key] != record["omp"][key] for key in fields):
                     status = "version_drift_unverified"
                 elif current["runtime_digest"] != old["runtime_digest"]:
                     status = "unrelated_change_observed"
                 return {"state": status, "admitted": True, "latest_record": ref,
-                        "verified_omp": record["omp"], "current_omp": omp}
+                        "verified_omp": record["omp"], "verified_record": ref,
+                        "current_omp": omp, "current_omp_exact": exact,
+                        "current_omp_unknowns": [key + "_unavailable" for key in fields if omp.get(key) is None]}
             except (OSError, ValueError, KeyError, TypeError, DataDirError, RecursionError):
                 return {"state": "unavailable", "reason": "compatibility_record_invalid", "admitted": False}
 
@@ -512,7 +575,8 @@ class SummaryCompatibility:
                     return False
                 current, omp = self.identity(), self.omp_identity()
                 return bool(_complete_identity(current) and _complete_omp(omp)
-                            and record["identity"] == current and record["omp"] == omp
+                            and record["identity"] == current and all(record["omp"][key] == omp[key]
+                                for key in ("version", "binary_sha256", "bundled_sha256"))
                             and record.get("boundary") == self.boundary())
         except (OSError, ValueError, KeyError, TypeError, DataDirError, RecursionError):
             return False

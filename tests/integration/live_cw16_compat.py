@@ -525,6 +525,24 @@ class CompatRun:
                 or self.report.data["versions"]["omp"], "header": self.ui.excerpt("focus:")[:1]}
 
     # C2 ---------------------------------------------------------------------------------------------------
+    def _retain_esc_failure(self, pane: str, closed: bool) -> None:
+        if closed:
+            return
+        # Only sample existing owner buffers after the original predicate failed.
+        # No pump, input, child hook or file I/O is added to the Esc observation.
+        ui = self.ui
+        self.report.data["c2_esc_failure"] = {
+            "scope": "outer_client_buffers_only",
+            "omp_input_delivery": "unknown",
+            "pane": pane,
+            "outer": self.outer_name,
+            "host_shell": self.shell,
+            "observed_monotonic_ns": time.monotonic_ns(),
+            "rendered_bytes": ui.total_bytes,
+            "screen_excerpt": ui.excerpt("/hot", "hotkeys", width=120)[:8],
+            "raw_tail_hex": bytes(ui.raw[-2048:]).hex(),
+        }
+
     def c2(self) -> dict:
         P = self.sb.project
         out: dict[str, Any] = {}
@@ -599,6 +617,7 @@ class CompatRun:
             self.ui.keys(b"\x1b", gap=1.0)
             r["esc_closed_menu"] = self.ui.wait(lambda: "/hot" not in self.ui.text()
                                                 or "hotkeys" not in self.ui.text(), 3)
+            self._retain_esc_failure(pane, r["esc_closed_menu"])
             self.ui.keys(b"\x15", gap=0.4)  # Ctrl-U: clear whatever is left, no exit arming
             hangul_m = f"한글{self.hex}"
             self.ui.type(hangul_m.encode(), gap=0.03)

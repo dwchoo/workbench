@@ -7,6 +7,7 @@ They never start Workbench, tmux, or an installed OMP process.
 from __future__ import annotations
 
 import copy
+import ast
 import json
 import os
 from pathlib import Path
@@ -29,10 +30,102 @@ import probe_dvl02_c2_escape as probe  # noqa: E402
 ESC_TRACE_FIXTURE = HERE / "fixtures/c2_manager_esc_trace.json"
 
 
+def _original_esc_attempt():
+    """Execute the actual Esc send/predicate/capture and original assertion only.
+
+    Other C2 input stages require a live terminal and are deliberately not run.
+    """
+    tree = ast.parse(Path(probe.live.__file__).read_text())
+    cls = next(node for node in tree.body if isinstance(node, ast.ClassDef)
+               and node.name == "CompatRun")
+    c2 = next(node for node in cls.body if isinstance(node, ast.FunctionDef) and node.name == "c2")
+    loop = next(node for node in c2.body if isinstance(node, ast.For))
+    capture = next(i for i, node in enumerate(loop.body) if isinstance(node, ast.Expr)
+                   and isinstance(node.value, ast.Call)
+                   and getattr(node.value.func, "attr", None) == "_retain_esc_failure")
+    function = ast.FunctionDef(
+        name="attempt", args=ast.arguments(posonlyargs=[], args=[ast.arg(arg=name)
+            for name in ("self", "pane", "r")], kwonlyargs=[], kw_defaults=[], defaults=[]),
+        body=loop.body[capture - 2:capture + 1] + [loop.body[-1]], decorator_list=[])
+    namespace = {}
+    exec(compile(ast.fix_missing_locations(ast.Module(body=[function], type_ignores=[])),
+                 probe.live.__file__, "exec"), namespace)
+    return namespace["attempt"]
+
+
 class C2ProbeIndependentTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
         OUTPUT.mkdir(mode=0o700, parents=True, exist_ok=True)
+
+    def test_successful_esc_adds_no_buffer_observation_or_diagnostic_io(self) -> None:
+        attempt = _original_esc_attempt()
+        ui = mock.Mock(spec=["keys", "wait", "text"])
+        ui.text.return_value = "menu closed"
+        ui.wait.side_effect = lambda predicate, timeout: predicate()
+        report = SimpleNamespace(data={"unknowns": ["retained prior unknown"]})
+        owner = SimpleNamespace(ui=ui, report=report)
+        owner._retain_esc_failure = probe.live.CompatRun._retain_esc_failure.__get__(owner)
+        before = copy.deepcopy(report.data)
+        flags = dict.fromkeys(("typed_visible", "alt_enter_newline", "ctrl_c_cleared",
+                               "slash_menu", "hangul_composer", "alive"), True)
+        with (mock.patch.object(probe.live.time, "monotonic_ns", side_effect=AssertionError("clock read")),
+              mock.patch.object(Path, "write_text", side_effect=AssertionError("file write")),
+              mock.patch("builtins.open", side_effect=AssertionError("file open"))):
+            attempt(owner, "manager_omp", flags)
+        self.assertTrue(flags["esc_closed_menu"])
+        ui.keys.assert_called_once_with(b"\x1b", gap=1.0)
+        self.assertEqual(ui.wait.call_args.args[1], 3)
+        ui.text.assert_called_once_with()
+        self.assertEqual(report.data, before)
+
+    def test_failed_esc_retains_bounded_outer_buffers_in_normal_failed_report(self) -> None:
+        attempt = _original_esc_attempt()
+        ui = probe.h.Ui.__new__(probe.h.Ui)
+        ui.screen = SimpleNamespace(display=["unrelated fixture text"] +
+                                     [f"/hot hotkeys line {i} " + "x" * 200 for i in range(12)])
+        ui.raw = bytearray(bytes(range(256)) * 20)
+        ui.total_bytes = len(ui.raw) + 1000
+        events = []
+        ui.keys = lambda *args, **kwargs: events.append(("keys", args, kwargs))
+        def wait(predicate, timeout):
+            events.append(("predicate", timeout))
+            return predicate()
+        ui.wait = wait
+        excerpt = ui.excerpt
+        ui.excerpt = lambda *args, **kwargs: (events.append(("snapshot",)), excerpt(*args, **kwargs))[1]
+        with tempfile.TemporaryDirectory(dir=OUTPUT) as temporary:
+            with mock.patch.object(probe.h, "_first_line", return_value="fixture-no-native"):
+                report = probe.h.ScenarioReport("c2-buffer-fixture", run_id="owned-fixture")
+            report.unknown("OMP input delivery remains unknown")
+            owner = SimpleNamespace(ui=ui, report=report, outer_name="tmux", shell="dash")
+            owner._retain_esc_failure = probe.live.CompatRun._retain_esc_failure.__get__(owner)
+            flags = dict.fromkeys(("typed_visible", "alt_enter_newline", "ctrl_c_cleared",
+                                   "slash_menu", "hangul_composer", "alive"), True)
+            runner = probe.h.StepRunner(report)
+            with mock.patch.object(Path, "write_text", side_effect=AssertionError("early file write")):
+                self.assertEqual(runner.run("C2", lambda: attempt(owner, "manager_omp", flags)), probe.h.FAIL)
+            self.assertEqual(events, [("keys", (b"\x1b",), {"gap": 1.0}),
+                                      ("predicate", 3), ("snapshot",)])
+            self.assertEqual(list(Path(temporary).iterdir()), [])
+            with mock.patch.object(probe.h, "REPORT_DIR", Path(temporary)):
+                persisted = json.loads(report.write().read_text())
+            self.assertEqual(persisted["result"], probe.h.FAIL)
+            self.assertEqual(persisted["steps"]["C2"]["status"], probe.h.FAIL)
+            self.assertIn("esc_closed_menu", persisted["steps"]["C2"]["assertion"])
+            self.assertNotIn("error", persisted["steps"]["C2"])
+            self.assertEqual(persisted["unknowns"], ["OMP input delivery remains unknown"])
+            evidence = persisted["c2_esc_failure"]
+            self.assertEqual((evidence["scope"], evidence["omp_input_delivery"]),
+                             ("outer_client_buffers_only", "unknown"))
+            self.assertEqual((evidence["pane"], evidence["outer"], evidence["host_shell"]),
+                             ("manager_omp", "tmux", "dash"))
+            self.assertEqual(evidence["rendered_bytes"], ui.total_bytes)
+            self.assertEqual(evidence["screen_excerpt"], excerpt("/hot", "hotkeys", width=120)[:8])
+            self.assertEqual(len(evidence["screen_excerpt"]), 8)
+            self.assertTrue(all(len(line) <= 120 for line in evidence["screen_excerpt"]))
+            self.assertNotIn("unrelated fixture text", json.dumps(evidence))
+            self.assertEqual(bytes.fromhex(evidence["raw_tail_hex"]), bytes(ui.raw[-2048:]))
 
     def test_private_directory_requires_owned_absolute_unlinked_0700_path(self) -> None:
         with tempfile.TemporaryDirectory(dir=OUTPUT) as temporary:

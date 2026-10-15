@@ -10,10 +10,10 @@
   이를 장문 적합성·품질·provider output/reasoning 의미의 입증으로 확대하지 않는다.
 - 실제 Backend/bridge의 nonreasoning 부모는 `thinkingLevel:undefined`로 metadata가 보류된다.
   전용 reasoning fixture의 readback은 성공했으나 operating MODEL pass는 아니며, 기본 Backend supplier의
-  고정 writer 결속 누락을 발견했다. 승인된 두 함수의 최소 연결 수정과 새 runtime harness 구현을 마쳤으며,
-  독립 테스트·리뷰와 실제 최종 통합 실행은 아직 남아 있다.
-  준비 완료나 기존 fixture를 최종 runtime 통과로 올리지 않으며, 실제 300초 요약·28 AC/46 gate 전체 실행은
-  독립 테스트와 리뷰 뒤 최종 후보에서 수행한다. 기존 실제 20개 core 항목의 근거와 비용 범위는 별도로 보존한다.
+  고정 writer 결속 누락을 발견해 최소 연결을 수정했다. 이후 독립 테스트·리뷰와 `814fb71`의 실제 feature 4개 실행에서
+  314.627초 주기의 요약·저장·조회 및 전용 raw/DB 처리를 확인했다. 상세 범위와 정리 사건은 [VERIFICATION](VERIFICATION.md)을 따른다.
+  이 결과를 28 AC/46 gate 전체 통과로 올리지 않는다. 기존 core 20개와 비용 근거는 별도 범위로 보존하고,
+  남은 gate의 현재 적용 범위를 확인한다. 변경과 무관한 전체 검사나 작은 실제 요약 시험을 반복하지 않는다.
 - 실제 사용자 raw 순환 삭제는 OFF, C2 hold는 유지한다. 내부 native I/O 귀속 unknown과 LG-D30의 세 soft unknown을
   0/pass로 바꾸지 않는다. 새 모델 route·추가 비용 quota·자동 fallback·반복 품질 평가를 도입하지 않는다.
 

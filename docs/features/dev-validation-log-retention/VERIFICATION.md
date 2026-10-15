@@ -1,10 +1,37 @@
 # 최종 통합 검증
 
-상태: host writer 연결과 통합 harness의 국소 독립 테스트·리뷰를 마쳤다. 첫 실제 feature 통합 실행은 priority 정리 확인에서 inconclusive였고, 그에 대한 최소 수정의 독립 검증을 진행한다. 같은 최종 후보의 28개 AC·46개 required gate는 아직 통과 판정하지 않았다.
+상태: `814fb71`에서 관련 feature 통합 4개 항목과 Q01 scripted 판별 8개가 통과했다. 실제 Backend의 요약·저장·조회·장애 처리와 소유 자원 정리를 확인했다. 같은 최종 후보의 28개 AC·46개 required gate 전체는 아직 통과 판정하지 않았다.
 이 문서는 이전 부분 결과·C2 hold·실패를 변경하지 않는다.
 
 기준은 [DVL-13](tickets/DVL-13.md), [SPEC §11](SPEC.md#11-수락-조건-추적과-시험-결정),
 [PLAN의 gate_items](PLAN.json)이다. 실행법은 [DEVELOPMENT](DEVELOPMENT.md)를 따른다.
+
+## 최신 결과 (2026-10-15)
+
+[원본 실행](../../../.workflow/dev-validation-log-retention/runs/dvl13-20261015/final-integration01/fresh-feature4-05/report.json)과
+[범위별 결과](../../../.workflow/dev-validation-log-retention/runs/dvl13-20261015/final-integration01/fresh-feature4-outcome05.json)는
+같은 입력에서 834.082초 동안 실행한 feature 4개 항목의 성공이다. 이전 core 20개를 합쳐 새 후보의 전체 통과로 표시하지 않는다.
+
+| 범위 | 관측 결과와 한계 |
+|---|---|
+| 실제 Backend·Task·command | 24개 확인 성공. DB-only 도구, host 고정 writer, 귀속, 저장·조회, pause·late 결과·no-replay, 저장 장애와 복구를 확인했다. 실제 요약 간격은 314.627초였다. |
+| 전용 raw·보관 DB | 582,480,635B의 전용 raw와 기본 eviction, legacy 불변, DB 회전·조회·삭제 경계를 확인했다. 사용자 raw 활성화는 하지 않았다. |
+| Q01 | 별도 Backend origin과 기존 SDK controls를 판별해 8개 모두 통과했다. Scripted 실행 근거이며 실모델 의미의 전체 증명은 아니다. |
+| metadata·제품 record | 실제 configured getter와 제품 record consumer 동작을 확인했다. Metadata 자체는 context·output enforce·reasoning 의미가 `inconclusive`이고, 내부 I/O 귀속 caveat도 유지한다. |
+| 정리 | 이번 실행의 Backend·소유 process·namespace와 임시 HOME을 정리했다. 이전 정리 사건을 이 결과로 정당화하지 않는다. |
+
+관련 독립 검증은 [국소 단위 기록](../../../.workflow/dev-validation-log-retention/runs/dvl13-20261015/final-integration01/final-fixture-alignment-unit01.json)을 따른다.
+옛 fixture와 퇴역한 비용 기대를 현재 계약에 맞췄고 제품 guard·caps는 바꾸지 않았다. TypeScript 43개는 한 실행에서 통과했다.
+Python은 98개 완료 후 600초 상한에 걸렸고, 같은 bytes의 나머지 14개만 별도 실행해 통과했다. 이를 단일 전체 실행의 성공으로 합치지 않는다.
+Fresh review는 중대한 문제 없음이었고, 문법·diff·gitleaks 검사를 통과했다.
+
+검사 정리 중 소유 생성 근거 없이 두 `/tmp` 경로를 삭제한 [범위 사건](../../../.workflow/dev-validation-log-retention/runs/dvl13-20261015/final-integration01/final-fixture-alignment-test01.json)이 있었다.
+다른 동시 실행을 포함한 영향은 불명이며, 사용자에게 알리고 추가 탐색·삭제·추정 복원을 중단했다.
+이후 14개 검사는 시작 전 전용 HOME·TMPDIR과 생성 reference를 고정하고, 소유 process 종료와 inode를 확인한 뒤 정리했다.
+
+이전 `fresh-feature4-04`의 TimeoutError 원인은 여전히 불명이다. 이번 성공을 원인 규명으로 표시하지 않는다.
+C2 hold와 실제 사용자 raw OFF를 유지한다. 기존 core의 C2 실패, 동일 범위 비용 비교와 최종 46개 근거의 적용 범위는 별도로 남아 있다.
+이미 성공한 [작은 실제 요약 시험](../../../.workflow/dev-validation-log-retention/runs/dvl14-20261015/real-summary01/actual-trial-outcome.json)은 재실행하지 않았다.
 
 ## precise 실행 항목
 
@@ -21,7 +48,7 @@ wrapper의 수집 수나 exit 0만으로 전체 기능을 통과시키지 않는
 core 항목에서, 새 300초 간격과 owned raw/DB 교차 동작은 feature runtime에서 실제로 관측해야 한다.
 Fixture supplier는 fixture 수준으로만 기록하며 runtime이 필요한 gate를 대신하지 않는다.
 
-## 현재 관측
+## 이전 관측과 수정 배경
 
 최소 credential-free 판별에서 기존 Sandbox와 실제 Backend의 두 OMP bridge가 ready에 도달했다.
 하지만 `summary_runtime`의 실제 응답은 `deferred`, `sent:false`, `reason:model_metadata_unavailable`였다.
@@ -54,7 +81,7 @@ scheduler는 count/예약/sending 전에 exact 3키 absolute/NUL-free 형태를 
 actual Backend origin trace의 사실별 판정을 공급한다. 이 조합의 실제 성공은 아직 미관측이다.
 원래 core 20개 실행 항목과 precise exact test ID 19개는 유지한다.
 
-독립 테스트·fresh general/security review와 필요한 correction 뒤 Root가 최종 전체 실행을 수행한다.
+위 연결의 후속 독립 테스트·리뷰와 실제 feature 실행 결과는 이 문서의 최신 결과를 따른다.
 원래 실패·unknown·첫 시도와 이후 수정 근거를 함께 보존한다. 필수 runtime 근거가 없으면 완료하지 않는다.
 
 ## 운영과 시험의 구분

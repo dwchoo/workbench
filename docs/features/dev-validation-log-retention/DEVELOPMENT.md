@@ -49,11 +49,11 @@ runner는 credential-free allowlist 환경과 짧은 전용 `/tmp` namespace를 
   Controlled provider descriptor를 실제 운영 Worker.default의 관측으로 바꾸지 않는다.
 - LG-D30의 부모 context 점유량·output enforce·reasoning 의미 unknown과 LG-D32의 native 내부 I/O 귀속 한계를
   그대로 기록한다. 관측하지 않은 수치를 0/pass로 표시하지 않는다.
-- 실제 Backend의 새 summary runtime 연결은 별도 판별 중이다. Backend readiness만으로 metadata나 요약 성공을
-  선언하지 않는다. 최종 28 AC/46 gate는 [VERIFICATION](VERIFICATION.md)의 현재 상태를 확인한다.
+- 실제 Backend의 summary runtime은 `814fb71`의 feature 통합에서 저장·조회와 실제 314.627초 주기를 확인했다.
+  Readiness만으로 성공을 추정하지 않으며, 최종 28 AC/46 gate는 [VERIFICATION](VERIFICATION.md)의 현재 상태를 따른다.
 - 전용 reasoning fixture의 metadata readback은 성공했다. 발견한 기본 Backend supplier의 고정 writer 누락은
   host 경로 공급과 scheduler의 count/예약/전송 전 검사로 수정했다. 새 runtime은 callback을 주입하지 않고
-  기본 Backend 경로를 사용하며, 실제 요약·저장 동작은 최종 실행에서 확인한다.
+  기본 Backend 경로를 사용하며, 실제 요약·저장 동작과 소유 정리는 최신 feature 실행에서 확인했다.
 - Q01은 기존 SDK controls의 원문 관측을 보존한다. 원 delegate의 synthetic origin은 판정에서 제외하고,
   별도 actual Backend Task/command/receipt trace의 아홉 사실을 public port의 CompositeRuntime이 공급한다.
   관측하지 못한 사실은 unknown으로 남기며, 다른 그룹의 사실을 일괄 true로 바꾸지 않는다.

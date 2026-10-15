@@ -44,6 +44,17 @@ from workbench.tasks.repository import InvalidTransitionError, TaskRepository
 
 def now():
     return time.monotonic_ns()
+
+def _remaining_until(groups: dict, deadline_ns: int) -> dict:
+    """Allow the containing subreaper to reap, within the existing common deadline."""
+    remaining = {key: rt._remaining(pgid) for key, pgid in groups.items()}
+    while any(remaining.values()) and now() < deadline_ns:
+        time.sleep(min(.01, max(0, (deadline_ns - now()) / 1000000000)))
+        if now() >= deadline_ns:
+            break
+        remaining = {key: rt._remaining(pgid) for key, pgid in groups.items()}
+    return remaining
+
 def utc():
     return datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z')
 def artifact(path):
@@ -183,15 +194,22 @@ def observe_priority(source: Path, *, budget_seconds: float = 90.0) -> dict:
         if process is not None and not (root / "priority-result.json").is_file():
             data.update(native_launches=None, model_posts_unobserved=True)
         refs = []
+        helper_remaining = rt._remaining(identity["pgid"]) if identity else []
         try:
             if (root / "owned-processes.json").exists():
                 refs = _owned_json(root / "owned-processes.json")["processes"]
-            remaining = [{"owned_ref": ref, "remaining_pgid_members": rt._remaining(ref["pgid"]),
-                "same_start_identity_present": rt._identity(ref["pid"]) == ref["start_ticks"] if ref.get("start_ticks") else None} for ref in refs]
+            deadlines = [row["owned_graceful_stop"]["termination_deadline_ns"]
+                for row in data.get("launches", {}).values() if "owned_graceful_stop" in row]
+            groups = {index: ref["pgid"] for index, ref in enumerate(refs)}
+            if identity:
+                groups["helper"] = identity["pgid"]
+            observed = _remaining_until(groups, min(deadlines, default=now()))
+            helper_remaining = observed.get("helper", [])
+            remaining = [{"owned_ref": ref, "remaining_pgid_members": observed[index],
+                "same_start_identity_present": rt._identity(ref["pid"]) == ref["start_ticks"] if ref.get("start_ticks") else None} for index, ref in enumerate(refs)]
         except (OSError, ValueError, KeyError, TypeError) as error:
             data["errors"].append("owned_resource_readback:" + str(error))
             remaining = [{"identity": "unavailable", "remaining_pgid_members": None}]
-        helper_remaining = rt._remaining(identity["pgid"]) if identity else []
         safe = (not helper_remaining and not any(row["remaining_pgid_members"] is None or row["remaining_pgid_members"] for row in remaining)
             and not (drain and drain.is_alive()) and (process is None or process.returncode is not None)
             and data.get("cleanup", {}).get("complete", process is None))
@@ -1043,14 +1061,15 @@ def _execute(top: Path, binary: Path, body_budget_seconds: float):
         for thread in tuple(threading.enumerate()):
             if thread is not threading.main_thread():
                 thread.join(.5)
-        remaining = {role: rt._remaining(ref['pgid']) for role, (process, ref) in owned.items()}
+        groups = {role: ref['pgid'] for role, (process, ref) in owned.items()}
         if "owned_shell" in data:
-            remaining["host_shell"] = rt._remaining(data["owned_shell"]["pgid"])
+            groups["host_shell"] = data["owned_shell"]["pgid"]
         if "managed_supervisor" in data:
-            remaining["managed_supervisor"] = rt._remaining(data["managed_supervisor"]["pgid"])
+            groups["managed_supervisor"] = data["managed_supervisor"]["pgid"]
         child_group = data.get("owned_managed_lifecycle", {}).get("child_group")
         if type(child_group) is int and child_group > 0:
-            remaining["managed_child_group"] = rt._remaining(child_group)
+            groups["managed_child_group"] = child_group
+        remaining = _remaining_until(groups, termination_deadline_ns)
         live = [thread.name for thread in threading.enumerate() if thread is not threading.main_thread()]
         sockets = sum(server.accepted_count() for server in servers.values())
         safe = (not any(remaining.values()) and not live and not sockets

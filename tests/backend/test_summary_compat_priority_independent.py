@@ -310,6 +310,40 @@ class PrivatePriorityWrapperTests(unittest.TestCase):
         print("graceful_common_budget=" + json.dumps({"parent_wait_seconds": waits, "barrier_sleeps": sleeps,
             "boundary": "actual_AST_block_controlled_parent_clock_not_native"}, sort_keys=True))
 
+    def test_remaining_recheck_uses_existing_deadline_and_waits_for_exact_zombie_reap(self):
+        child = self.real_popen([sys.executable, "-c", "pass"], start_new_session=True,
+                                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        try:
+            until = priority.time.monotonic() + 2
+            while priority.time.monotonic() < until:
+                state = Path(f"/proc/{child.pid}/stat")
+                if state.exists() and state.read_text().rsplit(") ", 1)[1].split()[0] == "Z": break
+                priority.time.sleep(.005)
+            self.assertIn(child.pid, runtime._remaining(child.pid))
+            clock = [1_000_000_000]
+            with patch.object(priority, "now", side_effect=lambda: clock[0]), \
+                 patch.object(priority.time, "sleep", side_effect=AssertionError("expired deadline must not wait")):
+                residue = priority._remaining_until({"manager": child.pid}, clock[0])
+            self.assertIn(child.pid, residue["manager"], "a zombie is residue until exact waitpid")
+            self.assertIsNone(child.returncode)
+            deadline = clock[0] + 5_000_000_000
+            sleeps = []
+            def owner_reaps(seconds):
+                sleeps.append(seconds)
+                child.wait(timeout=1)
+                clock[0] += int(seconds * 1_000_000_000)
+            with patch.object(priority, "now", side_effect=lambda: clock[0]), \
+                 patch.object(priority.time, "sleep", side_effect=owner_reaps):
+                cleared = priority._remaining_until({"manager": child.pid}, deadline)
+            self.assertEqual(cleared, {"manager": []})
+            self.assertEqual(sleeps, [.01])
+            self.assertLessEqual(clock[0], deadline)
+            self.assertFalse(Path(f"/proc/{child.pid}").exists())
+            print("priority_deadline_recheck=" + json.dumps({"pid": child.pid, "expiredResidue": residue,
+                "afterExactWait": cleared, "deadlineNs": deadline, "returnedNs": clock[0]}))
+        finally:
+            child.wait(timeout=2)
+
     def test_known_graceful_failures_stay_failed_after_late_terminal_and_wrapper_retains(self):
         observations = []
         for case in ("deadline", "parse", "fallback"):
@@ -318,8 +352,11 @@ class PrivatePriorityWrapperTests(unittest.TestCase):
                 self.assertFalse(data["cleanup"]["complete"])
                 self.assertFalse(data["coverage_complete"])
                 self.assertTrue(any(error.startswith("cleanup:") for error in data["errors"]))
-                observed, root = self.observe_fixture("graceful-report-" + case,
-                    report={key: data[key] for key in ("cleanup", "coverage_complete", "errors")})
+                with patch.object(priority, "_remaining_until", wraps=priority._remaining_until) as recheck:
+                    observed, root = self.observe_fixture("graceful-report-" + case,
+                        report={key: data[key] for key in ("cleanup", "coverage_complete", "errors", "launches")})
+                self.assertEqual(recheck.call_args.args[1],
+                    data["launches"]["manager"]["owned_graceful_stop"]["termination_deadline_ns"])
                 self.assertTrue(observed["containment"]["owned_daemon_metadata"]["all_observed_exited"])
                 self.assertEqual([observed["cleanup_complete"], observed["containment"]["cleanup_complete"],
                     observed["cleanup"]["complete"]], [False, False, False])
@@ -344,11 +381,17 @@ class PartialPriorityAggregationTests(unittest.TestCase):
             result = provider.ScriptedCompatibilityProvider().observe()
         observe.assert_called_once()
         self.assertEqual(result["observations"][0], before["observations"][0])
-        self.assertEqual(result["items"], before["items"])
+        self.assertEqual(result["items"], {"Q01-route": "not_run", "Q01-tools": "not_run",
+            "Q01-skill": "not_run", "Q01-context": "not_run", "Q01-result": "not_run",
+            "Q01-origin": "not_run", "Q01-recovery": "not_run", "Q01-priority": "inconclusive"})
         self.assertEqual(result["level"], "inconclusive")
         self.assertIsNone(result["io"]["model_calls"])
+        self.assertIsNone(result["io"]["omp_children"])
+        self.assertEqual(result["observations"][-1]["kind"], "owned_product_priority_partial")
         self.assertFalse(result["observations"][-1]["coverage_complete"])
-        self.assertTrue(any("owned fixture missing result" in value for value in result["unknowns"]))
+        self.assertIn("operating_MODEL_unknown", result["unknowns"])
+        self.assertIn("priority_controls_incomplete", result["unknowns"])
+        self.assertTrue(any("OSError" in value for value in result["unknowns"]))
 
     def test_prior_unavailable_or_ambiguous_cleanup_never_launches_priority_group(self):
         unavailable = runtime.unavailable("owned fixture unavailable")

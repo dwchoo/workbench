@@ -1,4 +1,4 @@
-"""Repository-only fast and representative core precise validation runner.
+"""Repository-only fast and precise core/retention validation runner.
 
 Every child gets a fresh credential-free environment and a private namespace.
 This is developer evidence, never a product compatibility/adoption verdict.
@@ -198,10 +198,24 @@ PRECISE_ITEMS = tuple(
          {"fault-x7": ("X7.command_delivered", "X7.takeover_holds_new_sends", "X7.backend_restart",
                        "X7.old_command_unknown_no_replay", "X7.shutdown")}),
 )
-PRECISE_PENDING = (
-    "q01_product_adapter_recheck", "new_storage_summary_raw_product_gates",
-    "model_metadata", "product_full_dvl14",
+_FEATURE = "tests.dev_validation.feature_items.FeaturePreciseItems"
+FEATURE_ITEMS = tuple(
+    Item(key, assertions, (f"{_FEATURE}.{method}",), "runtime", wait,
+         {"WB_DVL_FEATURE_ITEMS": "1"},
+         {key: ("actual_execution", "same_candidate", "owned_cleanup")})
+    for key, method, assertions, wait in (
+        ("new_storage_summary_raw_product_gates", "test_new_storage_summary_raw_product_gates",
+         # phase2020 + cleanup216 < supervisor2250 < runner idle120+wait2250.
+         tuple(f"LG-AC-{index:02d}" for index in range(1, 24)), 2250),
+        ("q01_product_adapter_recheck", "test_q01_product_adapter_recheck",
+         tuple("Q01-" + name for name in ("route", "tools", "skill", "result", "context", "priority", "recovery", "origin")), 300),
+        ("model_metadata", "test_model_metadata", ("MODEL-metadata", "LG-AC-06", "LG-AC-07"), 50),
+        ("product_full_dvl14", "test_product_full_dvl14", ("PRODUCT-evidence", "LG-AC-01", "LG-AC-06", "LG-AC-07"), 200),
+    )
 )
+# Every former placeholder now has an executable item. Unknown runtime evidence
+# remains inconclusive through the existing result/ownership channel.
+PRECISE_PENDING = ()
 
 
 def _private_dir(path: Path) -> Path:
@@ -216,6 +230,15 @@ def _private_dir(path: Path) -> Path:
         raise ValueError("report-dir must not be repository or HOME root")
     if list(path.iterdir()):
         raise ValueError("report-dir must be empty for this invocation")
+    return path
+
+
+def _feature_evidence_dir(path: Path) -> Path:
+    """Validate the invocation's shared artifacts without requiring emptiness."""
+    info = path.lstat()
+    if (not path.is_absolute() or path.resolve() != path or not stat.S_ISDIR(info.st_mode)
+            or info.st_uid != os.getuid() or stat.S_IMODE(info.st_mode) != 0o700):
+        raise ValueError("feature evidence must be an existing owned 0700 directory")
     return path
 
 
@@ -262,6 +285,10 @@ def _base_env(home: Path, namespace: Path, omp: Path, item: Item) -> dict[str, s
             tool = harness.find_tool(item.outer)
             if tool:
                 env[f"WB_CW16_{item.outer.upper()}"] = tool
+    if item.env.get("WB_DVL_FEATURE_ITEMS") == "1":
+        output = namespace / "fixture-output"
+        output.mkdir(mode=0o700)
+        env.update(DVL10_INDEPENDENT_OUTPUT=str(output), WB_DVL_PRECISE_TEST_OUTPUT=str(output))
     # The harness's guard only permits its own WORKBENCH data paths, never inherited ones.
     harness.assert_env_isolated(env, home.parent)
     return env
@@ -667,6 +694,10 @@ def _run_item_body(item: Item, index: int, report_dir: Path, omp: Path,
     try:
         os.chmod(namespace, 0o700)
         env = _base_env(namespace / "home", namespace, omp, item)
+        if item.env.get("WB_DVL_FEATURE_ITEMS") == "1":
+            shared = report_dir / "feature-evidence"
+            _feature_evidence_dir(shared)
+            env.update(WB_DVL_FEATURE_EVIDENCE=str(shared), WB_DVL_INVOCATION_ID=invocation)
         control_read, control_write = os.pipe()
         argv = [sys.executable, "-m", "tools.dev_validate", "--_driver", invocation, item.key,
                 nonce, str(control_write), *item.modules]
@@ -709,6 +740,8 @@ def _run_item_body(item: Item, index: int, report_dir: Path, omp: Path,
     adopted_seen: dict[int, int] = {}
     lifetime["adopted"] = adopted_seen
     adopted_zombies: set[int] = set()
+    adopted_observations: dict[int, dict[str, Any]] = {}
+    monitor_reaped: set[int] = set()
 
     def owned_now() -> dict[int, int]:
         members = _owned_members(proc, namespace, control.owned,
@@ -717,7 +750,25 @@ def _run_item_body(item: Item, index: int, report_dir: Path, omp: Path,
                               driver_start=ticks)
         for pid, start in {**control.owned, **adopted_seen, **members}.items():
             _cell_observe("owned", pid=pid, startTicks=start)
+        for pid, start in adopted_seen.items():
+            fields = harness.stat_fields(pid)
+            if fields is not None and int(fields[19]) == start and int(fields[1]) == os.getpid():
+                adopted_observations.setdefault(pid, {"pid": pid, "startTicks": start,
+                    "ppid": int(fields[1]), "pgrp": int(fields[2]), "session": int(fields[3]),
+                    "state": fields[0].decode("ascii"), "observedMonotonicNs": time.monotonic_ns()})
         return members
+
+    def reap_monitored_zombies() -> None:
+        owned_now()
+        current = {}
+        for pid in adopted_zombies:
+            start = adopted_seen.get(pid)
+            fields = harness.stat_fields(pid)
+            if (pid != proc.pid and start is not None
+                    and (baseline_children or {}).get(pid) != start and fields is not None
+                    and fields[0] == b"Z" and int(fields[1]) == os.getpid() and int(fields[19]) == start):
+                current[pid] = start
+        monitor_reaped.update(_reap_adopted(current))
 
     def stop_now() -> dict[str, Any]:
         return _stop_owned(proc, ticks, namespace, control.owned,
@@ -741,6 +792,7 @@ def _run_item_body(item: Item, index: int, report_dir: Path, omp: Path,
         last_progress = started
         while selector.get_map() or proc.poll() is None:
             events = selector.select(0.2)
+            reap_monitored_zombies()
             for key, _ in events:
                 descriptor = key.fileobj if type(key.fileobj) is int else key.fileobj.fileno()
                 chunk = os.read(descriptor, 65536)
@@ -782,7 +834,7 @@ def _run_item_body(item: Item, index: int, report_dir: Path, omp: Path,
         except subprocess.TimeoutExpired:
             pass
         owned_now()  # Include a backend that became adopted Z before the first cleanup scan.
-        stop["reapedPids"] = _reap_adopted({**control.owned, **adopted_seen})
+        stop["reapedPids"] = sorted(monitor_reaped | set(_reap_adopted({**control.owned, **adopted_seen})))
         close_mask = signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGINT, signal.SIGTERM})
         try:
             selector.close()
@@ -875,6 +927,8 @@ def _run_item_body(item: Item, index: int, report_dir: Path, omp: Path,
             "stdoutDroppedBytes": dropped_out, "stderrDroppedBytes": dropped_err,
             "cleanup": {"remaining": sorted(remaining), **stop, "adoptedPids": sorted(adopted_seen),
                         "adoptedZombiePids": sorted(adopted_zombies),
+                        "monitorReapedPids": sorted(monitor_reaped),
+                        "adoptedProcessReadback": list(adopted_observations.values()),
                         "unknownNamespaceUsers": sorted(unattributed),
                         "namespaceRemoved": namespace_removed}, "namespace": str(namespace),
             "testIds": list(item.modules), "scenarioEvidence": scenario_evidence}
@@ -1469,13 +1523,15 @@ def main(argv: list[str] | None = None) -> int:
         parser.error(str(exc))
     invocation_id = str(uuid4())
     attempt_id = str(uuid4())
+    if args.mode == "precise":
+        _private_dir(report_dir / "feature-evidence")
     started = time.monotonic()
     before = _input_manifest()
     versions_before = harness.tool_versions(str(omp))
     head = subprocess.run(["git", "rev-parse", "HEAD"], cwd=REPO, capture_output=True,
                           text=True, check=True, env=harness.clean_base_env()).stdout.strip()
     items: list[dict[str, Any]] = []
-    selected_items = FAST_ITEMS + (PRECISE_ITEMS if args.mode == "precise" else ())
+    selected_items = FAST_ITEMS + (PRECISE_ITEMS + FEATURE_ITEMS if args.mode == "precise" else ())
     if args.jobs == 1:
         for index, item in enumerate(selected_items):
             items.append(_run_item(item, index, report_dir, omp, invocation_id))
@@ -1483,12 +1539,7 @@ def main(argv: list[str] | None = None) -> int:
         for index, item in enumerate(FAST_ITEMS):
             items.append(_run_item(item, index, report_dir, omp, invocation_id))
         if args.mode == "precise":
-            items.extend(_parallel_items(PRECISE_ITEMS, report_dir, omp, invocation_id, len(FAST_ITEMS)))
-    if args.mode == "precise":
-        items.extend({"id": name, "assertionIds": ["DV-AC-03"], "required": True,
-                      "evidenceLevel": "runtime", "status": "not_run", "reason": "DVL-13/final product registry pending",
-                      "collectedTests": 0, "durationSeconds": 0, "expectedWaitSeconds": 0}
-                     for name in PRECISE_PENDING)
+            items.extend(_parallel_items(PRECISE_ITEMS + FEATURE_ITEMS, report_dir, omp, invocation_id, len(FAST_ITEMS)))
     after = _input_manifest()
     versions_after = harness.tool_versions(str(omp))
     if before["sha256"] != after["sha256"] or versions_before != versions_after:
@@ -1509,7 +1560,7 @@ def main(argv: list[str] | None = None) -> int:
                                        "inputSha256": before["sha256"]}],
               "mode": args.mode, "scope": ("developer fast subset; not product compatibility pass"
                                              if args.mode == "fast" else
-                                             "developer fast + representative core Bash/sh precise; DVL-13/product gates pending"),
+                                             "developer core Bash/sh precise + explicit owned feature runtime items; completion requires full gate evidence"),
               "cwd": str(REPO), "gitHead": head, "inputBefore": before, "inputAfter": after,
               "versionsBefore": versions_before, "versionsAfter": versions_after,
               "ompPath": str(omp), "targetSeconds": TARGET_SECONDS[args.mode],

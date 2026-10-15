@@ -55,9 +55,15 @@ class IndependentRunnerContract(unittest.TestCase):
                   {"sha256": "b" * 64, "fileCount": 1, "files": [{"path": "fixture", "sha256": "b" * 64}]}]
         versions = {"omp": "fixture 1", "python": "3.12", "kernel": "fixture"}
         targets = {"fast": 0, "precise": 600} if short_target else runner.TARGET_SECONDS
+        # Executable feature IDs use ordinary skipped unit fixtures here, never
+        # their Native/300-second/volume entrypoints. Unknowns still aggregate.
+        feature_items = tuple(runner.Item(key, ("DV-AC-04",), (f"{FIXTURES}.test_skip",), "fixture")
+                              for key in ("new_storage_summary_raw_product_gates", "q01_product_adapter_recheck",
+                                          "model_metadata", "product_full_dvl14"))
         capture = io.StringIO()
         with patch.object(runner, "FAST_ITEMS", (item,)), \
              patch.object(runner, "PRECISE_ITEMS", ()), \
+             patch.object(runner, "FEATURE_ITEMS", feature_items), \
              patch.object(runner, "_input_manifest", side_effect=inputs if changed_input else [inputs[0], inputs[0]]), \
              patch.object(runner.harness, "tool_versions", return_value=versions), \
              patch.object(runner, "TARGET_SECONDS", targets), redirect_stdout(capture):
@@ -74,15 +80,18 @@ class IndependentRunnerContract(unittest.TestCase):
         precise_exit, precise = self.main_report("precise", fixture)
         self.assertEqual((precise_exit, precise["result"]), (2, "inconclusive"))
         self.assertTrue(precise["firstFailure"])
-        self.assertTrue(any(row["required"] and row["status"] == "not_run"
+        self.assertTrue(any(row["required"] and row["status"] == "inconclusive"
                             for row in precise["items"]))
         self.assertEqual(precise["scope"],
-                         "developer fast + representative core Bash/sh precise; DVL-13/product gates pending")
-        self.assertEqual(precise["firstFailure"]["item"], "q01_product_adapter_recheck")
+                         "developer core Bash/sh precise + explicit owned feature runtime items; completion requires full gate evidence")
+        self.assertEqual(precise["firstFailure"]["item"], "new_storage_summary_raw_product_gates")
         self.assertEqual({row["id"] for row in precise["items"]},
                          {"fixture-pass", "q01_product_adapter_recheck", "new_storage_summary_raw_product_gates",
                           "model_metadata", "product_full_dvl14"})
         self.assertEqual(precise["matrix"]["testIds"], [])
+        for row in precise["items"][1:]:
+            self.assertEqual((row["status"], row["collectedTests"], row["skippedTests"]),
+                             ("inconclusive", 1, 1))
 
     def test_zero_and_fully_skipped_collections_never_pass(self) -> None:
         empty = runner.Item("empty", ("DV-AC-04",),
@@ -357,6 +366,107 @@ class IndependentRunnerContract(unittest.TestCase):
             except subprocess.TimeoutExpired:
                 unrelated.kill()
                 unrelated.wait(timeout=1)
+
+    def test_quiet_driver_observes_owned_orphan_group_absent_before_exit(self) -> None:
+        # The external driver is ordinary Python. Its private orphan must be
+        # reaped while both driver streams are quiet, not in final cleanup.
+        receipt = self.parent / "quiet-orphans.json"
+        observed = self.parent / "quiet-observed.json"
+        code = r'''
+import json, os, pathlib, sys, time
+receipt, observed, namespace = map(pathlib.Path, sys.argv[1:4])
+control_fd = int(sys.argv[4])
+def fields(pid):
+    try: return pathlib.Path('/proc/%s/stat' % pid).read_text().rsplit(') ', 1)[1].split()
+    except FileNotFoundError: return None
+broker = os.fork()
+if broker == 0:
+    os.close(control_fd)
+    null = os.open(os.devnull, os.O_WRONLY)
+    os.dup2(null, 1)
+    os.dup2(null, 2)
+    os.close(null)
+    os.setsid()
+    zombie = os.fork()
+    if zombie == 0:
+        time.sleep(.15)
+        os._exit(0)
+    live = os.fork()
+    if live == 0:
+        os.setsid()
+        os.execv(sys.executable, [sys.executable, '-c', 'import time; time.sleep(20)', str(namespace)])
+    until = time.monotonic() + 1
+    while int(fields(live)[2]) != live and time.monotonic() < until: time.sleep(.001)
+    rows = {str(pid): {'pid': pid, 'startTicks': int(fields(pid)[19]),
+        'pgrp': int(fields(pid)[2]), 'session': int(fields(pid)[3])} for pid in (zombie, live)}
+    receipt.write_text(json.dumps({'zombie': rows[str(zombie)], 'live': rows[str(live)]}))
+    os._exit(0)
+os.waitpid(broker, 0)
+until = time.monotonic() + 4
+while not receipt.exists() and time.monotonic() < until: time.sleep(.005)
+rows = json.loads(receipt.read_text())
+while fields(rows['zombie']['pid']) is not None and time.monotonic() < until: time.sleep(.01)
+live = fields(rows['live']['pid'])
+try:
+    os.killpg(rows['zombie']['pgrp'], 0)
+    group_absent = False
+except ProcessLookupError:
+    group_absent = True
+observed.write_text(json.dumps({'driver': os.getpid(), 'driverExitAfterNs': time.monotonic_ns(),
+    'groupAbsent': group_absent, 'zombieAbsent': fields(rows['zombie']['pid']) is None,
+    'liveStillRunning': live is not None and live[0] != 'Z'}))
+'''
+        real_popen = subprocess.Popen
+        unrelated = real_popen([sys.executable, "-c", "import sys; sys.stdin.buffer.read()"],
+                              stdin=subprocess.PIPE, start_new_session=True,
+                              stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        baseline = real_popen([sys.executable, "-c", "pass"], start_new_session=True,
+                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        unrelated_ticks = runner.harness.ticks(unrelated.pid)
+        try:
+            deadline = runner.time.monotonic() + 2
+            while runner.time.monotonic() < deadline:
+                fields = runner.harness.stat_fields(baseline.pid)
+                if fields is not None and fields[0] == b"Z": break
+                runner.time.sleep(.005)
+            self.assertEqual(runner.harness.stat_fields(baseline.pid)[0], b"Z")
+            def launch(argv, **kwargs):
+                return real_popen([sys.executable, "-B", "-c", code, str(receipt), str(observed),
+                                   kwargs["env"]["WB_DVL_NAMESPACE"], str(kwargs["pass_fds"][0])], **kwargs)
+            with patch.object(runner.subprocess, "Popen", side_effect=launch):
+                result = self.run_item("quiet-orphans", "test_pass")
+            rows, view = json.loads(receipt.read_text()), json.loads(observed.read_text())
+            self.assertTrue(view["zombieAbsent"], result)
+            self.assertTrue(view["groupAbsent"], result)
+            self.assertTrue(view["liveStillRunning"], result)
+            zombie, live = rows["zombie"], rows["live"]
+            self.assertIn(zombie["pid"], result["cleanup"]["monitorReapedPids"])
+            readback = next(row for row in result["cleanup"]["adoptedProcessReadback"]
+                            if row["pid"] == zombie["pid"])
+            for key in ("pid", "startTicks", "pgrp", "session"):
+                self.assertEqual(readback[key], zombie[key])
+            self.assertEqual(readback["ppid"], os.getpid())
+            self.assertLess(readback["observedMonotonicNs"], view["driverExitAfterNs"])
+            self.assertNotIn(live["pid"], result["cleanup"]["monitorReapedPids"])
+            self.assertNotIn(view["driver"], result["cleanup"]["monitorReapedPids"])
+            self.assertNotIn(baseline.pid, result["cleanup"]["reapedPids"])
+            self.assertNotIn(unrelated.pid, result["cleanup"]["signalledPids"])
+            self.assertEqual(runner.harness.stat_fields(baseline.pid)[0], b"Z")
+            self.assertTrue(runner.harness.alive(unrelated.pid, unrelated_ticks))
+            self.assertEqual(result["cleanup"]["remaining"], [])
+            self.assertTrue(result["cleanup"]["namespaceRemoved"])
+            print("quiet_owned_readback=" + json.dumps({"captured": rows, "observed": view,
+                "readback": readback, "monitorReapedPids": result["cleanup"]["monitorReapedPids"]}, sort_keys=True))
+        finally:
+            if receipt.exists():
+                for row in json.loads(receipt.read_text()).values():
+                    if runner.harness.ticks(row["pid"]) == row["startTicks"]:
+                        runner.harness.kill_exact(row["pid"], row["startTicks"])
+                    try: os.waitpid(row["pid"], 0)
+                    except ChildProcessError: pass
+            unrelated.stdin.close()
+            unrelated.wait(timeout=2)
+            baseline.wait(timeout=2)
 
     def test_early_native_zombie_is_exactly_reaped_without_touching_baseline_children(self) -> None:
         libc = ctypes.CDLL(None, use_errno=True)

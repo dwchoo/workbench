@@ -31,6 +31,45 @@ def fixture_worker_argv(item, index, invocation, nonce, parent_pid, parent_start
 
 
 class RunnerContractTests(unittest.TestCase):
+    def test_precise_prepares_shared_once_and_consumer_executes_after_producer_populates_it(self):
+        modules = ("tests.dev_validation.fixture_items.RunnerFixture.test_pass",)
+        items = tuple(runner.Item(key, ("DV-AC-04",), modules, "fixture", env={"WB_DVL_FEATURE_ITEMS": "1"})
+                      for key in ("feature-producer-fixture", "feature-consumer-fixture"))
+        real_run, real_private = runner._run_item, runner._private_dir
+        with tempfile.TemporaryDirectory() as temporary:
+            report_dir = Path(temporary) / "report"
+            artifact = report_dir / "feature-evidence" / "producer.json"
+            original = []
+            def execute(item, index, parent, omp, invocation):
+                if item.key == items[1].key:
+                    self.assertEqual(artifact.read_bytes(), original[0])
+                row = real_run(item, index, parent, omp, invocation)
+                if item.key == items[0].key:
+                    original.append(json.dumps({"invocation": invocation, "fixture_only": True}).encode())
+                    artifact.write_bytes(original[0])
+                    artifact.chmod(0o600)
+                return row
+            with patch.object(runner, "FAST_ITEMS", ()), patch.object(runner, "PRECISE_ITEMS", ()), \
+                 patch.object(runner, "FEATURE_ITEMS", items), patch.object(runner, "_run_item", side_effect=execute), \
+                 patch.object(runner, "_private_dir", wraps=real_private) as allocate, \
+                 patch.object(runner, "_feature_evidence_dir", wraps=runner._feature_evidence_dir) as validate, \
+                 patch.object(runner, "_input_manifest", return_value={"sha256": "fixture"}), \
+                 patch.object(runner.harness, "tool_versions", return_value={"omp": "fixture"}), \
+                 patch.object(runner.subprocess, "run", return_value=subprocess.CompletedProcess([], 0, "fixture-head")):
+                code = runner.main(["--mode", "precise", "--report-dir", str(report_dir), "--omp", "/usr/bin/true"])
+            report = json.loads((report_dir / "report.json").read_bytes())
+            self.assertEqual((code, report["result"]), (0, "passed"))
+            self.assertEqual([row["id"] for row in report["items"]], [item.key for item in items])
+            self.assertTrue(all(row["status"] == "passed" and row["collectedTests"] == 1
+                                and row["skippedTests"] == 0 and row["cleanup"]["namespaceRemoved"]
+                                for row in report["items"]))
+            self.assertEqual([call.args[0] for call in allocate.call_args_list],
+                             [report_dir, report_dir / "feature-evidence"])
+            self.assertEqual([call.args[0] for call in validate.call_args_list], [artifact.parent, artifact.parent])
+            self.assertEqual(artifact.read_bytes(), original[0])
+            with self.assertRaises(ValueError):
+                runner._private_dir(artifact.parent)  # The ordinary empty guard remains strict.
+
     def test_two_python_cells_overlap_with_private_env_and_complete_owned_cleanup(self):
         items = tuple(runner.Item(key, ("DV-AC-04",),
                                  ("tests.dev_validation.fixture_items.RunnerFixture.test_hang",), "fixture",
@@ -127,8 +166,8 @@ while True: time.sleep(0.05)
                         "inputAfter": {"sha256": "same"}, "versionsBefore": {"omp": "fixture"},
                         "versionsAfter": {"omp": "fixture"}, "mode": "precise", "cwd": str(runner.REPO),
                         "ompPath": "/usr/bin/true", "costIdentity": runner._cost_identity((item,), Path("/usr/bin/true")),
-                        "execution": {"jobs": 1}, "elapsedSeconds": 3, "result": "inconclusive", "items": [row],
-                        "firstFailure": {"item": runner.PRECISE_PENDING[0], "status": "not_run"}}
+                        "execution": {"jobs": 1}, "elapsedSeconds": 3, "result": "passed", "items": [row],
+                        "firstFailure": None}
             current = deepcopy(original)
             current.update(attemptId="new", execution={"jobs": 2}, elapsedSeconds=2)
             path = root / "baseline.json"
@@ -256,7 +295,7 @@ while True: time.sleep(0.05)
             self.assertIn("sh(dash)" if item.env["WB_CW16_SHELLS"] == "dash" else "Bash", result["reason"])
             self.assertEqual(runner._overall([result], None), ("inconclusive", 2))
 
-    def test_precise_main_executes_core_registry_but_future_gates_remain_pending(self):
+    def test_precise_main_executes_core_registry_and_four_feature_items(self):
         def passed(item, *args):
             return {"id": item.key, "required": True, "status": "passed",
                     "durationSeconds": 0, "expectedWaitSeconds": item.expected_wait_seconds}
@@ -269,17 +308,21 @@ while True: time.sleep(0.05)
                     patch.object(runner.subprocess, "run", return_value=subprocess.CompletedProcess([], 0, "fixture-head")):
                 exit_code = runner.main(["--mode", "precise", "--report-dir", str(report_dir), "--omp", "/usr/bin/true"])
             self.assertEqual([call.args[0] for call in run_item.call_args_list],
-                             list(runner.FAST_ITEMS + runner.PRECISE_ITEMS))
+                             list(runner.FAST_ITEMS + runner.PRECISE_ITEMS + runner.FEATURE_ITEMS))
             report = json.loads((report_dir / "report.json").read_text())
-            self.assertEqual((exit_code, report["result"]), (2, "inconclusive"))
+            self.assertEqual((exit_code, report["result"]), (0, "passed"))
             self.assertEqual(report["matrix"]["shells"], ["bash", "dash"])
             self.assertEqual(report["matrix"]["shellLabels"]["dash"], "sh(dash)")
             self.assertNotIn("dashOuterCells", report["matrix"])
-            self.assertEqual(report["scope"], "developer fast + representative core Bash/sh precise; DVL-13/product gates pending")
+            self.assertEqual(report["scope"], "developer core Bash/sh precise + explicit owned feature runtime items; completion requires full gate evidence")
             self.assertEqual(len(report["matrix"]["testIds"]), 19)
             self.assertEqual({item["id"] for item in report["items"] if item["status"] == "not_run"},
-                             set(runner.PRECISE_PENDING))
-            self.assertEqual(report["firstFailure"]["item"], runner.PRECISE_PENDING[0])
+                             set())
+            self.assertIsNone(report["firstFailure"])
+            self.assertEqual([item.key for item in runner.FEATURE_ITEMS], [
+                "new_storage_summary_raw_product_gates", "q01_product_adapter_recheck",
+                "model_metadata", "product_full_dvl14"])
+            self.assertEqual(len(report["items"]), 24)
             self.assertEqual({item["id"] for item in report["notRunCoverage"]},
                              {"legacy_full_regression", "VM_GUI_paid_model"})
 
@@ -339,7 +382,8 @@ while True: time.sleep(0.05)
 
     def test_mode_registry_and_no_precise_full_pass(self):
         self.assertEqual(set(runner.TARGET_SECONDS), {"fast", "precise"})
-        self.assertTrue(runner.PRECISE_PENDING)
+        self.assertEqual(runner.PRECISE_PENDING, ())
+        self.assertEqual(len(runner.FEATURE_ITEMS), 4)
         self.assertEqual({item.evidence_level for item in runner.FAST_ITEMS}, {"fixture", "runtime"})
         items = [{"required": True, "status": "passed"}, {"required": True, "status": "not_run"}]
         self.assertEqual(runner._overall(items, None), ("inconclusive", 2))

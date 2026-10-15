@@ -1,6 +1,23 @@
 # 개발용 검증·로그 보관 후속 시험 계획
 
-상태: 계획만. 이번 문서 보강에서 시험·모델 호출을 실행하지 않았다.
+## 2026-10-15 최종 통합 연결 중
+
+- 기존 [core FOLLOWUPS](../core-workbench/FOLLOWUPS.md)의 FL-01~04·RM-01~03 링크와 원래 관측은 유지한다.
+  이 아래의 과거 계획·예산 문구는 당시 상태이며, 현재 실행 경계는 LG-D30/31/32/33과
+  [DEVELOPMENT](DEVELOPMENT.md), [VERIFICATION](VERIFICATION.md)을 함께 따른다.
+- RM-input-budget의 광범위한 실모델 입력·경합·품질 시험은 후속 계획이며 착수하지 않았다.
+  별도 승인 뒤 완료된 작은 실제 Worker.default 입력 → 요약 → DB → 조회 시험을 반복하거나
+  이를 장문 적합성·품질·provider output/reasoning 의미의 입증으로 확대하지 않는다.
+- 실제 Backend/bridge의 nonreasoning 부모는 `thinkingLevel:undefined`로 metadata가 보류된다.
+  전용 reasoning fixture의 readback은 성공했으나 operating MODEL pass는 아니며, 기본 Backend supplier의
+  고정 writer 결속 누락을 발견했다. 승인된 두 함수의 최소 연결 수정과 새 runtime harness 구현을 마쳤으며,
+  독립 테스트·리뷰와 실제 최종 통합 실행은 아직 남아 있다.
+  준비 완료나 기존 fixture를 최종 runtime 통과로 올리지 않으며, 실제 300초 요약·28 AC/46 gate 전체 실행은
+  독립 테스트와 리뷰 뒤 최종 후보에서 수행한다. 기존 실제 20개 core 항목의 근거와 비용 범위는 별도로 보존한다.
+- 실제 사용자 raw 순환 삭제는 OFF, C2 hold는 유지한다. 내부 native I/O 귀속 unknown과 LG-D30의 세 soft unknown을
+  0/pass로 바꾸지 않는다. 새 모델 route·추가 비용 quota·자동 fallback·반복 품질 평가를 도입하지 않는다.
+
+이하 기존 계획 작성 당시 상태: 계획만. 당시 문서 보강에서는 시험·모델 호출을 실행하지 않았다.
 기존 간헐 실패 FL-01~04 및 실제 모델 RM-01~03 계획은 [core FOLLOWUPS](../core-workbench/FOLLOWUPS.md)를 참조한다.
 기존 목록·완료/미확인 이력을 덮어쓰지 않고 비용·승인 경계를 유지한다.
 

@@ -288,7 +288,7 @@ class ProducerCaptureBoundaryTests(unittest.TestCase):
     def test_budget_omits_utf8_continuation_group_without_rewriting_observed_sources(self):
         from workbench.workflow.run import _ExactByteMatcher
         from workbench.backend.summary_adapter import prepare_summary
-        owner,subject=self.task_run();raw=("가\n"+"x"*9000).encode()
+        owner,subject=self.task_run();raw=("가\n"+"x"*24000).encode()
         matcher=_ExactByteMatcher(b"DONE")
         segments=matcher.feed(raw[:4])+matcher.feed(raw[4:])+matcher.finish()
         owner._record_observed(segments);self.observed_run_raw(owner,raw)
@@ -299,11 +299,11 @@ class ProducerCaptureBoundaryTests(unittest.TestCase):
         prepared=prepare_summary(self.observed_request(subject,originals),pieces,metadata=owned_metadata(),instructions="existing task")
         selected=prepared["request"]["sources"];omitted=[item["range"] for item in prepared["omitted"]]
         self.assertEqual(gaps,[])
-        self.assertTrue(all(span not in selected and span in omitted for span in originals[:2]),"UTF8 continuation group must be wholly omitted under the actual input quota")
+        self.assertTrue(all(span not in selected and span in omitted for span in originals[:2]),"UTF8 continuation group must be wholly omitted under the 32KiB wire bound")
         self.assertEqual(selected,[originals[2]])
         self.assertEqual(sorted(json.dumps(s,sort_keys=True) for s in selected+omitted),sorted(json.dumps(s,sort_keys=True) for s in originals))
         self.assertEqual([record["range"] for record in owner.repository.pending_summary_sources(subject,revision=1)],originals)
-        self.assertEqual(prepared["budget"]["inputLimit"],8192)
+        self.assertEqual(prepared["budget"]["inputLimit"],131072)
         (EVIDENCE/"green-utf8-omission.json").write_text(json.dumps({"original_sources":originals,"selected_sources":selected,"omitted":prepared["omitted"],"budget":prepared["budget"]},ensure_ascii=False,indent=2))
 
 
@@ -329,13 +329,8 @@ from workbench.tasks.repository import InvalidTransitionError
 
 def owned_metadata():
     """Controlled supplier fixture; no operational parent epoch claim."""
-    return {"source":"parent_session_readback", "epoch":"controlled-private-fixture",
-        "parentSessionId":str(uuid4()), "model":{"provider":"scripted", "id":"test",
-        "api":"openai-completions", "baseUrl":"http://127.0.0.1:1/v1", "contextWindow":131072,
-        "maxTokens":8192}, "thinkingLevel":"off", "serviceTierByFamily":{}, "existingContextTokens":0,
-        "outputCap":8192, "reasoningTokens":0, "visibleResultTokens":8192,
-        "outputMeaning":"reasoning_and_visible", "outputLimitEnforced":True,
-        "outputLimitSource":"controlled-scripted-fixture-not-operating-model-proof", "estimator":"utf8_bytes_upper_bound"}
+    from tests.backend.test_summary_adapter_independent import contract_fixture
+    return contract_fixture()[1]
 
 
 class CompatibilityPort:
@@ -377,7 +372,7 @@ class SchedulerBoundaryTests(unittest.TestCase):
         self.factory=lambda:TaskRepository(self.layout.tasks)
         self.now=0.;self.paused=False;self.priority=False;self.active=True;self.revoked=False;self.healthy=True;self.dispatch_ready=True
         self.compat=CompatibilityPort();self.adapter=OutcomePort(self.root)
-        self.runtime={"metadata":owned_metadata(),"instructions":"existing task prompt fixture","expected_peer":(str(uuid4()),1),"writer":{}}
+        self.runtime={"metadata":owned_metadata(),"instructions":"existing task prompt fixture","expected_peer":(str(uuid4()),1),"writer":{"python":__import__("sys").executable,"moduleRoot":str(Path(__file__).resolve().parents[2]/"src"),"dataRoot":str(self.root)}}
         self.capture_failures=[]
         self.service=TerminalService.__new__(TerminalService)
         self.service._repository_factory=self.factory;self.service._subject_log=self.sink

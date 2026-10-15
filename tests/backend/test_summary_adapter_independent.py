@@ -42,7 +42,11 @@ def contract_fixture(texts=("작업 목적과 검증 결과",)):
                 "thinkingLevel": "off", "serviceTierByFamily": {}, "existingContextTokens": 0,
                 "outputCap": 8192, "reasoningTokens": 0, "visibleResultTokens": 8192,
                 "outputMeaning": "reasoning_and_visible", "outputLimitEnforced": True,
-                "outputLimitSource": "fixture-only", "estimator": "utf8_bytes_upper_bound"}
+                "outputLimitSource": "host_default", "estimator": "utf8_bytes_upper_bound"}
+    metadata["childSelection"] = {"source": "configured_worker_default", "modelTableDigest": "a" * 64,
+        "descriptorSource": "manager_model_registry_getAll_all", "serviceTierSource": "parent_session_readback",
+        "model": {**deepcopy(metadata["model"]), "id": "worker"},
+        "thinkingLevel": "high", "selector": "scripted/worker:high"}
     result = bound_result(request)
     return request, metadata, result
 
@@ -61,7 +65,7 @@ def bound_result(request):
 
 class IndependentSummaryPreparationTests(unittest.TestCase):
     def test_selection_is_permutation_independent_and_keeps_whole_ranges(self):
-        texts = ("terminal" * 900, "작업 시작 명세", "사용자 결정", "검증 보고")
+        texts = ("terminal" * 3000, "작업 시작 명세", "사용자 결정", "검증 보고")
         request, metadata, _ = contract_fixture(texts)
         pieces = [SourcePiece(span, text, kind, index) for index, (span, text, kind) in
                   enumerate(zip(request["sources"], texts, ("terminal", "start_spec", "decision", "report")))]
@@ -81,22 +85,25 @@ class IndependentSummaryPreparationTests(unittest.TestCase):
         with self.assertRaises(LogContractError):
             validate_result(a["request"], bound_result(request))
 
-    def test_unknown_output_semantics_and_parent_defaults_do_not_admit(self):
+    def test_unknown_semantics_remain_information_but_missing_selection_and_cap_defer(self):
         request, metadata, _ = contract_fixture()
         piece = SourcePiece(request["sources"][0], "작업 목적과 검증 결과")
         cases = [(None, "model_metadata_unavailable"),
                  ({**metadata, "source": "profile"}, "model_metadata_unavailable"),
                  ({**metadata, "epoch": None}, "model_metadata_unavailable"),
-                 ({**metadata, "outputLimitEnforced": False}, "output_budget_unavailable"),
-                 ({**metadata, "outputMeaning": "visible_only"}, "output_budget_unavailable"),
-                 ({**metadata, "reasoningTokens": 1}, "output_budget_unavailable"),
+                 ({**metadata, "childSelection": None}, "model_metadata_unavailable"),
                  ({**metadata, "outputCap": 8193}, "output_budget_unavailable")]
         for value, reason in cases:
-            with self.subTest(reason=reason, value=value), self.assertRaisesRegex(SummaryDeferred, reason):
+            with self.subTest(reason=reason), self.assertRaisesRegex(SummaryDeferred, reason):
                 prepare_summary(request, [piece], metadata=value, instructions="task")
+        for enforcement in (None, False):
+            unknown = {**metadata, "existingContextTokens": None, "outputLimitEnforced": enforcement,
+                       "outputMeaning": "unknown", "reasoningTokens": None, "visibleResultTokens": None}
+            actual = prepare_summary(request, [piece], metadata=unknown, instructions="task")
+            self.assertEqual(actual["metadata"], unknown)
 
     def test_utf8_group_quota_omission_keeps_every_original_range_and_digest(self):
-        large="가\n"+"x"*9000
+        large="가\n"+"x"*24000
         request, metadata, _=contract_fixture((large,"확인한 결정"))
         original=request["sources"][0];raw=large.encode()
         first={**deepcopy(original),"end":1,"digest":sha256(raw[:1]).hexdigest()}
@@ -111,39 +118,37 @@ class IndependentSummaryPreparationTests(unittest.TestCase):
         self.assertEqual(prepared["request"]["sources"],[decision])
         self.assertEqual([value["range"] for value in prepared["omitted"]],[first,second])
         self.assertTrue(all(value["reason"]=="input_budget" for value in prepared["omitted"]))
-        self.assertEqual(prepared["budget"]["inputLimit"],8192)
+        self.assertEqual(prepared["budget"]["inputLimit"], metadata["childSelection"]["model"]["contextWindow"])
         self.assertEqual(prepared["budget"]["resultByteLimit"],8192)
         self.assertLessEqual(prepared["budget"]["mandatoryWireBytes"],32768)
 
-    def test_full_ceiling_and_parent_context_reserved_even_for_a_small_result(self):
+    def test_child_context_fit_reserves_output_without_reserving_parent_context(self):
         request, metadata, _ = contract_fixture(("short",))
         piece = SourcePiece(request["sources"][0], "short")
-        ok = prepare_summary(request, [piece], metadata=metadata, instructions="task")
-        # Locate the externally observable fit/defer edge without reimplementing
-        # the product's continuation serialization or trusting its reported sum.
-        low, high = 0, metadata["model"]["contextWindow"]
+        metadata["existingContextTokens"] = None
+        metadata["model"]["contextWindow"] = 4096
+        low, high = 1, metadata["childSelection"]["model"]["contextWindow"]
         while low + 1 < high:
             middle = (low + high) // 2
+            trial = deepcopy(metadata)
+            trial["childSelection"]["model"]["contextWindow"] = middle
             try:
-                prepare_summary(request, [piece], metadata={**metadata, "existingContextTokens": middle}, instructions="task")
-                low = middle
-            except SummaryDeferred:
+                prepare_summary(request, [piece], metadata=trial, instructions="task")
                 high = middle
-        reserved = {**metadata, "existingContextTokens": low}
-        accepted = prepare_summary(request, [piece], metadata=reserved, instructions="task")
-        self.assertEqual(accepted["budget"]["outputReserve"], 8192)
+            except SummaryDeferred:
+                low = middle
+        accepted_metadata = deepcopy(metadata)
+        accepted_metadata["childSelection"]["model"]["contextWindow"] = high
+        accepted = prepare_summary(request, [piece], metadata=accepted_metadata, instructions="task")
+        self.assertIsNone(accepted["metadata"]["existingContextTokens"])
+        self.assertEqual(accepted["budget"]["inputLimit"], high)
         self.assertEqual(accepted["budget"]["previousOutputReserve"], 8192)
         self.assertEqual(accepted["budget"]["nextOutputReserve"], 8192)
-        reserved_beyond_host = metadata["model"]["contextWindow"] - low - ok["budget"]["inputEstimate"]
-        self.assertGreaterEqual(reserved_beyond_host, 2 * 8192)
-        self.assertLess(reserved_beyond_host, 2 * 8192 + 2048)
         self.assertEqual(accepted["request"]["sources"], request["sources"])
-        self.assertEqual(accepted["budget"]["inputLimit"], 8192)
-        self.assertEqual(accepted["budget"]["mandatoryArgumentsBytes"], 8192)
         self.assertLessEqual(accepted["budget"]["mandatoryWireBytes"], 32768)
-        reserved["existingContextTokens"] += 1
+        accepted_metadata["childSelection"]["model"]["contextWindow"] = low
         with self.assertRaisesRegex(SummaryDeferred, "input_budget_unavailable"):
-            prepare_summary(request, [piece], metadata=reserved, instructions="task")
+            prepare_summary(request, [piece], metadata=accepted_metadata, instructions="task")
 
     def test_collection_cap_is_separate_from_small_selected_input(self):
         texts = ("x" * 1_048_576, "decision")

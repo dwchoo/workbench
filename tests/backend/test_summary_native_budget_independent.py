@@ -19,7 +19,8 @@ def controlled_count(query):
 
 def native_case(texts=("작업 목적과 검증 결과",)):
     request, metadata, _ = contract_fixture(texts)
-    metadata["model"]["tokenizer"] = "claude-v3"
+    metadata["model"]["tokenizer"] = "qwen3"
+    metadata["childSelection"]["model"]["tokenizer"] = "claude-v3"
     pieces = [SourcePiece(span, text, sequence=i) for i, (span, text) in
               enumerate(zip(request["sources"], texts))]
     return request, metadata, pieces
@@ -31,7 +32,7 @@ class NativeBudgetIndependentTests(unittest.TestCase):
                                count_fragments=port)
 
     def test_fallback_preserves_byte_selection_omissions_and_observer_truth(self):
-        request, metadata, pieces = native_case(("t" * 6500, "사용자 결정", "검증 보고"))
+        request, metadata, pieces = native_case(("t" * 24000, "사용자 결정", "검증 보고"))
         pieces[1] = SourcePiece(pieces[1].range, pieces[1].text, "decision", 1)
         metadata["estimator"] = "native_known_family_strict"
         before = deepcopy(metadata)
@@ -55,7 +56,7 @@ class NativeBudgetIndependentTests(unittest.TestCase):
     def test_unknown_family_never_invokes_port_and_is_explicit_bytes(self):
         for family in (None, "o200k_base", "future-family", 1):
             request, metadata, pieces = native_case()
-            metadata["model"]["tokenizer"] = family
+            metadata["childSelection"]["model"]["tokenizer"] = family
             with self.subTest(family=family):
                 actual = self.prepare(request, metadata, pieces, lambda q: self.fail("unknown tokenizer used port"))
                 self.assertEqual(actual["budget"]["fallbackReason"], "tokenizer_family_unavailable")
@@ -79,7 +80,7 @@ class NativeBudgetIndependentTests(unittest.TestCase):
         expected = [DEFINITION + "\n\n" + skill_bytes().decode(), canonical_json(payload).decode()]
         self.assertEqual(final["fragments"], expected)
         self.assertEqual(final["fragmentDigests"], [sha256(t.encode()).hexdigest() for t in expected])
-        owner = {"epoch": before["epoch"], "parentSessionId": before["parentSessionId"], "model": before["model"]}
+        owner = {"epoch": before["epoch"], "parentSessionId": before["parentSessionId"], "model": before["childSelection"]["model"]}
         self.assertEqual(final["ownerDigest"], sha256(canonical_json(owner)).hexdigest())
         self.assertEqual(actual["countBinding"]["tokens"], [(len(t.encode()) + 7) // 8 for t in expected])
         self.assertNotEqual(*actual["countBinding"]["tokens"])
@@ -87,7 +88,7 @@ class NativeBudgetIndependentTests(unittest.TestCase):
         frozen = deepcopy(actual)
         responses[-1]["tokens"][0] = 99999
         responses[-1]["fragmentDigests"].reverse()
-        metadata["model"]["tokenizer"] = "qwen3"
+        metadata["childSelection"]["model"]["tokenizer"] = "qwen3"
         self.assertEqual(actual, frozen)
         self.assertEqual(actual["metadata"], before)
 
@@ -110,19 +111,16 @@ class NativeBudgetIndependentTests(unittest.TestCase):
         with self.assertRaisesRegex(SummaryDeferred, "input_count_unavailable"):
             self.prepare(request, metadata, pieces, lambda q: (_ for _ in ()).throw(ValueError("counter unavailable")))
 
-    def test_host_quota_boundary_uses_fragment_sum_and_framing(self):
+    def test_child_context_boundary_uses_fragment_sum_without_old_cost_quota(self):
         request, metadata, pieces = native_case()
+        metadata["childSelection"]["model"]["contextWindow"] = 30000
         def cap_count(total):
             return lambda q: {**controlled_count(q), "tokens": [100, total - 100]}
-        accepted = self.prepare(request, metadata, pieces, cap_count(6144))
-        self.assertEqual(accepted["budget"]["inputEstimate"], 8192)
+        accepted = self.prepare(request, metadata, pieces, cap_count(10000))
+        self.assertGreater(accepted["budget"]["inputEstimate"], 8192)
+        self.assertEqual(accepted["budget"]["inputLimit"], 30000)
         with self.assertRaisesRegex(SummaryDeferred, "input_budget_unavailable"):
-            self.prepare(request, metadata, pieces, cap_count(6145))
-        metadata["model"]["contextWindow"] = 50000
-        accepted = self.prepare(request, metadata, pieces, cap_count(2952))
-        self.assertEqual(accepted["budget"]["inputLimit"], 5000)
-        with self.assertRaisesRegex(SummaryDeferred, "input_budget_unavailable"):
-            self.prepare(request, metadata, pieces, cap_count(2953))
+            self.prepare(request, metadata, pieces, cap_count(30000))
 
     def test_tiny_native_counts_cannot_bypass_wire_or_two_output_reserves(self):
         request, metadata, pieces = native_case(("한" * 9000,))
@@ -136,9 +134,11 @@ class NativeBudgetIndependentTests(unittest.TestCase):
         self.assertEqual(budget["nextOutputReserve"], 8192)
         self.assertEqual(budget["mandatoryArgumentsBytes"], 8192)
         self.assertGreater(budget["wireInputEstimateBytes"], budget["inputEstimate"])
-        metadata["existingContextTokens"] = (metadata["model"]["contextWindow"] - budget["inputEstimate"]
-            - budget["fixedContinuationEstimate"] - 8192 - 8192)
-        self.prepare(request, metadata, pieces, tiny)
-        metadata["existingContextTokens"] += 1
+        metadata["existingContextTokens"] = None
+        unchanged = self.prepare(request, metadata, pieces, tiny)
+        self.assertIsNone(unchanged["metadata"]["existingContextTokens"])
+        metadata["existingContextTokens"] = 999999
+        self.assertEqual(self.prepare(request, metadata, pieces, tiny)["selected"], accepted["selected"])
+        metadata["childSelection"]["model"]["contextWindow"] = 16384
         with self.assertRaisesRegex(SummaryDeferred, "input_budget_unavailable"):
             self.prepare(request, metadata, pieces, tiny)

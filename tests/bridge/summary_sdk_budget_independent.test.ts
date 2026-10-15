@@ -19,7 +19,10 @@ function ownedRequest() {
       contextWindow: 131072, maxTokens: 8192 }, thinkingLevel: "off", serviceTierByFamily: {},
     existingContextTokens: 0, outputCap: 8192, reasoningTokens: 0, visibleResultTokens: 8192,
     outputMeaning: "reasoning_and_visible", outputLimitEnforced: true,
-    outputLimitSource: "controlled-not-operating-provider-proof", estimator: "utf8_bytes_upper_bound" };
+    outputLimitSource: "host_default", estimator: "utf8_bytes_upper_bound" };
+  (metadata as any).childSelection = {source:"configured_worker_default",modelTableDigest:"a".repeat(64),
+    descriptorSource:"manager_model_registry_getAll_all",serviceTierSource:"parent_session_readback",
+    model:{...metadata.model,id:"worker"},thinkingLevel:"high",selector:"controlled/worker:high"};
   const request = { schemaVersion: 1, requestId: randomUUID(), subject, revision: null,
     authorizationRef: randomUUID(), authorizationEpoch: 1, skillName: "important-log-summary", skillDigest,
     sources: [span], sourceGaps: [], priorCumulativeEntryId: null,
@@ -28,8 +31,8 @@ function ownedRequest() {
       mainBytes: 0, walBytes: 0, shmBytes: 0, totalBytes: 0, logicalLiveBytes: 0, freelistBytes: 0,
       subjectStats: [], cleanupCandidates: null, lastWrite: null, lastLock: null, lastMaintenance: null,
       diskFreeBytes: null, lastQuickCheck: null, metadataOutsideBudget: true }, requestedAt: "2026-10-12T00:00:00Z" };
-  return { role: "manager", context: { model: metadata.model, sessionManager: { getSessionId: () => parent } },
-    prepared: { request, metadata, selected: [{ range: span, text: "work" }], omitted: [],
+  return { role: "manager", context: { model: structuredClone(metadata.model), modelRegistry:{getAll:(mode:string)=>{assert.equal(mode,"all");return [(metadata as any).childSelection.model];}}, sessionManager: { getSessionId: () => parent } },
+    prepared: { request, metadata: structuredClone(metadata), selected: [{ range: span, text: "work" }], omitted: [],
       priorCumulative: null, definitionDigest: digest(definition) },
     writer: {}, metadata };
 }
@@ -62,7 +65,7 @@ async function exercise(stage: "first" | "followup", budget: "input" | "output",
         async prompt(text: string) {
           const context = (refused: boolean) => ({ systemPrompt: options.systemPrompt,
             // LG-D26: a later turn needs actual wire overflow, not another host quota.
-            messages: [{ role: "user", content: refused && budget === "input" ? "x".repeat(stage === "first" ? 8193 : 32768) : text }],
+            messages: [{ role: "user", content: refused && budget === "input" ? "x".repeat(32768) : text }],
             tools: [{ name: "db_summary_save", description: options.customTools[0].description,
               parameters: options.customTools[0].parameters }], outputRefused: refused && budget === "output" });
           if (stage === "followup") {
@@ -99,7 +102,7 @@ async function exercise(stage: "first" | "followup", budget: "input" | "output",
   return { result, counters };
 }
 
-test("first host quota and later wire/output refusal preserve exact budget cause and write nothing", async () => {
+test("first and later wire/output refusal preserve exact budget cause and write nothing", async () => {
   for (const stage of ["first", "followup"] as const) for (const budget of ["input", "output"] as const) {
     const { result } = await exercise(stage, budget);
     assert.equal(result.reason, budget + "_budget_unavailable");
@@ -224,8 +227,9 @@ async function u1Turn(scenario:"first_quota"|"ten_percent"|"continuation"|"manda
   const span=input.prepared.request.sources[0];span.end=Buffer.byteLength(text);span.digest=digest(text);
   input.prepared.selected[0].text=text;
   input.prepared.request.inputKey=summaryInputKey(input.prepared.request.subject as any,null,[span] as any,[],input.prepared.request.skillDigest);
-  if(scenario==="ten_percent")input.metadata.model.contextWindow=50000;
-  if(scenario==="mandatory_context")input.metadata.existingContextTokens=112000;
+  if(scenario==="ten_percent")(input.metadata as any).childSelection.model.contextWindow=50000;
+  if(scenario==="mandatory_context")(input.metadata as any).childSelection.model.contextWindow=24000;
+  input.prepared.metadata=structuredClone(input.metadata);
   const counters={create:0,prompt:0,dispatch:0,write:0,dispose:0};const trace:any[]=[];
   class Registry {
     entries=new Map<string,any>();get(id:string){return this.entries.get(id);}
@@ -270,14 +274,15 @@ async function u1Turn(scenario:"first_quota"|"ten_percent"|"continuation"|"manda
   return {outcome,counters,trace,input};
 }
 
-test("LGD26 first host quota 8192 and ten percent prevent prompt and stream",async()=>{
+test("LGD30 removed first cost quota admits wire-fitting input on selected child",async()=>{
   for(const scenario of ["first_quota","ten_percent"] as const){
-    const {outcome,counters,trace}=await u1Turn(scenario);
-    assert.deepEqual(outcome,{status:"deferred",sent:false,protected:false,reason:"input_budget_unavailable"});
-    assert.equal(counters.prompt,0);assert.equal(counters.dispatch,0);assert.equal(counters.write,0);
+    const {outcome,counters,trace,input}=await u1Turn(scenario);
+    assert.equal(outcome.status,"summary_result");assert.equal(outcome.sent,true);
+    assert.deepEqual(counters,{create:1,prompt:1,dispatch:2,write:1,dispose:1});
     const preflight=trace.find(e=>e.event==="dispatch_preflight");
-    assert.equal(preflight.inputLimit,scenario==="first_quota"?8192:5000);
-    assert.ok(preflight.inputEstimate>preflight.inputLimit);assert.equal(preflight.outputCap,8192);
+    assert.equal(preflight.inputLimit,(input.metadata as any).childSelection.model.contextWindow);
+    assert.equal(preflight.outputCap,8192);
+    assert.ok(preflight.mandatoryWireBytes<=32768);
   }
 });
 
@@ -291,8 +296,8 @@ test("LGD26 mandatory full next output and fitted cap are checked before prompt"
     assert.equal(e.previousOutputReserve,8192);assert.equal(e.nextOutputReserve,8192);
     assert.equal(e.mandatoryArgumentsBytes,8192);
     if(scenario==="mandatory_context"){
-      assert.ok(e.inputEstimate+input.metadata.existingContextTokens+8192<=input.metadata.model.contextWindow);
-      assert.ok(e.inputEstimate+e.fixedContinuationEstimate+input.metadata.existingContextTokens+16384>input.metadata.model.contextWindow);
+      assert.ok(e.inputEstimate+8192<=(input.metadata as any).childSelection.model.contextWindow);
+      assert.ok(e.inputEstimate+e.fixedContinuationEstimate+16384>(input.metadata as any).childSelection.model.contextWindow);
     }else{assert.equal(e.fittedCap,8192);assert.equal(e.nextFittedCap,8191);}
   }
 });
@@ -302,8 +307,8 @@ test("LGD26 valid escaped multibyte continuation above host quota can complete",
   assert.equal(outcome.status,"summary_result");assert.equal(outcome.sent,true);assert.equal(outcome.protected,false);
   assert.deepEqual(counters,{create:1,prompt:1,dispatch:2,write:1,dispose:1});
   const actual=trace.filter(e=>e.event==="dispatch_preflight");
-  const next=actual.find(e=>e.initialInputQuota===false);
-  assert.ok(next.inputEstimate>8192);assert.equal(next.inputLimit,8192);
+  const next=actual.find(e=>e.initialInvocation===false);
+  assert.ok(next.inputEstimate>8192);assert.equal(next.inputLimit,131072);
   assert.ok(next.conservativeWireBytes<=32768);assert.equal(next.fittedCap,8192);
 });
 
@@ -312,6 +317,6 @@ test("LGD26 unexpected later provider ID exceeds remaining wire without writing"
   assert.deepEqual(outcome,{status:"rejected",sent:true,protected:true,reason:"input_budget_unavailable"});
   assert.deepEqual(counters,{create:1,prompt:1,dispatch:1,write:0,dispose:1});
   assert.equal(Object.hasOwn(outcome,"receipt"),false);
-  const next=trace.find(e=>e.event==="dispatch_preflight"&&e.initialInputQuota===false);
+  const next=trace.find(e=>e.event==="dispatch_preflight"&&e.initialInvocation===false);
   assert.ok(next.conservativeWireBytes>32768);assert.ok(trace.some(e=>e.event==="stream_guard"&&e.reason==="input_budget_unavailable"));
 });

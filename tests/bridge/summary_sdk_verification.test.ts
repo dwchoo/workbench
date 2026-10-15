@@ -21,9 +21,12 @@ function fixture() {
  const model={id:"scripted",provider:"fixture",api:"openai-completions",baseUrl:"http://127.0.0.1:1/v1",contextWindow:131072,maxTokens:8192};
  const metadata={source:"parent_session_readback",parentSessionId:parentId,epoch:"readback-1",model,thinkingLevel:"off",
   serviceTierByFamily:{},existingContextTokens:0,outputCap:8192,reasoningTokens:0,visibleResultTokens:8192,
-  outputMeaning:"reasoning_and_visible",outputLimitEnforced:true,outputLimitSource:"mock-contract-only",estimator:"utf8_bytes_upper_bound"};
- const context:any={model,sessionManager:{getSessionId:()=>parentId}};
- return {role:"manager",context,metadata,prepared:{request,metadata,selected:[{range:span,text:"work"}],omitted:[],priorCumulative:null,definitionDigest:sha(definition)},
+  outputMeaning:"reasoning_and_visible",outputLimitEnforced:true,outputLimitSource:"host_default",estimator:"utf8_bytes_upper_bound"};
+ (metadata as any).childSelection={source:"configured_worker_default",modelTableDigest:"a".repeat(64),
+  descriptorSource:"manager_model_registry_getAll_all",serviceTierSource:"parent_session_readback",
+  model:{...model,id:"worker"},thinkingLevel:"high",selector:"fixture/worker:high"};
+ const context:any={model:structuredClone(model),modelRegistry:{getAll:(mode:string)=>{assert.equal(mode,"all");return [(metadata as any).childSelection.model];}},sessionManager:{getSessionId:()=>parentId}};
+ return {role:"manager",context,metadata,prepared:{request,metadata:structuredClone(metadata),selected:[{range:span,text:"work"}],omitted:[],priorCumulative:null,definitionDigest:sha(definition)},
   current:()=>true,observeMetadata:()=>metadata,writer:{python:"/fixed/python",moduleRoot:"/fixed/src",dataRoot:"/fixed/data"}};
 }
 function mockSDK() {
@@ -47,7 +50,7 @@ function mockSDK() {
 const saved=async()=>({saved:true,entryId:randomUUID()});
 test("verification waits before create, supplies exact native reference and only child power override",async()=>{
  const input=fixture(),mock=mockSDK();let release!:()=>void;let observedSignal!:AbortSignal;
- const registry={awaitInitialBackgroundRefresh(signal:AbortSignal){observedSignal=signal;mock.activity.push("wait");return new Promise<void>(r=>{release=r;});}};
+ const registry={getAll:()=>[(input.metadata as any).childSelection.model],awaitInitialBackgroundRefresh(signal:AbortSignal){observedSignal=signal;mock.activity.push("wait");return new Promise<void>(r=>{release=r;});}};
  input.context.modelRegistry=registry;const before=JSON.stringify(input);
  const pending=dispatchVerificationSummarySDK({...input,sdk:mock.sdk,save:saved});
  assert.equal(mock.created.length,0);assert.deepEqual(mock.activity,["wait"]);assert.equal(observedSignal.aborted,false);
@@ -57,17 +60,18 @@ test("verification waits before create, supplies exact native reference and only
  assert.equal(Object.hasOwn(mock.created[0],"authStorage"),false);assert.equal(JSON.stringify(input),before);
  assert.deepEqual(mock.activity,["wait","create","prompt","stream","dispose"]);
 });
-test("operating entry ignores verifier-looking extra fields and never reads parent registry",async()=>{
- const input=fixture(),mock=mockSDK();Object.defineProperty(input.context,"modelRegistry",{get(){throw Error("operating registry must remain unread");}});
+test("operating entry resolves configured child registry but ignores verifier-only overrides",async()=>{
+ const input=fixture(),mock=mockSDK();let registryReads=0;input.context.modelRegistry={getAll:(mode:string)=>{registryReads++;assert.equal(mode,"all");return [(input.metadata as any).childSelection.model];}};
  const result=await dispatchSummarySDK({...input,sdk:mock.sdk,save:saved,verification:true,modelRegistry:{},powerSleepPrevention:"off"} as any);
- assert.equal(result.status,"summary_result");const options=mock.created[0];
- assert.equal(Object.hasOwn(options,"modelRegistry"),false);assert.equal(Object.hasOwn(options,"authStorage"),false);
+ assert.equal(result.status,"summary_result");assert.ok(registryReads>=1);const options=mock.created[0];
+ assert.equal(options.modelRegistry,input.context.modelRegistry);assert.equal(Object.hasOwn(options,"authStorage"),false);
  assert.deepEqual(options.settings,{externalThinking:false,"prewalk.enabled":false,"tools.intentTracing":false,"retry.usageAwareFallback":false});
- assert.deepEqual(Object.keys(options).sort(),["cwd","model","thinkingLevel","resolveServiceTierByFamily","settings","sessionManager","agentRegistry","agentId","agentName","bindProcessState","systemPrompt","cacheWarming","disableExtensionDiscovery","preloadedPreparedExtensions","enableMCP","enableLsp","enableIrc","skipPythonPreflight","skills","rules","contextFiles","promptTemplates","slashCommands","toolNames","restrictToolNames","allowRestrictedCustomTools","requireYieldTool","customTools","hasUI","autoApprove","deadline"].sort());
+ assert.deepEqual(Object.keys(options).sort(),["cwd","model","modelRegistry","thinkingLevel","resolveServiceTierByFamily","settings","sessionManager","agentRegistry","agentId","agentName","bindProcessState","systemPrompt","cacheWarming","disableExtensionDiscovery","preloadedPreparedExtensions","enableMCP","enableLsp","enableIrc","skipPythonPreflight","skills","rules","contextFiles","promptTemplates","slashCommands","toolNames","restrictToolNames","allowRestrictedCustomTools","requireYieldTool","customTools","hasUI","autoApprove","deadline"].sort());
 });
 test("missing, throwing getter and rejected public ready API defer without child or prompt",async()=>{
  for(const variant of ["missing","missing_method","getter_throws","method_throws","rejects"]){
   const input=fixture(),mock=mockSDK();
+  if(variant==="missing")delete input.context.modelRegistry;
   if(variant==="missing_method")input.context.modelRegistry={};
   if(variant==="getter_throws")Object.defineProperty(input.context,"modelRegistry",{get(){throw Error("unavailable");}});
   if(variant==="method_throws")input.context.modelRegistry={awaitInitialBackgroundRefresh(){throw Error("unavailable");}};

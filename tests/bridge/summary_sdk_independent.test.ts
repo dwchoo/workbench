@@ -3,7 +3,6 @@ import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
 import path from "node:path";
 import { test } from "node:test";
 import { dispatchSummarySDK } from "../../omp_bridge/g3/summary_sdk.ts";
@@ -19,16 +18,16 @@ function runPython(program: string, value: any): any {
   }));
 }
 function privateFixture() {
-  const root = mkdtempSync(path.join(tmpdir(), "dvl09-independent-"));
+  const root = mkdtempSync(path.join(process.env.DVL10_INDEPENDENT_OUTPUT!, "dvl09-independent-"));
   const value = runPython(`import json,sys
 from pathlib import Path
 from tests.backend.test_summary_writer_independent import create_private_case
 print(json.dumps(create_private_case(Path(json.load(sys.stdin)['root']))))`, { root });
   const metadata = value.metadata;
   return { root, case: value, input: {
-    role: "manager", context: { model: metadata.model,
+    role: "manager", context: { model: structuredClone(metadata.model), modelRegistry: {getAll: (mode:string)=>{assert.equal(mode,"all");return [metadata.childSelection.model];}},
       sessionManager: { getSessionId: () => metadata.parentSessionId } },
-    prepared: { request: value.request, metadata, selected: [{ range: value.request.sources[0], text: "work" }],
+    prepared: { request: value.request, metadata: structuredClone(metadata), selected: [{ range: value.request.sources[0], text: "work" }],
       omitted: [], priorCumulative: null, definitionDigest: sha(definition) },
     writer: { python, moduleRoot, dataRoot: root },
     current: () => true, observeMetadata: () => metadata,
@@ -239,19 +238,28 @@ test("unknown metadata and authority prevent creation; runtime epoch change prev
   }
 });
 
-test("provider cap shrink or unknown reasoning semantics is deferred before prompt", async () => {
+test("provider cap shrink refuses while truthful unknown semantics permit a bound result", async () => {
   for (const problem of ["fit_shrink", "semantics"] as const) {
     const fixture = privateFixture();
     const mock = controlledSDK({ fittedCapDelta: problem === "fit_shrink" ? -1 : 0 });
-    if (problem === "semantics") fixture.case.metadata.outputMeaning = "unknown";
+    if (problem === "semantics") {
+      Object.assign(fixture.case.metadata,{existingContextTokens:null,outputMeaning:"unknown",
+        outputLimitEnforced:null,reasoningTokens:null,visibleResultTokens:null});
+      fixture.input.prepared.metadata=structuredClone(fixture.case.metadata);
+    }
     try {
       const result = await dispatchSummarySDK({ ...fixture.input, sdk: mock.sdk });
-      assert.equal(result.status, "deferred");
-      assert.equal(result.reason, "output_budget_unavailable");
-      assert.equal(result.sent, false);
-      assert.equal(mock.streamOptions.length, 0);
-      assert.equal(mock.history.some(x => x.startsWith("prompt:")), false);
-      assert.equal(fixture.observe().record.receipt, null);
+      if (problem === "fit_shrink") {
+        assert.equal(result.status,"deferred");assert.equal(result.reason,"output_budget_unavailable");
+        assert.equal(result.sent,false);assert.equal(mock.streamOptions.length,0);
+        assert.equal(mock.history.some(x=>x.startsWith("prompt:")),false);
+        assert.equal(fixture.observe().record.receipt,null);
+      } else {
+        assert.equal(result.status,"summary_result");assert.equal(mock.streamOptions.length,1);
+        assert.equal(fixture.observe().entries.length,1);
+        assert.equal(fixture.case.metadata.outputLimitEnforced,null);
+        assert.equal(fixture.case.metadata.existingContextTokens,null);
+      }
     } finally { fixture.cleanup(); }
   }
 });

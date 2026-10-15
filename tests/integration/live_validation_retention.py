@@ -509,6 +509,82 @@ def _runtime(work: Path) -> dict:
         result.update(result="failed", error_type=type(error).__name__, error_reason=str(error)[:256])
     except Exception as error:
         result.update(result="inconclusive", error_type=type(error).__name__)
+        if (isinstance(error, TimeoutError)
+                and result.get("stage") == "actual_task_and_real_300_seconds"):
+            def bounded_text(value, limit):
+                if not isinstance(value, str):
+                    return "unknown"
+                return value.encode("utf-8", "replace")[:limit].decode("utf-8", "ignore")
+
+            diagnostic = {
+                "summary_scheduler": {"state": "unknown", "reason": "unknown", "inFlight": "unknown"},
+                "summary_request_sample": "unknown",
+                "request_order": "unknown",
+                "summary_responder_attributed_count": len(trace),
+                "provider_request_counters": "unknown",
+            }
+            try:
+                scheduler = getattr(backend, "summary_scheduler", None)
+                status = scheduler.status() if scheduler is not None else None
+                if isinstance(status, dict):
+                    diagnostic["summary_scheduler"] = {
+                        "state": bounded_text(status.get("state"), 32),
+                        "reason": (None if "reason" in status and status.get("reason") is None else
+                                   bounded_text(status.get("reason"), 96)),
+                        "inFlight": status.get("inFlight") if type(status.get("inFlight")) is bool else "unknown",
+                    }
+            except BaseException:
+                pass
+            try:
+                trace_ids = {row.get("requestId") for row in trace if isinstance(row, dict)
+                             and isinstance(row.get("requestId"), str)}
+                rows = receipts()
+                diagnostic["summary_request_sample"] = [{
+                    "requestId": bounded_text((row.get("request") or {}).get("requestId"), 64),
+                    "state": bounded_text(row.get("state"), 32),
+                    "last_detail_or_defercode": "unavailable",
+                    "attribution": ("summary_responder" if
+                                    (row.get("request") or {}).get("requestId") in trace_ids else "unknown"),
+                } for row in rows[-8:] if isinstance(row, dict)]
+                diagnostic["request_order"] = "unknown"
+            except BaseException:
+                pass
+            try:
+                counts = sb.provider.snapshot()["requests"]
+                if isinstance(counts, dict):
+                    diagnostic["provider_request_counters"] = {
+                        bounded_text(key, 32): value
+                        for key, value in sorted(counts.items(), key=lambda item: bounded_text(item[0], 32))[:8]
+                        if isinstance(key, str) and type(value) is int and 0 <= value <= 2**31 - 1
+                    }
+            except BaseException:
+                pass
+            try:
+                encoded_diagnostic = json.dumps(diagnostic, ensure_ascii=False,
+                                                separators=(",", ":")).encode("utf-8", "replace")
+                if len(encoded_diagnostic) > 4096:
+                    sample = diagnostic["summary_request_sample"]
+                    if isinstance(sample, list):
+                        diagnostic["summary_request_sample"] = sample[:4]
+                        for row in diagnostic["summary_request_sample"]:
+                            row["last_detail_or_defercode"] = bounded_text(row["last_detail_or_defercode"], 16)
+                    encoded_diagnostic = json.dumps(diagnostic, ensure_ascii=False,
+                                                    separators=(",", ":")).encode("utf-8", "replace")
+                if len(encoded_diagnostic) > 4096:
+                    diagnostic = {"summary_scheduler": {"state": "unknown", "reason": "unknown",
+                                                         "inFlight": "unknown"},
+                                  "summary_request_sample": "unknown",
+                                  "request_order": "unknown",
+                                  "summary_responder_attributed_count": len(trace),
+                                  "provider_request_counters": "unknown"}
+            except BaseException:
+                diagnostic = {"summary_scheduler": {"state": "unknown", "reason": "unknown",
+                                                     "inFlight": "unknown"},
+                              "summary_request_sample": "unknown",
+                              "request_order": "unknown",
+                              "summary_responder_attributed_count": len(trace),
+                              "provider_request_counters": "unknown"}
+            details["actual_task_timeout_diagnostic"] = diagnostic
     finally:
         release.set()
         cleanup = {}

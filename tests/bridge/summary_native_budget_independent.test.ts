@@ -18,8 +18,8 @@ r,m,p=native_case((json.load(sys.stdin),))
 print(json.dumps(prepare_summary(r,p,metadata=m,instructions=DEFINITION,count_fragments=controlled_count)))`],
     { input: JSON.stringify(text), encoding: "utf8", timeout: 10000,
       env: { ...process.env, PYTHONPATH: "src:.", PYTHONDONTWRITEBYTECODE: "1" } }));
-  return { role: "manager", prepared, metadata: prepared.metadata, writer: {},
-    context: { model: structuredClone(prepared.metadata.model),
+  return { role: "manager", prepared, metadata: structuredClone(prepared.metadata), writer: {},
+    context: { model: structuredClone(prepared.metadata.model), modelRegistry:{getAll:(mode:string)=>{assert.equal(mode,"all");return [prepared.metadata.childSelection.model];}},
       sessionManager: { getSessionId: () => prepared.metadata.parentSessionId } } };
 }
 const fragments = (input: any) => [definition + "\n\n" + readFileSync("omp_bridge/skills/important-log-summary/SKILL.md", "utf8"),
@@ -96,7 +96,7 @@ test("strict known-family matrix uses adopted encodings; unsupported/null/inexac
   const families = { "claude-v3": "ClaudeV3", "claude-v47": "ClaudeV47", "claude-v5": "ClaudeV5",
     "claude-v5-sonnet": "ClaudeV5Sonnet", qwen3: "Qwen3", "deepseek-v3": "DeepSeekV3", "kimi-k2": "KimiK2", glm5: "Glm5" };
   for (const [family, encoding] of Object.entries(families)) {
-    input.metadata.model.tokenizer = family;
+    input.metadata.childSelection.model.tokenizer = family;
     const calls: any[] = [];
     const sdk = { Tokenizer: class {
       encoding = encoding;
@@ -109,12 +109,12 @@ test("strict known-family matrix uses adopted encodings; unsupported/null/inexac
     assert.deepEqual(calls, texts.map(t => [t, "strict"]));
   }
   for (const family of [null, "unknown", "o200k_base"]) {
-    input.metadata.model.tokenizer = family;
+    input.metadata.childSelection.model.tokenizer = family;
     const actual = countSummaryFragments(input.metadata, texts, { Tokenizer: class { constructor() { assert.fail("unknown family constructed tokenizer"); } } });
     assert.equal(actual.exact, false); assert.equal(actual.fallbackReason, "tokenizer_family_unavailable");
     assert.deepEqual(actual.tokens, texts.map(t => Buffer.byteLength(t)));
   }
-  input.metadata.model.tokenizer = "claude-v3";
+  input.metadata.childSelection.model.tokenizer = "claude-v3";
   for (const [encoding, strict, checked, exact, reason] of [
     [null, 1, 1, true, "native_encoding_unavailable"], ["o200k_base", 1, 1, true, "native_encoding_unavailable"],
     ["ClaudeV3", 1, 1, false, "native_count_unavailable"], ["ClaudeV3", 1, 2, true, "native_count_unavailable"],
@@ -137,24 +137,25 @@ test("cross-language proof order owner encoding and counts cannot be substituted
     (p: any) => { p.exact = false; }, (p: any) => { p.tokens = [1]; }
   ]) {
     const input = structuredClone({ ...base, context: undefined });
-    input.context = { model: structuredClone(input.metadata.model), sessionManager: { getSessionId: () => input.metadata.parentSessionId } };
+    input.context = { model: structuredClone(input.metadata.model), modelRegistry:{getAll:()=>[input.metadata.childSelection.model]}, sessionManager: { getSessionId: () => input.metadata.parentSessionId } };
     change(input.prepared.countBinding); const mock = controlled();
     assert.deepEqual(await run(input, mock), { status: "deferred", sent: false, protected: false, reason: "input_count_binding_mismatch" });
     assert.equal(mock.observed.creates, 0); assert.equal(mock.observed.prompts, 0); assert.equal(mock.observed.writes, 0);
   }
 });
 
-test("shared quota fitting never bypasses initial actual fullprojection quota including ten percent", async () => {
+test("removed cost quota does not prevent native-counted child context fit", async () => {
   for (const window of [131072, 50000]) {
-    const input = fixture("work"); input.metadata.model.contextWindow = window; input.context.model.contextWindow = window;
-    const mock = controlled({ fullCount: () => Math.min(8192, window / 10) + 1 });
-    input.prepared.countBinding = countSummaryFragments(input.metadata, fragments(input), mock.sdk);
-    const outcome = await run(input, mock);
-    assert.equal(outcome.reason, "input_budget_unavailable"); assert.equal(outcome.sent, false);
-    assert.equal(mock.observed.prompts, 0); assert.equal(mock.observed.streams, 0); assert.equal(mock.observed.writes, 0);
-    const pre = mock.observed.trace.find(e => e.event === "dispatch_preflight");
-    assert.ok(pre.sharedInputEstimate < pre.inputLimit); assert.ok(pre.inputEstimate > pre.inputLimit);
-    assert.equal(pre.inputLimit, window === 50000 ? 5000 : 8192);
+    const input = fixture("work");
+    input.metadata.childSelection.model.contextWindow=window;
+    input.prepared.metadata=structuredClone(input.metadata);
+    const mock = controlled({fullCount:()=>10000});
+    input.prepared.countBinding=countSummaryFragments(input.metadata,fragments(input),mock.sdk);
+    const outcome=await run(input,mock);
+    assert.equal(outcome.status,"summary_result");assert.equal(mock.observed.streams,1);
+    assert.equal(mock.observed.writes,1);
+    const pre=mock.observed.trace.find(e=>e.event==="dispatch_preflight");
+    assert.equal(pre.inputLimit,window);assert.equal(pre.inputEstimate,10000);
   }
 });
 
@@ -162,7 +163,7 @@ test("tokenizer mutation in live parent or bound proof blocks the next dispatch"
   for (const mutation of ["parent", "proof"]) {
     const input = fixture("work");
     const mock = controlled({ beforeStream: () => {
-      if (mutation === "parent") input.context.model.tokenizer = "qwen3";
+      if (mutation === "parent") input.context.model.tokenizer = "claude-v47";
       else input.prepared.countBinding.tokens[0]++;
     } });
     const outcome = await run(input, mock);
@@ -186,13 +187,15 @@ test("two full output reserves and fitted continuation cap remain despite tiny n
     const input = fixture("work");
     const mock = controlled({ fullCount: () => 10,
       fit: (ctx, cap) => mode === "fitted" && ctx.messages.length > 1 ? cap - 1 : cap });
-    if (mode === "two-reserves") input.metadata.existingContextTokens = input.metadata.model.contextWindow - 12000;
+    if (mode === "two-reserves") input.metadata.childSelection.model.contextWindow = 12000;
+    input.prepared.metadata=structuredClone(input.metadata);
+    input.prepared.countBinding=countSummaryFragments(input.metadata,fragments(input),mock.sdk);
     const outcome = await run(input, mock);
     assert.equal(outcome.reason, mode === "fitted" ? "output_budget_unavailable" : "input_budget_unavailable");
     assert.equal(mock.observed.prompts, 0); assert.equal(mock.observed.streams, 0); assert.equal(mock.observed.writes, 0);
     const pre = mock.observed.trace.find(e => e.event === "dispatch_preflight");
     assert.equal(pre.previousOutputReserve, 8192); assert.equal(pre.nextOutputReserve, 8192);
-    if (mode === "two-reserves") assert.ok(pre.inputEstimate + input.metadata.existingContextTokens + 8192 < input.metadata.model.contextWindow);
+    if (mode === "two-reserves") assert.ok(pre.inputEstimate + 8192 < input.metadata.childSelection.model.contextWindow);
     else assert.equal(pre.nextFittedCap, 8191);
   }
 });
@@ -205,5 +208,5 @@ test("later actual native projection count still prevents context overflow after
   assert.equal(outcome.sent, true); assert.equal(outcome.reason, "input_budget_unavailable");
   assert.equal(mock.observed.streams, 1); assert.equal(mock.observed.writes, 0);
   const pre = mock.observed.trace.filter(e => e.event === "dispatch_preflight").at(-1);
-  assert.equal(pre.initialInputQuota, false); assert.equal(pre.inputEstimate, 131072);
+  assert.equal(pre.initialInvocation, false); assert.equal(pre.inputEstimate, 131072);
 });

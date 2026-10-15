@@ -723,6 +723,86 @@ with stderr_path.open('wb') as errors:
                         os.close(fd)
                 shutil.rmtree(namespace, ignore_errors=True)
 
+    def test_15_second_pipe_emfile_preserves_row_fds_namespace_and_signal_mask(self):
+        import errno
+
+        def open_fds():
+            observed = {}
+            for name in os.listdir("/proc/self/fd"):
+                try:
+                    value = os.fstat(int(name))
+                except OSError:
+                    continue  # The directory-listing descriptor is already closed.
+                observed[int(name)] = (value.st_dev, value.st_ino, value.st_mode)
+            return observed
+
+        real_pipe, real_mkdtemp = os.pipe, tempfile.mkdtemp
+        created, pipe_identities = [], {}
+        pipe_calls = 0
+
+        def owned_namespace(*args, **kwargs):
+            namespace = Path(real_mkdtemp(prefix=kwargs["prefix"], dir=self.root))
+            created.append(namespace)
+            return str(namespace)
+
+        def second_pipe_emfile():
+            nonlocal pipe_calls
+            pipe_calls += 1
+            if pipe_calls == 2:
+                raise OSError(errno.EMFILE, "controlled second pipe allocation failure")
+            pair = real_pipe()
+            for fd in pair:
+                value = os.fstat(fd)
+                pipe_identities[fd] = (value.st_dev, value.st_ino, value.st_mode)
+            return pair
+
+        output = self.root / "second-pipe-allocation"
+        output.mkdir(mode=0o700)
+        item = self.make_item("setup-emfile")
+        before_fds = open_fds()
+        before_mask = signal.pthread_sigmask(signal.SIG_BLOCK, set())
+        rows, interrupted, error = None, None, None
+        evidence = {}
+        try:
+            with patch.object(runner.tempfile, "mkdtemp", side_effect=owned_namespace), \
+                    patch.object(runner.os, "pipe", side_effect=second_pipe_emfile), \
+                    patch.object(runner.subprocess, "Popen", side_effect=AssertionError("no worker before allocation")) as popen:
+                try:
+                    rows, interrupted = runner._run_cell_batch([(0, item)], output, self.omp, "second-pipe-emfile")
+                except Exception as exc:
+                    error = {"type": type(exc).__name__, "errno": getattr(exc, "errno", None)}
+                evidence = {"rows": rows, "interrupted": interrupted, "error": error,
+                            "pipeCalls": pipe_calls, "popenCalls": popen.call_count,
+                            "fdsBefore": before_fds, "fdsAfter": open_fds(),
+                            "maskBefore": sorted(before_mask),
+                            "maskAfter": sorted(signal.pthread_sigmask(signal.SIG_BLOCK, set())),
+                            "namespaces": [{"path": str(path), "exists": path.exists()} for path in created]}
+        finally:
+            # A red result must restore only the resources this fixture allocated.
+            for fd, identity in pipe_identities.items():
+                try:
+                    value = os.fstat(fd)
+                    if (value.st_dev, value.st_ino, value.st_mode) == identity:
+                        os.close(fd)
+                except OSError:
+                    pass
+            for namespace in created:
+                shutil.rmtree(namespace, ignore_errors=True)
+            signal.pthread_sigmask(signal.SIG_SETMASK, before_mask)
+            (self.root / "second-pipe-emfile-result.json").write_text(json.dumps(evidence))
+
+        self.assertIsNone(error, evidence)
+        self.assertEqual((pipe_calls, evidence["popenCalls"]), (2, 0), evidence)
+        self.assertFalse(interrupted, evidence)
+        self.assertEqual(len(rows), 1, evidence)
+        self.assertEqual((rows[0]["id"], rows[0]["status"], rows[0]["collectedTests"]),
+                         (item.key, "inconclusive", 0), evidence)
+        self.assertTrue(rows[0]["required"])
+        self.assertEqual(evidence["fdsAfter"], evidence["fdsBefore"], evidence)
+        self.assertEqual(evidence["maskAfter"], evidence["maskBefore"], evidence)
+        self.assertEqual(len(created), 1, evidence)
+        self.assertFalse(evidence["namespaces"][0]["exists"], evidence)
+
 
 if __name__ == "__main__":
     unittest.main()

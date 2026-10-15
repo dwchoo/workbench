@@ -1051,47 +1051,67 @@ def _run_cell_batch(batch: list[tuple[int, Item]], report_dir: Path, omp: Path,
     with _owned_subreaper():
         try:
             for index, item in batch:
+                namespace = None
+                allocated_fds: set[int] = set()
+                parent_writes: set[int] = set()
                 previous_mask = signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGINT, signal.SIGTERM})
-                namespace = Path(tempfile.mkdtemp(prefix=f"dvl02-worker-{index:02d}-", dir="/tmp"))
-                os.chmod(namespace, 0o700)
-                control_read, control_write = os.pipe()
-                result_read, result_write = os.pipe()
-                nonce = str(uuid4())
-                sentinel = namespace / "sentinel"
-                sentinel.write_bytes(nonce.encode())
-                sentinel_before = sha256(sentinel.read_bytes()).hexdigest()
                 try:
-                    env = _base_env(namespace / "home", namespace, omp, item)
-                    argv = _worker_argv(item, index, invocation, nonce, os.getpid(), harness.ticks(os.getpid()),
-                                        control_write, result_write, namespace, report_dir, omp)
-                    proc = subprocess.Popen(argv, cwd=REPO, env=env, stdin=subprocess.DEVNULL,
-                                            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                                            pass_fds=(control_write, result_write), start_new_session=True)
-                except (OSError, ValueError, AssertionError) as exc:
-                    for fd in (control_read, control_write, result_read, result_write):
-                        os.close(fd)
-                    results[index] = _unknown_item(item, "cell worker spawn failed: " + type(exc).__name__)
-                    shutil.rmtree(namespace)
-                    signal.pthread_sigmask(signal.SIG_SETMASK, previous_mask)
-                    continue
-                os.close(control_write)
-                os.close(result_write)
-                start = harness.ticks(proc.pid)
-                control = _ControlState(invocation, item.key, nonce)
-                control.bind_root(proc.pid, start)
-                worker = {"index": index, "item": item, "namespace": namespace, "proc": proc,
-                          "start": start, "control": control, "nonce": nonce, "argv": argv,
-                          "result": bytearray(), "stdout": bytearray(), "stderr": bytearray(),
-                          "error": None, "fds": [], "lastProgress": time.monotonic(),
-                          "started": time.monotonic(), "finished": None,
-                          "stopRequested": None, "sentinelBefore": sentinel_before}
-                workers.append(worker)
-                for fd, label in ((control_read, "control"), (result_read, "result"),
-                                  (proc.stdout.fileno(), "stdout"), (proc.stderr.fileno(), "stderr")):
-                    os.set_blocking(fd, False)
-                    worker["fds"].append(fd)
-                    selector.register(fd, selectors.EVENT_READ, (worker, label))
-                signal.pthread_sigmask(signal.SIG_SETMASK, previous_mask)
+                    try:
+                        namespace = Path(tempfile.mkdtemp(prefix=f"dvl02-worker-{index:02d}-", dir="/tmp"))
+                        os.chmod(namespace, 0o700)
+                        control_read, control_write = os.pipe()
+                        allocated_fds.update((control_read, control_write))
+                        parent_writes.add(control_write)
+                        result_read, result_write = os.pipe()
+                        allocated_fds.update((result_read, result_write))
+                        parent_writes.add(result_write)
+                        nonce = str(uuid4())
+                        sentinel = namespace / "sentinel"
+                        sentinel.write_bytes(nonce.encode())
+                        sentinel_before = sha256(sentinel.read_bytes()).hexdigest()
+                        env = _base_env(namespace / "home", namespace, omp, item)
+                        argv = _worker_argv(item, index, invocation, nonce, os.getpid(), harness.ticks(os.getpid()),
+                                            control_write, result_write, namespace, report_dir, omp)
+                        control = _ControlState(invocation, item.key, nonce)
+                        worker = {"index": index, "item": item, "namespace": namespace, "proc": None,
+                                  "start": None, "control": control, "nonce": nonce, "argv": argv,
+                                  "result": bytearray(), "stdout": bytearray(), "stderr": bytearray(),
+                                  "error": None, "fds": [control_read, result_read], "lastProgress": None,
+                                  "started": None, "finished": None,
+                                  "stopRequested": None, "sentinelBefore": sentinel_before}
+                        proc = subprocess.Popen(argv, cwd=REPO, env=env, stdin=subprocess.DEVNULL,
+                                                stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                                pass_fds=(control_write, result_write), start_new_session=True)
+                    except (OSError, ValueError, AssertionError) as exc:
+                        for fd in allocated_fds:
+                            os.close(fd)
+                        allocated_fds.clear()
+                        results[index] = _unknown_item(item, "cell worker spawn failed: " + type(exc).__name__)
+                        if namespace is not None:
+                            shutil.rmtree(namespace)
+                        continue
+                    # Own the successful Popen before any fallible post-spawn setup.
+                    worker["proc"] = proc
+                    workers.append(worker)
+                    worker["lastProgress"] = time.monotonic()
+                    worker["started"] = time.monotonic()
+                    try:
+                        worker["start"] = harness.ticks(proc.pid)
+                        control.bind_root(proc.pid, worker["start"])
+                        for fd, label in ((control_read, "control"), (result_read, "result"),
+                                          (proc.stdout.fileno(), "stdout"), (proc.stderr.fileno(), "stderr")):
+                            os.set_blocking(fd, False)
+                            selector.register(fd, selectors.EVENT_READ, (worker, label))
+                    except (OSError, ValueError, AssertionError) as exc:
+                        worker["error"] = "cell worker setup failed: " + type(exc).__name__
+                        harness.kill_exact(proc.pid, worker["start"], signal.SIGTERM)
+                        worker["stopRequested"] = time.monotonic()
+                finally:
+                    try:
+                        for fd in parent_writes & allocated_fds:
+                            os.close(fd)
+                    finally:
+                        signal.pthread_sigmask(signal.SIG_SETMASK, previous_mask)
             while selector.get_map() or any(w["proc"].poll() is None for w in workers):
                 members()
                 for key, _ in selector.select(0.1):
@@ -1168,7 +1188,7 @@ def _run_cell_batch(batch: list[tuple[int, Item]], report_dir: Path, omp: Path,
                     if worker["proc"].returncode != 0 or worker["error"]:
                         raise ValueError(worker["error"] or "cell worker exit error")
                 except (ValueError, TypeError, KeyError) as exc:
-                    row = _unknown_item(item, "cell result unavailable/invalid: " + str(exc))
+                    row = _unknown_item(item, "cell result unavailable/invalid: " + (worker["error"] or str(exc)))
                 sentinel = worker["namespace"] / "sentinel"
                 try:
                     with os.fdopen(os.open(sentinel, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK), "rb") as stream:

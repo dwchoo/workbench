@@ -497,6 +497,75 @@ class FeatureIntegrationIndependentTests(unittest.TestCase):
         runtime.close()
         self.assertTrue(runtime.closed)
 
+    def test_composite_origin_reaches_frozen_product_judge_without_relabeling_facts(self):
+        from tools.q01_recheck import judge_observations
+
+        # These synthetic rows exercise the collector/judge boundary only;
+        # their required evidence_level label is not actual runtime evidence.
+        delegated_ids = ("Q01-route", "Q01-tools", "Q01-skill", "Q01-result",
+                         "Q01-context", "Q01-priority", "Q01-recovery")
+        delegated = [{"id": item, "adapter": "product", "source": "product_adapter",
+                      "evidence_level": "runtime", "evidence_ref": "fixture-only:" + item,
+                      "facts": {"retained_observation": None},
+                      "unknowns": ["delegate_fixture_unknown"]} for item in delegated_ids]
+        raw = {"observations": delegated + [{"id": "Q01-origin", "facts": {"stale": True}}],
+               "unknowns": ["delegate-native-io-unattributed"]}
+        original = deepcopy(raw)
+        delegate_verdicts = judge_observations(delegated, adapter="product")
+        key = "notice_not_authority"
+        for case, expected in (("complete", "passed"), ("false", "failed"),
+                               ("none", "inconclusive"), ("missing", "inconclusive")):
+            with self.subTest(origin=case):
+                output = self.root / case
+                output.mkdir(mode=0o700)
+                facts = dict.fromkeys(ORIGIN_FACTS, True)
+                if case == "false":
+                    facts[key] = False
+                elif case == "none":
+                    facts[key] = None
+                elif case == "missing":
+                    facts.pop(key)
+                origin = {"facts": facts}
+                origin_before = deepcopy(origin)
+                evidence = output / "backend-origin.json"
+                product.write_json(evidence, origin)
+                evidence_bytes = evidence.read_bytes()
+                delegate = SimpleNamespace(collect_observations=lambda: deepcopy(raw), close=lambda: None)
+                runtime = harness._CompositeRuntime(delegate, origin, evidence, "a" * 64, output)
+                try:
+                    projected = runtime.collect_observations()
+                finally:
+                    runtime.close()
+                self.assertTrue(runtime.closed)
+                self.assertEqual(raw, original)
+                self.assertEqual(product.read_json(output / "delegate-envelope.json"), original)
+                self.assertEqual(projected["observations"][:-1], delegated)
+                self.assertEqual(projected["unknowns"], original["unknowns"])
+                self.assertEqual(origin, origin_before)
+                self.assertEqual(evidence.read_bytes(), evidence_bytes)
+                row = projected["observations"][-1]
+                self.assertEqual(row["evidence_ref"], str(evidence))
+                self.assertEqual(set(row["facts"]), set(ORIGIN_FACTS))
+                verdicts = judge_observations(projected["observations"], adapter="product")
+                for item in delegated_ids:
+                    self.assertEqual(verdicts[item], delegate_verdicts[item])
+                origin_verdict = verdicts["Q01-origin"]
+                self.assertEqual(origin_verdict["result"], expected)
+                if case == "complete":
+                    self.assertEqual(origin_verdict, {"result": "passed", "unknowns": [],
+                                                     "evidence_ref": str(evidence)})
+                    old_source = deepcopy(projected["observations"])
+                    old_source[-1]["source"] = "backend_event"
+                    self.assertEqual(judge_observations(old_source, adapter="product")["Q01-origin"],
+                                     {"result": "not_run", "unknowns": ["untrusted_or_malformed_observation"]})
+                else:
+                    self.assertIs(row["facts"][key], False if case == "false" else None)
+                    self.assertIn(key, origin_verdict["unknowns"])
+                    cause = "actual_backend_origin_unobserved:" + key
+                    self.assertEqual(row["unknowns"], [] if case == "false" else [cause])
+                    if case != "false":
+                        self.assertIn(cause, origin_verdict["unknowns"])
+
     def test_feature_report_preserves_failure_unknown_timeout_and_owned_cleanup(self):
         output = self.root / "fixture-output"
         output.mkdir(mode=0o700)

@@ -167,7 +167,8 @@ class _CompositeRuntime:
         write_json(self.output / "delegate-envelope.json", raw)
         from tools.q01_recheck import REQUIRED_FACTS
         facts = {name: self.origin["facts"].get(name) for name in REQUIRED_FACTS["Q01-origin"]}
-        row = {"id": "Q01-origin", "adapter": "product", "source": "backend_event",
+        # Port the frozen product judge label; raw Backend provenance stays in evidence_ref.
+        row = {"id": "Q01-origin", "adapter": "product", "source": "product_adapter",
             "evidence_level": "runtime", "evidence_ref": str(self.origin_path), "facts": facts,
             "unknowns": ["actual_backend_origin_unobserved:" + key for key, value in facts.items()
                          if type(value) is not bool]}

@@ -18,7 +18,7 @@ from workbench.backend.paths import ensure_private_dir, write_private_json
 from workbench.backend.summary_compatibility import (
     POLICY_PATH, Q01_ITEMS, SummaryCompatibility, _digest, collect_runtime_identity,
 )
-from tests.backend.summary_compat_record_fixture import bind_metadata, complete_record
+from tests.backend.summary_compat_record_fixture import bind_metadata, complete_record, synthetic_asset_binding
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -32,6 +32,7 @@ class CompatibilityCoreTests(unittest.TestCase):
                       "closure_digest": "2" * 64, "runtime_digest": "3" * 64,
                       "stable_host": {"os_family": "Linux", "architecture": "x86_64", "python_minor": "3.12"}}
         self.omp = {"binary_sha256": "4" * 64, "version": "18.8.6", "bundled_sha256": "5" * 64}
+        self.omp.update(synthetic_asset_binding(self.root / "synthetic-validator-omp"))
         self.boundary = {"route": "sdk_session", "adoption_ref": "approved", "model_config": "one"}
         self.service = SummaryCompatibility(self.root / "compat", identity=lambda: deepcopy(self.ident),
             omp_identity=lambda: deepcopy(self.omp), boundary=lambda: deepcopy(self.boundary))

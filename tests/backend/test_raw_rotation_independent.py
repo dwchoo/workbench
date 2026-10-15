@@ -1,5 +1,6 @@
 """Independent activation/policy fixtures, never actual verifier/MODEL pass."""
 from contextlib import redirect_stderr, redirect_stdout
+from copy import deepcopy
 from io import StringIO
 from pathlib import Path
 import threading
@@ -41,8 +42,15 @@ class RawActivationIndependentTests(unittest.TestCase):
         fixture, reference, _ = validator_fixture(self)
         backend = backend_fixture(self, fixture)
         output, error = StringIO(), StringIO()
-        with patch("workbench.backend.summary_compatibility.SummaryCompatibility",
+        # CLI owns its newly constructed service in production. This fixture
+        # returns an existing service, so restore its identity callback on exit.
+        with patch.object(fixture.service, "omp_identity", fixture.service.omp_identity), \
+             patch("workbench.backend.summary_compatibility.SummaryCompatibility",
                    return_value=fixture.service), \
+             patch("workbench.backend.cli.current_omp_identity", side_effect=lambda: deepcopy(fixture.omp)), \
+             patch("workbench.backend.summary_compat_identity.observe_configured", return_value={
+                 "result": "pass", "cleanup_complete": True, "omp": deepcopy(fixture.omp)}) as getter, \
+             patch("subprocess.Popen", side_effect=AssertionError("Native forbidden in policy fixture")), \
              patch.object(fixture.service, "verify_reference", wraps=fixture.service.verify_reference) as verify, \
              patch.object(fixture.service, "admission", wraps=fixture.service.admission) as admission, \
              redirect_stdout(output), redirect_stderr(error):
@@ -54,6 +62,7 @@ class RawActivationIndependentTests(unittest.TestCase):
         self.assertIn("기존 source와 legacy 파일은 전환하거나 삭제하지 않습니다", error.getvalue())
         self.assertEqual(verify.call_count, 2)
         self.assertEqual(admission.call_count, 2)
+        getter.assert_called_once()
         self.assertEqual(backend.raw_rotation.path.stat().st_mode & 0o777, 0o600)
         self.assertFalse(backend.layout.raw_v2.exists())
         self.assertIn(reference, output.getvalue())

@@ -411,7 +411,8 @@ class Backend:
                 instructions = runtime["instructions"]
         except Exception:
             pass  # Missing live readback stays unknown; no cached definition is substituted.
-        return current_omp_identity(self.plan.omp, version=self.plan.omp_version, instructions=instructions)
+        return current_omp_identity(self.plan.omp, version=self.plan.omp_version, instructions=instructions,
+                                    environment=self.environment)
 
     def _open(self) -> None:
         layout = self.layout

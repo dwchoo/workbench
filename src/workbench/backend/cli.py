@@ -432,7 +432,8 @@ def cmd_important_read(args: argparse.Namespace) -> int:
 
 def cmd_raw_rotation(args: argparse.Namespace) -> int:
     from workbench.backend.raw_rotation import RawRotationPolicy
-    from workbench.backend.summary_compatibility import SummaryCompatibility
+    from workbench.backend.summary_compatibility import SummaryCompatibility, checkout_root
+    from workbench.backend.summary_compat_identity import observe_configured
     # Even --yes does not bypass the local product evidence and live gate.
     print("경고: 이후 시작한 raw source는 100MB × 5 rotation으로 오래된 bytes가 삭제될 수 있습니다. "
           "기존 source와 legacy 파일은 전환하거나 삭제하지 않습니다.", file=sys.stderr)
@@ -441,8 +442,21 @@ def cmd_raw_rotation(args: argparse.Namespace) -> int:
         return EXIT_FAILURE
     try:
         layout = _layout(args, create=False)
-        policy = RawRotationPolicy(layout.raw_rotation, SummaryCompatibility(layout.summary_compatibility,
-            omp_identity=current_omp_identity, boundary=compatibility_boundary))
+        compatibility = SummaryCompatibility(layout.summary_compatibility,
+            omp_identity=current_omp_identity, boundary=compatibility_boundary)
+        if not compatibility.activation_preflight(args.evidence):
+            raise ValueError("verified_activation_evidence_unavailable")
+        observation = observe_configured(checkout_root(), environment=os.environ)
+        if observation.get("result") != "pass" or observation.get("cleanup_complete") is not True:
+            raise ValueError("verified_activation_evidence_unavailable")
+        fresh = observation["omp"]
+        def activation_identity():
+            current = current_omp_identity()
+            if all(current.get(key) == fresh.get(key) for key in ("binary_path", "binary_sha256", "asset_selection")):
+                return dict(fresh)
+            return current
+        compatibility.omp_identity = activation_identity
+        policy = RawRotationPolicy(layout.raw_rotation, compatibility)
         result = policy.activate(args.evidence)
         print(json.dumps(result, sort_keys=True, ensure_ascii=False))
         return 0

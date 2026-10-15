@@ -15,19 +15,26 @@ from workbench.backend.omp_home import config_dir_value
 from workbench.backend.summary_adapter import _resolved_metadata
 
 
-def current_omp_identity(binary=None, *, version=None, instructions=None):
-    if version in ("unknown", "unobserved", ""):
+ASSET_SELECTORS = ("PI_PACKAGE_DIR", "OMP_NATIVE_LIBRARY_PATH")
+
+
+def current_omp_identity(binary=None, *, version=None, instructions=None, environment=None):
+    environment = os.environ if environment is None else environment
+    if version in ("unknown", "unobserved"):
         version = None
-    selected = binary or shutil.which("omp")
-    digest = None
+    selected = binary or shutil.which("omp", path=environment.get("PATH", os.defpath))
+    digest = binary_path = None
     if selected:
         try:
             path = Path(selected).resolve(strict=True)
+            binary_path = str(path)
             with path.open("rb") as stream:
                 digest = file_digest(stream, "sha256").hexdigest()
         except OSError:
             pass
     return {"binary_sha256": digest, "version": version,
+            "binary_path": binary_path,
+            "asset_selection": {key: environment.get(key) for key in ASSET_SELECTORS},
             "bundled_sha256": sha256(instructions.encode()).hexdigest() if isinstance(instructions, str) and instructions else None,
             "unknowns": [key + "_unavailable" for key, value in
                          (("binary", digest), ("version", version), ("bundled", instructions)) if value is None]}
@@ -40,25 +47,32 @@ def compatibility_boundary():
                                                     separators=(",", ":")).encode()).hexdigest()}
 
 
-def observe_configured(source: Path) -> dict:
+def observe_configured(source: Path, *, environment=None) -> dict:
     """One credential-free public Native getter; no prompt or auth-store copy."""
     from workbench.backend import summary_compat_runtime as rt
     row = {"kind": "owned_configured_metadata", "result": "inconclusive", "checks": {},
            "metadata": None, "omp": None, "cleanup_complete": False}
-    name = shutil.which("omp")
+    supplied = os.environ if environment is None else environment
+    environment = {key: supplied[key] for key in ("PATH", *ASSET_SELECTORS) if key in supplied}
+    name = shutil.which("omp", path=environment.get("PATH", os.defpath))
     if name is None:
         row["error"] = "configured_native_unavailable"
         return row
     root = Path(tempfile.mkdtemp(prefix="wb-summary-model-")).resolve()
     process = ref = None
     try:
+        selected = Path(name).absolute()
+        before = current_omp_identity(selected, environment=environment)
+        if before["binary_sha256"] is None:
+            raise ValueError("configured_binary_unavailable")
         os.chmod(root, 0o700)
         rt._private_root(root)
         for name in ("home", "agent", "config", "project", "tmp", "xdg-config", "xdg-data", "xdg-state", "xdg-cache"):
             (root / name).mkdir(mode=0o700)
         runtime = rt._copy_runtime(source, root)
         env = rt._environment(root)
-        binary = Path(shutil.which("omp")).resolve(strict=True)
+        env.update({key: value for key, value in before["asset_selection"].items() if value is not None})
+        binary = Path(before["binary_path"])
         table = load_model_table(runtime / "omp_bridge/omp-models.yml")
         manager, worker = table["manager"]["models"]["default"], table["worker"]["models"]["default"]
         plan = LaunchPlan(choose_shell(env), str(binary), "unobserved", str(runtime / "omp_bridge/g3/summary_verification.ts"),
@@ -91,8 +105,14 @@ def observe_configured(source: Path) -> dict:
             "configured_worker_default": selection["selector"] == worker and selection["modelTableDigest"] == expected["modelTableDigest"]
                 and selection["model"]["provider"] + "/" + selection["model"]["id"] == selector_model(worker)
                 and selection["thinkingLevel"] == selector_level(worker)}
-        identity = current_omp_identity(binary, version=completed.get("version"))
+        after = current_omp_identity(selected, environment=environment)
+        checks["binary_epoch_stable"] = all(before[key] == after[key] for key in ("binary_path", "binary_sha256"))
+        identity = current_omp_identity(selected, version=completed.get("version"), environment=environment)
         identity["bundled_sha256"] = completed.get("definitionDigest")
+        checks["actual_install_identity"] = (isinstance(identity["version"], str) and bool(identity["version"].strip())
+            and isinstance(identity["bundled_sha256"], str) and len(identity["bundled_sha256"]) == 64
+            and all(char in "0123456789abcdef" for char in identity["bundled_sha256"])
+            and all(identity[key] == before[key] for key in ("binary_path", "binary_sha256", "asset_selection")))
         identity.pop("unknowns")
         row.update(metadata=metadata, checks=checks, omp=identity)
     except Exception as error:

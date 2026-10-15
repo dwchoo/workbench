@@ -2,6 +2,7 @@
 from hashlib import sha256
 from pathlib import Path
 import json
+import os
 import time
 import subprocess
 from typing import Any
@@ -84,7 +85,7 @@ class ScriptedCompatibilityProvider:
         if completed.get("caseControls"):
             if result["observations"][0].get("error"):
                 return result
-            configured = observe_configured(source)
+            configured = observe_configured(source, environment=os.environ)
             result["observations"].append(configured)
             result["model_metadata"] = configured.get("metadata") or result["model_metadata"]
             result["omp"] = configured.get("omp")

@@ -17,7 +17,7 @@ from uuid import uuid4
 
 from workbench.backend.paths import ensure_private_dir, write_private_json
 from workbench.backend.summary_compatibility import Q01_ITEMS, RECORD_LIMIT, SummaryCompatibility
-from tests.backend.summary_compat_record_fixture import bind_metadata, complete_record
+from tests.backend.summary_compat_record_fixture import bind_metadata, complete_record, synthetic_asset_binding
 
 
 def digest(value):
@@ -38,6 +38,7 @@ class PersistedCompatibilityIndependentTests(unittest.TestCase):
                          "volatile_host": {"kernel_release": "original", "python_patch": "3.12.1"}}
         self.omp = {"version": "18.8.6", "binary_sha256": "4" * 64,
                     "bundled_sha256": "5" * 64}
+        self.omp.update(synthetic_asset_binding(self.directory.parent / "synthetic-validator-omp"))
         self.boundary = {"route": "sdk_session", "role": "manager", "adoption_ref": "LG-D22",
                          "agent_definition_sha256": "6" * 64, "skill_sha256": "7" * 64,
                          "contract_sha256": "8" * 64, "model_config_sha256": "9" * 64}

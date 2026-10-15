@@ -57,6 +57,13 @@ def _complete_omp(value: Any) -> bool:
             and all(_hex_digest(value.get(key)) for key in ("binary_sha256", "bundled_sha256")))
 
 
+def _bound_install_assets(value: Any) -> bool:
+    selection = value.get("asset_selection") if isinstance(value, dict) else None
+    return (isinstance(selection, dict) and set(selection) == {"PI_PACKAGE_DIR", "OMP_NATIVE_LIBRARY_PATH"}
+            and all(item is None or isinstance(item, str) for item in selection.values())
+            and isinstance(value.get("binary_path"), str) and Path(value["binary_path"]).is_absolute())
+
+
 def checkout_root() -> Path:
     return Path(__file__).resolve().parents[3]
 
@@ -548,24 +555,47 @@ class SummaryCompatibility:
                 if (not isinstance(omp, dict) or not _hex_digest(omp.get("binary_sha256"))
                         or (omp.get("version") is not None and (not isinstance(omp["version"], str)
                             or not omp["version"].strip()))
-                        or (omp.get("bundled_sha256") is not None and not _hex_digest(omp["bundled_sha256"]))):
+                        or (omp.get("bundled_sha256") is not None and not _hex_digest(omp["bundled_sha256"]))
+                        or (omp.get("asset_selection") is not None and not _bound_install_assets(omp))):
                     return {"state": "unavailable", "reason": "omp_identity_unavailable", "admitted": False}
                 status = "verified"
                 fields = ("version", "binary_sha256", "bundled_sha256")
-                exact = _complete_omp(omp) and all(omp[key] == record["omp"][key] for key in fields)
-                if any(omp.get(key) is not None and omp[key] != record["omp"][key] for key in fields):
+                assets_exact = (_bound_install_assets(omp) and _bound_install_assets(record["omp"])
+                    and all(omp[key] == record["omp"][key] for key in ("binary_path", "asset_selection")))
+                exact = _complete_omp(omp) and assets_exact and all(omp[key] == record["omp"][key] for key in fields)
+                if (any(omp.get(key) is not None and omp[key] != record["omp"][key] for key in fields)
+                        or (_bound_install_assets(omp) and _bound_install_assets(record["omp"]) and not assets_exact)):
                     status = "version_drift_unverified"
                 elif current["runtime_digest"] != old["runtime_digest"]:
                     status = "unrelated_change_observed"
                 return {"state": status, "admitted": True, "latest_record": ref,
                         "verified_omp": record["omp"], "verified_record": ref,
                         "current_omp": omp, "current_omp_exact": exact,
-                        "current_omp_unknowns": [key + "_unavailable" for key in fields if omp.get(key) is None]}
+                        "current_omp_unknowns": [key + "_unavailable" for key in fields if omp.get(key) is None]
+                            + ([] if _bound_install_assets(omp) else ["asset_selection_unavailable"])}
             except (OSError, ValueError, KeyError, TypeError, DataDirError, RecursionError):
                 return {"state": "unavailable", "reason": "compatibility_record_invalid", "admitted": False}
 
     def admission(self) -> bool:
         return self.status()["admitted"] is True
+
+    def activation_preflight(self, ref: str) -> bool:
+        """Cheap original/current checks before an explicit activation getter."""
+        try:
+            with self._lock:
+                status = self._checked_status()
+                if not status.get("admitted") or status.get("latest_record") != ref:
+                    return False
+                record = self._verified_record(ref)
+                if record is None or not _bound_install_assets(record["omp"]):
+                    return False
+                current, omp = self.identity(), self.omp_identity()
+                return bool(_complete_identity(current) and current == record["identity"]
+                    and record.get("boundary") == self.boundary() and _bound_install_assets(omp)
+                    and all(omp[key] == record["omp"][key]
+                            for key in ("binary_path", "binary_sha256", "asset_selection")))
+        except (OSError, ValueError, KeyError, TypeError, DataDirError, RecursionError):
+            return False
 
     def verify_reference(self, ref: str) -> bool:
         try:
@@ -575,8 +605,9 @@ class SummaryCompatibility:
                     return False
                 current, omp = self.identity(), self.omp_identity()
                 return bool(_complete_identity(current) and _complete_omp(omp)
+                            and _bound_install_assets(omp) and _bound_install_assets(record["omp"])
                             and record["identity"] == current and all(record["omp"][key] == omp[key]
-                                for key in ("version", "binary_sha256", "bundled_sha256"))
+                                for key in ("version", "binary_sha256", "bundled_sha256", "binary_path", "asset_selection"))
                             and record.get("boundary") == self.boundary())
         except (OSError, ValueError, KeyError, TypeError, DataDirError, RecursionError):
             return False

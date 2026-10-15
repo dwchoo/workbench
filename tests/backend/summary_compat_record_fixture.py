@@ -9,6 +9,12 @@ from copy import deepcopy
 from workbench.backend.summary_compat_provider import item_rows
 
 
+def synthetic_asset_binding(binary_path):
+    """Complete validator-only binding, not an observed installed identity."""
+    return {"binary_path": str(binary_path),
+            "asset_selection": {"PI_PACKAGE_DIR": None, "OMP_NATIVE_LIBRARY_PATH": None}}
+
+
 def complete_record(record):
     preflight = [{"event": "dispatch_preflight", "outputCap": 4096, "fittedCap": 4096,
                   "conservativeWireBytes": 12000, "mandatoryWireBytes": 8000}]

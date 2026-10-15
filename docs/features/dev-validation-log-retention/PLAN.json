@@ -2698,6 +2698,32 @@
       "preserved": "기존 mandatory gate IDs/levels/의존 graph·28 AC·46 gate 및 미검증 상태; DB-only/작업결속/no replay/실패표시/검증격리; Worker.default·단순 기본값; C2 hold/actual raw off",
       "real_trial": "관련 개발 검증 뒤 이미 승인한 작은 실제 입력→요약→DB저장→조회 확인; 반복 품질 평가나 자동교정으로 확대하지 않음",
       "history": "원 승인 bundle/requirements와 과거 실패/관측 보존. 문서 정렬만으로 gate pass 또는 실모델 품질/전체 완료를 선언하지 않음."
+    },
+    {
+      "id": "LG-D32",
+      "date": "2026-10-15",
+      "source": "사용자: 추천대로 범위 조정",
+      "decision": "다섯 실제 안전 조건을 검증하고 프로세스 내부 전체 native I/O 귀속 불명은 미검증 한계로 남긴다. 그 불명만으로 완료·정상 요약을 차단하지 않으며 실제 위반은 실패 처리한다.",
+      "preserved": [
+        "Q01 8개 항목 및 그 밖의 필수 gate",
+        "사용자 자원 불변·전용 임시 환경·owned cleanup",
+        "C2 hold",
+        "실제 raw 순환 삭제 비활성"
+      ],
+      "reference": "BRIEF.md LG-D32"
+    },
+    {
+      "id": "LG-D33",
+      "date": "2026-10-15",
+      "source": "사용자: 테스트에서 필요하면 인증 파일을 복사해도 될거 같은데. 대신 너가 읽진 말고.",
+      "decision": "승인된 작은 실제 Worker.default 요약 시험에서만 인증 파일을 내용 열람·출력 없이 전용 임시 환경으로 기계적으로 복사하고 기존 OMP가 복사본만 사용한다. 원본 쓰기 없이 복사본을 정리한다.",
+      "preserved": [
+        "credential-free scripted verify에는 사용자 인증정보 전달 금지",
+        "다섯 안전 조건 및 기존 필수 gate",
+        "C2 hold",
+        "실제 raw 순환 삭제 비활성"
+      ],
+      "reference": "BRIEF.md LG-D33"
     }
   ]
 }

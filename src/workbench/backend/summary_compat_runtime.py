@@ -35,9 +35,137 @@ DEADLINE_SECONDS = 90
 SUMMARY = {"facts": ["소유 private scripted fixture의 연결을 확인했다."],
            "interpretations": [], "unknowns": ["실제 MODEL 및 전체 Q01은 미검증이다."]}
 IO_KEYS = ("omp_children", "model_calls", "network_requests", "auth_store_open", "settings_writes")
+Q01_ITEMS = tuple("Q01-" + item for item in
+                  ("route", "tools", "skill", "result", "context", "priority", "recovery", "origin"))
 PAUSE_NO_SEND_DETAIL = "owner_predicate_false_confirmed_before_send"
 DISCONNECT_REQUEST_ID = "fc8416c2-7d8c-46d4-9615-b833b567f9fe"
 RESTART_REQUEST_ID = "a40f9a18-a0fc-4d75-9260-7f83cb06622d"
+
+
+def _item_rows(result: dict[str, Any]) -> list[dict[str, Any]]:
+    observations = result.get("observations") if isinstance(result.get("observations"), list) else []
+    c1_index = next((index for index, row in enumerate(observations)
+                     if isinstance(row, dict) and row.get("kind") == "owned_C1_partial"), None)
+    c1 = observations[c1_index] if c1_index is not None else {}
+    completed = c1.get("completed") if isinstance(c1.get("completed"), dict) else None
+    outcome = completed.get("outcome") if completed and isinstance(completed.get("outcome"), dict) else {}
+    summary_result = outcome.get("result") if isinstance(outcome.get("result"), dict) else {}
+    writer = completed.get("writerObserved") if completed and isinstance(completed.get("writerObserved"), dict) else {}
+    posts = c1.get("localhost_model_posts") if isinstance(c1.get("localhost_model_posts"), list) else []
+    exercised = set(completed.get("exercised", [])) if completed and isinstance(completed.get("exercised"), list) else set()
+    recovery = c1.get("recovery_control") if isinstance(c1.get("recovery_control"), dict) else {}
+    restart = c1.get("restart_control") if isinstance(c1.get("restart_control"), dict) else {}
+    recovery_pause = recovery.get("owner_predicate_false_control") if isinstance(
+        recovery.get("owner_predicate_false_control"), dict) else {}
+
+    def boolean(value: Any) -> bool | None:
+        return value if type(value) is bool else None
+
+    def inverse(value: Any) -> bool | None:
+        return not value if type(value) is bool else None
+
+    tool_posts = [post for post in posts if isinstance(post, dict)]
+    tool_only = all(post.get("tools") == ["db_summary_save"] for post in tool_posts) if tool_posts else None
+    system_exact = all(post.get("system_exact") is True for post in tool_posts) if tool_posts else None
+    source_binding = boolean(writer.get("request_binding_matches"))
+    receipt_matches = boolean(writer.get("receipt_matches"))
+    body_matches = (writer.get("actual_body") == {"schemaVersion": 1,
+        "facts": ["소유 private scripted fixture의 연결을 확인했다."], "interpretations": [],
+        "unknowns": ["실제 MODEL 및 전체 Q01은 미검증이다."]}) if "actual_body" in writer else None
+    source_count = len(summary_result["sources"]) if isinstance(summary_result.get("sources"), list) else None
+    rows: list[dict[str, Any]] = []
+    for item in Q01_ITEMS:
+        checks: dict[str, bool | None] = {"owned_c1_cleanup_complete": boolean(c1.get("cleanup_complete"))}
+        if item == "Q01-route":
+            checks.update(c1_case_exercised=item in exercised if completed else None,
+                          parent_unchanged=boolean(completed.get("parentUnchanged")) if completed else None,
+                          registry_unchanged=boolean(completed.get("registryUnchanged")) if completed else None,
+                          settings_unchanged=boolean(completed.get("settingsUnchanged")) if completed else None,
+                          role_filter_controls=None)
+            required = ("parent_unchanged", "registry_unchanged", "settings_unchanged")
+        elif item == "Q01-tools":
+            checks.update(c1_case_exercised=item in exercised if completed else None,
+                          observed_post_used_db_summary_save_only=tool_only,
+                          tool_call_observed=(completed.get("toolCalls", 0) > 0)
+                          if completed and type(completed.get("toolCalls")) is int else None,
+                          child_disposed=boolean(completed.get("childDisposed")) if completed else None,
+                          negative_tool_control=None)
+            required = ("observed_post_used_db_summary_save_only", "child_disposed")
+        elif item == "Q01-skill":
+            checks.update(c1_case_exercised=item in exercised if completed else None,
+                          exact_skill_prompt_observed=system_exact,
+                          writer_skill_binding_matches=source_binding,
+                          role_filter_expectation=None)
+            required = ("exact_skill_prompt_observed", "writer_skill_binding_matches")
+        elif item == "Q01-result":
+            checks.update(summary_result_returned=(outcome.get("status") == "summary_result")
+                          if "status" in outcome else None,
+                          writer_request_binding_matches=source_binding,
+                          receipt_matches=receipt_matches,
+                          body_matches_fixture=body_matches,
+                          single_catalog_entry=(writer.get("catalog_entries") == 1)
+                          if type(writer.get("catalog_entries")) is int else None)
+            required = ("writer_request_binding_matches", "receipt_matches", "body_matches_fixture", "single_catalog_entry")
+        elif item == "Q01-context":
+            checks.update(c1_case_exercised=item in exercised if completed else None,
+                          operating_metadata_pass=boolean(completed.get("operatingMetadataPass")) if completed else None,
+                          three_context_scenarios=None)
+            required = ()
+        elif item == "Q01-priority":
+            checks["priority_observation_run"] = None
+            required = ()
+        elif item == "Q01-recovery":
+            checks.update(recovery_unknown_before_response=boolean(recovery.get("unknown_before_response")),
+                          recovery_replay_refused=boolean(recovery.get("replay_reserve_refused")),
+                          recovery_replay_row_absent=inverse(recovery.get("replay_row_present")),
+                          duplicate_receipt_rejected=inverse(recovery.get("duplicate_receipt_accepted")),
+                          recovery_receipt_unchanged=boolean(recovery.get("receipt_unchanged")),
+                          pause_no_send_confirmed=boolean(recovery_pause.get("noSendConfirmed")),
+                          restart_response_absent=boolean(restart.get("completed_artifact_absent")),
+                          restart_replay_refused=boolean(restart.get("replay_reserve_refused")),
+                          restart_replay_row_absent=inverse(restart.get("replay_row_present")),
+                          final_replay_row_absent=boolean(restart.get("final_replay_row_absent")))
+            required = ("recovery_unknown_before_response", "recovery_replay_refused", "recovery_replay_row_absent",
+                        "duplicate_receipt_rejected", "recovery_receipt_unchanged", "pause_no_send_confirmed",
+                        "restart_response_absent", "restart_replay_refused", "restart_replay_row_absent",
+                        "final_replay_row_absent")
+        else:  # Q01-origin
+            checks.update(c1_case_exercised=item in exercised if completed else None,
+                          request_scope_binding_matches=source_binding,
+                          one_fixture_source_observed=source_count == 1 if source_count is not None else None)
+            required = ("request_scope_binding_matches",)
+
+        if item == "Q01-priority":
+            observed = False
+        elif item == "Q01-recovery":
+            observed = bool(recovery or restart)
+        else:
+            observed = completed is not None and item in exercised
+        status = "inconclusive" if observed else "not_run"
+        if any(checks.get(name) is False for name in required):
+            status = "failed"
+        if status == "not_run":
+            unknowns = ["item_not_observed"]
+        elif item == "Q01-route":
+            unknowns = ["role_filter_controls_unobserved"]
+        elif item == "Q01-tools":
+            unknowns = ["negative_tool_control_unobserved"]
+        elif item == "Q01-skill":
+            unknowns = ["role_filter_expectation_unverified"]
+        elif item == "Q01-result":
+            unknowns = ["wrong_binding_and_duplicate_controls_unverified"]
+        elif item == "Q01-context":
+            unknowns = ["three_context_scenarios_unobserved", "output_budget_unavailable"]
+        elif item == "Q01-priority":
+            unknowns = ["priority_observation_not_run"]
+        elif item == "Q01-recovery":
+            unknowns = ["complete_recovery_contract_unverified"]
+        else:
+            unknowns = ["origin_scope_and_close_controls_unverified"]
+        rows.append({"item": item, "result": status, "checks": checks, "unknowns": unknowns,
+                     "evidence_refs": ([{"observation_index": c1_index, "kind": "owned_C1_partial"}]
+                                       if c1_index is not None else [])})
+    return rows
 
 
 def unavailable(reason: str) -> dict[str, Any]:
@@ -758,6 +886,7 @@ def _execute(source: Path, binary: Path, root: Path, *, recovery_control: bool =
             result["observations"][0]["retained_private_root"] = str(root)
     elif error:
         result["unknowns"] = [error]
+    result["item_rows"] = _item_rows(result)
     write_private_json(root / "observation.json", result)
     return result
 

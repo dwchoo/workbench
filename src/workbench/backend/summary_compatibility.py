@@ -24,14 +24,10 @@ from uuid import UUID, uuid4
 
 from workbench.backend.paths import DataDirError, InstanceLock, ensure_private_dir, write_private_json
 from workbench.backend.summary_adapter import SummaryDeferred, _resolved_metadata
-from workbench.backend.summary_compat_provider import ScriptedCompatibilityProvider
+from workbench.backend.summary_compat_provider import Q01_ITEMS, ScriptedCompatibilityProvider
 
 POLICY_PATH = "src/workbench/contracts/summary_compat_policy_v1.json"
 RECORD_LIMIT = 1 << 20
-Q01_ITEMS = tuple("Q01-" + item for item in
-                  ("route", "tools", "skill", "result", "context", "priority", "recovery", "origin"))
-
-
 def _canonical(value: Any) -> bytes:
     return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()
 
@@ -347,13 +343,34 @@ class SummaryCompatibility:
             unknowns = list(observed["unknowns"]) + before["unknowns"]
             if before != after:
                 unknowns.append("runtime_changed_during_verification")
+            allowed_item_results = {"pass", "failed", "inconclusive", "not_run"}
+            rows_by_item = {}
+            raw_rows = observed.get("item_rows")
+            if isinstance(raw_rows, list):
+                for row in raw_rows:
+                    if (isinstance(row, dict) and row.get("item") in Q01_ITEMS
+                            and row.get("result") in allowed_item_results):
+                        rows_by_item.setdefault(row["item"], row)
+            item_rows = []
+            items = {}
+            for name in Q01_ITEMS:
+                row = rows_by_item.get(name)
+                if row is None:
+                    # Legacy item flags cannot turn a bare pass into evidence.
+                    result = "inconclusive" if observed.get("items", {}).get(name) == "inconclusive" else "not_run"
+                    row = {"item": name, "result": result, "checks": {},
+                           "unknowns": ["per_item_observation_row_unavailable"], "evidence_refs": []}
+                row = deepcopy(row)
+                item_rows.append(row)
+                items[name] = row["result"]
+                if isinstance(row.get("unknowns"), list):
+                    unknowns.extend(value for value in row["unknowns"] if isinstance(value, str))
             record = {"id": str(uuid4()), "schema_version": 1, "validator_version": 1,
                       "created_at": datetime.now(timezone.utc).isoformat(), "identity": before,
                       "omp": self.omp_identity(), "boundary": self.boundary(),
                       "result": "inconclusive" if observed["level"] == "inconclusive" else "unavailable",
                       "observations": observed["observations"],
-                      "items": {name: "inconclusive" if observed.get("items", {}).get(name) == "inconclusive"
-                                else "not_run" for name in Q01_ITEMS},
+                      "item_rows": item_rows, "items": items,
                       "model_metadata": observed["model_metadata"], "real_model_contract": "unverified",
                       "unknowns": sorted(set(unknowns)), "io": observed["io"]}
             ensure_private_dir(self.directory)
@@ -362,7 +379,8 @@ class SummaryCompatibility:
             state.update(latest_record=record["id"], record_sha256=_digest(record))
             # A failed/inconclusive verify cannot clear a previous protection episode.
             self._save_state(state)
-            return {key: record[key] for key in ("id", "result", "items", "model_metadata", "unknowns", "io")}
+            return {key: record[key] for key in
+                    ("id", "result", "items", "item_rows", "model_metadata", "unknowns", "io")}
 
     def _verified_record(self, ref: str) -> dict | None:
         if not isinstance(ref, str) or str(UUID(ref)) != ref:

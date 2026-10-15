@@ -162,6 +162,7 @@ class ParallelCostIndependent(unittest.TestCase):
         if output and not Path(output).is_absolute():
             raise AssertionError("output must be absolute before import")
         cls.root = Path(tempfile.mkdtemp(prefix="parallel-proof-", dir=output))
+        print("PARALLEL_FIXTURE_ROOT=" + str(cls.root), flush=True)
         if not output:
             import shutil
             cls.addClassCleanup(shutil.rmtree, cls.root)
@@ -202,19 +203,18 @@ class ParallelCostIndependent(unittest.TestCase):
 
     @classmethod
     def report(cls, rows, wall, *, jobs, attempt):
-        pending = [{"id": key, "required": True, "status": "not_run", "collectedTests": 0,
-                    "durationSeconds": 0} for key in runner.PRECISE_PENDING]
-        first = {"item": "q01_product_adapter_recheck", "status": "not_run", "attemptId": attempt}
         return {"schemaVersion": 1, "attemptId": attempt, "inputBefore": cls.source,
                 "inputAfter": cls.source, "versionsBefore": {"python": sys.version, "omp": "fixture only"},
                 "versionsAfter": {"python": sys.version, "omp": "fixture only"},
                 "ompPath": str(cls.omp), "mode": "precise", "cwd": str(runner.REPO),
                 "costIdentity": cls.cost_identity, "execution": {"jobs": jobs},
                 "environment": {"privateNamespace": str(cls.root / attempt)},
-                "items": [*rows, *pending], "elapsedSeconds": wall, "result": "inconclusive",
-                "firstFailure": first}
+                "items": list(rows), "elapsedSeconds": wall, "result": "passed",
+                "firstFailure": None}
 
     def compare(self, *, before=None, after=None):
+        positive = runner._compare_cost(self.after, self.baseline)
+        self.assertEqual(positive["status"], "comparable", positive)
         path = self.root / "comparison-baseline.json"
         path.write_text(json.dumps(self.before if before is None else before))
         return runner._compare_cost(self.after if after is None else after, path)
@@ -318,7 +318,7 @@ assert r.harness.kill_exact(identity['pid'],identity['ticks'],signal.SIGTERM)
                          [["compat_tmux_bash", "compat_tmux_dash"]])
         self.assertTrue(all(len(items) == 1 for items in batches if any("herdr" in name for name in items)))
 
-    def test_03_core_cost_comparable_pending_gates_wall_sum_and_first_failure_preserved(self):
+    def test_03_completed_fixture_cost_compares_wall_sum_without_invented_pending_failure(self):
         comparison = self.compare()
         self.assertEqual(comparison["status"], "comparable", comparison)
         self.assertEqual((comparison["baselineJobs"], comparison["currentJobs"]), (1, 2))
@@ -327,7 +327,8 @@ assert r.harness.kill_exact(identity['pid'],identity['ticks'],signal.SIGTERM)
         self.assertEqual(comparison["after"]["itemSumSeconds"],
                          round(sum(row["durationSeconds"] for row in self.parallel), 3))
         self.assertEqual(comparison["baselineFirstFailure"], self.before["firstFailure"])
-        self.assertEqual(runner._overall(self.after["items"], self.after["firstFailure"]), ("inconclusive", 2))
+        self.assertIsNone(self.before["firstFailure"])
+        self.assertEqual(runner._overall(self.after["items"], self.after["firstFailure"]), ("passed", 0))
 
     def test_04_cost_rejects_changed_positive_collection_count(self):
         current = deepcopy(self.after)
@@ -388,9 +389,16 @@ assert r.harness.kill_exact(identity['pid'],identity['ticks'],signal.SIGTERM)
                     patch.object(runner.harness, "tool_versions", return_value={"omp": "fixture"}), \
                     redirect_stdout(io.StringIO()):
                 code = runner.main(argv)
-            expected = runner.FAST_ITEMS + (runner.PRECISE_ITEMS if mode == "precise" else ())
-            self.assertEqual(order, [item.key for item in expected])
-            self.assertEqual(code, 2 if mode == "precise" else 0)
+            fast = ("harness_fixture", "launcher_skill_filter", "installed_plain_bash")
+            precise = ("compat_plain_bash", "compat_plain_dash", "compat_tmux_bash", "compat_tmux_dash",
+                "compat_herdr_bash", "compat_herdr_dash", "shell_selection", "review_busy_end",
+                "pause_end_no_replay", "pause_interrupts_manager_turn", "restart_worker_survivor_host",
+                "detach_active_work", "backend_restart_no_replay", "scripted_model_fault_holds",
+                "shutdown_confirmation", "core_metadata_raw_faults", "takeover_restart_no_replay",
+                "new_storage_summary_raw_product_gates", "q01_product_adapter_recheck", "model_metadata",
+                "product_full_dvl14")
+            self.assertEqual(tuple(order), fast + (precise if mode == "precise" else ()))
+            self.assertEqual(code, 0)
 
     def test_10_g1_confirmed_failure_survives_supervisor_sigterm(self):
         failed_key, live_key = "g1-failed", "g1-live"

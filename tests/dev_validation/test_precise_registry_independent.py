@@ -45,8 +45,21 @@ EXPECTED_FAST = (
     ("launcher_skill_filter", ("tests.backend.test_paths_launcher", "tests.backend.test_workbench_skills")),
     ("installed_plain_bash", ("tests.dev_validation.test_fast_smoke",)),
 )
-FUTURE = {"q01_product_adapter_recheck", "new_storage_summary_raw_product_gates",
-          "model_metadata", "product_full_dvl14"}
+EXPECTED_PRECISE_KEYS = (
+    "compat_plain_bash", "compat_plain_dash", "compat_tmux_bash", "compat_tmux_dash",
+    "compat_herdr_bash", "compat_herdr_dash", "shell_selection", "review_busy_end",
+    "pause_end_no_replay", "pause_interrupts_manager_turn", "restart_worker_survivor_host",
+    "detach_active_work", "backend_restart_no_replay", "scripted_model_fault_holds",
+    "shutdown_confirmation", "core_metadata_raw_faults", "takeover_restart_no_replay",
+)
+EXPECTED_FEATURES = (
+    ("new_storage_summary_raw_product_gates",
+     ("tests.dev_validation.feature_items.FeaturePreciseItems.test_new_storage_summary_raw_product_gates",)),
+    ("q01_product_adapter_recheck",
+     ("tests.dev_validation.feature_items.FeaturePreciseItems.test_q01_product_adapter_recheck",)),
+    ("model_metadata", ("tests.dev_validation.feature_items.FeaturePreciseItems.test_model_metadata",)),
+    ("product_full_dvl14", ("tests.dev_validation.feature_items.FeaturePreciseItems.test_product_full_dvl14",)),
+)
 
 
 class PreciseRegistryIndependent(unittest.TestCase):
@@ -160,12 +173,14 @@ class PreciseRegistryIndependent(unittest.TestCase):
             stack.enter_context(patch.object(runner, "_stop_owned", side_effect=AssertionError("no process exists")))
             return runner._run_item_scoped(item, index, report_dir, Path("/usr/bin/true"), invocation_id)
 
-    def main_report(self, mode="precise", *, mutate=None, mutate_key="compat_tmux_bash", prior=None):
+    def main_report(self, mode="precise", *, mutate=None, mutate_key="compat_tmux_bash", prior=None,
+                    missing_key=None):
         report_dir = self.parent / f"main-{len(list(self.parent.iterdir()))}"
 
         def run(item, index, output, omp, invocation):
             return self.fixture_item(item, index, output, omp, invocation,
-                                     mutate=mutate if item.key == mutate_key else None)
+                                     mutate=mutate if item.key == mutate_key else None,
+                                     missing=item.key == missing_key)
 
         args = ["--mode", mode, "--report-dir", str(report_dir), "--omp", "/usr/bin/true"]
         if prior:
@@ -179,11 +194,25 @@ class PreciseRegistryIndependent(unittest.TestCase):
         return code, json.loads((report_dir / "report.json").read_text()), report_dir
 
     def test_precise_main_selects_exact_bash_sh_and_local_shell_fallback_legacy_ids(self):
-        _, report, _ = self.main_report()
-        launched = tuple(name for key, ids in self.commands if key not in dict(EXPECTED_FAST) for name in ids)
+        # A synthetic successful report proves selection/aggregation only;
+        # it cannot supply the Native/full46/operating evidence behind these IDs.
+        code, report, _ = self.main_report()
+        launched = tuple(name for key, ids in self.commands if key in EXPECTED_PRECISE_KEYS for name in ids)
         self.assertEqual(launched, EXPECTED_IDS)
         self.assertEqual((len(launched), len(set(launched))), (19, 19))
         self.assertEqual(len(runner.PRECISE_ITEMS), 17)
+        expected_keys = tuple(key for key, _ in EXPECTED_FAST) + EXPECTED_PRECISE_KEYS + tuple(
+            key for key, _ in EXPECTED_FEATURES)
+        self.assertEqual(tuple(key for key, _ in self.commands), expected_keys)
+        self.assertEqual(tuple(self.commands[:3]), EXPECTED_FAST)
+        self.assertEqual(tuple(self.commands[-4:]), EXPECTED_FEATURES)
+        self.assertEqual(tuple(row["id"] for row in report["items"]), expected_keys)
+        self.assertEqual((len(expected_keys), len(set(expected_keys))), (24, 24))
+        for row in report["items"]:
+            count = {"harness_fixture": 2, "launcher_skill_filter": 2, "shell_selection": 3}.get(row["id"], 1)
+            self.assertTrue(row["required"])
+            self.assertEqual((row["status"], row["collectedTests"], row["skippedTests"]), ("passed", count, 0))
+        self.assertEqual((code, report["result"], report["firstFailure"]), (0, "passed", None))
         self.assertEqual(tuple(report["matrix"]["testIds"]), EXPECTED_IDS)
         self.assertEqual(report["matrix"]["shells"], ["bash", "dash"])
         self.assertEqual(report["matrix"]["shellLabels"], {"bash": "Bash", "dash": "sh(dash)"})
@@ -199,16 +228,21 @@ class PreciseRegistryIndependent(unittest.TestCase):
         self.assertNotIn("matrix", report)
         self.assertTrue(all(row["expectedWaitSeconds"] == 0 for row in report["items"]))
 
-    def test_all_core_passes_cannot_close_future_product_gates(self):
-        code, report, _ = self.main_report()
-        self.assertEqual((code, report["result"]), (2, "inconclusive"))
-        pending = [row for row in report["items"] if row["status"] == "not_run"]
-        self.assertEqual({row["id"] for row in pending}, FUTURE)
-        self.assertTrue(all(row["required"] and row["collectedTests"] == 0 for row in pending))
-        core = [row for row in report["items"] if row["id"] not in FUTURE]
-        self.assertEqual(len(core), 20)
-        self.assertTrue(all(row["status"] == "passed" and row["collectedTests"] > 0 for row in core))
-        self.assertEqual(report["firstFailure"]["item"], "q01_product_adapter_recheck")
+    def test_registered_feature_missing_or_not_run_never_passes(self):
+        for case in ("missing_report", "not_run"):
+            with self.subTest(observation=case):
+                if case == "missing_report":
+                    code, report, _ = self.main_report(missing_key="model_metadata")
+                else:
+                    code, report, _ = self.main_report(mutate_key="model_metadata", mutate=lambda payload:
+                        payload["steps"]["actual_execution"].update(status="not_run"))
+                row = next(row for row in report["items"] if row["id"] == "model_metadata")
+                self.assertTrue(row["required"])
+                self.assertEqual((row["collectedTests"], row["skippedTests"]), (1, 0))
+                self.assertNotEqual(row["status"], "passed")
+                self.assertNotEqual(report["result"], "passed")
+                self.assertNotEqual(code, 0)
+                self.assertEqual(report["firstFailure"]["item"], "model_metadata")
 
     def test_precise_restored_legacy_steps_are_required_and_full_regression_remains_unverified(self):
         _, report, report_dir = self.main_report()
@@ -231,7 +265,8 @@ class PreciseRegistryIndependent(unittest.TestCase):
                 self.assertEqual(evidence["sha256"], sha256(retained.read_bytes()).hexdigest())
         self.assertEqual(omitted["legacy_full_regression"]["status"], "not_run")
         self.assertEqual(omitted["VM_GUI_paid_model"]["status"], "not_run")
-        self.assertIn("representative", report["scope"])
+        self.assertEqual(report["scope"],
+                         "developer core Bash/sh precise + explicit owned feature runtime items; completion requires full gate evidence")
         self.assertEqual(report["targetSeconds"], 600)
 
     def test_c1_through_c7_consumed_and_fresh_report_retained_with_digest(self):

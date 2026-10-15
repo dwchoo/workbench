@@ -66,8 +66,30 @@ class ActualExperimentDeliveryTests(unittest.TestCase):
         self.assertFalse(run.subject_capture_unknown)
         with ImportantLogStore.open(directory, db_uuid) as store:
             entries = store.list_entries({"schemaVersion": 1, "kind": "task", "id": task_id})
+            terminal_events = store._connection.execute(
+                "SELECT source_id, entry_id FROM subject_events_v1 "
+                "WHERE subject_kind='task' AND subject_id=? AND event_kind='terminal_range'",
+                (task_id,),
+            ).fetchall()
+            copied = [(event["source_id"], store.get_entry(event["entry_id"])["sources"])
+                      for event in terminal_events]
         self.assertEqual({entry["sources"][0]["source"]["sourceKind"] for entry in entries},
-                         {"manager_instruction", "report"})
+                         {"manager_instruction", "report", "terminal"})
+        subject = {"schemaVersion": 1, "kind": "task", "id": task_id}
+        canonical = self.repository.get_log_sources(subject)
+        expected = {record["source_id"]: [{"schemaVersion": 1, "source": record["source"],
+                                         "start": record["start"], "end": record["end"],
+                                         "digest": record["digest"]}]
+                    for record in canonical if record["source"]["sourceKind"] == "terminal"}
+        self.assertTrue(expected, "actual host output must have canonical terminal sources")
+        self.assertEqual(len(copied), len(dict(copied)), "no duplicate source_id copies")
+        self.assertEqual(dict(copied), expected)
+        terminal_spans = [span for entry in entries for span in entry["sources"]
+                          if span["source"]["sourceKind"] == "terminal"]
+        self.assertCountEqual(terminal_spans, [span for spans in expected.values() for span in spans])
+        for span in terminal_spans:
+            self.assertEqual((span["source"]["taskId"], span["source"]["runId"],
+                              span["source"]["revision"]), (task_id, run.run_id, 1))
 
 
 if __name__ == "__main__":

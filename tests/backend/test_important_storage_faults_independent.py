@@ -6,7 +6,7 @@ from pathlib import Path
 import random
 import sqlite3
 import tempfile
-from threading import Event
+from threading import Event, RLock
 import time
 from types import SimpleNamespace
 import unittest
@@ -214,6 +214,10 @@ class IndependentStorageFaultTests(unittest.TestCase):
 
         backend = Backend.__new__(Backend)
         backend.layout = SimpleNamespace(important_logs=late_directory)
+        backend._raw_port_lock = RLock()
+        backend.segmented_raw_port = None
+        backend._owned_segmented_store = None
+        backend.raw_rotation = None
         backend.important_catalog = None
         backend.subject_log = None
         backend.important_storage_status = {"state": "unavailable", "reason": "NotADirectoryError"}

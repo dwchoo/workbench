@@ -1,6 +1,6 @@
 # 최종 통합 검증
 
-상태: `814fb71`에서 관련 feature 통합 4개 항목과 Q01 scripted 판별 8개가 통과했다. 실제 Backend의 요약·저장·조회·장애 처리와 소유 자원 정리를 확인했다. 같은 최종 후보의 28개 AC·46개 required gate 전체는 아직 통과 판정하지 않았다.
+상태: `814fb71`에서 관련 feature 통합 4개 항목과 Q01 scripted 판별 8개가 통과했다. 실제 Backend의 요약·저장·조회·장애 처리와 소유 자원 정리를 확인했다. 후속 테스트 정정 커밋 `30ff1d8`·`fae0d04`는 제품 코드를 바꾸지 않았으며, `fae0d04`의 실제 fast 3개 항목도 통과했다. 같은 최종 후보의 28개 AC·46개 required gate 전체는 아직 통과 판정하지 않았다.
 이 문서는 이전 부분 결과·C2 hold·실패를 변경하지 않는다.
 
 기준은 [DVL-13](tickets/DVL-13.md), [SPEC §11](SPEC.md#11-수락-조건-추적과-시험-결정),
@@ -19,6 +19,34 @@
 | Q01 | 별도 Backend origin과 기존 SDK controls를 판별해 8개 모두 통과했다. Scripted 실행 근거이며 실모델 의미의 전체 증명은 아니다. |
 | metadata·제품 record | 실제 configured getter와 제품 record consumer 동작을 확인했다. Metadata 자체는 context·output enforce·reasoning 의미가 `inconclusive`이고, 내부 I/O 귀속 caveat도 유지한다. |
 | 정리 | 이번 실행의 Backend·소유 process·namespace와 임시 HOME을 정리했다. 이전 정리 사건을 이 결과로 정당화하지 않는다. |
+
+### 후속 검증과 현재 적용 범위
+
+[현재 fast 원본](../../../.workflow/dev-validation-log-retention/runs/dvl13-20261015/final-integration01/current-fast01/report.json)은
+`fae0d04`에서 실제 등록된 3개 항목을 32.076초 동안 실행한 결과다. Harness 26개·launcher/skill filter 64개·설치된 OMP smoke 1개가 모두 통과했고 skip은 0이었다.
+실제 plain Bash의 세 pane 입력·한글/paste·resize·pause 신규 호출 차단·shutdown을 확인했다. 입력과 도구 identity는 실행 전후 같았고,
+[정리 확인](../../../.workflow/dev-validation-log-retention/runs/dvl13-20261015/final-integration01/current-fast01-result.json)에서 기록된 소유 PID/startTicks·namespace의 부재와 Root 임시 HOME 삭제를 확인했다.
+이는 fast 범위의 근거이며 precise·전체 core·46개 gate 통과가 아니다.
+
+이와 별도로 현재 제품 입력에서 [A 106개](../../../.workflow/dev-validation-log-retention/runs/dvl13-20261015/final-integration01/required46-local-a01-result.json)와
+[B 143개](../../../.workflow/dev-validation-log-retention/runs/dvl13-20261015/final-integration01/required46-local-b01-result.json)의 관련 fixture가 통과했다.
+[C 원본](../../../.workflow/dev-validation-log-retention/runs/dvl13-20261015/final-integration01/required46-local-c01-result.json)은 167개 중 158개 통과·2개 실패·7개 오류로 보존한다.
+실패 원인은 긴 임시 socket 경로 7건, 기존 Backend fake의 raw-port lock 누락 1건, terminal source를 빠뜨린 기대값 1건이었다.
+짧은 전용 TMPDIR과 테스트 2개 파일의 최소 정정 뒤 [관련 16개](../../../.workflow/dev-validation-log-retention/runs/dvl13-20261015/final-integration01/required46-C-correction01-unit.json)가 통과했다.
+이를 C 167개 전체의 단일 성공으로 바꾸지 않는다. Terminal source는 core source의 ID·범위·Task/run/revision과 일치하고 중복이 없는지도 확인했다.
+
+별도의 [registry fixture 42개](../../../.workflow/dev-validation-log-retention/runs/dvl13-20261015/final-integration01/required46-registry-alignment01-unit.json)는
+실행 가능한 feature 4개를 포함한 항목 선택·집계와 비용 비교 거부 조건을 검증했다. Synthetic fixture이므로 실제 Native 비용 비교 근거는 아니다.
+테스트 정정 4개 파일은 독립 테스트·fresh review·문법·diff·gitleaks 검증 뒤 `30ff1d8`·`fae0d04`로 커밋했다.
+
+[현재 입력 대조](../../../.workflow/dev-validation-log-retention/runs/dvl13-20261015/final-integration01/current-runtime-applicability02.json)에서
+원래 Q01 projection 144개 entry와 제품 policy·설치 OMP binary가 일치했다. Native 입력 manifest의 차이는 위 테스트 4개 파일뿐이며 제품과 실행한 Native fixture 입력은 그대로다.
+따라서 기존 실제 feature/Q01 결과의 해당 범위는 재사용하고, 모델 호출·300초 요약·500MB 시험은 반복하지 않았다.
+[46개 항목별 감사](../../../.workflow/dev-validation-log-retention/runs/dvl13-20261015/final-integration01/required46-applicability-audit03.json)의 `scoped_verified`는 해당 범위의 관측 근거라는 뜻이며 전체 최종 후보 gate 통과를 새로 발급한 표시가 아니다.
+
+남은 필수 근거는 현재 최종 후보의 precise/core matrix와 실제 60초 점검·65초 detach, 동일 범위 Native baseline/after 비용 비교 및 최종 통합 판정이다.
+과거 core 20개 중 C2 실패와 보류를 유지하며, 실패 셀을 빼서 전체 성공이나 비용 비교 성공을 만들지 않는다.
+Metadata getter wrapper의 성공과 descriptor의 context·output enforce·reasoning 의미 `inconclusive`도 구분한다. LG-D30/32에 따른 이 unknown은 단독 차단 사유가 아니다.
 
 관련 독립 검증은 [국소 단위 기록](../../../.workflow/dev-validation-log-retention/runs/dvl13-20261015/final-integration01/final-fixture-alignment-unit01.json)을 따른다.
 옛 fixture와 퇴역한 비용 기대를 현재 계약에 맞췄고 제품 guard·caps는 바꾸지 않았다. TypeScript 43개는 한 실행에서 통과했다.

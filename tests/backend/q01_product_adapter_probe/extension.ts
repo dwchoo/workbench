@@ -6,6 +6,7 @@ import { toolWireSchema } from "@oh-my-pi/pi-ai";
 import { Tokenizer, fitOutputTokensToContextWindow } from "@oh-my-pi/pi-agent-core";
 import { getBundledAgent } from "@oh-my-pi/pi-coding-agent/task/agents";
 import { dispatchSummarySDK } from "../../../omp_bridge/g3/summary_sdk.ts";
+import { observeModelMetadata } from "../../../omp_bridge/g3/model_metadata.ts";
 
 const privateRoot = process.env.Q01_PRODUCT_PRIVATE!;
 const log = (data: any) => appendFileSync(privateRoot + "/trace.jsonl", JSON.stringify({
@@ -27,16 +28,14 @@ async function run(pi: any, context: any) {
   const parent = AgentRegistry.global().list().find((entry: any) =>
     entry.session?.sessionManager.getSessionId() === context.sessionManager.getSessionId())?.session;
   if (!parent) throw new Error("actual_parent_getters_unavailable");
+  const selection = JSON.parse(process.env.WORKBENCH_G3_SUMMARY_SELECTION ?? "null");
   const definition = getBundledAgent("task")!;
   const skill = readFileSync(process.env.Q01_PRODUCT_SKILL!, "utf8");
-  const descriptor = () => ({ source: "parent_session_readback", epoch: "owned-parent-" + context.sessionManager.getSessionId(),
-    parentSessionId: String(parent.sessionManager.getSessionId()),
-    model: { id: parent.model.id, provider: parent.model.provider, api: parent.model.api,
-      baseUrl: parent.model.baseUrl, contextWindow: parent.model.contextWindow, maxTokens: parent.model.maxTokens },
-    thinkingLevel: parent.thinkingLevel, serviceTierByFamily: parent.serviceTierByFamily,
-    existingContextTokens: 0, outputCap: 8192, reasoningTokens: 0, visibleResultTokens: 8192,
-    outputMeaning: "reasoning_and_visible", outputLimitEnforced: true,
-    outputLimitSource: "owned-scripted-provider-capability-not-operating-model-proof", estimator: "utf8_bytes_upper_bound" });
+  const descriptor = () => {
+    const observed = observeModelMetadata(context, sdk, selection);
+    if (!observed) throw new Error("actual_parent_model_metadata_unavailable");
+    return observed;
+  };
   const nativeState = () => ({ model: descriptor().model, thinkingLevel: parent.thinkingLevel,
     serviceTierByFamily: structuredClone(parent.serviceTierByFamily) });
   const nativeInitial = nativeState();

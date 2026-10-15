@@ -157,6 +157,18 @@ class ProductRuntime:
                 raise RuntimeError("product_mirror_not_byte_identical")
             self.mirror_hashes[name] = digest
         (self.private / "project/sentinel").write_text("ORIGINAL")
+        fixture_worker_selector = "currentproduct/scripted:max"
+        fixture_model = {"id": "scripted", "name": "scripted", "contextWindow": 131072,
+                         "maxTokens": 8192, "reasoning": True}
+        fixture_model_table = {"worker": {"default": fixture_worker_selector},
+                               "providers": {"currentproduct": {
+                                   "api": "openai-completions", "auth": "none",
+                                   "baseUrl": f"http://127.0.0.1:{self.provider.server_port}/v1",
+                                   "models": [fixture_model]}}}
+        selection_digest = sha256(json.dumps(fixture_model_table, sort_keys=True, ensure_ascii=False,
+                                              separators=(",", ":")).encode()).hexdigest()
+        selection = {"source": "configured_worker_default", "selector": fixture_worker_selector,
+                     "modelTableDigest": selection_digest}
         (self.private / "agent/models.yml").write_text(
             "providers:\n  currentproduct:\n    api: openai-completions\n    auth: none\n"
             f"    baseUrl: http://127.0.0.1:{self.provider.server_port}/v1\n    models:\n"
@@ -175,6 +187,7 @@ class ProductRuntime:
         for name in ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy", "https_proxy", "all_proxy"):
             env[name] = proxy
         env.update(getattr(self, "extra_env", {}))
+        env["WORKBENCH_G3_SUMMARY_SELECTION"] = json.dumps(selection, sort_keys=True, separators=(",", ":"))
         argv = [shutil.which("omp"), "--thinking", "off", "--mode", "rpc", "--no-session", "--no-title",
                 "--no-extensions", "--no-skills", "--no-rules", "--no-pty", "--config",
                 str(self.private / "overlay.yml"), "--extension", str(getattr(self, "extension", HERE / "extension.ts")),
@@ -208,7 +221,9 @@ class ProductRuntime:
                       "provider": metadata["model"]["provider"], "context_limit_tokens": metadata["model"]["contextWindow"],
                       "harness": "current-product-" + sha256(b"".join(
                           file.read_bytes() for file in (HERE / "extension.ts", HERE / "runtime.py"))).hexdigest(),
-                      "selection_epoch": metadata["epoch"], "source": "product_adapter_readback"}
+                      "selection_epoch": metadata["epoch"], "selection_provenance": "owned_product_fixture_worker_default",
+                      "worker_default_selector": fixture_worker_selector, "model_table_sha256": selection_digest,
+                      "source": "product_adapter_readback"}
         self.argv = argv
         return self.route
 

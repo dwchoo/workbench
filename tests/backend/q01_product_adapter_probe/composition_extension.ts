@@ -6,6 +6,7 @@ import {toolWireSchema} from "@oh-my-pi/pi-ai";
 import {Tokenizer,fitOutputTokensToContextWindow} from "@oh-my-pi/pi-agent-core";
 import {getBundledAgent} from "@oh-my-pi/pi-coding-agent/task/agents";
 import {dispatchSummarySDK} from "../../../omp_bridge/g3/summary_sdk.ts";
+import {observeModelMetadata} from "../../../omp_bridge/g3/model_metadata.ts";
 const dir=process.env.Q01_PRODUCT_PRIVATE!;
 const log=(row:any)=>appendFileSync(dir+"/trace.jsonl",JSON.stringify({...row,pid:process.pid})+"\n");
 const digest=(s:string)=>createHash("sha256").update(s).digest("hex");
@@ -14,13 +15,11 @@ export default function probe(pi:any){ pi.on("session_start",(_e:any,ctx:any)=>{
 async function run(pi:any,ctx:any){
  const parent=AgentRegistry.global().list().find((e:any)=>e.session?.sessionManager.getSessionId()===ctx.sessionManager.getSessionId())?.session;
  if(!parent)throw Error("actual_parent_missing");
+ const selection=JSON.parse(process.env.WORKBENCH_G3_SUMMARY_SELECTION??"null");
  await parent.setActiveToolsByName(["read"]);
  const definition=getBundledAgent("task")!;
- const metadata=()=>({source:"parent_session_readback",epoch:"owned-parent-"+parent.sessionManager.getSessionId(),
- parentSessionId:parent.sessionManager.getSessionId(),model:{id:parent.model.id,provider:parent.model.provider,api:parent.model.api,
- baseUrl:parent.model.baseUrl,contextWindow:parent.model.contextWindow,maxTokens:parent.model.maxTokens},thinkingLevel:parent.thinkingLevel,
- serviceTierByFamily:parent.serviceTierByFamily,existingContextTokens:0,outputCap:8192,reasoningTokens:0,visibleResultTokens:8192,
- outputMeaning:"reasoning_and_visible",outputLimitEnforced:true,outputLimitSource:"owned-scripted-provider-contract",estimator:"utf8_bytes_upper_bound"});
+ const metadata=()=>{const observed=observeModelMetadata(ctx,{AgentRegistry},selection);
+ if(!observed)throw Error("actual_parent_model_metadata_unavailable");return observed;};
  writeFileSync(dir+"/metadata.json",JSON.stringify(metadata()));writeFileSync(dir+"/definition.txt",definition.systemPrompt);
  log({event:"ready",metadata:metadata(),definitionDigest:digest(definition.systemPrompt),skillDigest:digest(readFileSync(process.env.Q01_PRODUCT_SKILL!,"utf8")),parentTools:parent.getEnabledToolNames()});
  const deadline=Date.now()+30000;while(!existsSync(dir+"/prepared.json")&&Date.now()<deadline)await new Promise(r=>setTimeout(r,25));

@@ -179,6 +179,55 @@ class FeatureIntegrationIndependentTests(unittest.TestCase):
             "boundary": "catalog active identity lease before pressure; no injected helper error",
             "targetsRestored": list(original_targets), "activeUnchanged": True, "afterUnlock": "healthy"}))
 
+    def test_q01_owned_startup_selection_binds_fixture_worker_table_at_launch(self):
+        from tests.backend.q01_product_adapter_probe import runtime as q01
+        output = self.root / "q01-startup-env"
+        output.mkdir(mode=0o700)
+        runtime = q01.ProductRuntime(output)
+        for name in ("home", "project", "data", "socket-dir"):
+            (runtime.private / name).mkdir(parents=True, mode=0o700, exist_ok=True)
+        # A preexisting extra env value cannot relabel the fixture's selector.
+        runtime.extra_env = {"WORKBENCH_G3_SUMMARY_SELECTION": '{"source":"obsolete-fixture"}'}
+        captured = []
+        def launch(argv, **kwargs):
+            captured.append((list(argv), kwargs["env"].copy(), runtime.provider.server_port))
+            raise OSError("independent external Native launch boundary")
+        try:
+            with patch.object(q01.shutil, "which", return_value=str(self.binary)), \
+                 patch.object(q01.subprocess, "Popen", side_effect=launch):
+                with self.assertRaisesRegex(OSError, "independent external Native launch boundary"):
+                    runtime.prepare_route({})
+            self.assertEqual(len(captured), 1)
+            argv, env, port = captured[0]
+            selection = json.loads(env["WORKBENCH_G3_SUMMARY_SELECTION"])
+            selector = "currentproduct/scripted:max"
+            table = {"worker": {"default": selector}, "providers": {"currentproduct": {
+                "api": "openai-completions", "auth": "none", "baseUrl": f"http://127.0.0.1:{port}/v1",
+                "models": [{"id": "scripted", "name": "scripted", "contextWindow": 131072,
+                            "maxTokens": 8192, "reasoning": True}]}}}
+            expected_digest = sha256(json.dumps(table, sort_keys=True, ensure_ascii=False,
+                                                 separators=(",", ":")).encode()).hexdigest()
+            self.assertEqual(selection, {"source": "configured_worker_default", "selector": selector,
+                                         "modelTableDigest": expected_digest})
+            self.assertEqual(argv[argv.index("--model") + 1], "currentproduct/scripted")
+            self.assertEqual(argv[argv.index("--thinking") + 1], "off")
+            self.assertEqual(Path(env["PI_CODING_AGENT_DIR"]), runtime.private / "agent")
+            self.assertEqual(Path(env["PI_CONFIG_DIR"]), runtime.private / "config")
+            self.assertEqual(Path(env["HOME"]), runtime.private / "home")
+            self.assertTrue((runtime.private / "agent/models.yml").is_file())
+            self.assertNotIn("OPENAI_API_KEY", env)
+            self.assertEqual(runtime.posts, [])
+            self.assertIsNone(runtime.process)
+            self.assertFalse((runtime.private / "prepared.json").exists())
+            print("q01_owned_startup_env=" + json.dumps({"selection": selection,
+                "argv": argv, "boundary": "actual_prepare_route_external_Popen_refusal_no_Native",
+                "providerPosts": 0, "preparedFile": False}, sort_keys=True))
+        finally:
+            runtime.close()
+        self.assertTrue(runtime.closed)
+        self.assertFalse(runtime.thread.is_alive())
+        self.assertTrue(all(stream.closed for stream in runtime.streams))
+
     def producer(self):
         fixture = records.CompatibilityCoreTests()
         fixture.setUp()

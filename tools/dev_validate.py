@@ -1617,7 +1617,7 @@ def main(argv: list[str] | None = None) -> int:
 
 if __name__ == "__main__":
     if len(sys.argv) == 13 and sys.argv[1] == "--_cell-worker":
-        registry = {item.key: item for item in (*FAST_ITEMS, *PRECISE_ITEMS)}
+        registry = {item.key: item for item in (*FAST_ITEMS, *PRECISE_ITEMS, *FEATURE_ITEMS)}
         raise SystemExit(_cell_worker_main(registry[sys.argv[2]], int(sys.argv[3]), sys.argv[4], sys.argv[5],
                                           int(sys.argv[6]), int(sys.argv[7]), int(sys.argv[8]), int(sys.argv[9]),
                                           Path(sys.argv[10]), Path(sys.argv[11]), Path(sys.argv[12])))

@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 from contextlib import redirect_stdout
+from copy import deepcopy
+import ast
 import ctypes
 import io
 import json
@@ -13,6 +15,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
@@ -92,6 +95,126 @@ class IndependentRunnerContract(unittest.TestCase):
         for row in precise["items"][1:]:
             self.assertEqual((row["status"], row["collectedTests"], row["skippedTests"]),
                              ("inconclusive", 1, 1))
+
+    def test_module_entry_registry_preserves_core_and_matches_parallel_selection(self) -> None:
+        core_keys = ("harness_fixture", "launcher_skill_filter", "installed_plain_bash",
+            "compat_plain_bash", "compat_plain_dash", "compat_tmux_bash", "compat_tmux_dash",
+            "compat_herdr_bash", "compat_herdr_dash", "shell_selection", "review_busy_end",
+            "pause_end_no_replay", "pause_interrupts_manager_turn", "restart_worker_survivor_host",
+            "detach_active_work", "backend_restart_no_replay", "scripted_model_fault_holds",
+            "shutdown_confirmation", "core_metadata_raw_faults", "takeover_restart_no_replay")
+        feature_keys = ("new_storage_summary_raw_product_gates", "q01_product_adapter_recheck",
+                        "model_metadata", "product_full_dvl14")
+        selected = runner.FAST_ITEMS + runner.PRECISE_ITEMS + runner.FEATURE_ITEMS
+        self.assertEqual(tuple(item.key for item in selected), core_keys + feature_keys)
+        self.assertEqual(len({item.key for item in selected}), 24)
+        before = [deepcopy(vars(item)) for item in selected]
+        tree = ast.parse(Path(runner.__file__).read_text())
+        entry, = [node for node in tree.body if isinstance(node, ast.If)
+                  and any(isinstance(part, ast.Name) and part.id == "__name__"
+                          for part in ast.walk(node.test))]
+        branch = compile(ast.Module(body=[entry], type_ignores=[]), runner.__file__, "exec")
+        calls = []
+        def cell(*args):
+            calls.append(args)
+            return 79  # AST-controlled dispatch receipt, not a scenario result.
+        for index, item in enumerate(selected):
+            with self.subTest(item=item.key):
+                argv = ["tools.dev_validate", "--_cell-worker", item.key, str(index),
+                    "owned-entry-invocation", "owned-entry-nonce", str(os.getpid()), "1", "41", "42",
+                    str(self.parent / "namespace"), str(self.parent), str(self.omp_placeholder)]
+                namespace = {**vars(runner), "__name__": "__main__", "sys": SimpleNamespace(argv=argv),
+                             "_cell_worker_main": cell}
+                with patch("subprocess.Popen", side_effect=AssertionError("AST entry must not launch")):
+                    with self.assertRaises(SystemExit) as ended:
+                        exec(branch, namespace)
+                self.assertEqual(ended.exception.code, 79)
+                self.assertIs(calls[-1][0], item)
+                self.assertEqual(calls[-1][1:], (index, "owned-entry-invocation", "owned-entry-nonce",
+                    os.getpid(), 1, 41, 42, self.parent / "namespace", self.parent, self.omp_placeholder))
+                self.assertEqual(tuple(namespace["registry"]), core_keys + feature_keys)
+        scheduled = []
+        batches = []
+        def batch(items, *args):
+            batches.append([item.key for _, item in items])
+            scheduled.extend(items)
+            return [{"id": item.key, "status": "inconclusive"} for _, item in items], False
+        with patch.object(runner, "_run_cell_batch", side_effect=batch):
+            rows = runner._parallel_items(runner.PRECISE_ITEMS + runner.FEATURE_ITEMS,
+                                         self.parent, self.omp_placeholder, "owned-entry", 3)
+        self.assertEqual([index for index, _ in scheduled], list(range(3, 24)))
+        self.assertEqual([row["id"] for row in rows], list((core_keys + feature_keys)[3:]))
+        self.assertEqual([keys for keys in batches if len(keys) == 2],
+                         [["compat_tmux_bash", "compat_tmux_dash"]])
+        for (_, actual), expected in zip(scheduled, selected[3:]):
+            self.assertIs(actual, expected)
+        self.assertEqual([vars(item) for item in selected], before)
+        print("module_entry_ast=" + json.dumps({"coreKeys": core_keys, "featureKeys": feature_keys,
+            "parallelKeys": [row["id"] for row in rows], "boundary": "actual_entry_AST_external_cell_launch_double"}))
+
+    def test_fresh_module_entry_transports_feature_refusals_and_rejects_unknown_key(self) -> None:
+        # run_module executes the real complete module as __main__ in a fresh
+        # interpreter. Only a downstream Popen is prohibited at its external
+        # boundary; the real worker/parent guard, kernel readback and pipes run.
+        bootstrap = """
+import runpy, subprocess, sys
+def no_scenario_process(*args, **kwargs):
+    raise AssertionError('fixture forbids downstream driver/Native launch')
+subprocess.Popen = no_scenario_process
+sys.argv = ['tools.dev_validate', *sys.argv[1:]]
+runpy.run_module('tools.dev_validate', run_name='__main__')
+"""
+        features = ("new_storage_summary_raw_product_gates", "q01_product_adapter_recheck",
+                    "model_metadata", "product_full_dvl14")
+        receipts = []
+        for index, key in enumerate((*features, "unregistered-owned-fixture")):
+            with self.subTest(item=key):
+                control_read, control_write = os.pipe()
+                result_read, result_write = os.pipe()
+                child = None
+                try:
+                    argv = [sys.executable, "-B", "-c", bootstrap, "--_cell-worker", key, str(index),
+                        "owned-process-invocation", "owned-process-nonce", str(os.getpid()), "0",
+                        str(control_write), str(result_write), str(self.parent / "unused-namespace"),
+                        str(self.parent), str(self.omp_placeholder)]
+                    child = subprocess.Popen(argv, cwd=ROOT, env=os.environ.copy(),
+                        stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                        pass_fds=(control_write, result_write), start_new_session=True)
+                    os.close(control_write); control_write = None
+                    os.close(result_write); result_write = None
+                    stdout, stderr = child.communicate(timeout=10)
+                    raw = os.read(result_read, 65_537)
+                    self.assertEqual(os.read(control_read, 65_537), b"")
+                    self.assertEqual(stdout, b"")
+                    if key not in features:
+                        self.assertNotEqual(child.returncode, 0)
+                        self.assertEqual(raw, b"")
+                        receipts.append({"item": key, "exitCode": child.returncode, "envelope": False})
+                        continue
+                    self.assertEqual((child.returncode, stderr), (0, b""))
+                    envelope = json.loads(raw)
+                    self.assertEqual((envelope["item"], envelope["invocation"], envelope["nonce"]),
+                                     (key, "owned-process-invocation", "owned-process-nonce"))
+                    self.assertEqual(envelope["workerPid"], child.pid)
+                    self.assertGreater(envelope["workerStartTicks"], 0)
+                    row = envelope["result"]
+                    self.assertEqual((row["id"], row["status"], row["collectedTests"], row["skippedTests"]),
+                                     (key, "inconclusive", 0, 0))
+                    self.assertIn("parent identity changed before start", row["reason"])
+                    self.assertEqual(row["cleanup"], {"remaining": [], "namespaceRemoved": None})
+                    self.assertFalse((self.parent / "unused-namespace").exists())
+                    self.assertFalse(Path(f"/proc/{child.pid}").exists())
+                    receipts.append({"item": key, "exitCode": child.returncode,
+                        "workerPid": child.pid, "workerStartTicks": envelope["workerStartTicks"],
+                        "status": row["status"], "collected": 0})
+                finally:
+                    if child is not None and child.poll() is None:
+                        child.kill()
+                        child.communicate(timeout=2)
+                    for fd in (control_read, control_write, result_read, result_write):
+                        if fd is not None: os.close(fd)
+        print("module_entry_real_process=" + json.dumps({"receipts": receipts,
+            "boundary": "fresh_python_actual_module_entry_IPC_parent_refusal_not_scenario_execution"}))
 
     def test_zero_and_fully_skipped_collections_never_pass(self) -> None:
         empty = runner.Item("empty", ("DV-AC-04",),

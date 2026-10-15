@@ -30,7 +30,7 @@ import probe_dvl02_c2_escape as probe  # noqa: E402
 ESC_TRACE_FIXTURE = HERE / "fixtures/c2_manager_esc_trace.json"
 
 
-def _original_esc_attempt():
+def _original_esc_attempt(*, include_open=False):
     """Execute the actual Esc send/predicate/capture and original assertion only.
 
     Other C2 input stages require a live terminal and are deliberately not run.
@@ -46,17 +46,91 @@ def _original_esc_attempt():
     function = ast.FunctionDef(
         name="attempt", args=ast.arguments(posonlyargs=[], args=[ast.arg(arg=name)
             for name in ("self", "pane", "r")], kwonlyargs=[], kw_defaults=[], defaults=[]),
-        body=loop.body[capture - 2:capture + 1] + [loop.body[-1]], decorator_list=[])
-    namespace = {}
+        body=loop.body[capture - (3 if include_open else 2):capture + 1] + [loop.body[-1]],
+        decorator_list=[])
+    namespace = {"_hotkeys_completion_visible": probe.live._hotkeys_completion_visible}
     exec(compile(ast.fix_missing_locations(ast.Module(body=[function], type_ignores=[])),
                  probe.live.__file__, "exec"), namespace)
     return namespace["attempt"]
+
+
+def _rendered_menu_ui(text):
+    """The real owner emulator, fed fixture bytes without opening a PTY."""
+    ui = probe.h.Ui.__new__(probe.h.Ui)
+    screen, stream = probe.h.screen_classes()
+    ui.screen = screen(160, 12)
+    ui.stream = stream(ui.screen)
+    ui.raw, ui.raw_limit, ui.total_bytes = bytearray(), 1 << 20, 0
+    ui.osc52, ui._osc_tail = [], b""
+    ui._feed(text.encode())
+    return ui
 
 
 class C2ProbeIndependentTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
         OUTPUT.mkdir(mode=0o700, parents=True, exist_ok=True)
+
+    def test_menu_predicates_distinguish_command_row_from_retained_tip(self) -> None:
+        # Command row shape is from pinned public OMP source, not a Native capture.
+        tip = "Tip: see /hotkeys for your exit key"
+        row = "> hotkeys  Show all keyboard shortcuts"
+        states = [("menu", row + "\r\n/hot", True, False),
+                  ("row_only", row, True, False),
+                  ("retained_tip_and_draft", tip + "\r\n/hot", False, True),
+                  ("tip_only", tip, False, True),
+                  ("tip_and_menu", tip + "\r\n" + row + "\r\n/hot", True, False)]
+        attempt = _original_esc_attempt(include_open=True)
+        for name, text, opened, closed in states:
+            with self.subTest(state=name):
+                ui = _rendered_menu_ui(text)
+                waits = []
+                ui.wait = lambda predicate, timeout: (waits.append(timeout), predicate())[1]
+                ui.keys = mock.Mock()
+                report = SimpleNamespace(data={})
+                owner = SimpleNamespace(ui=ui, report=report, outer_name="plain", shell="dash")
+                owner._retain_esc_failure = probe.live.CompatRun._retain_esc_failure.__get__(owner)
+                flags = dict.fromkeys(("typed_visible", "alt_enter_newline", "ctrl_c_cleared",
+                                       "hangul_composer", "alive"), True)
+                # A static closed screen cannot also prove that opening succeeded.
+                with self.assertRaises(AssertionError):
+                    attempt(owner, "manager_omp", flags)
+                self.assertIs(flags["slash_menu"], opened)
+                self.assertIs(flags["esc_closed_menu"], closed)
+                self.assertEqual(waits, [5, 3])
+                ui.keys.assert_called_once_with(b"\x1b", gap=1.0)
+
+    def test_esc_requires_menu_row_to_disappear_despite_retained_tip(self) -> None:
+        attempt = _original_esc_attempt(include_open=True)
+        tip = "Tip: see /hotkeys for your exit key\r\n"
+        menu = "> hotkeys  Show all keyboard shortcuts\r\n"
+        for remains, tip_and_draft in ((False, True), (True, True), (False, False), (True, False)):
+            with self.subTest(menu_remains=remains, tip_and_draft=tip_and_draft):
+                prefix, draft = (tip, "/hot") if tip_and_draft else ("", "")
+                ui = _rendered_menu_ui(prefix + menu + draft)
+                waits = []
+                ui.wait = lambda predicate, timeout: (waits.append(timeout), predicate())[1]
+                def esc(*args, **kwargs):
+                    self.assertEqual((args, kwargs), ((b"\x1b",), {"gap": 1.0}))
+                    ui._feed(("\x1b[2J\x1b[H" + prefix + (menu if remains else "") + draft).encode())
+                ui.keys = esc
+                with mock.patch.object(probe.h, "_first_line", return_value="fixture-no-native"):
+                    report = probe.h.ScenarioReport("menu-transition-fixture")
+                owner = SimpleNamespace(ui=ui, report=report, outer_name="plain", shell="dash")
+                owner._retain_esc_failure = probe.live.CompatRun._retain_esc_failure.__get__(owner)
+                flags = dict.fromkeys(("typed_visible", "alt_enter_newline", "ctrl_c_cleared",
+                                       "hangul_composer", "alive"), True)
+                runner = probe.h.StepRunner(report)
+                self.assertEqual(runner.run("C2", lambda: attempt(owner, "manager_omp", flags)),
+                                 probe.h.FAIL if remains else probe.h.PASS)
+                self.assertTrue(flags["slash_menu"])
+                self.assertIs(flags["esc_closed_menu"], not remains)
+                self.assertEqual(waits, [5, 3])
+                if remains:
+                    self.assertIn("esc_closed_menu", report.data["steps"]["C2"]["assertion"])
+                    self.assertEqual(report.data["c2_esc_failure"]["omp_input_delivery"], "unknown")
+                else:
+                    self.assertNotIn("c2_esc_failure", report.data)
 
     def test_successful_esc_adds_no_buffer_observation_or_diagnostic_io(self) -> None:
         attempt = _original_esc_attempt()
@@ -82,8 +156,9 @@ class C2ProbeIndependentTests(unittest.TestCase):
     def test_failed_esc_retains_bounded_outer_buffers_in_normal_failed_report(self) -> None:
         attempt = _original_esc_attempt()
         ui = probe.h.Ui.__new__(probe.h.Ui)
-        ui.screen = SimpleNamespace(display=["unrelated fixture text"] +
-                                     [f"/hot hotkeys line {i} " + "x" * 200 for i in range(12)])
+        ui.screen = SimpleNamespace(display=["unrelated fixture text", "/hot"] +
+                                     [f"hotkeys  Show all keyboard shortcuts {i} " + "x" * 200
+                                      for i in range(12)])
         ui.raw = bytearray(bytes(range(256)) * 20)
         ui.total_bytes = len(ui.raw) + 1000
         events = []

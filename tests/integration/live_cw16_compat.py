@@ -425,6 +425,11 @@ def _find_pane(value: Any) -> str | None:
 OUTER_TYPES = {"plain": PlainOuter, "tmux": TmuxOuter, "herdr": HerdrOuter}
 
 
+def _hotkeys_completion_visible(text: str) -> bool:
+    """Match the command row, not a startup Tip mentioning /hotkeys."""
+    return re.search(r"(?<![/\w])hotkeys[ \t]+Show all keyboard shortcuts\b", text) is not None
+
+
 # ============================================================================================ scenario
 class CompatRun:
     """C1-C7 for one outer x host shell. Results go to ``compat-<outer>-<shell>.json``."""
@@ -613,10 +618,9 @@ class CompatRun:
             self.ui.keys(b"\x03", gap=1.0)
             r["ctrl_c_cleared"] = self.ui.wait(lambda: m1 not in self.ui.text() and m2 not in self.ui.text(), 4)
             self.ui.type("/hot", gap=0.05)
-            r["slash_menu"] = self.ui.wait(lambda: "hotkeys" in self.ui.text(), 5)
+            r["slash_menu"] = self.ui.wait(lambda: _hotkeys_completion_visible(self.ui.text()), 5)
             self.ui.keys(b"\x1b", gap=1.0)
-            r["esc_closed_menu"] = self.ui.wait(lambda: "/hot" not in self.ui.text()
-                                                or "hotkeys" not in self.ui.text(), 3)
+            r["esc_closed_menu"] = self.ui.wait(lambda: not _hotkeys_completion_visible(self.ui.text()), 3)
             self._retain_esc_failure(pane, r["esc_closed_menu"])
             self.ui.keys(b"\x15", gap=0.4)  # Ctrl-U: clear whatever is left, no exit arming
             hangul_m = f"한글{self.hex}"

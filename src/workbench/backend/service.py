@@ -909,7 +909,9 @@ class Backend:
         if self.summary_runtime is not None:
             return None
         peer = self.bridge.peer("manager")
-        return self.summary_adapter.read_runtime(expected_peer=(peer.session_id, peer.generation))
+        runtime = self.summary_adapter.read_runtime(expected_peer=(peer.session_id, peer.generation))
+        return {**runtime, "writer": {"python": sys.executable,
+            "moduleRoot": str(Path(__file__).resolve().parents[2]), "dataRoot": str(self.layout.root)}}
 
     def _summary_compatibility_observation(self) -> dict:
         """Snapshots read the last check only; never invoke admission or hash runtime."""

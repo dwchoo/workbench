@@ -358,6 +358,11 @@ class SummaryScheduler:
                 runtime = self.runtime()
                 if not isinstance(runtime, dict):
                     raise SummaryDeferred("model_metadata_unavailable")
+                writer = runtime.get("writer")
+                if (not isinstance(writer, dict) or set(writer) != {"python", "moduleRoot", "dataRoot"}
+                        or any(not isinstance(value, str) or not os.path.isabs(value) or "\0" in value
+                               for value in writer.values())):
+                    raise SummaryDeferred("startup_configuration_unavailable")
                 prior = journal.latest_summary_receipt(subject)
                 prior_entry = sink.summary_entry(prior["entry_id"]) if prior else None
                 if prior is not None and prior_entry is None:
@@ -404,7 +409,7 @@ class SummaryScheduler:
                 # Sending is deliberately persisted before the socket claim. Crash
                 # here is unknown, never optimistically replayed after restart.
                 response = self.adapter.dispatch_outcome(prepared, expected_peer=expected_peer,
-                                                        authority_token=token, writer=runtime["writer"])
+                                                        authority_token=token, writer=writer)
                 sent = response.get("sent") is not False  # absent evidence is unknown
                 reason = str(response.get("reason", response.get("status", "summary_outcome_unknown")))[:256]
                 budget = reason in BUDGET_REASONS

@@ -7,6 +7,7 @@ from hashlib import sha256
 from pathlib import Path
 import os
 import tempfile
+import sys
 import threading
 import time
 import unittest
@@ -68,7 +69,10 @@ class SchedulerTests(unittest.TestCase):
         self.start()
         _, self.metadata = request_fixture(self.root / "fixture", ["work"])
         self.runtime = {"metadata": self.metadata, "instructions": "existing task definition",
-                        "expected_peer": (str(uuid4()), 1), "writer": {}}
+                        "expected_peer": (str(uuid4()), 1),
+                        "writer": {"python": sys.executable,
+                                   "moduleRoot": str(Path(__file__).resolve().parents[2] / "src"),
+                                   "dataRoot": str(self.root)}}
         self.factory = lambda: TaskRepository(self.layout.tasks)
         self.compat = Compat()
         self.adapter = Adapter(self.root)

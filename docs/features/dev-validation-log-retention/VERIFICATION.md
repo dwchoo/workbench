@@ -1,12 +1,35 @@
 # 최종 통합 검증
 
-상태: `814fb71`에서 관련 feature 통합 4개 항목과 Q01 scripted 판별 8개가 통과했다. 실제 Backend의 요약·저장·조회·장애 처리와 소유 자원 정리를 확인했다. 후속 테스트 정정 커밋 `30ff1d8`·`fae0d04`는 제품 코드를 바꾸지 않았으며, `fae0d04`의 실제 fast 3개 항목도 통과했다. 같은 최종 후보의 28개 AC·46개 required gate 전체는 아직 통과 판정하지 않았다.
+상태: 구현 후보 `7e67fe2`에서 plain·tmux·Herdr의 Bash/sh 여섯 조합과 SEL1~3을 검증했다. 변경하지 않은 제품·실행 입력의 실제 Backend 요약·저장·조회와 Q01 근거를 재사용하고, 28개 AC·46개 required gate의 근거를 대조했다. 단일 전체 실행의 성공과 범위별 근거 재사용을 구분하며, 최종 gate 판정은 별도 검증 기록을 따른다.
 이 문서는 이전 부분 결과·C2 hold·실패를 변경하지 않는다.
 
 기준은 [DVL-13](tickets/DVL-13.md), [SPEC §11](SPEC.md#11-수락-조건-추적과-시험-결정),
 [PLAN의 gate_items](PLAN.json)이다. 실행법은 [DEVELOPMENT](DEVELOPMENT.md)를 따른다.
 
-## 최신 결과 (2026-10-15)
+## 최신 결과 (2026-10-16)
+
+사용자가 채택한 LG-D30~33에 따라 다섯 안전 조건을 검증하고, 변경과 무관한 전체 검사를 반복하지 않았다.
+[항목별 근거](../../../.workflow/dev-validation-log-retention/runs/dvl13-20261015/final-integration01/required46-final-audit01.json)와
+[독립 범위 대조](../../../.workflow/dev-validation-log-retention/runs/dvl13-20261015/final-integration01/final-coverage-assessment01.json)를 함께 확인한다.
+미실행 testcase와 operating model 의미의 unknown은 통과로 바꾸지 않는다.
+
+| 범위 | 실제 관측과 근거 |
+|---|---|
+| 메뉴 검사 정정 | 시작 안내문의 `/hotkeys`를 메뉴로 잘못 인식한 test-only 결함이었다. 실제 메뉴 행으로 열림·닫힘을 판정하고, draft 부재만으로 통과시키던 조건을 제거했다. 독립 11개 테스트와 fresh review 뒤 `7e67fe2`로 커밋했다. 제품 입력·대기 시간·나머지 assertion은 유지했다. |
+| 외부 terminal·shell | [plain/sh](../../../.workflow/dev-validation-log-retention/runs/dvl13-20261015/final-integration01/c2-tip-native01-outcome.json)와 [나머지 조합](../../../.workflow/dev-validation-log-retention/runs/dvl13-20261015/final-integration01/c2-matrix03-outcome.json)에서 C1~C7 및 SEL1~3이 통과했다. plain의 C6는 기존 계약대로 해당 없음이다. |
+| Native 비용 비교 | 같은 후보·도구·환경의 tmux Bash/sh 두 항목은 순차 285.659초, 병렬 155.990초였다. 비교 identity·수집 수·assertion·정리 근거가 일치했다. 이 국소 비교를 전체 precise 성능으로 일반화하지 않는다. 원 Native02의 3055.069초는 600초 목표를 초과한 기록으로 유지한다. |
+| 실제 통합과 재사용 | [Native02 원본](../../../.workflow/dev-validation-log-retention/runs/dvl13-20261015/final-integration01/final-precise02/report.json)은 114개 수집, 24항목 중 23개 성공·C2 fixture 1개 실패로 보존한다. 실제 61.1초 점검·67.3초 detach, 314.706초 요약, Backend 24개 확인과 전용 raw 582,480,635B는 변경 영향 밖의 유효 근거다. 이를 새 단일 24항목 성공으로 재표시하지 않는다. |
+| Q01·제품 근거 | [현재 입력 대조](../../../.workflow/dev-validation-log-retention/runs/dvl13-20261015/final-integration01/current-runtime-applicability03.json)에서 제품 137개와 개발 7개 entry 및 설치 binary가 일치했다. Q01 원본 8개 판별과 hashed log를 보존한다. metadata getter 성공과 context·output enforce·reasoning 의미의 unknown을 구분한다. |
+| 실제 모델 시험 | [이미 승인한 작은 실제 요약](../../../.workflow/dev-validation-log-retention/runs/dvl14-20261015/real-summary01/actual-trial-outcome.json)은 Worker.default로 입력 → 요약 → DB 저장 → readonly 조회를 22.96초에 확인했다. 인증 파일은 내용을 표시하지 않고 임시 복사본만 사용·정리했으며 시험을 반복하지 않았다. |
+| 정리 | 이번 matrix에서 기록한 PID/startTicks 185건과 namespace 10개가 남아 있지 않았고 임시 HOME·TMPDIR을 제거했다. 기존 Native02의 정리 근거도 별도로 보존한다. 과거 두 임시 경로 삭제 사건의 영향 unknown을 이번 성공으로 지우지 않는다. |
+
+요약 표현·중요도·일부 누락의 품질 편차는 허용한다. provider의 output/reasoning 의미와 프로세스 내부 전체 I/O 귀속은 미검증 한계로 남긴다.
+관련 행동이 별도 근거로 확인된 quoted-root launcher testcase와 과거 특정 batch/hash에 결속된 collector·measurement testcase는 미실행 상태로 유지한다.
+과거 C2 실패 원인을 새 메뉴 검사 정정으로 소급해 확정하지 않는다. C2 hold와 실제 사용자 raw 순환 삭제 OFF는 그대로다.
+
+## 이전 검증 (2026-10-15)
+
+이하의 현재·남은 항목 표현은 당시 관측 시점의 기록이다. 최신 범위 대조는 위 결과를 따른다.
 
 [원본 실행](../../../.workflow/dev-validation-log-retention/runs/dvl13-20261015/final-integration01/fresh-feature4-05/report.json)과
 [범위별 결과](../../../.workflow/dev-validation-log-retention/runs/dvl13-20261015/final-integration01/fresh-feature4-outcome05.json)는

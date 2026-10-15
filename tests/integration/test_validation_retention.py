@@ -3,7 +3,7 @@ from contextlib import redirect_stdout
 import ast
 from copy import deepcopy
 from hashlib import sha256
-from io import StringIO
+from io import BytesIO, StringIO
 import json
 import os
 from pathlib import Path
@@ -181,6 +181,7 @@ class FeatureIntegrationIndependentTests(unittest.TestCase):
 
     def test_q01_owned_startup_selection_binds_fixture_worker_table_at_launch(self):
         from tests.backend.q01_product_adapter_probe import runtime as q01
+        from tests.backend.test_summary_model_budget_independent import metadata as fixture_metadata
         output = self.root / "q01-startup-env"
         output.mkdir(mode=0o700)
         runtime = q01.ProductRuntime(output)
@@ -191,16 +192,42 @@ class FeatureIntegrationIndependentTests(unittest.TestCase):
         captured = []
         def launch(argv, **kwargs):
             captured.append((list(argv), kwargs["env"].copy(), runtime.provider.server_port))
-            raise OSError("independent external Native launch boundary")
+            selection = json.loads(kwargs["env"]["WORKBENCH_G3_SUMMARY_SELECTION"])
+            # An external readback double drives the actual return path. The
+            # separate installed-runtime check supplies decisive SDK evidence.
+            observed = fixture_metadata()
+            model = {"provider": "currentproduct", "id": "scripted", "api": "openai-completions",
+                "baseUrl": f"http://127.0.0.1:{runtime.provider.server_port}/v1",
+                "contextWindow": 131072, "maxTokens": 8192, "tokenizer": None}
+            observed.update(model=model, epoch="owned-external-readback-epoch", thinkingLevel="off", outputCap=8192)
+            observed["childSelection"].update(selector=selection["selector"], model=model,
+                modelTableDigest=selection["modelTableDigest"], thinkingLevel="xhigh")
+            write_private_json(runtime.private / "metadata.json", observed)
+            write_private_json(runtime.private / "trace.jsonl", {"event": "ready",
+                "definitionDigest": "a" * 64, "skillDigest": "b" * 64, "metadata": observed})
+            return SimpleNamespace(stdin=BytesIO(), poll=lambda: 0)
         try:
             with patch.object(q01.shutil, "which", return_value=str(self.binary)), \
                  patch.object(q01.subprocess, "Popen", side_effect=launch):
-                with self.assertRaisesRegex(OSError, "independent external Native launch boundary"):
-                    runtime.prepare_route({})
+                route = runtime.prepare_route({})
+            self.assertEqual(set(route), {"route", "role", "agent_definition_sha256", "skill_sha256",
+                "resolved_model", "provider", "context_limit_tokens", "harness", "selection_epoch", "source"})
+            self.assertEqual(route["selection_epoch"], "owned-external-readback-epoch")
+            self.assertEqual((route["resolved_model"], route["context_limit_tokens"]),
+                             ("currentproduct/scripted", 131072))
+            self.assertEqual((route["agent_definition_sha256"], route["skill_sha256"]), ("a" * 64, "b" * 64))
+            mirrors = ("omp_bridge/g3/summary_sdk.ts", "omp_bridge/g3/model_metadata.ts",
+                       "omp_bridge/contract/logs_v1.ts", "omp_bridge/skills/important-log-summary/SKILL.md",
+                       "src/workbench/contracts/summary_compat_policy_v1.json")
+            self.assertEqual(set(runtime.mirror_hashes), set(mirrors))
+            for name in mirrors:
+                raw = (runtime.private / "product-mirror" / name).read_bytes()
+                self.assertEqual(raw, (ROOT / name).read_bytes())
+                self.assertEqual(sha256(raw).hexdigest(), runtime.mirror_hashes[name])
             self.assertEqual(len(captured), 1)
             argv, env, port = captured[0]
             selection = json.loads(env["WORKBENCH_G3_SUMMARY_SELECTION"])
-            selector = "currentproduct/scripted:max"
+            selector = "currentproduct/scripted:xhigh"
             table = {"worker": {"default": selector}, "providers": {"currentproduct": {
                 "api": "openai-completions", "auth": "none", "baseUrl": f"http://127.0.0.1:{port}/v1",
                 "models": [{"id": "scripted", "name": "scripted", "contextWindow": 131072,
@@ -217,10 +244,10 @@ class FeatureIntegrationIndependentTests(unittest.TestCase):
             self.assertTrue((runtime.private / "agent/models.yml").is_file())
             self.assertNotIn("OPENAI_API_KEY", env)
             self.assertEqual(runtime.posts, [])
-            self.assertIsNone(runtime.process)
             self.assertFalse((runtime.private / "prepared.json").exists())
             print("q01_owned_startup_env=" + json.dumps({"selection": selection,
-                "argv": argv, "boundary": "actual_prepare_route_external_Popen_refusal_no_Native",
+                "argv": argv, "route": route, "mirrors": runtime.mirror_hashes,
+                "boundary": "actual_prepare_route_external_readback_double_no_Native",
                 "providerPosts": 0, "preparedFile": False}, sort_keys=True))
         finally:
             runtime.close()

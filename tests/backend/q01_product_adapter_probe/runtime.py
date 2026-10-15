@@ -144,7 +144,8 @@ class ProductRuntime:
         for name in ("agent", "config"):
             (self.private / name).mkdir(mode=0o700, exist_ok=True)
         mirror = self.private / "product-mirror"
-        mirrors = ("omp_bridge/g3/summary_sdk.ts", "omp_bridge/contract/logs_v1.ts",
+        mirrors = ("omp_bridge/g3/summary_sdk.ts", "omp_bridge/g3/model_metadata.ts",
+                   "omp_bridge/contract/logs_v1.ts",
                    "omp_bridge/skills/important-log-summary/SKILL.md",
                    "src/workbench/contracts/summary_compat_policy_v1.json")
         self.mirror_hashes = {}
@@ -157,7 +158,7 @@ class ProductRuntime:
                 raise RuntimeError("product_mirror_not_byte_identical")
             self.mirror_hashes[name] = digest
         (self.private / "project/sentinel").write_text("ORIGINAL")
-        fixture_worker_selector = "currentproduct/scripted:max"
+        fixture_worker_selector = "currentproduct/scripted:xhigh"
         fixture_model = {"id": "scripted", "name": "scripted", "contextWindow": 131072,
                          "maxTokens": 8192, "reasoning": True}
         fixture_model_table = {"worker": {"default": fixture_worker_selector},
@@ -221,8 +222,7 @@ class ProductRuntime:
                       "provider": metadata["model"]["provider"], "context_limit_tokens": metadata["model"]["contextWindow"],
                       "harness": "current-product-" + sha256(b"".join(
                           file.read_bytes() for file in (HERE / "extension.ts", HERE / "runtime.py"))).hexdigest(),
-                      "selection_epoch": metadata["epoch"], "selection_provenance": "owned_product_fixture_worker_default",
-                      "worker_default_selector": fixture_worker_selector, "model_table_sha256": selection_digest,
+                      "selection_epoch": metadata["epoch"],
                       "source": "product_adapter_readback"}
         self.argv = argv
         return self.route

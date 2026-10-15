@@ -2669,6 +2669,35 @@
       "preserved": "gate IDs/levels/의존 graph, 실제 descriptor/요청·권한·도구 결속, DB-only/no replay/32KiB 전송·8KiB 결과/C2 hold/actual raw off",
       "history": "원 bundle/requirements identity와 과거 실패/관측 보존; 실제 관측 없는 의미/비용을 pass로 바꾸지 않음",
       "alignment_pending": "runtime 구현·독립 테스트·리뷰·제품 record/admission 소비자 정렬 후 actual configured model 관측 및 작은 실요약"
+    },
+    {
+      "decision_id": "LG-D31",
+      "date": "2026-10-15",
+      "record": "BRIEF.md#lg-d31--실용-기능-완성과-다섯-안전-조건-2026-10-15",
+      "authority_record": "../../../.workflow/dev-validation-log-retention/runs/practical-five-boundary-20261015/decision.json",
+      "direction": "기본 안전 조건 아래 사용 가능한 작업 기록·요약·조회 완성 우선. 표현·중요도·일부 누락의 품질 편차 허용; 완벽한 요약/반복 품질 평가/자동 교정/포괄적 고장 증명을 완료 조건으로 확대하지 않음.",
+      "required_boundaries": [
+        "DB-only와 host 고정 writer 저장 경계",
+        "Task·command 및 입력 범위 귀속",
+        "sent/unknown 자동 재전송 금지와 확정 not_sent 구분",
+        "실패 상태·최소 원인 및 정상 기록 보존, main 작업 불필요 중단 금지",
+        "전용 임시 환경과 사용자 파일·설정·DB·세션 보호, 성공/실패 소유 자원 정리·잔여 보고"
+      ],
+      "verification": "유효 근거 재사용과 관련 변경 묶음 독립 테스트/리뷰. 필요한 최종 통합 검증 수행; 무관 전체 검사 반복 및 실제 결함과 무관한 견고화/성능 개선 확대 금지.",
+      "affected": [
+        "DVL-08",
+        "DVL-09",
+        "DVL-10",
+        "DVL-13",
+        "DVL-14",
+        "Q01",
+        "MODEL-metadata",
+        "PRODUCT-evidence",
+        "INT-runtime"
+      ],
+      "preserved": "기존 mandatory gate IDs/levels/의존 graph·28 AC·46 gate 및 미검증 상태; DB-only/작업결속/no replay/실패표시/검증격리; Worker.default·단순 기본값; C2 hold/actual raw off",
+      "real_trial": "관련 개발 검증 뒤 이미 승인한 작은 실제 입력→요약→DB저장→조회 확인; 반복 품질 평가나 자동교정으로 확대하지 않음",
+      "history": "원 승인 bundle/requirements와 과거 실패/관측 보존. 문서 정렬만으로 gate pass 또는 실모델 품질/전체 완료를 선언하지 않음."
     }
   ]
 }

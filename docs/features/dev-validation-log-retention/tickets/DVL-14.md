@@ -78,3 +78,9 @@ R4는 공유현재session/격리생성context 해석의 전송전 read-back으�
 ## LG-D30 후속 승인 (2026-10-14)
 
 요약 child 모델은 기존 model table의 Worker.default를 실제 Manager registry descriptor로 해석하고 부모 readback과 별도로 결속한다. 부모 session·설정·기존 SDK route는 유지한다. 최초10%/8192 비용 quota와 미확인 출력 의미의 차단을 제거하며, 기존 전송32KiB·DB결과8KiB·SDK context fitting/no replay를 유지한다. 출력 요청 min(8192, model.maxTokens)은 host 기본값이고 provider enforce 증거가 아니다. 제품 record/admission 소비자도 이 승인에 맞춰 정렬해야 하며, 이 문서 변경만으로 전체 제품 verifier/운영 MODEL gate를 통과시키지 않는다. 개발 검증 뒤 작은 실제 요약 시험을 진행하고 과도한 예산 정책을 추가하지 않는다.
+
+## LG-D31 후속 방향 (2026-10-15)
+
+[BRIEF LG-D31](../BRIEF.md#lg-d31--실용-기능-완성과-다섯-안전-조건-2026-10-15)의 다섯 안전 조건을 실제 실행 경로에서 검증하며 작업 기록·요약·조회 기능 완성을 우선한다. 요약 표현·중요도·일부 누락의 품질 편차는 허용하고 반복 품질 평가·자동 교정·포괄적 내부 고장 증명을 추가하지 않는다. 기존 구조적 DB 계약·권한·귀속·no replay·실패 표시·격리/정리는 유지한다.
+
+기존 유효 근거와 구현을 재사용하고 관련 변경을 묶어 독립 테스트·리뷰한다. 실제 결함과 직접 연결되지 않는 견고화·성능 개선은 후속으로 남긴다. 필수 gate를 삭제하거나 unknown을 pass로 올리지 않는다. 관련 개발 검증 뒤 Worker.default로 이미 승인한 작은 실제 입력 → 요약 → DB 저장 → 조회 시험을 수행하며, C2 hold·실제 raw 순환 삭제 비활성은 유지한다.

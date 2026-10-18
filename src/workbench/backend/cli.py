@@ -377,14 +377,34 @@ def _important_print(result: dict, args: argparse.Namespace) -> None:
         print(json.dumps(result, sort_keys=True, ensure_ascii=False))
         return
     if args.logs_action == "status":
+        from workbench.storage.important_log.maintenance import RETENTION_DAYS, TARGET_BYTES
+
         count, size = result.get("databaseCount"), result.get("physicalBytes")
-        if result.get("complete") and type(count) is int:
-            print(f"important DB {count}개 · 총 물리 크기 {size} bytes · active {result.get('active')}")
+        complete = result.get("complete") is True
+        if complete and type(count) is int and type(size) is int:
+            print(f"important DB {count}개 · 총 물리 크기 {_status_bytes(size)} · active {result.get('active')}")
             if count >= 2:
                 print("경고: 여러 중요 로그 DB가 남아 있습니다. 'logs important status --json'으로 UUID와 크기를 "
                       "확인하고 'logs important delete-db --db UUID'로 사용자 정리를 진행하세요")
         else:
-            print("important DB 수·크기 확인 불가")
+            print("important DB 상태: 일부 또는 확인 불가")
+            count_text = f"{count}개" if type(count) is int and count >= 0 else "미확인"
+            print(f"DB 수: {count_text} · 물리 크기: {_status_bytes(size)}")
+        databases = result.get("databases")
+        if isinstance(databases, list):
+            for row in databases:
+                if not isinstance(row, dict):
+                    continue
+                identity = row.get("dbUuid") or "UUID 미확인"
+                role = row.get("role") or "unknown"
+                availability = row.get("availability") or "unknown"
+                print(f"  DB {identity} · role={role} · 물리 크기 {_status_bytes(row.get('physicalBytes'))}"
+                      f" · 상태={availability}")
+                if role == "orphan":
+                    print("    orphan은 확인 불가 상태이며 archive로 추정하거나 삭제 대상으로 안내하지 않습니다")
+        print(f"활성 DB 보관 안내: {_status_bytes(TARGET_BYTES)} 논리 용량 목표이며 전체 물리 용량 상한이 아닙니다")
+        print(f"보관 기간: {RETENTION_DAYS}일은 보관 종료 시점부터 계산하며 용량 압박 시 더 일찍 정리될 수 있습니다")
+        print("archive DB는 자동 삭제되지 않습니다. 수동 정리는 사용자가 UUID를 선택해 명시적으로 진행합니다")
         print(summary_compatibility_text(result.get("compatibility")))
     elif args.logs_action == "list":
         for row in result.get("subjects", []):
@@ -465,6 +485,78 @@ def cmd_raw_rotation(args: argparse.Namespace) -> int:
         return EXIT_FAILURE
 
 
+def _status_bytes(value: object) -> str:
+    if type(value) is int and value >= 0:
+        return f"{value:,} B"
+    return "미확인"
+
+
+def _raw_status_print(result: dict) -> None:
+    from workbench.storage.log_raw.segments import SEGMENT_COUNT, SEGMENT_LIMIT
+
+    legacy = result.get("legacy")
+    legacy = legacy if isinstance(legacy, dict) else {}
+    segmented = result.get("segmented_v1")
+    segmented = segmented if isinstance(segmented, dict) else {}
+    rotation = result.get("rotation")
+    rotation = rotation if isinstance(rotation, dict) else {}
+
+    activation = rotation.get("activated")
+    if type(activation) is not bool:
+        activation_value = result.get("activation")
+        activation = True if activation_value == "enabled" else False if activation_value == "disabled" else None
+    activation_text = "활성화됨" if activation is True else "비활성" if activation is False else "미확인"
+    policy = rotation.get("newSourcePolicy")
+    print("raw 원본 용량 상태")
+    response_status = result.get("status")
+    if isinstance(response_status, str):
+        print(f"응답 상태: {_plain(response_status)}")
+    response_reason = result.get("reason")
+    if isinstance(response_reason, str) and response_reason:
+        print(f"조회 사유: {_plain(response_reason)}")
+    print(f"활성화 결정: {activation_text}")
+    print(f"실제 신규 source 정책: {_plain(policy) if isinstance(policy, str) else '미확인'}")
+    reason = rotation.get("reason")
+    if isinstance(reason, str) and reason:
+        print(f"정책 사유: {_plain(reason)}")
+
+    legacy_state = legacy.get("state")
+    legacy_label = legacy_state if isinstance(legacy_state, str) else "unknown"
+    print(f"legacy 조회 상태: {legacy_label}")
+    run_bytes = _status_bytes(legacy.get("run_bytes"))
+    terminal_bytes = _status_bytes(legacy.get("terminal_bytes"))
+    run_observed = "확인된 " if legacy_state != "available" and run_bytes != "미확인" else ""
+    terminal_observed = "확인된 " if legacy_state != "available" and terminal_bytes != "미확인" else ""
+    print(f"legacy 실험: {run_observed}{run_bytes} · "
+          f"project 한도 {_status_bytes(legacy.get('project_limit_bytes'))} · "
+          f"{_status_bytes(legacy.get('run_limit_bytes'))}/run")
+    print(f"legacy terminal: {terminal_observed}{terminal_bytes} · "
+          f"명령당 {_status_bytes(legacy.get('terminal_limit_bytes'))}")
+
+    segmented_state = segmented.get("state")
+    segmented_label = segmented_state if isinstance(segmented_state, str) else "unknown"
+    raw_limit = segmented.get("raw_limit_bytes")
+    if type(raw_limit) is not int or raw_limit < 0:
+        raw_limit = SEGMENT_LIMIT * SEGMENT_COUNT
+    if segmented_state == "not_allocated":
+        print(f"segmented-v1 저장소: 미생성 · raw 예산 {_status_bytes(raw_limit)} · metadata 사용량: 미확인")
+    else:
+        print(f"segmented-v1 조회 상태: {segmented_label}")
+        raw_bytes = _status_bytes(segmented.get("raw_bytes"))
+        metadata_bytes = _status_bytes(segmented.get("metadata_bytes"))
+        if segmented_state == "available":
+            print(f"segmented-v1 raw: {raw_bytes} / {_status_bytes(raw_limit)} · metadata: {metadata_bytes}")
+        else:
+            print(f"segmented-v1 raw 사용량: {'확인된 ' if raw_bytes != '미확인' else ''}{raw_bytes} · "
+                  f"예산 {_status_bytes(raw_limit)} · metadata 사용량: {metadata_bytes}")
+        reason = segmented.get("reason")
+        if isinstance(reason, str) and reason:
+            print(f"segmented-v1 조회 사유: {_plain(reason)}")
+
+    print("이 표시는 legacy, important DB, 기타 파일을 합친 전체 용량 상한이 아닙니다")
+    print("중요 로그 DB 상태: logs important status")
+
+
 def cmd_raw_read(args: argparse.Namespace) -> int:
     """User-only bounded source read; stopped queries never start writer recovery."""
     from workbench.storage.log_raw.port import raw_query, raw_usage
@@ -497,7 +589,7 @@ def cmd_raw_read(args: argparse.Namespace) -> int:
         if args.json:
             print(json.dumps(result, sort_keys=True, ensure_ascii=False))
         elif args.logs_kind == "raw-status":
-            print(json.dumps(result, sort_keys=True, ensure_ascii=False))
+            _raw_status_print(result)
         elif result.get("log_format") == "segmented-v1":
             read = result.get("read") or {}
             for chunk in read.get("chunks", []):

@@ -1,0 +1,21 @@
+{
+  "feature_id": "dev-validation-log-storage-operations",
+  "status": "approved_for_implementation",
+  "approved_by": "user",
+  "approval_reference": "2026-10-18 현재 대화: $implement docs/features/dev-validation-log-retention/storage-operations",
+  "source_intent_reference": "BRIEF.md U-OPS-02/U-OPS-03 (2026-10-18 현재대화)",
+  "brief_revision": "b1",
+  "spec_revision": "s1",
+  "plan_revision": "p1",
+  "bundle_files": [
+    "BRIEF.md",
+    "SPEC.md",
+    "requirements.json",
+    "PLAN.json",
+    "tickets/DVL-OPS-01.md",
+    "tickets/DVL-OPS-02.md",
+    "tickets/DVL-OPS-03.md"
+  ],
+  "bundle_sha256": "14fdd540d306c714b8061314ca169b4d1f814618c93126123d6e9d5355b4849f",
+  "note": "정확한 14fdd540…b4849f bundle의 구현·관련 검증을 사용자 명령으로 승인. 실제 raw 활성화/기존 로그·보존 DB 삭제/commit·게시·배포는 승인하지 않음."
+}

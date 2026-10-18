@@ -1,0 +1,80 @@
+{
+  "schema_version": 1,
+  "revision": "lso-r1-planning-draft",
+  "authority": "2026-10-18 현재 대화 U-OPS-02: 사용자 「좋아 그렇게 하자. 개발 계획을 세워봐.」는 추천 방향 채택과 계획 요청. U-OPS-03: $to-tickets docs/features/dev-validation-log-retention/BRIEF.md는 계획 작성 권한. 상위 BRIEF LG-AC-01~04/08~13/15~20 및 LG-D30~33을 유지. 이 8개 로컬 AC/7개 gate는 합의 방향의 검증 상세 초안이며 정확한 SPEC/PLAN bundle 구현 승인은 아직 없음. 상위28AC/46gate는 PLAN.parent_evidence_contract의 원본 참조로 모두 보존하며 축소/대체하지 않음.",
+  "acceptance_ids": [
+    "LSO-AC-01",
+    "LSO-AC-02",
+    "LSO-AC-03",
+    "LSO-AC-04",
+    "LSO-AC-05",
+    "LSO-AC-06",
+    "LSO-AC-07",
+    "LSO-AC-08"
+  ],
+  "gate_items": [
+    {
+      "id": "G-LSO-01-inventory",
+      "acceptance_ids": [
+        "LSO-AC-01",
+        "LSO-AC-02",
+        "LSO-AC-05",
+        "LSO-AC-06"
+      ],
+      "required_evidence_level": "runtime"
+    },
+    {
+      "id": "G-LSO-02-cli",
+      "acceptance_ids": [
+        "LSO-AC-01",
+        "LSO-AC-02",
+        "LSO-AC-03",
+        "LSO-AC-07"
+      ],
+      "required_evidence_level": "fixture"
+    },
+    {
+      "id": "G-LSO-03-mixed",
+      "acceptance_ids": [
+        "LSO-AC-04",
+        "LSO-AC-08"
+      ],
+      "required_evidence_level": "runtime"
+    },
+    {
+      "id": "G-LSO-04-retention",
+      "acceptance_ids": [
+        "LSO-AC-02",
+        "LSO-AC-04",
+        "LSO-AC-05"
+      ],
+      "required_evidence_level": "fixture"
+    },
+    {
+      "id": "G-LSO-05-admission",
+      "acceptance_ids": [
+        "LSO-AC-03",
+        "LSO-AC-07"
+      ],
+      "required_evidence_level": "fixture"
+    },
+    {
+      "id": "G-LSO-06-evidence",
+      "acceptance_ids": [
+        "LSO-AC-06",
+        "LSO-AC-08"
+      ],
+      "required_evidence_level": "static"
+    },
+    {
+      "id": "G-LSO-07-rollout",
+      "acceptance_ids": [
+        "LSO-AC-05",
+        "LSO-AC-06",
+        "LSO-AC-07",
+        "LSO-AC-08"
+      ],
+      "required_evidence_level": "static"
+    }
+  ]
+}

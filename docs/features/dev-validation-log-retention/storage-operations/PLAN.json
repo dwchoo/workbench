@@ -1,0 +1,985 @@
+{
+  "schema_version": 1,
+  "feature_id": "dev-validation-log-storage-operations",
+  "revision": "p1",
+  "status": "draft_pending_bundle_approval",
+  "source_brief": {
+    "path": "BRIEF.md",
+    "revision": "b1",
+    "sha256": "6c92cb991d06abb2dcf38901b167be6ce5b16abb4fcbcd0dba909f8966aca1b9",
+    "upstream_path": "../BRIEF.md",
+    "upstream_sha256": "4f1d216f9e0851979f5926caaecb9f279151b0b0e7462830985022aa9b2f24c0",
+    "authority_note": "U-OPS-02방향합의 + U-OPS-03 계획작성; 구현/실제삭제/활성화 승인없음"
+  },
+  "spec": {
+    "path": "SPEC.md",
+    "revision": "s1"
+  },
+  "requirements": {
+    "path": "requirements.json",
+    "revision": "lso-r1-planning-draft"
+  },
+  "requirements_identity": "e30465d81946b006e53dad3ee56fd82e3d8427090a09041225ebbf1e89aac1bd",
+  "baseline": {
+    "head": "c15ae38b6ada6f2ae3bb0ca706ff90b564072fd7",
+    "observed_date": "2026-10-18",
+    "source_sha256": {
+      "docs/features/dev-validation-log-retention/BRIEF.md": "4f1d216f9e0851979f5926caaecb9f279151b0b0e7462830985022aa9b2f24c0",
+      "docs/features/dev-validation-log-retention/SPEC.md": "094eaed8a6be5508d6373f87179086b37016a59fa9fb440cf5451ed4211c5dcc",
+      "docs/features/dev-validation-log-retention/PLAN.json": "0e55419cf61c909ac119c690628bbe8f880bd175adcaf63ef47ca8df82def76f",
+      "docs/features/dev-validation-log-retention/requirements-r0.9-p5.json": "d778a6b44c2384a979d4c581e1a8add76d6f13cf39b11b328f9138c2d2c864a2",
+      "AGENTS.md": "d94845bbd5e800575d5d1f94bd8ab5fa96fa36c817ea3f62fab2b194404a12f2",
+      "CONTEXT.md": "5538ec38de2ceb508974c096ddf8e1d0113a9a14a04eaeaea8974d432934dfbe",
+      ".codex/workflow-contract.md": "ecf941f9c78ed6178b82e50dba6d2e0d42c3aa9c425e3295e4064d728c79e46c",
+      "src/workbench/backend/cli.py": "32e27d029040cd3b31941ad8ae01621842a5ece1a29f6ecd80fa311d69a341e2",
+      "src/workbench/backend/raw_rotation.py": "7efac8513e2f1fe21703c4fb59872f8453c6b91d870c054aef74fea612208e33",
+      "src/workbench/backend/service.py": "75e55a28acda91cb381d36417db0a5e35d02f470ccb69ec1abe8a6f24ca61aad",
+      "src/workbench/storage/log_raw/port.py": "87f1d4b1956aebe47876e3a4828147e272bfc64899d47a3fc99f76ccf7b92893",
+      "src/workbench/storage/log_raw/segments.py": "43e9ef4e8a96795d39fa8d99c1a74c28776b5b83738591a49dd68a62b6b546f6",
+      "src/workbench/storage/important_log/reader.py": "64aa0d7ae11cdc5f13578522c1919c4b81b50e83eeee7ff77a1465a2feada2e4",
+      "src/workbench/storage/important_log/maintenance.py": "eb3af2dda76156836877278670a09b92b4509f6fb405776aff27ee354a56446d"
+    },
+    "dirty_paths": [
+      " M .agents/skills/ask-workflow/SKILL.md",
+      " M .agents/skills/ask-workflow/agents/openai.yaml",
+      " M .agents/skills/change-verification/SKILL.md",
+      " M .agents/skills/change-verification/agents/openai.yaml",
+      " M .agents/skills/handoff/SKILL.md",
+      " M .agents/skills/implement/SKILL.md",
+      " M .agents/skills/implement/agents/openai.yaml",
+      " M .agents/skills/implement/references/dispatch-and-oracle.md",
+      " M .agents/skills/investigate-bug/SKILL.md",
+      " M .agents/skills/refine-spec/SKILL.md",
+      " M .agents/skills/refine-spec/agents/openai.yaml",
+      " M .agents/skills/to-tickets/SKILL.md",
+      " M .agents/skills/to-tickets/agents/openai.yaml",
+      " M .agents/skills/workflow-ledger/SKILL.md",
+      " M .agents/skills/workflow-ledger/references/formats.md",
+      " M .agents/skills/workflow-ledger/scripts/workflow_tools.py",
+      " M .agents/skills/workspace-evidence/SKILL.md",
+      " M .codex/agents/code-explorer.toml",
+      " M .codex/agents/oracle-senior.toml",
+      " M .codex/agents/oracle.toml",
+      " M .codex/agents/reviewer.toml",
+      " M .codex/agents/test-designer.toml",
+      " M .codex/agents/worker-senior.toml",
+      " M .codex/agents/worker.toml",
+      " M .codex/config.toml",
+      " M .codex/workflow-contract.md",
+      " M .gitignore",
+      " M .workflow/dev-validation-log-retention/runs/implement-p5-20261009/invocations.json",
+      " M .workflow/dev-validation-log-retention/state.json",
+      " M AGENTS.md",
+      " M src/workbench/backend/cli.py",
+      " M src/workbench/ui/terminal_g1/app.py",
+      " M tests/bridge/handoff_tools.test.ts",
+      " M tests/bridge/test_cw18_schema_independent_p27w.py",
+      "?? .agents/skills/brief-workflow/",
+      "?? .agents/skills/change-verification/references/",
+      "?? .agents/skills/implement/references/progress-report.md",
+      "?? .agents/skills/implement/references/rollback.md",
+      "?? .agents/skills/implement/references/worktrees.md",
+      "?? .agents/skills/quick-change/",
+      "?? .agents/skills/workspace-evidence/references/",
+      "?? .agents/skills/workspace-evidence/scripts/storage_maintenance.py",
+      "?? .codex/rules/",
+      "?? .graphifyignore",
+      "?? docs/features/dev-validation-log-retention/storage-operations/",
+      "?? tests/recovery_boot/test_cli_down_alias_independent.py",
+      "?? tests/ui/test_product_render_performance_independent.py"
+    ],
+    "note": "기존사용자/workflow변경·down alias·render cache/시험 보존; HEAD동일성이working tree동일성은아님. 본디렉터리만신규작성. 실제데모상태/도구runtime버전은미조회.",
+    "retained_evidence": [
+      {
+        "path": ".workflow/dev-validation-log-retention/runs/dvl13-20261015/final-integration01/final-closure-outcome01.json",
+        "sha256": "d27174f1b7fedcca3ee0171d040f209e8b536bc4c504a33a06e1ecfe3a89f2e4",
+        "use": "과거candidate의증거. current반영여부는OPS-01에서diff/hash/게이트소비자별재확인; 지금currentpass로승격하지않음."
+      },
+      {
+        "path": ".workflow/dev-validation-log-retention/runs/dvl13-20261015/final-integration01/final-gate01.json",
+        "sha256": "26261dcab7fbcb36015428deb4b655d4dd0502fc2b1c927dfa545c42d5bc99a7",
+        "use": "과거candidate의증거. current반영여부는OPS-01에서diff/hash/게이트소비자별재확인; 지금currentpass로승격하지않음."
+      },
+      {
+        "path": ".workflow/core-workbench/runs/ui-render-20261016-01/down-alias01/outcome.json",
+        "sha256": "b1edb3aac3fd21526496ad17b253d81c15f773bc7f48404e36df40e1dd310529",
+        "use": "과거candidate의증거. current반영여부는OPS-01에서diff/hash/게이트소비자별재확인; 지금currentpass로승격하지않음."
+      },
+      {
+        "path": ".workflow/core-workbench/runs/ui-render-20261016-01/outcome.json",
+        "sha256": "0c6ddccf0054f1d7527c6f0d591be1231ec2f4c9e8e2af72741264803e7dfa19",
+        "use": "과거candidate의증거. current반영여부는OPS-01에서diff/hash/게이트소비자별재확인; 지금currentpass로승격하지않음."
+      }
+    ]
+  },
+  "scheduling": {
+    "max_open_child_threads": 4,
+    "max_parallel_writer_workspaces": 1,
+    "workspace_policy": "serial_default",
+    "dependency_gate": "integrated_and_validated",
+    "initial_independent_frontier": [
+      "DVL-OPS-01"
+    ],
+    "initial_parallel_candidates": [],
+    "on_unavailable_isolation": "serial_with_disclosure",
+    "note": "3ticket순차. 제품writer/독립test writer/Root동시편집금지. test_designer와reviewer는OPS-03에서관련변경한단위; graphupdate는writer종료뒤Root."
+  },
+  "budget_policy": {
+    "operating_estimates": {
+      "total_child_calls": 6,
+      "worker": 1,
+      "test_designer": 1,
+      "reviewer": 1,
+      "conditional_security_review": 1,
+      "correction_reserve": 2
+    },
+    "authority": "Root workflow-contract §8의운영예상; 실제구현시ledger예약/관측 후 조정가능",
+    "explicit_user_limits": [],
+    "note": "계획단계subagent/모델호출0. 유료실모델trial재실행권한없음. 예상호출수는사용자하드상한아님."
+  },
+  "tickets": [
+    {
+      "id": "DVL-OPS-01",
+      "path": "tickets/DVL-OPS-01.md",
+      "kind": "evidence_reconciliation",
+      "depends_on": [],
+      "dependency_reasons": {},
+      "acceptance_ids": [
+        "LSO-AC-01",
+        "LSO-AC-02",
+        "LSO-AC-05",
+        "LSO-AC-06"
+      ],
+      "deliverable": "선택 root 저장량/정리 후보 readonly 현황, 실제 표시 공백, 기존46gate 영향별 근거 재사용 대응표",
+      "write_scope_hint": [
+        ".workflow/dev-validation-log-storage-operations/runs/<new-run>/inventory.md",
+        ".workflow/dev-validation-log-storage-operations/runs/<new-run>/evidence-map.json"
+      ],
+      "resource_claims": [
+        {
+          "resource": "demo:wb-demo-storage-inventory",
+          "mode": "shared"
+        },
+        {
+          "resource": "workflow:storage-operations-root-records",
+          "mode": "exclusive"
+        }
+      ],
+      "workspace_requirement": "root_readonly_inventory",
+      "owner": "root",
+      "base_requirements": {
+        "brief": "BRIEF.md@b1 + ../BRIEF.md 고정 입력",
+        "spec": "SPEC.md@s1",
+        "candidate": "HEAD가 아닌 dirty 포함 current manifest 재확인",
+        "authority": "정확한 후속bundle 구현승인 후 실행"
+      },
+      "required_checks": [
+        "G-LSO-01-inventory"
+      ],
+      "service_namespaces": {
+        "project": "전용 임시 Git project",
+        "data_dir": "새 .workflow 후속 run 아래 ticket/attempt별 private temp root",
+        "home": "scripted 검증 전용 HOME/OMP/XDG; 사용자 인증 미상속",
+        "socket": "동일 run 소유 private backend/G3 socket; 길이는 기존 harness 검증 사용",
+        "provider": "필요할 때만 소유 localhost scripted provider; paid model 없음",
+        "owned_cleanup": "pid/start-ticks 또는 pidfd + manifest 소유 socket/temp만 정리",
+        "actual_demo": "OPS-01만 선택 root의 readonly 상태/metadata 조회; 실제 prompt/설정/DB내용 쓰기/종료 금지"
+      }
+    },
+    {
+      "id": "DVL-OPS-02",
+      "path": "tickets/DVL-OPS-02.md",
+      "kind": "implementation",
+      "depends_on": [
+        "DVL-OPS-01"
+      ],
+      "dependency_reasons": {
+        "DVL-OPS-01": "기존 JSON key/부분상태와 실제 표시 공백·보관 한도 대조 결과를 소비한다."
+      },
+      "acceptance_ids": [
+        "LSO-AC-01",
+        "LSO-AC-02",
+        "LSO-AC-03",
+        "LSO-AC-07"
+      ],
+      "deliverable": "기존 raw-status/important status의 한국어 기본 출력과 호환 안내; JSON/exit code/readonly/정책 불변",
+      "write_scope_hint": [
+        "src/workbench/backend/cli.py",
+        "tests/backend/test_storage_status_cli.py",
+        "docs/features/dev-validation-log-retention/storage-operations/USAGE.md"
+      ],
+      "resource_claims": [
+        {
+          "resource": "source:backend-cli",
+          "mode": "exclusive"
+        },
+        {
+          "resource": "tests:storage-status-cli",
+          "mode": "exclusive"
+        },
+        {
+          "resource": "docs:storage-operations-usage",
+          "mode": "exclusive"
+        }
+      ],
+      "workspace_requirement": "single_writer_workspace",
+      "worker": "worker",
+      "routing_hint": {
+        "reason_codes": [
+          "bounded_pattern"
+        ],
+        "evidence_refs": [
+          "SPEC.md 기존CLI/readonly port/고정JSON계약",
+          "DVL-OPS-01 실제응답/표시공백 결과"
+        ]
+      },
+      "base_requirements": {
+        "brief": "BRIEF.md@b1",
+        "spec": "SPEC.md@s1",
+        "candidate": "OPS-01 현황·범위 확인 후 current source",
+        "dependency_boundary": "integrated_and_validated"
+      },
+      "required_checks": [
+        "G-LSO-02-cli"
+      ],
+      "service_namespaces": {
+        "project": "전용 임시 Git project",
+        "data_dir": "새 .workflow 후속 run 아래 ticket/attempt별 private temp root",
+        "home": "scripted 검증 전용 HOME/OMP/XDG; 사용자 인증 미상속",
+        "socket": "동일 run 소유 private backend/G3 socket; 길이는 기존 harness 검증 사용",
+        "provider": "필요할 때만 소유 localhost scripted provider; paid model 없음",
+        "owned_cleanup": "pid/start-ticks 또는 pidfd + manifest 소유 socket/temp만 정리",
+        "actual_demo": "OPS-01만 선택 root의 readonly 상태/metadata 조회; 실제 prompt/설정/DB내용 쓰기/종료 금지"
+      }
+    },
+    {
+      "id": "DVL-OPS-03",
+      "path": "tickets/DVL-OPS-03.md",
+      "kind": "integration_verification",
+      "depends_on": [
+        "DVL-OPS-02"
+      ],
+      "dependency_reasons": {
+        "DVL-OPS-02": "통합된CLI 동작·JSON불변·사용법과 OPS-01 근거대응표가 있어야 combined검증·운영준비를 평가할 수 있다."
+      },
+      "acceptance_ids": [
+        "LSO-AC-01",
+        "LSO-AC-02",
+        "LSO-AC-03",
+        "LSO-AC-04",
+        "LSO-AC-05",
+        "LSO-AC-06",
+        "LSO-AC-07",
+        "LSO-AC-08"
+      ],
+      "deliverable": "관련변경 독립시험/리뷰·필요 mixed통합 근거·보관경계·cleanup·별도승인 전 운영준비 보고",
+      "write_scope_hint": [
+        "tests/backend/test_storage_status_cli_independent.py",
+        "tests/integration/test_storage_operations_independent.py",
+        "docs/features/dev-validation-log-retention/storage-operations/USAGE.md",
+        ".workflow/dev-validation-log-storage-operations/runs/<new-run>/**"
+      ],
+      "resource_claims": [
+        {
+          "resource": "tests:storage-status-cli",
+          "mode": "exclusive"
+        },
+        {
+          "resource": "docs:storage-operations-usage",
+          "mode": "exclusive"
+        },
+        {
+          "resource": "integration:storage-operations",
+          "mode": "exclusive"
+        },
+        {
+          "resource": "workflow:storage-operations-root-records",
+          "mode": "exclusive"
+        }
+      ],
+      "workspace_requirement": "root_integration_workspace",
+      "owner": "root",
+      "base_requirements": {
+        "brief": "BRIEF.md@b1",
+        "spec": "SPEC.md@s1",
+        "candidate": "OPS-02 frozen product+test candidate; product추가수정은OPS-02로돌려delta검증",
+        "dependency_boundary": "integrated_and_validated"
+      },
+      "required_checks": [
+        "G-LSO-03-mixed",
+        "G-LSO-04-retention",
+        "G-LSO-05-admission",
+        "G-LSO-06-evidence",
+        "G-LSO-07-rollout"
+      ],
+      "service_namespaces": {
+        "project": "전용 임시 Git project",
+        "data_dir": "새 .workflow 후속 run 아래 ticket/attempt별 private temp root",
+        "home": "scripted 검증 전용 HOME/OMP/XDG; 사용자 인증 미상속",
+        "socket": "동일 run 소유 private backend/G3 socket; 길이는 기존 harness 검증 사용",
+        "provider": "필요할 때만 소유 localhost scripted provider; paid model 없음",
+        "owned_cleanup": "pid/start-ticks 또는 pidfd + manifest 소유 socket/temp만 정리",
+        "actual_demo": "OPS-01만 선택 root의 readonly 상태/metadata 조회; 실제 prompt/설정/DB내용 쓰기/종료 금지"
+      }
+    }
+  ],
+  "gate_items": [
+    {
+      "id": "G-LSO-01-inventory",
+      "acceptance_ids": [
+        "LSO-AC-01",
+        "LSO-AC-02",
+        "LSO-AC-05",
+        "LSO-AC-06"
+      ],
+      "required_evidence_level": "runtime",
+      "owner_ticket": "DVL-OPS-01",
+      "requires_tickets": [
+        "DVL-OPS-01"
+      ],
+      "check": "명시된root의 기존CLI/metadata 조회에 관측시각·legacy/segmented/DB 구분·unknown·종료확인 후보를 기록. 실제 사용자data의변경/모델호출 없음. 없음/불가면미확인으로 보고하고 만들어내지않음.",
+      "evidence_status": "not_run"
+    },
+    {
+      "id": "G-LSO-02-cli",
+      "acceptance_ids": [
+        "LSO-AC-01",
+        "LSO-AC-02",
+        "LSO-AC-03",
+        "LSO-AC-07"
+      ],
+      "required_evidence_level": "fixture",
+      "owner_ticket": "DVL-OPS-02",
+      "requires_tickets": [
+        "DVL-OPS-01",
+        "DVL-OPS-02"
+      ],
+      "check": "실제parser/main으로 기본문구·수치단위·정책보호상태·missing/partial·DBrole/복수경고를 확인하고 --json payload/exit code동일·조회의mutation/model/verify호출0을 검증.",
+      "evidence_status": "not_run"
+    },
+    {
+      "id": "G-LSO-03-mixed",
+      "acceptance_ids": [
+        "LSO-AC-04",
+        "LSO-AC-08"
+      ],
+      "required_evidence_level": "runtime",
+      "owner_ticket": "DVL-OPS-03",
+      "requires_tickets": [
+        "DVL-OPS-01",
+        "DVL-OPS-02",
+        "DVL-OPS-03"
+      ],
+      "check": "실제 임시producer→공용store→reader/collector 및CLI 연결에서 mixed교체·정확source/range/gap·실행/필수근거/기존정상요약보존·오류/noReplay를 관측. 필요한SDK경로만기존scripted재사용. 유효기존runtime근거와 신규좁은근거를구분.",
+      "evidence_status": "not_run"
+    },
+    {
+      "id": "G-LSO-04-retention",
+      "acceptance_ids": [
+        "LSO-AC-02",
+        "LSO-AC-04",
+        "LSO-AC-05"
+      ],
+      "required_evidence_level": "fixture",
+      "owner_ticket": "DVL-OPS-03",
+      "requires_tickets": [
+        "DVL-OPS-01",
+        "DVL-OPS-02",
+        "DVL-OPS-03"
+      ],
+      "check": "활성DB120일/용량압박·시작/최신누적보호·rollover/보존DB자동삭제0·기존UUID명시삭제보호 근거를 재사용/영향case검사. 실제사용자DB는미사용.",
+      "evidence_status": "not_run"
+    },
+    {
+      "id": "G-LSO-05-admission",
+      "acceptance_ids": [
+        "LSO-AC-03",
+        "LSO-AC-07"
+      ],
+      "required_evidence_level": "fixture",
+      "owner_ticket": "DVL-OPS-03",
+      "requires_tickets": [
+        "DVL-OPS-01",
+        "DVL-OPS-02",
+        "DVL-OPS-03"
+      ],
+      "check": "기존활성화거부/identity재검사 시험과 status조회가 activation/verify를유발하지않는회귀. 합성record 성공을 실제로컬activation가능으로올리지않음.",
+      "evidence_status": "not_run"
+    },
+    {
+      "id": "G-LSO-06-evidence",
+      "acceptance_ids": [
+        "LSO-AC-06",
+        "LSO-AC-08"
+      ],
+      "required_evidence_level": "static",
+      "owner_ticket": "DVL-OPS-03",
+      "requires_tickets": [
+        "DVL-OPS-01",
+        "DVL-OPS-02",
+        "DVL-OPS-03"
+      ],
+      "check": "원본28AC/46gate ID·level을 parent_evidence_contract와대조하고 diff영향별candidate/check/loghash·재사용·stale/unknown을 기록. 독립test/review·scope/security필수검사·실패보존 확인.",
+      "evidence_status": "not_run"
+    },
+    {
+      "id": "G-LSO-07-rollout",
+      "acceptance_ids": [
+        "LSO-AC-05",
+        "LSO-AC-06",
+        "LSO-AC-07",
+        "LSO-AC-08"
+      ],
+      "required_evidence_level": "static",
+      "owner_ticket": "DVL-OPS-03",
+      "requires_tickets": [
+        "DVL-OPS-01",
+        "DVL-OPS-02",
+        "DVL-OPS-03"
+      ],
+      "check": "대상data root/현재상태/실제gate가능또는보류·legacy/신규구분·후보UUID/path와소실정보·별도승인절차·C2hold/rawOFF·remaining_owned와한계를 포함한 인계. 실제삭제/활성화실행0.",
+      "evidence_status": "not_run"
+    }
+  ],
+  "parent_evidence_contract": {
+    "plan_path": "../PLAN.json",
+    "plan_sha256": "0e55419cf61c909ac119c690628bbe8f880bd175adcaf63ef47ca8df82def76f",
+    "requirements_path": "../requirements-r0.9-p5.json",
+    "requirements_sha256": "d778a6b44c2384a979d4c581e1a8add76d6f13cf39b11b328f9138c2d2c864a2",
+    "acceptance_ids": [
+      "DV-AC-01",
+      "DV-AC-02",
+      "DV-AC-03",
+      "DV-AC-04",
+      "DV-AC-05",
+      "LG-AC-01",
+      "LG-AC-02",
+      "LG-AC-03",
+      "LG-AC-04",
+      "LG-AC-05",
+      "LG-AC-06",
+      "LG-AC-07",
+      "LG-AC-08",
+      "LG-AC-09",
+      "LG-AC-10",
+      "LG-AC-11",
+      "LG-AC-12",
+      "LG-AC-13",
+      "LG-AC-14",
+      "LG-AC-15",
+      "LG-AC-16",
+      "LG-AC-17",
+      "LG-AC-18",
+      "LG-AC-19",
+      "LG-AC-20",
+      "LG-AC-21",
+      "LG-AC-22",
+      "LG-AC-23"
+    ],
+    "gate_items": [
+      {
+        "id": "G-DV-01",
+        "acceptance_ids": [
+          "DV-AC-01"
+        ],
+        "required_evidence_level": "fixture"
+      },
+      {
+        "id": "G-DV-02",
+        "acceptance_ids": [
+          "DV-AC-02"
+        ],
+        "required_evidence_level": "runtime"
+      },
+      {
+        "id": "G-DV-03",
+        "acceptance_ids": [
+          "DV-AC-03"
+        ],
+        "required_evidence_level": "runtime"
+      },
+      {
+        "id": "G-DV-04",
+        "acceptance_ids": [
+          "DV-AC-04"
+        ],
+        "required_evidence_level": "runtime"
+      },
+      {
+        "id": "G-DV-05",
+        "acceptance_ids": [
+          "DV-AC-05"
+        ],
+        "required_evidence_level": "runtime"
+      },
+      {
+        "id": "G-LG-01",
+        "acceptance_ids": [
+          "LG-AC-01"
+        ],
+        "required_evidence_level": "runtime"
+      },
+      {
+        "id": "G-LG-02",
+        "acceptance_ids": [
+          "LG-AC-02"
+        ],
+        "required_evidence_level": "runtime"
+      },
+      {
+        "id": "G-LG-03",
+        "acceptance_ids": [
+          "LG-AC-03"
+        ],
+        "required_evidence_level": "fixture"
+      },
+      {
+        "id": "G-LG-04",
+        "acceptance_ids": [
+          "LG-AC-04"
+        ],
+        "required_evidence_level": "fixture"
+      },
+      {
+        "id": "G-LG-05",
+        "acceptance_ids": [
+          "LG-AC-05"
+        ],
+        "required_evidence_level": "runtime"
+      },
+      {
+        "id": "G-LG-06",
+        "acceptance_ids": [
+          "LG-AC-06"
+        ],
+        "required_evidence_level": "runtime"
+      },
+      {
+        "id": "G-LG-07",
+        "acceptance_ids": [
+          "LG-AC-07"
+        ],
+        "required_evidence_level": "fixture"
+      },
+      {
+        "id": "G-LG-08",
+        "acceptance_ids": [
+          "LG-AC-08"
+        ],
+        "required_evidence_level": "fixture"
+      },
+      {
+        "id": "G-LG-09",
+        "acceptance_ids": [
+          "LG-AC-09"
+        ],
+        "required_evidence_level": "fixture"
+      },
+      {
+        "id": "G-LG-10",
+        "acceptance_ids": [
+          "LG-AC-10"
+        ],
+        "required_evidence_level": "fixture"
+      },
+      {
+        "id": "G-LG-11",
+        "acceptance_ids": [
+          "LG-AC-11"
+        ],
+        "required_evidence_level": "fixture"
+      },
+      {
+        "id": "G-LG-12",
+        "acceptance_ids": [
+          "LG-AC-12"
+        ],
+        "required_evidence_level": "fixture"
+      },
+      {
+        "id": "G-LG-13",
+        "acceptance_ids": [
+          "LG-AC-13"
+        ],
+        "required_evidence_level": "fixture"
+      },
+      {
+        "id": "G-LG-14",
+        "acceptance_ids": [
+          "LG-AC-14"
+        ],
+        "required_evidence_level": "fixture"
+      },
+      {
+        "id": "G-LG-15",
+        "acceptance_ids": [
+          "LG-AC-15"
+        ],
+        "required_evidence_level": "fixture"
+      },
+      {
+        "id": "G-LG-16",
+        "acceptance_ids": [
+          "LG-AC-16"
+        ],
+        "required_evidence_level": "fixture"
+      },
+      {
+        "id": "G-LG-17",
+        "acceptance_ids": [
+          "LG-AC-17"
+        ],
+        "required_evidence_level": "fixture"
+      },
+      {
+        "id": "G-LG-18",
+        "acceptance_ids": [
+          "LG-AC-18"
+        ],
+        "required_evidence_level": "fixture"
+      },
+      {
+        "id": "G-LG-19",
+        "acceptance_ids": [
+          "LG-AC-19"
+        ],
+        "required_evidence_level": "fixture"
+      },
+      {
+        "id": "G-LG-20",
+        "acceptance_ids": [
+          "LG-AC-20"
+        ],
+        "required_evidence_level": "fixture"
+      },
+      {
+        "id": "G-LG-21",
+        "acceptance_ids": [
+          "LG-AC-21"
+        ],
+        "required_evidence_level": "fixture"
+      },
+      {
+        "id": "G-LG-22",
+        "acceptance_ids": [
+          "LG-AC-22"
+        ],
+        "required_evidence_level": "runtime"
+      },
+      {
+        "id": "G-LG-23",
+        "acceptance_ids": [
+          "LG-AC-23"
+        ],
+        "required_evidence_level": "fixture"
+      },
+      {
+        "id": "Q01-route",
+        "acceptance_ids": [
+          "LG-AC-06"
+        ],
+        "required_evidence_level": "runtime"
+      },
+      {
+        "id": "Q01-tools",
+        "acceptance_ids": [
+          "LG-AC-05",
+          "LG-AC-06"
+        ],
+        "required_evidence_level": "runtime"
+      },
+      {
+        "id": "Q01-skill",
+        "acceptance_ids": [
+          "LG-AC-06"
+        ],
+        "required_evidence_level": "runtime"
+      },
+      {
+        "id": "Q01-result",
+        "acceptance_ids": [
+          "LG-AC-06",
+          "LG-AC-18"
+        ],
+        "required_evidence_level": "runtime"
+      },
+      {
+        "id": "Q01-context",
+        "acceptance_ids": [
+          "LG-AC-06",
+          "LG-AC-07"
+        ],
+        "required_evidence_level": "runtime"
+      },
+      {
+        "id": "Q01-priority",
+        "acceptance_ids": [
+          "LG-AC-07"
+        ],
+        "required_evidence_level": "runtime"
+      },
+      {
+        "id": "Q01-recovery",
+        "acceptance_ids": [
+          "LG-AC-18",
+          "LG-AC-19"
+        ],
+        "required_evidence_level": "runtime"
+      },
+      {
+        "id": "Q01-origin",
+        "acceptance_ids": [
+          "LG-AC-22"
+        ],
+        "required_evidence_level": "runtime"
+      },
+      {
+        "id": "STORE-contract",
+        "acceptance_ids": [
+          "LG-AC-05",
+          "LG-AC-06",
+          "LG-AC-11",
+          "LG-AC-18"
+        ],
+        "required_evidence_level": "fixture"
+      },
+      {
+        "id": "LIFECYCLE",
+        "acceptance_ids": [
+          "LG-AC-05",
+          "LG-AC-14",
+          "LG-AC-21",
+          "LG-AC-22"
+        ],
+        "required_evidence_level": "fixture"
+      },
+      {
+        "id": "RAW-engine",
+        "acceptance_ids": [
+          "LG-AC-01",
+          "LG-AC-02",
+          "LG-AC-03",
+          "LG-AC-04"
+        ],
+        "required_evidence_level": "fixture"
+      },
+      {
+        "id": "INT-runtime",
+        "acceptance_ids": [
+          "DV-AC-01",
+          "DV-AC-02",
+          "DV-AC-03",
+          "DV-AC-04",
+          "DV-AC-05",
+          "LG-AC-01",
+          "LG-AC-02",
+          "LG-AC-03",
+          "LG-AC-04",
+          "LG-AC-05",
+          "LG-AC-06",
+          "LG-AC-07",
+          "LG-AC-08",
+          "LG-AC-09",
+          "LG-AC-10",
+          "LG-AC-11",
+          "LG-AC-12",
+          "LG-AC-13",
+          "LG-AC-14",
+          "LG-AC-15",
+          "LG-AC-16",
+          "LG-AC-17",
+          "LG-AC-18",
+          "LG-AC-19",
+          "LG-AC-20",
+          "LG-AC-21",
+          "LG-AC-22",
+          "LG-AC-23"
+        ],
+        "required_evidence_level": "runtime"
+      },
+      {
+        "id": "Q01-validator",
+        "acceptance_ids": [
+          "LG-AC-06"
+        ],
+        "required_evidence_level": "fixture"
+      },
+      {
+        "id": "Q01-contract",
+        "acceptance_ids": [
+          "LG-AC-05",
+          "LG-AC-06"
+        ],
+        "required_evidence_level": "fixture"
+      },
+      {
+        "id": "SUMMARY-budget",
+        "acceptance_ids": [
+          "LG-AC-05",
+          "LG-AC-07"
+        ],
+        "required_evidence_level": "fixture"
+      },
+      {
+        "id": "PRODUCT-evidence",
+        "acceptance_ids": [
+          "LG-AC-01",
+          "LG-AC-06",
+          "LG-AC-07"
+        ],
+        "required_evidence_level": "runtime"
+      },
+      {
+        "id": "DV-registry",
+        "acceptance_ids": [
+          "DV-AC-01",
+          "DV-AC-03",
+          "DV-AC-04"
+        ],
+        "required_evidence_level": "runtime"
+      },
+      {
+        "id": "MODEL-metadata",
+        "acceptance_ids": [
+          "LG-AC-06",
+          "LG-AC-07"
+        ],
+        "required_evidence_level": "runtime"
+      }
+    ],
+    "acceptance_count": 28,
+    "gate_count": 46,
+    "operation": "preserve_external_registry",
+    "owner_for_applicability_audit": "DVL-OPS-03",
+    "note": "원PLAN graph/owner/requiredlevel/승인/과거결과는변경없음. 이배열은상속확인용이며새46개실행ticket이아님. 로컬7gate통과가상위46/Q01/C2/productrecord를대체하지않음. 관계없는유효근거재사용, 실제diff영향만재검증; 실제activation은별도gate/승인."
+  },
+  "acceptance_trace": [
+    {
+      "id": "LSO-AC-01",
+      "spec": "SPEC.md 수락 조건과 책임",
+      "tickets": [
+        "DVL-OPS-01",
+        "DVL-OPS-02",
+        "DVL-OPS-03"
+      ],
+      "gate_items": [
+        "G-LSO-01-inventory",
+        "G-LSO-02-cli"
+      ],
+      "final_ticket": "DVL-OPS-03"
+    },
+    {
+      "id": "LSO-AC-02",
+      "spec": "SPEC.md 수락 조건과 책임",
+      "tickets": [
+        "DVL-OPS-01",
+        "DVL-OPS-02",
+        "DVL-OPS-03"
+      ],
+      "gate_items": [
+        "G-LSO-01-inventory",
+        "G-LSO-02-cli",
+        "G-LSO-04-retention"
+      ],
+      "final_ticket": "DVL-OPS-03"
+    },
+    {
+      "id": "LSO-AC-03",
+      "spec": "SPEC.md 수락 조건과 책임",
+      "tickets": [
+        "DVL-OPS-02",
+        "DVL-OPS-03"
+      ],
+      "gate_items": [
+        "G-LSO-02-cli",
+        "G-LSO-05-admission"
+      ],
+      "final_ticket": "DVL-OPS-03"
+    },
+    {
+      "id": "LSO-AC-04",
+      "spec": "SPEC.md 수락 조건과 책임",
+      "tickets": [
+        "DVL-OPS-03"
+      ],
+      "gate_items": [
+        "G-LSO-03-mixed",
+        "G-LSO-04-retention"
+      ],
+      "final_ticket": "DVL-OPS-03"
+    },
+    {
+      "id": "LSO-AC-05",
+      "spec": "SPEC.md 수락 조건과 책임",
+      "tickets": [
+        "DVL-OPS-01",
+        "DVL-OPS-03"
+      ],
+      "gate_items": [
+        "G-LSO-01-inventory",
+        "G-LSO-04-retention",
+        "G-LSO-07-rollout"
+      ],
+      "final_ticket": "DVL-OPS-03"
+    },
+    {
+      "id": "LSO-AC-06",
+      "spec": "SPEC.md 수락 조건과 책임",
+      "tickets": [
+        "DVL-OPS-01",
+        "DVL-OPS-03"
+      ],
+      "gate_items": [
+        "G-LSO-01-inventory",
+        "G-LSO-06-evidence",
+        "G-LSO-07-rollout"
+      ],
+      "final_ticket": "DVL-OPS-03"
+    },
+    {
+      "id": "LSO-AC-07",
+      "spec": "SPEC.md 수락 조건과 책임",
+      "tickets": [
+        "DVL-OPS-02",
+        "DVL-OPS-03"
+      ],
+      "gate_items": [
+        "G-LSO-02-cli",
+        "G-LSO-05-admission",
+        "G-LSO-07-rollout"
+      ],
+      "final_ticket": "DVL-OPS-03"
+    },
+    {
+      "id": "LSO-AC-08",
+      "spec": "SPEC.md 수락 조건과 책임",
+      "tickets": [
+        "DVL-OPS-03"
+      ],
+      "gate_items": [
+        "G-LSO-03-mixed",
+        "G-LSO-06-evidence",
+        "G-LSO-07-rollout"
+      ],
+      "final_ticket": "DVL-OPS-03"
+    }
+  ],
+  "verification": {
+    "unit": "CLI/운영안내와원본/중요로그기존경계를한단위로독립평가",
+    "reuse_first": true,
+    "new_runtime_scope": "기존증거의빈틈에만작은임시mixedproducer+현재CLI; 500MB/outer전체/유료모델무조건재실행금지",
+    "cleanup": "AGENTS 용량경계/전용root/소유identity종료·회수/캐시정리; 보고서/실패/DB결과보존",
+    "all_product_evidence_status": "not_run_in_this_planning_invocation"
+  },
+  "publication": {
+    "implementation_authorized": false,
+    "actual_raw_activation_authorized": false,
+    "actual_legacy_or_archive_deletion_authorized": false,
+    "commit_push_deploy_authorized": false,
+    "next_command": "$implement docs/features/dev-validation-log-retention/storage-operations",
+    "note": "정확한bundle에대한명시구현요청은승인과개발시작을겸할수있음. 실제삭제/활성화는그요청과별도."
+  },
+  "revision_notes": [
+    "p1은기존완료feature의작은운영후속. 원bundle bytes·DVL IDs·과거완료/실패/unknown 보존. 새goal생성/기존goal재개없음."
+  ]
+}

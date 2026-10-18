@@ -61,8 +61,9 @@ class SchemaAgreementTests(unittest.TestCase):
         # C-D70 (3)/(5): the manager also has restart_worker and workbench_status (p27-cd70-test-01 edit); they are
         # answered by the backend itself, not by HandoffService (TOOL_ROLES below stays the two handoff tools).
         self.assertEqual(sorted(t["name"] for t in self.tools["manager"]),
-                         ["restart_worker", "stop_survivor", "to_worker", "workbench_status"])  # C-D71 (1), p27-cw19-test-01
-        self.assertEqual(sorted(t["name"] for t in self.tools["worker"]), ["terminal", "to_manager"])
+                         ["restart_worker", "stop_survivor", "to_worker", "workbench_logs", "workbench_status"])
+        self.assertEqual(sorted(t["name"] for t in self.tools["worker"]),
+                         ["terminal", "to_manager", "workbench_logs"])
         self.assertEqual({name: role.value for name, role in flow.TOOL_ROLES.items()},
                          {"to_worker": "manager", "to_manager": "worker"})
 
@@ -121,9 +122,9 @@ class SchemaAgreementTests(unittest.TestCase):
 
 class SkillContentTests(unittest.TestCase):
     def test_front_matter_and_directories(self):
-        # C-D70 (5): plus the manager's agent-only recovery skill (p27-cd70-test-01 edit)
+        # Includes the host-only summary protocol; directory presence grants no public tool.
         self.assertEqual(sorted(p.name for p in SKILLS.iterdir() if (p / "SKILL.md").is_file()),
-                         ["to-manager", "to-worker", "workbench-recovery"])
+                         ["important-log-summary", "to-manager", "to-worker", "workbench-recovery"])
         for name in ("to-worker", "to-manager"):
             front, body = skill(name)
             self.assertEqual(front.get("name"), name)

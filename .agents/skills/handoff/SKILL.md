@@ -8,7 +8,7 @@ description: "Create a codex-swarm model/session handoff with evidence and resum
 Start only on a user request to create a handoff, such as `$handoff <target> [next-session purpose]`.
 A model change, completed phase, large context or another skill's internal procedure is not a
 trigger. Reading a handoff or asking for status does not authorize creation or implementation.
-Read `.codex/workflow-contract.md` section 11. Honor valid existing authorization; a new session
+Print section 11 of `.codex/workflow-contract.md` (`python3 ../workflow-ledger/scripts/workflow_tools.py contract --sections 11`, relative to this skill). Honor valid existing authorization; a new session
 alone is not a reason to repeat approval. Preserve explicit pauses and changed scope.
 
 Resolve feature, incident or planning target and the next session's purpose from context.
@@ -24,9 +24,17 @@ prose with the [request format](../workflow-ledger/references/formats.md):
 - User decisions, reasons, constraints and request/authorization evidence; distinguish proposals.
 - Complete, partial, failed and unverified work tied to candidates and checks. A past pass is
   not necessarily current. Preserve contradictions and exact limits of partial verification.
-- Dirty/new files, workspaces, assignments, processes, reservations and observation times.
+- Dirty/new files, workspaces, assignments, processes, reservations and observation times. If a run
+  manifest `.workflow/*/runs/*/worktrees.json` lists worktrees still in `git worktree list` (or
+  prunable), state them as leftover Root worktrees and tell the receiver to resume `implement` to clean
+  them up; never remove them while creating a handoff.
 - Failed approaches, counterexamples, ruled-out hypotheses and conditions for retry.
-- First checks, concrete next actions, completion criteria and blockers.
+- First checks, concrete next actions, completion criteria and blockers. Link canonical issues,
+  direct ticket/gate impact, answer references and resume conditions without copying the issue
+  history. Distinguish partial blocking, independent runnable work and active-result waits from
+  a stopped run; preserve unanswered questions and avoid duplicate asks. Missing expected issue
+  references or revision mismatches mean unknown impact, not resolved; issue-free legacy work
+  needs no migration. Answers require authority/candidate/writer reconciliation before resumption.
 - Canonical paths and when/why to read each, rather than duplicated source documents.
 
 Use `scripts/handoff.py handoff --input request.json` relative to this skill. The helper collects

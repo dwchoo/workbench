@@ -1,6 +1,6 @@
 interface:
   display_name: "ask-workflow"
-  short_description: "ask-workflow — repository workflow"
-  default_prompt: "Use $ask-workflow for the requested workflow stage."
+  short_description: "Inspect workflow evidence and recommend the next step"
+  default_prompt: "Use $ask-workflow to inspect current workflow evidence and recommend the next step without executing it."
 policy:
   allow_implicit_invocation: true

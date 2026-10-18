@@ -8,7 +8,7 @@ description: "In one planning command, convert a persisted approved brief into a
 One entry point performs both specification synthesis and ticket decomposition. It does
 not invoke separately installed upstream to-spec/to-tickets skills. Assume the user chose
 Sol XHigh/Max; model changes are host/user operations, not skill actions.
-Read `.codex/workflow-contract.md`. Leaves return to Root. Locate the explicit BRIEF.md;
+Print sections 1–4, 7, 8, 11 of `.codex/workflow-contract.md` (`python3 ../workflow-ledger/scripts/workflow_tools.py contract --sections 1-4,7,8,11`, relative to this skill). Leaves return to Root. Locate the explicit BRIEF.md;
 read it fully with relevant glossary, ADRs and linked source decisions. New session context
 is not a license to repeat the whole interview. If approval is absent, draft transparently;
 do not claim the brief or plan has been approved.
@@ -70,7 +70,7 @@ must preserve stable ticket IDs, completed work and old revision references; rec
 Present one combined approval summary: important decisions, tickets, dependencies, parallel
 candidates, conflicts, test plan and unresolved blockers. No general new interview. A request
 to implement this exact presented bundle can both approve it and start development later.
-Record bundle manifest/digest separately from files being hashed. Return:
+Record bundle manifest/digest separately from files being hashed: `approval.json` lists `bundle_files` and the `bundle_sha256` computed by the `bundle-digest` helper action (SHA-256 of those files' bytes concatenated in order; `formats --actions bundle-digest`). Return:
 `$implement <feature-directory>`.
 Stop at planning. Do not start code changes, tests-as-code, worktree provisioning or agent
 execution merely because tickets are ready. The planning command is one entry point, not

@@ -5,7 +5,7 @@ description: "Investigate a specific bug through reproduction and discriminating
 
 # Investigate bug
 
-Read `.codex/workflow-contract.md`, especially sections 8 and 10. Start only when the user
+Print sections 5, 6, 8–11 of `.codex/workflow-contract.md` (`python3 ../workflow-ledger/scripts/workflow_tools.py contract --sections 5,6,8-11`, relative to this skill). Start only when the user
 invokes this skill, not on an ordinary error report, a question about skills, or an implement
 failure. Another skill must not bypass this boundary by loading these instructions internally.
 
@@ -31,6 +31,7 @@ Do not duplicate a ticket graph or take over another Root's ledger or assignment
 - An explicit read-only request also prohibits diagnostic file writes. Report in the response
   and use only observations that satisfy the restriction.
 
+Report progress at events per `../implement/references/progress-report.md` (no ticket lines).
 Preserve user edits. Establish workspace/base/candidate and writer ownership before experiments;
 do not overlap an active writer or its mutating subprocesses. Existing implement evidence is
 input, not permission to resume that run. Record the real request and behavior/check criteria,
@@ -68,6 +69,9 @@ writes product code or approves a fix. New consultations need new observations o
 unanswered question, not the same failed packet sent again.
 
 Change one explanatory variable at a time. Prefer targeted inspection/probes to broad logging.
+If an experiment injects failure by changing code or a fixture, verify the applied delta
+against the recorded pre-experiment state before trusting the result. Identify the injected
+failure separately from reproduction of the reported defect.
 Tag temporary instrumentation and track its baseline so cleanup removes only this incident's
 changes. Bound execution, drain subprocess output, and clean up owned processes; a stuck probe
 can be the fault in the experiment rather than the product.

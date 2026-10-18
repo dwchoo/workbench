@@ -20,10 +20,3 @@ unnecessary rescans. No writing or side-effectful reproduction commands. Return 
 locations, facts, relevant tests, unknowns and a precise unresolved question. Stay factual;
 do not redefine the approved design or create implementation tickets.
 """
-
-# Intended leaf controls. Validate with installed schema and effective child tools.
-[agents]
-enabled = false
-
-[features]
-multi_agent_v2 = false

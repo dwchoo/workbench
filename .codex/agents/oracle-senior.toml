@@ -22,10 +22,3 @@ files, spawn agents, approve completion or substitute model confidence for a ver
 Return the technical decision/diagnosis, evidence, experiments, risks and remaining blockers;
 Root owns execution and any revised plan/authorization.
 """
-
-# Intended leaf controls. Validate with installed schema and effective child tools.
-[agents]
-enabled = false
-
-[features]
-multi_agent_v2 = false

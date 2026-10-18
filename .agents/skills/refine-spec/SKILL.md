@@ -7,7 +7,7 @@ description: "Interview and document a repository idea into an approved portable
 
 This is the discovery phase, inspired by grill-with-docs, not a final ticket generator.
 Assume the user selected Astra. Do not try to change the model or reroute the conversation
-to a planner. Read `.codex/workflow-contract.md`; a delegated leaf must return to Root.
+to a planner. Print sections 1–3 of `.codex/workflow-contract.md` (`python3 ../workflow-ledger/scripts/workflow_tools.py contract --sections 1-3`, relative to this skill); a delegated leaf must return to Root.
 Read existing instructions, the relevant glossary/CONTEXT-MAP, ADRs, feature artifacts and
 provided evidence. Preserve prior answers; do not restart a settled interview.
 
@@ -16,7 +16,9 @@ provided evidence. Preserve prior answers; do not restart a settled interview.
 Map decisions as a design tree. At each round ask the current frontier: questions whose
 prerequisites are settled. Dependent questions wait for later rounds. Number questions,
 include alternatives, trade-offs and a recommended answer; wait for user decisions. Keep
-questions concrete. Group a large frontier by topic or split it when the user prefers;
+questions concrete. Align each question with its recommendation so acceptance identifies the
+decision clearly. Clarify only materially ambiguous answers, preserving any explicit broader
+approval the user actually gives. Group a large frontier by topic or split it when the user prefers;
 do not invent a hard rule that only one question may ever be asked.
 
 Find observable facts through tools or a bounded `code_explorer` assignment instead of

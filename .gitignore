@@ -2,3 +2,8 @@
 __pycache__/
 *.py[cod]
 /.codex-swarm/
+/.worktrees/
+
+# Regenerable output and local workflow evidence; tracked records remain tracked.
+/graphify-out/
+/.workflow/

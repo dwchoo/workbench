@@ -1,4 +1,4 @@
-"""Shared local workflow evidence primitives. No scheduler or workspace restore."""
+"""Shared local workflow evidence primitives. No scheduler; restore is delta-only and opt-in."""
 from __future__ import annotations
 
 import argparse
@@ -8,8 +8,9 @@ import fnmatch
 import hashlib
 import json
 import math
-from collections import deque
+from collections import deque, namedtuple
 import os
+import re
 from pathlib import Path
 import stat
 import subprocess
@@ -73,6 +74,57 @@ def exclusive_json(path, value):
         stream.write(encoded(value)); stream.flush(); os.fsync(stream.fileno())
 
 
+# Path observations are local to one preflight, never a lock-time cache.
+PathIdentity = namedtuple('PathIdentity', 'lexical resolved inode uncertain')
+
+
+def inspect_path_identity(path):
+    lexical = Path(path).absolute()  # Preserve symlink/.. filesystem semantics.
+    resolved, inode, uncertain = None, None, False
+    try:
+        resolved = lexical.resolve()
+    except (OSError, RuntimeError, ValueError):
+        uncertain = True
+    try:
+        info = lexical.stat()
+        inode = (info.st_dev, info.st_ino)
+    except FileNotFoundError:
+        pass
+    except (OSError, ValueError):
+        uncertain = True
+    return PathIdentity(lexical, resolved, inode, uncertain)
+
+
+def path_relation(left, right):
+    if left.lexical == right.lexical:
+        return 'same'
+    if left.inode is not None and left.inode == right.inode:
+        return 'alias'
+    pairs = []
+    if '..' not in left.lexical.parts and '..' not in right.lexical.parts:
+        pairs.append((left.lexical, right.lexical))
+    if left.resolved is not None and right.resolved is not None:
+        pairs.append((left.resolved, right.resolved))
+    for first, second in pairs:
+        if first == second:
+            return 'same'
+        if second.is_relative_to(first):
+            return 'ancestor'
+        if first.is_relative_to(second):
+            return 'descendant'
+    return 'undetermined' if left.uncertain or right.uncertain else 'disjoint'
+
+
+def paths_overlap(left, right):
+    relation = path_relation(inspect_path_identity(left), inspect_path_identity(right))
+    # Conversion's existing adapter handles unavailable paths as invalid requests.
+    return relation != 'disjoint'
+
+
+def ledger_lock_path(path):
+    return Path(str(path) + '.lock')
+
+
 def git(root, *args, optional=False):
     result = subprocess.run(['git', '-C', str(root), *args], capture_output=True,
                             env={**os.environ, 'GIT_OPTIONAL_LOCKS': '0'})
@@ -100,10 +152,17 @@ def capture(root, watch=(), exclude=(), blobs=None):
         else:
             names.add(name)
     files, unknowns = {}, []
+    blob_bytes = 0
     def content(raw):
+        nonlocal blob_bytes
         key = hashlib.sha256(raw).hexdigest()
-        if blobs is not None:
+        if blobs is not None and key not in blobs:
+            # A checkpoint is a bounded recovery copy, not an output archive.
+            require(blob_bytes + len(raw) <= 32 * 1024 * 1024,
+                    'Checkpoint recovery data exceeds 32 MiB; narrow watch/exclude '
+                    'and exclude generated output, caches and runtime fixtures')
             blobs[key] = base64.b64encode(raw).decode()
+            blob_bytes += len(raw)
         return key
     for name in sorted(names):
         if '.git' in Path(name).parts or matches(name, exclude):
@@ -165,6 +224,107 @@ def audit(before, after, allowed):
             'comparable': all(before['identity'][k] == after['identity'][k] for k in ('watch', 'exclude'))}
 
 
+DELETED = {'kind': 'deleted'}
+
+
+def restore_plan(pre, post, current):
+    """Classify the integration delta (pre -> post) against the current workspace."""
+    pf, qf, cf = pre['identity']['files'], post['identity']['files'], current['identity']['files']
+    delta = sorted(n for n in pf.keys() | qf.keys() if pf.get(n, DELETED) != qf.get(n, DELETED))
+    pi = {(e['path'], e['stage']): e for e in pre['identity']['index']}
+    qi = {(e['path'], e['stage']): e for e in post['identity']['index']}
+    ci = {(e['path'], e['stage']): e for e in current['identity']['index']}
+    index_delta = sorted({k[0] for k in pi.keys() | qi.keys() if pi.get(k) != qi.get(k)})
+    conflicts = []
+    for name in sorted(set(delta) | set(index_delta)):
+        stages = {k[1] for k in ci.keys() | qi.keys() if k[0] == name}
+        if name in delta and cf.get(name, DELETED) != qf.get(name, DELETED):
+            conflicts.append({'path': name, 'reason': 'worktree changed after integration'})
+        elif any(ci.get((name, st)) != qi.get((name, st)) for st in stages):
+            conflicts.append({'path': name, 'reason': 'index changed after integration'})
+        elif any(k[0] == name and k[1] != '0' for k in pi):
+            conflicts.append({'path': name, 'reason': 'pre-integration index has merge stages'})
+        elif 'submodule' in (pf.get(name, DELETED)['kind'], qf.get(name, DELETED)['kind']):
+            conflicts.append({'path': name, 'reason': 'submodule paths are not restorable'})
+    return delta, index_delta, conflicts
+
+
+def restore(root, pre, post, watch=None, exclude=None, apply=False):
+    """Undo only the integration delta. Dry-run unless apply is true; never reset/clean/stash."""
+    root = Path(root).resolve()
+    pre, post = read(pre), read(post)
+    require(pre.get('blobs') is not None, 'Pre-integration manifest must be a checkpoint with blobs')
+    for key in ('watch', 'exclude'):
+        require(pre['identity'][key] == post['identity'][key], 'Pre and post manifests use different ' + key + ' policy')
+    watch = pre['identity']['watch'] if watch is None else watch
+    exclude = pre['identity']['exclude'] if exclude is None else exclude
+    require(sorted(watch) == pre['identity']['watch'] and sorted(exclude) == pre['identity']['exclude'],
+            'Restore observation policy must equal the manifests')
+    require(not pre['unknowns'] and not post['unknowns'], 'Manifests with unknown inputs cannot drive restore')
+    current = capture(root, watch, exclude)
+    result = {'mode': 'apply' if apply else 'dry-run', 'workspace': str(root), 'observed_at': now(),
+              'pre_candidate': pre['candidate'], 'post_candidate': post['candidate'],
+              'current_candidate': current['candidate'], 'unknowns': current['unknowns']}
+    if current['unknowns']:
+        return {**result, 'status': 'blocked', 'delta': [], 'actions': [], 'conflicts': [
+            {'path': '', 'reason': 'current workspace has unknown inputs'}]}
+    delta, index_delta, conflicts = restore_plan(pre, post, current)
+    pf = pre['identity']['files']
+    actions = []
+    for name in delta:
+        kind = pf.get(name, DELETED)['kind']
+        actions.append({'path': name, 'action': 'remove' if kind == 'deleted' else 'write_' + kind})
+    actions.extend({'path': name, 'action': 'restore_index'} for name in index_delta)
+    result.update(delta=delta, index_delta=index_delta, actions=actions, conflicts=conflicts)
+    if conflicts:
+        return {**result, 'status': 'blocked'}
+    if not actions:
+        return {**result, 'status': 'nothing_to_restore', 'matches_pre_delta': True}
+    if not apply:
+        return {**result, 'status': 'restorable'}
+    blobs = pre['blobs']
+    for name in delta:
+        path = safe_path(root, name)
+        record = pf.get(name, DELETED)
+        if record['kind'] == 'deleted':
+            if path.is_symlink() or path.exists():
+                path.unlink()
+            for parent in path.parents:
+                if parent == root or any(parent.iterdir()):
+                    break
+                parent.rmdir()
+            continue
+        path.parent.mkdir(parents=True, exist_ok=True)
+        fd, temporary = tempfile.mkstemp(dir=path.parent, prefix='.restore-')
+        os.close(fd); os.unlink(temporary)
+        if record['kind'] == 'symlink':
+            os.symlink(record['target'], temporary)
+        else:
+            Path(temporary).write_bytes(base64.b64decode(blobs[record['sha256']]))
+            os.chmod(temporary, record['mode'])
+        os.replace(temporary, path)
+    pi = {e['path']: e for e in pre['identity']['index'] if e['stage'] == '0'}
+    for name in index_delta:
+        git(root, 'update-index', '--force-remove', '--', name)
+        if name in pi:
+            entry = pi[name]
+            oid = entry['oid']
+            if entry['mode'] != '160000' and subprocess.run(
+                    ['git', '-C', str(root), 'cat-file', '-e', oid], capture_output=True).returncode:
+                oid = subprocess.run(['git', '-C', str(root), 'hash-object', '-w', '--stdin'],
+                                     input=base64.b64decode(blobs[entry['sha256']]), capture_output=True,
+                                     check=True).stdout.decode().strip()
+            git(root, 'update-index', '--add', '--cacheinfo', entry['mode'], oid, name)
+    after = capture(root, watch, exclude)
+    af = after['identity']['files']
+    ai = {(e['path'], e['stage']): e for e in after['identity']['index']}
+    pix = {(e['path'], e['stage']): e for e in pre['identity']['index']}
+    verified = all(af.get(n, DELETED) == pf.get(n, DELETED) for n in delta) and \
+        all(ai.get((n, '0')) == pix.get((n, '0')) for n in index_delta)
+    return {**result, 'status': 'restored' if verified else 'blocked', 'matches_pre_delta': verified,
+            'restored_candidate': after['candidate'], 'restored_unknowns': after['unknowns']}
+
+
 # Operational state graph is shared with the explicit legacy converter.
 TRANSITIONS = {'reserved': {'starting', 'cancelled'}, 'starting': {'running', 'unknown'},
                'unknown': {'running', 'cancelled', 'finished'}, 'running': {'finished'}}
@@ -173,7 +333,7 @@ TRANSITIONS = {'reserved': {'starting', 'cancelled'}, 'starting': {'running', 'u
 from contextlib import contextmanager
 
 LEDGER_TYPE = 'workflow-invocation-journal'
-LEDGER_ACTIONS = {'ledger-init', 'ledger-read', 'ledger-inspect', 'ledger-update', 'ledger-convert', 'reconcile'}
+
 ERROR_ACTIONS = {
     'file_not_found': 'locate_ledger', 'file_unreadable': 'fix_file_access',
     'invalid_json': 'repair_json_preserving_original', 'invalid_request': 'fix_request',
@@ -202,11 +362,14 @@ class LedgerError(ValueError):
         self.expected_type = None
         self.missing_keys = []
         self.unexpected_key_count = 0
+        self.detail = None
 
 
-def ledger_require(condition, code='invalid_ledger_shape', json_path='$', reason=None):
+def ledger_require(condition, code='invalid_ledger_shape', json_path='$', reason=None, detail=None):
     if not condition:
-        raise LedgerError(code, json_path=json_path, reason=reason)
+        error = LedgerError(code, json_path=json_path, reason=reason)
+        error.detail = detail  # short, payload-free hint: only validated IDs, bucket names and fixed words
+        raise error
 
 
 
@@ -304,18 +467,29 @@ def ledger_decode(raw):
         raise LedgerError('invalid_json') from None
 
 
-def ledger_classify(value):
+SUMMARY_TYPES = {'run_id': str, 'revision': int, 'buckets': dict, 'active_calls': dict,
+                 'unresolved': list, 'usage_known': bool, 'next_action': str}
+LedgerFormat = namedtuple('LedgerFormat', 'name candidate')
+
+
+def ledger_format_info(value):
     if not isinstance(value, dict):
-        return 'unknown'
+        return LedgerFormat('unknown', 'unknown')
     if 'record_type' in value:
-        return LEDGER_TYPE if value['record_type'] == LEDGER_TYPE else 'unknown'
+        return LedgerFormat(LEDGER_TYPE if value['record_type'] == LEDGER_TYPE else 'unknown', 'typed')
     if 'schema_version' in value and 'events' in value:
-        return 'untyped-journal'
+        return LedgerFormat('untyped-journal', 'legacy')
+    if all(key in value and type(value[key]) is kind for key, kind in SUMMARY_TYPES.items()):
+        return LedgerFormat('auxiliary-summary-candidate', 'result')
     if {'limits', 'calls'} <= value.keys() or {'used', 'limit'} <= value.keys():
-        return 'legacy-snapshot-candidate'
+        return LedgerFormat('legacy-snapshot-candidate', 'legacy')
     if any(k in value for k in ('total_calls', 'oracle_calls', 'total_used', 'summary', 'cumulative_total')):
-        return 'auxiliary-summary-candidate'
-    return 'unknown'
+        return LedgerFormat('auxiliary-summary-candidate', 'legacy')
+    return LedgerFormat('unknown', 'unknown')
+
+
+def ledger_classify(value):
+    return ledger_format_info(value).name
 
 
 def ledger_read(path):
@@ -349,7 +523,7 @@ def ledger_destination(path):
 
 @contextmanager
 def ledger_lock(path):
-    lock = Path(str(path) + '.lock')
+    lock = ledger_lock_path(path)
     try:
         fd = os.open(lock, os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW | os.O_NONBLOCK, 0o600)
         if not stat.S_ISREG(os.fstat(fd).st_mode):
@@ -419,31 +593,48 @@ def ledger_init(path, run_id, limits):
     return {**ledger_summary(state), 'mutation': {'ledger': 'committed', 'artifacts': 'created'}}
 
 
-def ledger_update(path, expected_revision, event):
+LEDGER_BATCH_LIMIT = 50
+
+
+def ledger_update(path, expected_revision, event=None, events=None):
+    """Apply one event or an ordered batch. A batch is validated, applied and published atomically."""
     ledger_require(type(expected_revision) is int and expected_revision >= 1, 'invalid_request', '$.expected_revision')
-    ledger_validate_request_event(event)
+    ledger_require((event is None) != (events is None), 'invalid_request')
+    batch = [event] if events is None else events
+    ledger_require(isinstance(batch, list) and 0 < len(batch) <= LEDGER_BATCH_LIMIT, 'invalid_request')
+    for item in batch:
+        ledger_validate_request_event(item)
+    ledger_require(len({item['id'] for item in batch}) == len(batch), 'invalid_request')
     path = ledger_path(path)
     ledger_read(path)  # Full preflight before the first lock artifact.
     with ledger_lock(path):
         value, state = ledger_read(path)
-        for old in value['events']:
-            if old['id'] == event['id']:
-                ledger_require(all(old[k] == event[k] for k in event), 'event_id_conflict')
-                return {**ledger_summary(state), 'mutation': {'ledger': 'none', 'artifacts': 'created'}}
+        known = {old['id']: old for old in value['events']}
+        present = [item['id'] in known for item in batch]
+        if any(present):
+            # Identical retry succeeds even with a stale revision; a partial or changed batch fails.
+            ledger_require(all(present) and all(all(known[item['id']][k] == item[k] for k in item) for item in batch),
+                           'event_id_conflict')
+            return {**ledger_summary(state), 'mutation': {'ledger': 'none', 'artifacts': 'created'}}
         ledger_require(expected_revision == state['revision'], 'stale_revision')
-        fresh = {**event, 'revision': expected_revision + 1, 'at': now()}
-        try:
-            ledger_apply(state, fresh)
-        except LedgerError as exc:
-            exc.event_index = len(value['events'])
-            raise
-        value['events'].append(fresh)
+        fresh = []
+        for offset, item in enumerate(batch):
+            entry = {**item, 'revision': expected_revision + 1 + offset, 'at': now()}
+            try:
+                ledger_apply(state, entry)
+            except LedgerError as exc:
+                exc.event_index = len(value['events']) + offset
+                prefix = '$.event' if events is None else f'$.events[{offset}]'
+                exc.json_path = prefix + exc.json_path[1:]
+                raise
+            fresh.append(entry)
+        value['events'].extend(fresh)
         # Apply validates semantics; replay also validates the complete serialized boundary.
         state = ledger_replay(value)
         try:
             ledger_publish(path, encoded(value), replace=True)
         except LedgerError as exc:
-            exc.revision, exc.event_id = fresh['revision'], fresh['id']
+            exc.revision, exc.event_id = fresh[-1]['revision'], fresh[-1]['id']
             raise
     return {**ledger_summary(state), 'mutation': {'ledger': 'committed', 'artifacts': 'created'}}
 
@@ -476,22 +667,172 @@ def ledger_snapshot(path, reference_path=None):
             'usage': summary['buckets'], 'active_calls': summary['active_calls'], 'unresolved': summary['unresolved']}
 
 
-def ledger_output_preflight(output, data, action):
-    output = ledger_destination(output)
-    ledger_require(not output.name.startswith('.workflow-ledger-tmp-'), 'invalid_request')
-    protected = []
-    if 'path' in data:
-        protected += [ledger_path(data['path']), Path(str(data['path']) + '.lock')]
-    if action == 'ledger-convert':
-        protected += [ledger_path(data['destination']), Path(str(data['destination']) + '.lock'),
-                      ledger_path(data['preservation_directory'])]
-        protected += [ledger_path(s['path']) for s in data['sources']]
-    resolved = output.resolve()
-    for path in protected:
-        other = path.resolve()
-        ledger_require(not (resolved == other or resolved.is_relative_to(other) or other.is_relative_to(resolved)),
-                       'invalid_request', reason='output_path_conflict')
+PathReference = namedtuple('PathReference', 'role path')
+
+
+def command_path(value):
+    require(isinstance(value, (str, Path)) and bool(str(value).strip()) and '\x00' not in str(value),
+            'Invalid command path.')
+    return Path(value)
+
+
+def named_paths(data, *names):
+    return [PathReference(name, command_path(data[name])) for name in names]
+
+
+def journal_paths(data):
+    path = command_path(data['path'])
+    return [PathReference('journal', path), PathReference('lock', ledger_lock_path(path))]
+
+
+def conversion_paths(data):
+    require(isinstance(data['sources'], list), 'Invalid command paths.')
+    result = named_paths(data, 'destination', 'preservation_directory')
+    result.append(PathReference('lock', ledger_lock_path(data['destination'])))
+    for source in data['sources']:
+        require(isinstance(source, dict), 'Invalid command paths.')
+        result.extend(named_paths(source, 'path'))
+    return result
+
+
+def gate_paths(data):
+    require(isinstance(data['checks'], list), 'Invalid command paths.')
+    return named_paths(data, 'requirements') + [
+        PathReference('check', command_path(path)) for path in data['checks']]
+
+
+def handoff_paths(data):
+    root = command_path(data['root'])
+    draft = data['draft']
+    require(isinstance(draft, dict), 'Invalid command paths.')
+    def project_path(value):
+        path = command_path(value)
+        require(not path.is_absolute() and '..' not in path.parts, 'Invalid command paths.')
+        # Identify first; the handler retains its root-containment/access checks.
+        return root / path
+    result = [PathReference('handoff', project_path(data['output']))]
+    references, checks = draft.get('references', []), draft.get('checks', [])
+    require(isinstance(references, list) and isinstance(checks, list), 'Invalid command paths.')
+    paths = list(checks)
+    for reference in references:
+        require(isinstance(reference, dict), 'Invalid command paths.')
+        paths.append(reference['path'])
+    for key in ('ledger', 'previous'):
+        if draft.get(key) is not None and draft.get(key) != '':
+            paths.append(draft[key])
+    result.extend(PathReference('reference', project_path(path)) for path in paths)
+    return result
+
+
+# Inventory only: request schemas and execution remain in their existing adapters.
+ACTIONS = {
+    'ledger-init': ('ledger', journal_paths),
+    'ledger-inspect': ('ledger', journal_paths),
+    'ledger-convert': ('ledger', conversion_paths),
+    'ledger-update': ('ledger', journal_paths),
+    'ledger-read': ('ledger', journal_paths),
+    'reconcile': ('ledger', journal_paths),
+    'snapshot': ('other', lambda data: []),
+    'audit': ('other', lambda data: named_paths(data, 'before', 'after')),
+    'restore': ('other', lambda data: named_paths(data, 'pre', 'post')),
+    'plan': ('other', lambda data: named_paths(data, 'plan', 'requirements')),
+    'check': ('other', lambda data: named_paths(data, 'requirements', 'log')),
+    'gate': ('other', gate_paths),
+    'bundle-digest': ('other', lambda data: []),
+    'handoff': ('other', handoff_paths),
+    'handoff-validate': ('other', lambda data: named_paths(data, 'directory')),
+}
+LEDGER_ACTIONS = {name for name, (group, _) in ACTIONS.items() if group == 'ledger'}
+
+
+def ledger_request_stream(path):
+    return str(path) == '/dev/stdin' or str(path).startswith(('/dev/fd/', '/proc/self/fd/'))
+
+
+def collect_command_paths(action, data, input_path=None):
+    require(isinstance(data, dict), 'Invalid command paths.')
+    references = ACTIONS[action][1](data)
+    if input_path is not None and not (action in LEDGER_ACTIONS and ledger_request_stream(input_path)):
+        references.append(PathReference('request', command_path(input_path)))
+    if action in LEDGER_ACTIONS:
+        for reference in references:
+            ledger_path(reference.path)
+    return references
+
+
+def result_output_issue(output, references, ledger=False):
+    output = command_path(output)
+    identity = inspect_path_identity(output)
+    relations = [path_relation(identity, inspect_path_identity(ref.path)) for ref in references]
+    if any(relation not in ('disjoint', 'undetermined') for relation in relations):
+        return 'output_path_conflict'
+    if ledger and output.name.startswith('.workflow-ledger-tmp-'):
+        return 'reserved_output_name'
+    if identity.uncertain or 'undetermined' in relations:
+        return 'path_identity_unavailable'
+    try:
+        output.lstat()
+    except FileNotFoundError:
+        pass
+    except OSError:
+        return 'path_identity_unavailable'
+    else:
+        return 'destination_exists'
+    try:
+        if ledger:
+            if not output.parent.is_dir():
+                return 'output_parent_unavailable'
+        else:
+            for parent in output.parents:
+                if (parent.exists() or parent.is_symlink()) and not parent.is_dir():
+                    return 'output_parent_unavailable'
+    except OSError:
+        return 'output_parent_unavailable'
+    return None
+
+
+def ledger_output_preflight(output, data, action, input_path=None):
+    output = ledger_path(output)
+    try:
+        issue = result_output_issue(output, collect_command_paths(action, data, input_path), ledger=True)
+    except (KeyError, TypeError, ValueError, OSError, RuntimeError):
+        raise LedgerError('invalid_request') from None
+    errors = {
+        'output_path_conflict': ('invalid_request', 'output_path_conflict'),
+        'reserved_output_name': ('invalid_request', 'invalid_request'),
+        'path_identity_unavailable': ('file_unreadable', 'path_identity_unavailable'),
+        'destination_exists': ('destination_exists', 'destination_exists'),
+        'output_parent_unavailable': ('file_unreadable', 'file_unreadable'),
+    }
+    if issue:
+        code, reason = errors[issue]
+        raise LedgerError(code, reason=reason)
     return output
+
+
+def command_output_preflight(output, data, action, input_path):
+    try:
+        issue = result_output_issue(output, collect_command_paths(action, data, input_path))
+    except (KeyError, TypeError, ValueError, OSError, RuntimeError):
+        raise ValueError('Invalid command paths.') from None
+    messages = {
+        'output_path_conflict': 'Result output conflicts with a command path.',
+        'path_identity_unavailable': 'Cannot establish result output path separation.',
+        'destination_exists': 'Output must be a new file.',
+        'output_parent_unavailable': 'Output parent must be a directory.',
+    }
+    if issue:
+        raise ValueError(messages[issue])
+
+
+def validate_request_event_at(event, json_path, index=None):
+    """Validate one request event; errors name the event (and inner field) instead of just `$`."""
+    try:
+        ledger_validate_request_event(event)
+    except LedgerError as exc:
+        exc.json_path = json_path + exc.json_path[1:]
+        exc.event_index = index
+        raise
 
 
 def ledger_request(action, data):
@@ -501,6 +842,9 @@ def ledger_request(action, data):
         'reconcile': {'path', 'observed'},
         'ledger-convert': {'sources', 'destination', 'run_id', 'mode', 'strategy', 'mapping', 'preservation_directory'}}
     allowed = required[action] | ({'view'} if action == 'ledger-read' else set())
+    if action == 'ledger-update' and isinstance(data, dict) and 'events' in data:
+        required = {**required, action: {'path', 'expected_revision', 'events'}}  # batch form replaces `event`
+        allowed = required[action]
     ledger_fields(data, required[action], allowed, code='invalid_request')
     if action == 'ledger-read':
         ledger_require(data.get('view', 'summary') in ('summary', 'full'), 'invalid_request')
@@ -508,7 +852,14 @@ def ledger_request(action, data):
         ledger_path(data['path'])
     if action == 'ledger-update':
         ledger_require(type(data['expected_revision']) is int and data['expected_revision'] >= 1, 'invalid_request')
-        ledger_validate_request_event(data['event'])
+        if 'events' in data:
+            events = data['events']
+            ledger_require(isinstance(events, list) and 0 < len(events) <= LEDGER_BATCH_LIMIT, 'invalid_request')
+            for index, event in enumerate(events):
+                validate_request_event_at(event, f'$.events[{index}]', index)
+            ledger_require(len({event['id'] for event in events}) == len(events), 'invalid_request')
+        else:
+            validate_request_event_at(data['event'], '$.event')
     if action == 'ledger-convert':
         ledger_require(isinstance(data['sources'], list) and data['sources'], 'invalid_request')
         for source in data['sources']:
@@ -524,30 +875,54 @@ def ledger_error_json(exc, action, data):
         path = str(ledger_path(path)) if path is not None else None
     except LedgerError:
         path = None
-    return {'error': {'code': exc.code, 'action': action, 'message': ERROR_ACTIONS[exc.code].replace('_', ' ') + '.',
+    messages = {
+        'output_path_conflict': 'Result output conflicts with a command path. The request identifies the journal; use a fresh result path or omit --output.',
+        'result_is_not_journal': 'This result summary is not a journal and has no event history. Preserve the original and reconstruct from evidence.',
+        'path_identity_unavailable': 'Cannot establish result output path separation.',
+    }
+    message = messages.get(exc.reason, ERROR_ACTIONS[exc.code].replace('_', ' ') + '.')
+    return {'error': {'code': exc.code, 'action': action, 'message': message,
             'path': path, 'json_path': exc.json_path, 'expected_record_type': LEDGER_TYPE,
             'supported_schema_versions': [1], 'detected_format': getattr(exc, 'detected_format', None),
             'usage_known': False, 'mutation': exc.mutation, 'next_action': ERROR_ACTIONS[exc.code],
             'event_index': exc.event_index, 'reason': exc.reason, 'phase': exc.phase,
             'revision': exc.revision, 'event_id': exc.event_id, 'expected_type': exc.expected_type,
-            'missing_keys': exc.missing_keys, 'unexpected_key_count': exc.unexpected_key_count}}
+            'missing_keys': exc.missing_keys, 'unexpected_key_count': exc.unexpected_key_count,
+            **({'detail': exc.detail} if exc.detail else {})}}
 
 
-def ledger_main(action, input_path, output=None):
+def request_event_id(data):
+    batch = data.get('events')
+    event = batch[-1] if isinstance(batch, list) and batch else data.get('event')
+    return event.get('id') if isinstance(event, dict) else None
+
+
+def ledger_main(action, input_path, output=None, request=None, collect=None):
+    """Run one ledger action. `request` is an already decoded inline request (batch steps);
+    `collect` receives the result/error instead of stdout/stderr."""
     data = None
     result = None
+    def emit_error(exc):
+        payload = ledger_error_json(exc, action, data)
+        if collect is None:
+            print(json.dumps(payload, ensure_ascii=False), file=sys.stderr)
+        else:
+            collect['error'] = payload
     try:
-        # CLI requests may be /dev/stdin or process substitution streams.
-        try:
-            request_path = Path(input_path)
-            is_stream = str(request_path) == '/dev/stdin' or str(request_path).startswith(('/dev/fd/', '/proc/self/fd/'))
-            raw = request_path.read_bytes() if is_stream else ledger_source(request_path)[0]
-            data = ledger_decode(raw)
-        except OSError:
-            raise LedgerError('file_unreadable') from None
+        if request is not None:
+            data = request
+        else:
+            # CLI requests may be /dev/stdin or process substitution streams.
+            try:
+                request_path = Path(input_path)
+                is_stream = ledger_request_stream(request_path)
+                raw = request_path.read_bytes() if is_stream else ledger_source(request_path)[0]
+                data = ledger_decode(raw)
+            except OSError:
+                raise LedgerError('file_unreadable') from None
         ledger_request(action, data)
         if output is not None:
-            ledger_output_preflight(output, data, action)
+            ledger_output_preflight(output, data, action, input_path)
         if action == 'ledger-read':
             _, state = ledger_read(data['path'])
             result = state if data.get('view', 'summary') == 'full' else ledger_summary(state)
@@ -571,30 +946,38 @@ def ledger_main(action, input_path, output=None):
                 exc.mutation = dict(result['mutation'])
                 exc.mutation['artifacts'] = 'unknown' if failure.mutation['ledger'] == 'unknown' else 'created'
                 exc.revision = result.get('revision')
-                exc.event_id = data.get('event', {}).get('id')
+                exc.event_id = request_event_id(data)
                 raise exc from None
-        print(json.dumps(result, ensure_ascii=False, indent=2))
+        if collect is not None:
+            collect['result'] = result
+        else:
+            try:
+                print(json.dumps(result, ensure_ascii=False, indent=2))
+            except OSError:
+                exc = LedgerError('output_failed', phase='output')
+                exc.mutation = dict(result['mutation'])
+                exc.revision = result.get('revision')
+                exc.event_id = request_event_id(data)
+                raise exc from None
         if action == 'reconcile':
             return int(bool(result['mismatches'] or result['unrecorded'] or not result['usage_known']))
         if action == 'ledger-convert':
             return int(bool(result.get('unresolved')) or not result['usage_known'])
         return 0
     except LedgerError as exc:
-        print(json.dumps(ledger_error_json(exc, action, data), ensure_ascii=False), file=sys.stderr)
+        emit_error(exc)
         return 2
     except (KeyError, TypeError, ValueError, OSError, RecursionError):
         # Defensive boundary: raw payloads and OS messages must never escape to stderr.
         exc = LedgerError('invalid_request')
         if result is not None:
             exc.mutation = result['mutation']
-        print(json.dumps(ledger_error_json(exc, action, data), ensure_ascii=False), file=sys.stderr)
+        emit_error(exc)
         return 2
 
 # Typed ledger state engine. Counters exist only during replay, never on disk.
 import copy
 import re
-
-LEDGER_TYPE = 'workflow-invocation-journal'
 LEDGER_ORIGINS = ('operating', 'user', 'host')
 LEDGER_RESERVE_FIELDS = {'invocation', 'role', 'unit', 'incident', 'purpose', 'model', 'effort', 'buckets', 'writer', 'workspace'}
 LEDGER_CALL_FIELDS = LEDGER_RESERVE_FIELDS | {'state', 'started', 'outcome', 'observed_model', 'observed_effort', 'evidence_refs'}
@@ -672,9 +1055,10 @@ def lcall(call, name, limits, imported=False):
         for field in ('role', 'unit', 'incident'):
             if call[field]:
                 required.add(field + ':' + call[field])
-        ledger_require(required <= set(buckets))
+        # A non-empty role/unit/incident needs its own `role:<id>`/`unit:<id>`/`incident:<id>` bucket, and no others.
+        ledger_require(required <= set(buckets), json_path='$.buckets', reason='missing_required_bucket')
         if all(call[k] is not None for k in ('role', 'unit', 'incident')):
-            ledger_require(required == set(buckets))
+            ledger_require(required == set(buckets), json_path='$.buckets', reason='unexpected_bucket')
     state, started = call['state'], call['started']
     ledger_require(isinstance(state, str) and state in {'reserved', 'starting', 'running', 'unknown', 'finished', 'cancelled'})
     ledger_require(started is None or type(started) is bool)
@@ -865,11 +1249,21 @@ def _ledger_validate_request_event(event):
         lcall({**data, 'state': 'reserved', 'started': False, 'outcome': None, 'observed_model': 'unverified',
                'observed_effort': 'unverified', 'evidence_refs': []}, data['invocation'], {b: {} for b in data['buckets']})
     elif event['kind'] == 'transition':
-        ledger_require(lid(data['invocation']) and data['state'] in ('starting', 'running', 'unknown', 'finished', 'cancelled') and
-                       all(nonempty(data[k]) for k in ('evidence', 'observed_model', 'observed_effort')) and
-                       (data['not_started_evidence'] is None or nonempty(data['not_started_evidence'])))
+        ledger_require(lid(data['invocation']), json_path='$.data.invocation', reason='invalid_invocation_id',
+                       detail='invocation must match ^[A-Za-z0-9][A-Za-z0-9._:-]{0,95}$')
+        ledger_require(data['state'] in ('starting', 'running', 'unknown', 'finished', 'cancelled'), json_path='$.data.state',
+                       reason='invalid_state', detail='state must be starting, running, unknown, finished or cancelled')
+        for name in ('evidence', 'observed_model', 'observed_effort'):
+            ledger_require(nonempty(data[name]), json_path='$.data.' + name, reason='empty_' + name,
+                           detail=name + ' must be a nonempty string (observed_* may be "unverified")')
+        ledger_require(data['not_started_evidence'] is None or nonempty(data['not_started_evidence']),
+                       json_path='$.data.not_started_evidence', reason='empty_not_started_evidence',
+                       detail='not_started_evidence must be null or a nonempty string')
         ledger_require((data['state'] == 'finished' and data['outcome'] in ('complete', 'partial', 'failed', 'interrupted')) or
-                       (data['state'] != 'finished' and data['outcome'] is None))
+                       (data['state'] != 'finished' and data['outcome'] is None), json_path='$.data.outcome',
+                       reason='invalid_outcome',
+                       detail='outcome must be complete, partial, failed or interrupted when state is finished, otherwise null '
+                              '(worker result names such as candidate_ready belong in evidence)')
     elif event['kind'] == 'check':
         lcheck(data)
     else:
@@ -916,21 +1310,39 @@ def _ledger_apply(state, event):
                     'evidence_refs': copy.deepcopy(basis['evidence_refs'])})
         state['limits'][bucket][origin] = {k: data[k] for k in ('value', 'authority', 'reason')}
     elif kind == 'reserve':
-        ledger_require(data['invocation'] not in state['calls'], code='invalid_event_transition')
+        ledger_require(data['invocation'] not in state['calls'], code='invalid_event_transition', json_path='$.data.invocation',
+                       reason='invocation_exists', detail=f'invocation {data["invocation"]} is already reserved; use a new invocation ID')
         for bucket in data['buckets']:
-            ledger_require(bucket in state['limits'], code='capacity_unknown')
+            where = '$.data.buckets[' + bucket + ']'
+            ledger_require(bucket in state['limits'], code='capacity_unknown', json_path=where, reason='bucket_without_limit',
+                           detail=f'bucket {bucket} has no limit; add it to ledger-init limits or a limit event first')
             capacity = _lusage(state, bucket)
-            ledger_require(capacity['usage_known'] and capacity['effective_limit'] is not None and
-                           not any(x['buckets'] is None or bucket in x['buckets'] for x in state['unresolved']), code='capacity_unknown')
-            ledger_require(capacity['available'] > 0, code='capacity_exhausted')
+            starting = sorted(name for name, call in state['calls'].items()
+                              if call['started'] is None and call['state'] in {'starting', 'unknown'} and
+                              (call['buckets'] is None or bucket in call['buckets']))
+            ledger_require(capacity['usage_known'], code='capacity_unknown', json_path=where, reason='usage_unknown',
+                           detail=(f'usage of bucket {bucket} is unknown while invocation(s) {", ".join(starting)} have an unobserved start '
+                                   '(state starting/unknown). Record running/finished/cancelled for them first, or reserve every '
+                                   'invocation before recording any starting') if starting else
+                                  f'usage of bucket {bucket} is unknown (null baseline); resolve the imported unknown first')
+            ledger_require(capacity['effective_limit'] is not None and
+                           not any(x['buckets'] is None or bucket in x['buckets'] for x in state['unresolved']),
+                           code='capacity_unknown', json_path=where, reason='unresolved_blocks_bucket',
+                           detail=f'bucket {bucket} has no effective limit or a relevant unresolved fact; resolve it first')
+            ledger_require(capacity['available'] > 0, code='capacity_exhausted', json_path=where, reason='no_available_capacity',
+                           detail=f'bucket {bucket}: used {capacity["used"]} + reserved {capacity["reserved"]} '
+                                  f'has reached limit {capacity["effective_limit"]}')
         call = {**copy.deepcopy(data), 'state': 'reserved', 'started': False, 'outcome': None,
                 'observed_model': 'unverified', 'observed_effort': 'unverified', 'evidence_refs': []}
         state['calls'][data['invocation']] = call
         _lcount_call(state, call, 1)
     elif kind == 'transition':
-        ledger_require(data['invocation'] in state['calls'], code='invalid_event_transition')
+        ledger_require(data['invocation'] in state['calls'], code='invalid_event_transition', json_path='$.data.invocation',
+                       reason='unknown_invocation', detail=f'invocation {data["invocation"]} has no reserve event')
         old = state['calls'][data['invocation']]
-        ledger_require(data['state'] in TRANSITIONS.get(old['state'], set()), code='invalid_event_transition')
+        ledger_require(data['state'] in TRANSITIONS.get(old['state'], set()), code='invalid_event_transition',
+                       json_path='$.data.state', reason='transition_not_allowed',
+                       detail=f'{data["invocation"]} is {old["state"]}; allowed next: {", ".join(sorted(TRANSITIONS.get(old["state"], set()))) or "none (terminal)"}')
         if data['state'] == 'cancelled' and old['state'] == 'unknown':
             ledger_require(old['started'] is not True and nonempty(data['not_started_evidence']), code='invalid_event_transition')
         call = copy.deepcopy(old)
@@ -991,10 +1403,10 @@ def ledger_apply(state, event):
 def ledger_replay(value):
     ledger_type(value, 'object')
     if 'record_type' not in value:
-        classification = ledger_classify(value)
-        detected = classification if isinstance(classification, str) else classification.get('detected_format', 'unknown')
-        error = LedgerError('conversion_required' if detected in {'untyped-journal', 'legacy-snapshot-candidate', 'auxiliary-summary-candidate'} else 'invalid_ledger_shape')
-        error.detected_format = detected
+        detected = ledger_format_info(value)
+        error = LedgerError('conversion_required' if detected.candidate == 'legacy' else 'invalid_ledger_shape',
+                            reason='result_is_not_journal' if detected.candidate == 'result' else None)
+        error.detected_format = detected.name
         raise error
     ledger_type(value['record_type'], 'string', '$.record_type')
     ledger_require(value['record_type'] == LEDGER_TYPE, code='unsupported_record_type')
@@ -1203,19 +1615,13 @@ def ledger_convert(sources, destination, run_id, mode, strategy, mapping, preser
         path = ledger_path(source['path']); raw, inode = ledger_source(path)
         ledger_require(hashlib.sha256(raw).hexdigest() == source['expected_sha256'], 'source_changed')
         ledger_require(inode not in inode_seen, 'invalid_request'); inode_seen.add(inode)
-        canonical = path.resolve()
-        ledger_require(canonical != destination.resolve() and canonical != preserve.resolve()
-                       and not canonical.is_relative_to(preserve.resolve())
-                       and not preserve.resolve().is_relative_to(canonical), 'invalid_request')
         paths.append(str(path)); source_records.append((path, raw, inode, ledger_decode(raw)))
-    ledger_require(len(paths) == len(set(paths)) and preserve.resolve() != destination.resolve()
-                   and not destination.resolve().is_relative_to(preserve.resolve())
-                   and not preserve.resolve().is_relative_to(destination.resolve()), 'invalid_request')
-    lock_path = destination.with_suffix(destination.suffix + '.lock').resolve()
-    ledger_require(preserve.resolve() != lock_path and not lock_path.is_relative_to(preserve.resolve())
-                   and not preserve.resolve().is_relative_to(lock_path)
-                   and all(p.resolve() != lock_path and not lock_path.is_relative_to(p.resolve())
-                           and not p.resolve().is_relative_to(lock_path) for p, _, _, _ in source_records), 'invalid_request')
+    lock_path = ledger_lock_path(destination)
+    pairs = [(destination, preserve), (preserve, lock_path)]
+    for path, _, _, _ in source_records:
+        pairs.extend((path, protected) for protected in (destination, preserve, lock_path))
+    ledger_require(len(paths) == len(set(paths)) and
+                   not any(paths_overlap(left, right) for left, right in pairs), 'invalid_request')
     ledger_convert_mapping(mapping, paths, strategy)
     # Validate claimed JSON locations without assuming their values prove a semantic mapping.
     source_values = {str(p): v for p, _, _, v in source_records}
@@ -1521,13 +1927,14 @@ def validate_plan(plan, approved):
 
 
 def run_check(root, approved, argv, environment, log, check_id, watch=(), exclude=(), timeout=300):
-    require(argv_valid(argv) and environment_valid(environment) and nonempty(check_id),
-            'Command, sanitized environment and check ID required')
-    require(isinstance(root, (str, Path)) and nonempty(str(root)) and '\x00' not in str(root), 'Invalid root')
-    require(isinstance(log, (str, Path)) and nonempty(str(log)) and '\x00' not in str(log), 'Invalid log')
-    require(type(timeout) in (int, float) and math.isfinite(timeout) and timeout > 0, 'Invalid timeout')
-    require(isinstance(watch, (list, tuple)) and all(relative(v) for v in watch), 'Invalid watch')
-    require(isinstance(exclude, (list, tuple)) and all(relative(v) for v in exclude), 'Invalid exclude')
+    require(argv_valid(argv), 'Invalid argv: expected a non-empty list of strings (no shell expansion)')
+    require(environment_valid(environment), 'Invalid environment: expected a sanitized description string or non-empty object')
+    require(nonempty(check_id), 'Invalid check_id: expected a non-empty string')
+    require(isinstance(root, (str, Path)) and nonempty(str(root)) and '\x00' not in str(root), 'Invalid root: expected the Git workspace root path')
+    require(isinstance(log, (str, Path)) and nonempty(str(log)) and '\x00' not in str(log), 'Invalid log: expected a new file path')
+    require(type(timeout) in (int, float) and math.isfinite(timeout) and timeout > 0, 'Invalid timeout: expected positive seconds')
+    require(isinstance(watch, (list, tuple)) and all(relative(v) for v in watch), 'Invalid watch: expected project-relative paths')
+    require(isinstance(exclude, (list, tuple)) and all(relative(v) for v in exclude), 'Invalid exclude: expected project-relative paths or globs')
     req = requirements(approved)
     before = snapshot(root, watch, exclude)
     started = now()
@@ -1558,8 +1965,8 @@ def run_check(root, approved, argv, environment, log, check_id, watch=(), exclud
 
 def validate_gate(approved, candidate, checks):
     req = requirements(approved)
-    require(sha256(candidate), 'Invalid candidate')
-    require(isinstance(checks, list), 'Checks must be a list')
+    require(sha256(candidate), 'Invalid candidate: expected a 64-hex candidate id (a check "after" value or snapshot candidate)')
+    require(isinstance(checks, list), 'Invalid checks: expected a list of check record paths')
     issues, valid = [], []
     for index, check in enumerate(checks):
         errors = check_errors(check)
@@ -1891,10 +2298,15 @@ def handoff_validate(root, directory):
                 result['unknowns'].append('historical ledger record preserved: ' + path)
                 try:
                     inspection = ledger_inspect(safe_path(root, path))
-                    if not inspection['supported']:
-                        result['unknowns'].append('referenced ledger requires conversion: ' + path)
-                    elif not inspection['valid']:
-                        result['unknowns'].append('referenced ledger is invalid: ' + path)
+                    if not inspection['valid']:
+                        guidance = {
+                            'convert_ledger': 'referenced ledger requires conversion: ',
+                            'inspect_supported_format': 'referenced ledger requires supported format: ',
+                            'use_supported_version': 'referenced ledger requires supported version: ',
+                            'repair_ledger_preserving_original': 'referenced ledger is invalid: ',
+                            'repair_history_preserving_original': 'referenced ledger is invalid: ',
+                        }.get(inspection['next_action'], 'referenced ledger requires inspection: ')
+                        result['unknowns'].append(guidance + path)
                 except (LedgerError, ValueError, OSError):
                     result['unknowns'].append('referenced ledger unavailable: ' + path)
             else:
@@ -1912,54 +2324,412 @@ def handoff_validate(root, directory):
     return finish()
 
 
+BUNDLE_METHOD = ('SHA-256 over the bytes of the approval.json "bundle_files" concatenated in the listed order '
+                 '(paths relative to the approval.json directory); approval.json itself is never part of the digest')
+
+
+def bundle_digest(dir, files=None):
+    """Compute (and, when approval.json records one, verify) the approved-bundle digest."""
+    require(isinstance(dir, (str, Path)) and nonempty(str(dir)), 'Invalid dir: expected the folder holding approval.json')
+    root, recorded = Path(dir), None
+    if files is None:
+        approval = read(safe_approval(root))
+        require(isinstance(approval, dict), 'approval.json must be an object')
+        files, recorded = approval.get('bundle_files'), approval.get('bundle_sha256')
+    require(strings(files, non_empty=True) and bool(files), 'bundle_files must be a non-empty list of relative file paths')
+    hasher = hashlib.sha256()
+    for name in files:
+        hasher.update(regular_bytes(safe_path(root, name)))
+    digest_value = hasher.hexdigest()
+    return {'digest': digest_value, 'recorded': recorded, 'valid': recorded is None or recorded == digest_value,
+            'files': files, 'method': BUNDLE_METHOD}
+
+
+def safe_approval(root):
+    path = root / 'approval.json'
+    require(path.is_file(), 'No approval.json in ' + str(root) + '; pass "files" to compute a digest')
+    return path
+
+
+def plain_call(action, data, output=None, input_path=None):
+    """Run one non-ledger action on a decoded request; the full result also goes to `output` (create-only)."""
+    require(isinstance(data, dict), 'Request must be an object')
+    if output is not None:
+        command_output_preflight(output, data, action, input_path)
+    if action == 'snapshot':
+        result = snapshot(**data)
+    elif action == 'audit':
+        result = audit(read(data['before']), read(data['after']), data['allowed'])
+    elif action == 'restore':
+        result = restore(**data)
+    elif action == 'plan':
+        result = validate_plan(read(data['plan']), read(data['requirements']))
+    elif action == 'check':
+        data['approved'] = read(data.pop('requirements'))
+        result = run_check(**data)
+    elif action == 'gate':
+        require(strings(data['checks'], non_empty=True), 'Invalid checks: expected a non-empty list of check record paths')
+        result = validate_gate(read(data['requirements']), data['candidate'], [read(p) for p in data['checks']])
+        for issue in result['issues']:
+            if 'check_index' in issue:
+                issue['check_path'] = data['checks'][issue['check_index']]
+    elif action == 'bundle-digest':
+        result = bundle_digest(**data)
+    elif action == 'handoff':
+        result = handoff_create(**data)
+    else:
+        result = handoff_validate(**data)
+    if output is not None:
+        exclusive_json(output, result)
+    return result
+
+
+def plain_code(action, result):
+    if result.get('valid') is False or result.get('passed') is False or \
+            (action == 'restore' and result.get('status') == 'blocked'):
+        return 1
+    return 0
+
+
+SUMMARY_LIMIT = 20
+
+
+def capped(result, fields, limit=SUMMARY_LIMIT):
+    """Copy list fields truncated to `limit`, with true totals in `counts`."""
+    out, counts = {}, {}
+    for name in fields:
+        values = result.get(name)
+        if isinstance(values, list):
+            counts[name] = len(values)
+            out[name] = values[:limit]
+    if any(total > limit for total in counts.values()):
+        out['truncated'] = sorted(name for name, total in counts.items() if total > limit)
+    out['counts'] = counts
+    return out
+
+
+def summarize(action, result, output=None, limit=SUMMARY_LIMIT):
+    """Compact stdout summary of a non-ledger result; never blobs or per-file identity maps.
+
+    The complete result exists only in the `--output` file or when `--full` is given.
+    """
+    saved = str(Path(output).resolve()) if output is not None else 'not saved; use --output NEW_FILE or --full'
+    head = {'action': action, 'full_result': saved}
+    if action == 'snapshot':
+        identity = result['identity']
+        return {**head, 'candidate': result['candidate'], 'stable': result['stable'],
+                'observed_at': result['observed_at'], 'workspace': result['workspace'],
+                'head': identity['head'], 'checkpoint': 'blobs' in result,
+                'file_count': len(identity['files']), 'index_count': len(identity['index']),
+                'blob_count': len(result.get('blobs', ())), **capped(result, ['unknowns'], limit)}
+    if action == 'audit':
+        return {**head, 'comparable': result['comparable'],
+                **capped(result, ['changed', 'index_changed', 'outside_scope'], limit)}
+    if action == 'restore':
+        kept = {k: result[k] for k in ('mode', 'status', 'workspace', 'pre_candidate', 'post_candidate',
+                                       'current_candidate', 'matches_pre_delta', 'restored_candidate') if k in result}
+        summary = {**head, **kept, **capped(result, ['unknowns', 'delta', 'index_delta', 'conflicts', 'actions',
+                                                     'restored_unknowns'], limit)}
+        kinds = {}
+        for entry in result.get('actions', ()):
+            kinds[entry['action']] = kinds.get(entry['action'], 0) + 1
+        summary['action_kinds'] = kinds
+        return summary
+    if action == 'bundle-digest':
+        return {**head, **{k: v for k, v in result.items() if k != 'method'}}
+    if action == 'plan':
+        return {**head, 'valid': result['valid'], 'requirements_identity': result['requirements_identity'],
+                **capped(result, ['errors'], limit)}
+    if action == 'check':
+        return {**head, **{k: result[k] for k in ('check_id', 'exit_code', 'timed_out', 'stable', 'before', 'after',
+                                                  'log', 'log_sha256', 'cwd', 'started_at', 'finished_at')}}
+    if action == 'gate':
+        return {**head, 'passed': result['passed'], **capped(result, ['issues'], limit)}
+    if action == 'handoff':
+        return {**head, 'path': result['path'], 'stable': result['stable'], 'starter': result['starter'],
+                'validation': capped(result['validation'], list(result['validation']), limit)}
+    return {**head, **capped(result, list(result), limit)}  # handoff-validate
+
+
+CONTRACT_NAME = 'workflow-contract.md'
+
+
+def parse_number_list(text):
+    numbers = []
+    for part in str(text).split(','):
+        low, dash, high = part.strip().partition('-')
+        require(low.isdigit() and (not dash or high.isdigit()), 'Sections must look like 1,3,5-9')
+        numbers.extend(range(int(low), int(high or low) + 1))
+    return numbers
+
+
+def find_contract(explicit=None):
+    if explicit:
+        return Path(explicit)
+    for base in (Path.cwd(), *Path.cwd().parents):
+        if (base / '.codex' / CONTRACT_NAME).is_file():
+            return base / '.codex' / CONTRACT_NAME
+    home = Path(os.environ.get('CODEX_HOME') or Path.home() / '.codex')
+    require((home / CONTRACT_NAME).is_file(), 'Installed workflow contract not found; pass --path')
+    return home / CONTRACT_NAME
+
+
+def contract_sections(text, wanted):
+    """Return the requested numbered `## N.` sections in contract order."""
+    parts = re.split(r'(?m)^(?=## \d+\. )', text)
+    found = {int(re.match(r'## (\d+)\.', part).group(1)): part.rstrip() + '\n' for part in parts[1:]}
+    missing = [n for n in wanted if n not in found]
+    require(not missing, 'Unknown contract sections: ' + ','.join(map(str, missing)))
+    return '\n'.join(found[n] for n in sorted(set(wanted)))
+
+
+def formats_text():
+    return (Path(__file__).resolve().parents[1] / 'references' / 'formats.md').read_text(encoding='utf-8')
+
+
+FORMAT_RELATED = {'requirements', 'check', 'check-items', 'gate', 'event-check'}
+FORMAT_ALIASES = {'batch': ('batch-setup', 'batch-dispatch', 'batch-result', 'batch-pre', 'batch-post')}
+
+
+def format_actions(text, actions):
+    """Request-example lines of the formats quick reference; returns (text, unknown action names)."""
+    block = text.split('## Common actions (quick reference)')[1].split('```')[1]
+    known = sorted({line.split(' ', 1)[0] for line in block.strip().splitlines()} | set(FORMAT_ALIASES))
+    matched = [a for a in actions if a in known]
+    require(matched, 'Unknown action; known: ' + ', '.join(known))
+    wanted = set(matched)
+    for name in matched:
+        wanted.update(FORMAT_ALIASES.get(name, ()))
+    # A check/gate request needs its requirements file, items record and ledger event too.
+    if wanted & {'check', 'gate'}:
+        wanted |= FORMAT_RELATED
+    lines = [line for line in block.strip().splitlines() if line.split(' ', 1)[0] in wanted]
+    return '\n'.join(lines) + '\n', [a for a in actions if a not in known]
+
+
+def format_heading(text, heading):
+    """A formats.md section whose heading contains `heading`, up to the next heading of equal or higher level."""
+    lines = text.splitlines()
+    for start, line in enumerate(lines):
+        match = re.match(r'(#+) (.*)', line)
+        if match and heading.lower() in match.group(2).lower():
+            level = len(match.group(1))
+            end = next((i for i in range(start + 1, len(lines))
+                        if re.match(r'#{1,%d} ' % level, lines[i])), len(lines))
+            return '\n'.join(lines[start:end]).rstrip() + '\n'
+    raise ValueError('No formats heading contains: ' + heading)
+
+
+BRIEFS = {
+    'implement': {'contract': '1,3-9,11',
+                  'files': ('workflow-ledger/SKILL.md', 'workspace-evidence/SKILL.md', 'change-verification/SKILL.md',
+                            'implement/references/dispatch-and-oracle.md', 'implement/references/progress-report.md'),
+                  'actions': ('batch', 'plan', 'bundle-digest', 'ledger-init', 'ledger-update', 'snapshot', 'audit', 'check', 'gate')},
+    'quick-change': {'contract': '6-9,11',
+                     'files': ('quick-change/references/change-template.md', 'workflow-ledger/SKILL.md',
+                               'workspace-evidence/SKILL.md', 'change-verification/SKILL.md',
+                               'implement/references/dispatch-and-oracle.md', 'implement/references/progress-report.md'),
+                     'actions': ('batch', 'ledger-init', 'ledger-update', 'snapshot', 'audit')},
+}
+
+
+def brief_text(name, contract_path=None):
+    """Everything a skill tells Root to read at the start, printed in ONE command (one turn instead of several)."""
+    require(name in BRIEFS, 'Unknown brief; use one of: ' + ', '.join(BRIEFS))
+    spec, skills = BRIEFS[name], Path(__file__).resolve().parents[2]
+    parts = []
+    for relative in spec['files']:
+        parts.append(f'===== {relative} =====\n' + (skills / relative).read_text(encoding='utf-8').rstrip() + '\n')
+    contract = find_contract(contract_path).read_text(encoding='utf-8')
+    parts.append(f'===== contract sections {spec["contract"]} =====\n' + contract_sections(contract, parse_number_list(spec['contract'])))
+    formats = formats_text()
+    quick = formats.split('## Common actions (quick reference)')[1].split('\n```')[0]
+    lines, _ = format_actions(formats, list(spec['actions']))
+    parts.append('===== formats quick reference =====\n' + quick.split('\n\n', 2)[1].strip() + '\n\n' + lines)
+    return '\n'.join(parts)
+
+
+def reference_main(args):
+    try:
+        if args.action == 'brief':
+            require(args.for_skill, 'Use --for, for example --for implement')
+            sys.stdout.write(brief_text(args.for_skill, args.path))
+        elif args.action == 'contract':
+            require(args.sections, 'Use --sections, for example --sections 1,3,7-9')
+            text = find_contract(args.path).read_text(encoding='utf-8')
+            sys.stdout.write(contract_sections(text, parse_number_list(args.sections)))
+        else:
+            require(bool(args.actions) != bool(args.heading), 'Use exactly one of --actions or --heading')
+            text = formats_text()
+            if args.actions:
+                lines, unknown = format_actions(text, [a.strip() for a in args.actions.split(',')])
+                sys.stdout.write(lines)
+                if unknown:
+                    print(json.dumps({'warning': 'No quick-reference example for: ' + ', '.join(unknown)}), file=sys.stderr)
+            else:
+                sys.stdout.write(format_heading(text, args.heading))
+        return 0
+    except (ValueError, KeyError, IndexError, OSError) as exc:
+        print(json.dumps({'error': str(exc)}, ensure_ascii=False), file=sys.stderr)
+        return 2
+
+
+BATCH_ACTIONS = ('ledger-init', 'ledger-read', 'ledger-inspect', 'ledger-update', 'reconcile',
+                 'snapshot', 'audit', 'plan', 'check', 'gate', 'bundle-digest')
+BATCH_FIELDS = {'steps', 'stop_on_error'}
+BATCH_STEP_LIMIT = 30
+
+
+def brief(action, result):
+    """Smallest per-step summary for a batch; the full result stays in the step's `output` file."""
+    if action in LEDGER_ACTIONS:
+        kept = {k: result[k] for k in ('run_id', 'revision', 'next_action', 'usage_known', 'mutation',
+                                       'detected_format', 'valid', 'recognized') if k in result}
+        if isinstance(result.get('active_calls'), dict):
+            kept['active_calls'] = {name: call['state'] for name, call in result['active_calls'].items()}
+        if action == 'reconcile':
+            kept.update(mismatches=result['mismatches'][:SUMMARY_LIMIT], unrecorded=result['unrecorded'][:SUMMARY_LIMIT])
+        return kept
+    full = summarize(action, result)
+    for noisy in ('full_result', 'action', 'workspace', 'observed_at', 'head', 'cwd', 'started_at', 'finished_at', 'log'):
+        full.pop(noisy, None)
+    if 'truncated' not in full:
+        full.pop('counts', None)  # totals only matter when a list was capped
+    if not full.get('checkpoint', True):
+        full.pop('blob_count', None)
+    return {k: v for k, v in full.items() if v != []}
+
+
+def batch_error(index, action, code, detail, cause=None):
+    error = {'code': 'batch_step_failed', 'step': index, 'action': action, 'exit_code': code,
+             'json_path': f'$.steps[{index}]', 'detail': detail}
+    if cause:
+        inner = cause.get('error', cause) if isinstance(cause, dict) else {}
+        if isinstance(inner, dict):
+            error['cause'] = inner
+            if isinstance(inner.get('json_path'), str) and inner['json_path'].startswith('$'):
+                error['json_path'] = f'$.steps[{index}].request' + inner['json_path'][1:]
+        elif isinstance(inner, str):
+            error['cause'] = {'message': inner}
+    return {'error': error}
+
+
+def batch_main(input_path, full=False):
+    """Run several helper actions in order. Each step behaves exactly like the individual command
+    (same validation, atomicity and --output rules); steps that finished before a failure keep their effects."""
+    steps, results = [], []
+    try:
+        try:
+            # A heredoc or pipe (`--input /dev/stdin`) lets Root write and run a phase in one command.
+            raw = Path(input_path).read_bytes() if ledger_request_stream(input_path) else ledger_source(Path(input_path))[0]
+            plan = ledger_decode(raw)
+        except (OSError, LedgerError):
+            raise ValueError('Cannot read the batch request as strict JSON') from None
+        require(isinstance(plan, dict) and set(plan) <= BATCH_FIELDS and 'steps' in plan, 'Batch request needs "steps" (and optional "stop_on_error")')
+        steps, stop = plan['steps'], plan.get('stop_on_error', True)
+        require(type(stop) is bool, 'stop_on_error must be a boolean')
+        require(isinstance(steps, list) and 0 < len(steps) <= BATCH_STEP_LIMIT, f'steps must be a list of 1-{BATCH_STEP_LIMIT} steps')
+        for index, step in enumerate(steps):
+            require(isinstance(step, dict) and set(step) <= {'action', 'request', 'output'} and {'action', 'request'} <= set(step),
+                    f'steps[{index}] needs exactly action, request and optional output')
+            require(step['action'] in BATCH_ACTIONS, f'steps[{index}].action must be one of: ' + ', '.join(BATCH_ACTIONS)
+                    + ' (batch, restore, ledger-convert, handoff, contract and formats stay standalone; git is never part of a batch)')
+            require(isinstance(step['request'], dict), f'steps[{index}].request must be an inline object')
+            require(step.get('output') is None or isinstance(step['output'], str), f'steps[{index}].output must be a path')
+    except ValueError as exc:
+        print(json.dumps({'error': {'code': 'invalid_batch', 'json_path': '$', 'detail': str(exc)}}, ensure_ascii=False), file=sys.stderr)
+        return 2
+    # Pure request validation of every ledger step first: a typo must not leave earlier steps applied.
+    for index, step in enumerate(steps):
+        if step['action'] in LEDGER_ACTIONS:
+            try:
+                ledger_request(step['action'], copy.deepcopy(step['request']))
+            except LedgerError as exc:
+                failure = batch_error(index, step['action'], 2, 'request rejected before any step ran',
+                                      ledger_error_json(exc, step['action'], step['request']))
+                print(json.dumps(failure, ensure_ascii=False), file=sys.stderr)
+                return 2
+    code, failure = 0, None
+    for index, step in enumerate(steps):
+        action, output = step['action'], step.get('output')
+        entry = {'index': index, 'action': action}
+        if failure is not None and stop:
+            results.append({**entry, 'status': 'skipped'})
+            continue
+        request = copy.deepcopy(step['request'])
+        step_code, result, error = 0, None, None
+        if action in LEDGER_ACTIONS:
+            box = {}
+            step_code = ledger_main(action, input_path, output, request=request, collect=box)
+            result, error = box.get('result'), box.get('error')
+        else:
+            try:
+                result = plain_call(action, request, output, input_path)
+                step_code = plain_code(action, result)
+            except KeyError as exc:
+                error = {'error': 'Missing request field: ' + str(exc.args[0]) + ' (see formats --actions ' + action + ')'}
+                step_code = 2
+            except (ValueError, TypeError, OSError) as exc:
+                error, step_code = {'error': str(exc)}, 2
+        if step_code == 0 and error is None:
+            results.append({**entry, 'status': 'ok', 'summary': brief(action, result),
+                            **({'output': str(Path(output).resolve())} if output else {}),
+                            **({'result': result} if full else {})})
+            continue
+        status = 'error' if error is not None else 'failed'
+        results.append({**entry, 'status': status, 'exit_code': step_code,
+                        **({'summary': brief(action, result)} if result is not None else {}),
+                        **({'output': str(Path(output).resolve())} if output and result is not None else {})})
+        code = max(code, step_code)
+        if failure is None:
+            failure = batch_error(index, action, step_code, 'step returned an error' if error is not None else
+                                  'step reported a failed result (exit 1); see its summary', error)
+            if not stop:
+                continue
+    ran = [r for r in results if r['status'] != 'skipped']
+    print(json.dumps({'action': 'batch', 'status': 'ok' if failure is None else 'failed', 'stop_on_error': stop,
+                      'counts': {'steps': len(steps), 'ok': sum(r['status'] == 'ok' for r in results), 'ran': len(ran)},
+                      'steps': results}, ensure_ascii=False, separators=(',', ':')))
+    if failure is not None:
+        print(json.dumps(failure, ensure_ascii=False), file=sys.stderr)
+    return code
+
+
 def main(default=None):
     parser = argparse.ArgumentParser(description=__doc__)
     if default is None:
-        parser.add_argument('action', choices=['ledger-init', 'ledger-inspect', 'ledger-convert', 'ledger-update', 'ledger-read', 'reconcile', 'snapshot', 'audit', 'plan', 'check', 'gate', 'handoff', 'handoff-validate'])
-    parser.add_argument('--input', required=True, help='JSON request; see workflow-ledger/references/formats.md')
-    parser.add_argument('--output', help='New JSON result file; existing files are preserved')
+        parser.add_argument('action', choices=list(ACTIONS) + ['batch', 'brief', 'contract', 'formats'])
+    parser.add_argument('--input', help='JSON request; see workflow-ledger/references/formats.md')
+    parser.add_argument('--output', help='Optional create-only command result file holding the full result; not a ledger journal. Use a fresh path or omit this option')
+    parser.add_argument('--full', action='store_true', help='Print the complete result to stdout instead of the compact summary (snapshot checkpoints include every file byte)')
+    if default is None:
+        parser.add_argument('--for', dest='for_skill', help='brief: implement or quick-change; prints the skill files, contract sections and request examples it needs in one go')
+        parser.add_argument('--sections', help='contract: section numbers to print, for example 1,3,7-9')
+        parser.add_argument('--path', help='contract: explicit path of the installed workflow-contract.md')
+        parser.add_argument('--actions', help='formats: comma-separated action names whose request example to print')
+        parser.add_argument('--heading', help='formats: print the section whose heading contains this text')
     args = parser.parse_args()
+    if default is None and args.action in ('brief', 'contract', 'formats'):
+        return reference_main(args)
+    if not args.input:
+        parser.error('--input is required')
     action = default or args.action
+    if action == 'batch':
+        if args.output:
+            parser.error('batch takes no --output; give each step its own "output"')
+        return batch_main(args.input, args.full)
     if action in LEDGER_ACTIONS:
         return ledger_main(action, args.input, args.output)
     try:
         data = read(args.input)
-        require(isinstance(data, dict), 'Request must be an object')
-        action = default or args.action
-        if args.output is not None:
-            require(nonempty(args.output), "Invalid output path")
-            output = Path(args.output)
-            require(not output.exists() and not output.is_symlink(), 'Output must be a new file')
-            require(all((not parent.exists() and not parent.is_symlink()) or parent.is_dir() for parent in output.parents),
-                    'Output parent must be a directory')
-            if action == 'check':
-                require(output.resolve() != Path(data['log']).resolve(), 'Output and log must differ')
-        if action == 'snapshot':
-            result = snapshot(**data)
-        elif action == 'audit':
-            result = audit(read(data['before']), read(data['after']), data['allowed'])
-        elif action == 'plan':
-            result = validate_plan(read(data['plan']), read(data['requirements']))
-        elif action == 'check':
-            data['approved'] = read(data.pop('requirements'))
-            result = run_check(**data)
-        elif action == 'gate':
-            require(strings(data['checks'], non_empty=True), 'Checks must be a list of paths')
-            result = validate_gate(read(data['requirements']), data['candidate'], [read(p) for p in data['checks']])
-            for issue in result['issues']:
-                if 'check_index' in issue:
-                    issue['check_path'] = data['checks'][issue['check_index']]
-        elif action == 'handoff':
-            result = handoff_create(**data)
-        else:
-            result = handoff_validate(**data)
-        if args.output is not None:
-            exclusive_json(args.output, result)
-        print(json.dumps(result, ensure_ascii=False, indent=2))
-        if result.get('valid') is False or result.get('passed') is False:
-            return 1
-        return 0
-    except (ValueError, KeyError, TypeError, OSError) as exc:
+        result = plain_call(action, data, args.output, args.input)
+        print(json.dumps(result if args.full else summarize(action, result, args.output), ensure_ascii=False, indent=2))
+        return plain_code(action, result)
+    except KeyError as exc:
+        print(json.dumps({'error': 'Missing request field: ' + str(exc.args[0]) + ' (see formats --actions ' + action + ')'},
+                         ensure_ascii=False), file=sys.stderr)
+        return 2
+    except (ValueError, TypeError, OSError) as exc:
         print(json.dumps({'error': str(exc)}, ensure_ascii=False), file=sys.stderr)
         return 2
 

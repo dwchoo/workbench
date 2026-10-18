@@ -25,13 +25,9 @@ Return invocation and one task result with attributable delta, checks and remain
 - needs_oracle: unresolved diagnosis/design; include expected/actual behavior, candidate,
   logs, attempts and a precise question.
 - blocked: permissions, environment, contract or prerequisites prevent progress; name the gap.
+For blocked results, report cause and observations, directly affected acceptance/gates, partial
+delta and the needed decision/prerequisite with a resume condition. Link an existing issue when
+known; do not change shared state, assume a user answer or declare unrelated work blocked.
 Stop mutating subprocesses before yielding ownership; report uncertain process state honestly.
 
 """
-
-# Intended leaf controls. Validate with installed schema and effective child tools.
-[agents]
-enabled = false
-
-[features]
-multi_agent_v2 = false

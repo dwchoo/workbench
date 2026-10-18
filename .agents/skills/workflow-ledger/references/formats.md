@@ -5,7 +5,110 @@ Sibling evidence.py and handoff.py expose the same CLI using the single shared m
 Outputs are JSON; ledger exits follow the ledger section. For other actions, exit 2 is invalid
 input, exit 1 is a failed PLAN/gate, exit 0 is successful inspection/collection (not permission or proof of readiness). JSON output paths must be new.
 Use a private operational directory and explicit project root. No dependencies beyond Python
-3.11+, Git and POSIX file locks. No network, scheduler, restore or model calls.
+3.11+, Git and POSIX file locks. No network, scheduler or model calls; `restore` is limited to the integration delta.
+
+## Common actions (quick reference)
+
+Routine calls need only this section; the rest is exact detail for unusual requests and errors.
+Print just what you need instead of reading this file:
+`python3 <skill>/scripts/workflow_tools.py formats --actions ledger-update,snapshot` (request
+examples) or `formats --heading "Mutation data"` (one section).
+Exact form: `python3 <skill>/scripts/workflow_tools.py ACTION --input request.json [--output NEW.json]`
+(every option is `--input FILE`; `ledger-read` takes no `--path`). `evidence.py`, `verify.py` and
+`handoff.py` accept the same actions. Add `--output NEW.json` to keep the full result.
+Stdout is always a compact summary (status, ids, counts, first 20 paths with totals, the
+`--output` path), never file bytes or identity maps; `--full` prints the complete result and is for
+diagnosis only. Pass saved file paths (`pre.json`, `check.json`) to later requests; do not read them.
+Exit 0 ok, 1 failed gate/plan/blocked restore or unresolved ledger facts, 2 invalid input.
+
+Fewer turns: every command is a turn that resends the whole context. `batch --input steps.json` runs
+several of ledger-init/-read/-inspect/-update, reconcile, snapshot, audit, plan, check and gate in order from ONE
+set of inline requests (`{"steps":[{"action","request","output"?}],"stop_on_error":true}`; see `batch-*` below).
+Write and run it in ONE command, with no request file: `python3 <skill>/scripts/workflow_tools.py batch --input /dev/stdin <<'JSON'`
+… JSON (or pipe a `python3 - <<'PY'` generator into `batch --input /dev/stdin`).
+Each step validates and commits exactly like the individual command; ledger requests are validated before any step
+runs; on the first failure the rest are skipped, earlier steps stay committed, stdout lists each step briefly and
+stderr names the step and `json_path`. A later step reads an earlier result only through the earlier step's
+`output` file. `restore`, `ledger-convert`, `handoff`, nested `batch` and git commands are never batched. Use one
+batch per phase: dispatch, result, integration checkpoint and integration verification. Chain independent helper
+steps whose output you need not inspect in between into one shell command with `&&` (write the
+request files, `ledger-update`, `snapshot --output`, and so on) and read only the last summary.
+`git worktree` commands are the exception and stay standalone. A ledger call for one subagent needs
+two commands: before the host call `reserve` + `starting` as one `events` batch, after the result
+returns `running` + `finished` as one batch (record `running` only for what you observed). To start several
+subagents together batch every `reserve` first, then their `starting` events: an unobserved `starting` makes
+later reserves fail with `usage_unknown`. `finished` needs outcome complete|partial|failed|interrupted (a worker
+result such as candidate_ready goes into `evidence`). Errors name the field (`json_path`) and give a `detail`.
+
+```
+ledger-init    {"path":"L.json","run_id":"run-1","limits":{"total":{"operating":{"value":8,"authority":"user request","reason":"remaining work"}},"role:worker":{"operating":{"value":4,"authority":"user request","reason":"remaining work"}}}}
+ledger-read    {"path":"L.json"}                       # summary; {"path":"L.json","view":"full"} only to diagnose
+reconcile      {"path":"L.json","observed":{"I1":"running"}}   # compare recorded calls with what you observed; never writes
+ledger-update  {"path":"L.json","expected_revision":1,"event":{"id":"reserve-1","kind":"reserve","data":{"invocation":"I1","role":"worker","unit":"","incident":"","purpose":"fix","model":"configured","effort":"high","buckets":["total","role:worker"],"writer":true,"workspace":"/project"}}}   # unit/incident "" unless the matching unit:<id>/incident:<id> bucket exists
+ledger-update  {"path":"L.json","expected_revision":2,"events":[{"id":"reserve-2","kind":"reserve","data":{"invocation":"I2","role":"worker","unit":"","incident":"","purpose":"fix","model":"configured","effort":"high","buckets":["total","role:worker"],"writer":false,"workspace":"/project"}},{"id":"start-2","kind":"transition","data":{"invocation":"I2","state":"starting","evidence":"host call","outcome":null,"observed_model":"unverified","observed_effort":"unverified","not_started_evidence":null}}]}   # reserve+starting before the host call: one command, all or nothing
+ledger-update  {"path":"L.json","expected_revision":4,"events":[{"id":"run-2","kind":"transition","data":{"invocation":"I2","state":"running","evidence":"thread accepted","outcome":null,"observed_model":"unverified","observed_effort":"unverified","not_started_evidence":null}},{"id":"done-2","kind":"transition","data":{"invocation":"I2","state":"finished","evidence":"result received","outcome":"complete","observed_model":"unverified","observed_effort":"unverified","not_started_evidence":null}}]}   # running+finished once the result is back
+snapshot       {"root":"/project","exclude":[".workflow/run"],"checkpoint":true}            # --output pre.json
+audit          {"before":"pre.json","after":"post.json","allowed":["src/**"]}               # both are snapshot files saved with --output; lists changed/outside_scope
+restore        {"root":"/project","pre":"pre.json","post":"post.json","apply":false}        # dry run; apply only when restorable
+requirements   {"schema_version":1,"revision":"r1","authority":"user request","acceptance_ids":["AC1"],"gate_items":[{"id":"G1","acceptance_ids":["AC1"],"required_evidence_level":"static"}]}   # req.json; level static|fixture|skill_behavior|runtime
+check          {"root":"/project","requirements":"req.json","argv":["python3","-m","unittest"],"environment":"sanitized description","log":"check.log","check_id":"C1","exclude":[".workflow/**"]}   # --output check.json; argv runs with cwd=root, log must be new; exclude the run folder
+check-items    {"items":[{"id":"G1","acceptance_ids":["AC1"],"result":"passed","observed_evidence_level":"static","evidence":"what you observed","unknowns":[]}]}   # add this list to a copy of check.json (keep every other field) -> checked.json
+gate           {"requirements":"req.json","candidate":"<check.after or snapshot candidate>","checks":["checked.json"]}   # exit 1 lists issues; needs the log file unchanged
+event-check    {"id":"check-1","kind":"check","data":{"check_id":"C1","path":"/abs/checked.json","sha256":"<sha256 of that file>"}}   # an event (or one of `events`) for ledger-update to record the check
+batch-setup    {"steps":[{"action":"bundle-digest","request":{"dir":"docs/features/x"}},{"action":"plan","request":{"plan":"PLAN.json","requirements":"req.json"}},{"action":"ledger-init","request":{"path":"L.json","run_id":"run-1","limits":{"total":{"operating":{"value":8,"authority":"user request","reason":"remaining work"}},"role:worker":{"operating":{"value":4,"authority":"user request","reason":"remaining work"}}}}},{"action":"snapshot","request":{"root":"/project","exclude":[".workflow/**"]},"output":"start.json"}]}   # after `git worktree add`: approved-bundle digest check, plan check, ledger-init and the starting snapshot in ONE command
+batch-dispatch {"steps":[{"action":"ledger-update","request":{"path":"L.json","expected_revision":2,"events":[{"id":"reserve-3","kind":"reserve","data":{"invocation":"I3","role":"worker","unit":"","incident":"","purpose":"ticket T-01","model":"configured","effort":"high","buckets":["total","role:worker"],"writer":true,"workspace":"/project/.worktrees/run1-t01"}},{"id":"start-3","kind":"transition","data":{"invocation":"I3","state":"starting","evidence":"host call","outcome":null,"observed_model":"unverified","observed_effort":"unverified","not_started_evidence":null}}]}},{"action":"snapshot","request":{"root":"/project/.worktrees/run1-t01","exclude":[".workflow/**"],"checkpoint":true},"output":"base-t01.json"}]}   # dispatch: reserve+starting events and the worker's baseline snapshot in ONE command; steps run in order, stop at the first failure
+batch-result   {"steps":[{"action":"ledger-update","request":{"path":"L.json","expected_revision":4,"events":[{"id":"run-3","kind":"transition","data":{"invocation":"I3","state":"running","evidence":"thread accepted","outcome":null,"observed_model":"unverified","observed_effort":"unverified","not_started_evidence":null}},{"id":"done-3","kind":"transition","data":{"invocation":"I3","state":"finished","evidence":"result received","outcome":"complete","observed_model":"unverified","observed_effort":"unverified","not_started_evidence":null}}]}},{"action":"snapshot","request":{"root":"/project/.worktrees/run1-t01","exclude":[".workflow/**"]},"output":"post-t01.json"},{"action":"audit","request":{"before":"base-t01.json","after":"post-t01.json","allowed":["src/**"]}}]}   # result: running+finished events, candidate snapshot and scope audit in ONE command
+batch-pre      {"steps":[{"action":"snapshot","request":{"root":"/project","exclude":[".workflow/**"],"checkpoint":true},"output":"pre-int-t01.json"}]}   # integration: this checkpoint batch, then the standalone `git apply --check … && git apply …`, then batch-post
+batch-post     {"steps":[{"action":"snapshot","request":{"root":"/project","exclude":[".workflow/**"]},"output":"post-int-t01.json"},{"action":"audit","request":{"before":"pre-int-t01.json","after":"post-int-t01.json","allowed":["src/**"]}},{"action":"check","request":{"root":"/project","requirements":"req.json","argv":["python3","-m","unittest"],"environment":"sanitized description","log":"int-t01.log","check_id":"int-t01","exclude":[".workflow/**"]},"output":"int-t01-check.json"}]}   # integration: post-integration manifest, scope audit against the checkpoint and the required check
+bundle-digest  {"dir":"docs/features/x"}   # verifies bundle_sha256 of docs/features/x/approval.json (SHA-256 of bundle_files bytes concatenated in order); {"dir":"docs/features/x","files":["BRIEF.md","SPEC.md"]} only computes; valid=false exits 1
+plan           {"plan":"PLAN.json","requirements":"req.json"}   # the request names PLAN.json; never pass PLAN.json itself as --input
+handoff        {"root":"/project","output":".workflow/handoffs/id","draft":{"target":"...","purpose":"..."}}   # see Handoff
+```
+
+`events` (instead of `event`) applies an ordered list of at most 50 events atomically: each is
+validated like a single event, the batch is rejected as a whole (no revision consumed) if any event is
+invalid or not allowed, `expected_revision` is the revision before the first event, and the revision
+advances by the number of events. An identical retry succeeds; a partly present or changed batch is
+`event_id_conflict`. A reservation's `buckets` must list `total` plus its `role:<id>` (and any unit/incident) bucket, each
+initialized in `limits`. `event.kind` also includes `limit`, `check` and `resolve-import`; state graph and field rules
+are under "Mutation data". Save `check` with `--output check.json`, add `items` in a new
+record, then pass its path to `gate`. Snapshot with `checkpoint:true` is needed only before a writer
+or integration; use `false` for routine candidate ids.
+
+## Command result paths
+
+CLI `--output` is an optional create-only command result file holding the full result. Ledger
+actions print the same summary to stdout; other actions print a compact summary of it (`--full`
+prints everything).
+For `ledger-update`, the request's `path` identifies the journal updated directly; the CLI
+result is only a summary without event history. Never copy/move a result over a journal.
+Choose a fresh `*-result.json` or omit `--output`; do not work around a rejection by moving
+a temporary result to the journal. Omitting output does not suppress lock artifacts.
+
+All actions share result path preflight. It protects the CLI request file and paths directly
+named by the request: journal/lock, conversion sources/destination/preservation, audit inputs,
+plan/requirements, gate requirements/checks, check requirements/log, handoff output and
+draft references/ledger/checks/previous, and handoff-validate directory. Ledger request streams
+retain their existing exception. File contents' indirect references and the whole workspace
+are not recursively collected. Missing references remain protected; collection does not
+require source readability. Without `--output`, existing diagnostic behavior is unchanged.
+
+Relative paths use cwd except handoff output and draft references/ledger/checks/previous,
+which use root. Handoff-validate directory and check log use cwd. Shared comparison checks
+lexical/resolved identity, ancestor/descendant relations and existing entry device/inode aliases.
+It does not scan directories for hardlinks. Confirmed conflicts take priority over investigation
+errors from other references, then the ledger reserved `.workflow-ledger-tmp-` basename rule,
+uncertain identity, existing result entries and parent conditions are checked in that order.
+An undetermined alias relationship with output requested is rejected before action execution.
+
+Ledger conflicts report invalid_request/reason=output_path_conflict/phase=preflight;
+identity investigation failures report file_unreadable/reason=path_identity_unavailable.
+A separate existing result still reports destination_exists. New messages use fixed text.
+Nonledger actions retain string errors and exit policy. Ledger output requires an existing
+parent; nonledger may create missing parents only during its existing publication stage.
+Preflight itself creates nothing and does not replace commit-time checks. It is not protection
+against arbitrary concurrent ancestor/symlink replacement. Nonledger publication remains
+create-only but can leave partial JSON; ledger atomic publication guarantees are separate.
 
 ## Ledger: exact journal v1 contract
 
@@ -108,7 +211,7 @@ in memory, then commit all or none. No arbitrary patch or change to established 
 `ledger-init`: exactly `path, run_id, limits`; initializes all explicit bucket baselines to
 zero, empty calls/checks/unresolved and null provenance. It authorizes only an explicit new
 run, never bypassing earlier accounting. `ledger-read`: path and optional view summary/full.
-`ledger-inspect`: path. `ledger-update`: exactly `path, expected_revision, event`; an existing
+`ledger-inspect`: path. `ledger-update`: exactly `path, expected_revision` plus `event` or `events` (batch); an existing
 valid journal is required. Identical ID/content retry succeeds even with stale expected
 revision; ID reuse with changed content fails. `reconcile`: exactly path/observed, where
 observed maps invocation IDs to supported states. It never performs host queries or writes.
@@ -187,6 +290,16 @@ recognized/supported/valid/usage_known/next_action and detected_format. Candidat
 is diagnostic only: untyped-journal, legacy-snapshot-candidate, auxiliary-summary-candidate,
 unknown, workflow-invocation-journal. It never selects converter mapping/strategy.
 
+Modern `ledger_summary` results (read-summary/init/update/convert) are auxiliary-summary-candidate
+when all seven summary fields have the documented top-level types, with integer excluding boolean.
+Additional fields are allowed. Explicit record_type and untyped-journal detection take precedence;
+a complete modern summary signature precedes legacy markers. This is candidate recognition,
+not accounting validation. Modern results remain supported=false/valid=false; normal operations
+reject them with invalid_ledger_shape/reason=result_is_not_journal and
+next_action=repair_ledger_preserving_original. Legacy candidates retain conversion_required.
+Read-full/reconcile/inspect results are not added to this signature. Historical handoff diagnosis
+uses inspection recovery guidance rather than treating every unsupported record as convertible.
+
 Exit 0: every successful read/init/update, including unknown usage, and every completed
 inspect diagnosis, including decoded unsupported/invalid records. Exit 1: reconcile
 mismatch/unrecorded/unknown and valid conversion with unresolved facts. Exit 2: malformed
@@ -196,8 +309,8 @@ Nonledger gate/evidence/handoff exits remain unchanged.
 Update validates request and entire existing journal before creating lock, then rereads under
 lock. Preflight failures create nothing. Lock inode remains after later failures; flock is
 released. Replace/publish is commit point. Failure of parent fsync makes durability unknown.
-Output is preflighted as a new regular destination before any action, rejecting aliases and
-ancestor/descendant conflicts with ledger/source/lock/preservation paths. It is independently
+Result output relationships are preflighted before checking whether a new destination is available,
+rejecting aliases and ancestor/descendant conflicts with protected paths. It is independently
 fsynced and create-only published; never expose partial JSON. An output failure after durable
 ledger commit reports output_failed, phase=output, mutation.ledger=committed. Broken stdout
 may prevent delivery; recover by event ID or destination provenance, never assume rollback.
@@ -208,9 +321,19 @@ may prevent delivery; recover by event ID or destination provenance, never assum
 Default observation includes all tracked/non-ignored files, not merely the writer's scope.
 Watch adds literal ignored paths; exclude accepts project-relative paths/globs for operational
 outputs only. Do not exclude validation inputs. Use the same watch/exclude for the whole run.
-Checkpoint=true adds base64 blobs addressed by SHA-256 for worktree and index contents.
-It does not restore. Modes, symlink targets, missing files, index stages and Git base are retained.
+Checkpoint=true adds base64 blobs addressed by SHA-256 for worktree and index contents (only in `--output`/`--full`, never in the default stdout summary).
+Snapshot never restores. Modes, symlink targets, missing files, index stages and Git base are retained.
 A separate submodule checkpoint is required for dirty submodules; stability otherwise fails.
+`restore`: `{"root":"/project","pre":"pre-checkpoint.json","post":"post-integration.json","apply":false}`.
+`pre` must be a checkpoint (with blobs) and `post` a manifest, both with the same watch/exclude, no unknowns
+and taken by `snapshot`. Default is a dry run: it prints `mode`, `status`, `delta` (paths that differ
+between pre and post), `index_delta`, `actions` (`remove`, `write_file`, `write_symlink`, `restore_index`)
+and `conflicts`. Status `restorable`/`nothing_to_restore` exit 0; `blocked` exits 1 and writes nothing.
+`apply:true` writes only when every delta path (worktree and index) still equals the post manifest, and
+also refuses submodule paths and merge stages; any conflict blocks the whole restore. It restores
+only the delta from the checkpoint blobs, never runs reset/clean/stash, then recaptures and reports
+`status: restored` with `matches_pre_delta: true`, or `blocked` when verification fails. Other paths,
+including later user edits, are untouched. Exit 2 is invalid input (for example no checkpoint blobs).
 `audit`: before/after manifest paths plus allowed path/glob list. Inspect outside_scope and
 comparable; policy differences require recollection. Renames appear as removal plus addition.
 

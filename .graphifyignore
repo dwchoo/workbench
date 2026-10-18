@@ -1,0 +1,5 @@
+# Development evidence and generated graphs are not the source corpus.
+/.workflow/
+/graphify-out/
+/.worktrees/
+/.codex-swarm/

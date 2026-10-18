@@ -1,0 +1,6 @@
+interface:
+  display_name: "quick-change"
+  short_description: "Make one small, low-risk change with independent review"
+  default_prompt: "Use $quick-change to make this small change; stop and report if it needs a spec or plan."
+policy:
+  allow_implicit_invocation: false

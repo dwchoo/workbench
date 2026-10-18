@@ -1,13 +1,21 @@
 ---
 name: workspace-evidence
-description: "Root-internal candidate manifests, recovery checkpoints and write-scope audits for authorized workflow work."
+description: "Root-internal candidate manifests, recovery checkpoints and write-scope audits for authorized workflow work. Used by Root during implement or investigate-bug; not selected for general review or status questions."
 ---
 
 # Workspace evidence
 
-Read `.codex/workflow-contract.md` sections 5, 6 and 11. Use
-`scripts/evidence.py snapshot --input request.json` relative to this skill. The shared
-[formats](../workflow-ledger/references/formats.md) describes inputs and audit requests.
+Print sections 5, 6, 11 of `.codex/workflow-contract.md` (`python3 ../workflow-ledger/scripts/workflow_tools.py contract --sections 5,6,11`; skip if already printed). Use
+`scripts/evidence.py snapshot|audit|restore --input request.json` relative to this skill. The shared
+[formats](../workflow-ledger/references/formats.md) opens with request fields and an example
+for each routine action; print just the ones you need with
+`python3 ../workflow-ledger/scripts/workflow_tools.py formats --actions snapshot,audit`.
+
+Stdout is a compact summary (status, ids, counts, first 20 paths with totals, `--output` path),
+never file bytes. Always pass `--output NEW_FILE` for a snapshot, checkpoint or restore result
+you will use later, and pass that file's path in later requests (`audit`, `restore`, handoff). Do
+not read manifests or checkpoints into context; `--full` prints the complete result and is for
+diagnosis only. Root reads the summary and the file paths, not the full stdout of any helper.
 
 Resolve the actual Git workspace root, relevant ignored inputs and operational exclusions.
 Observe the whole relevant workspace; allowed write scope is a separate audit input. Default
@@ -20,6 +28,25 @@ small manifests. Stop/reconcile writers through the existing owner before claimi
 candidate. A stable double collection does not prove no active writer exists. Dirty submodules
 need their own snapshot/checkpoint. Audit additions, removals, content, modes, links and index.
 
-Never restore automatically or reset/clean/stash user work. Checkpoints contain sensitive
+Never reset/clean/stash user work. The only restore is `restore`: a dry run by default that
+undoes just the integration delta between a pre-integration checkpoint and the post-integration
+manifest, and writes (`apply: true`) only if every delta path still matches that manifest;
+Root applies it during implement after a failed integration (see the implement skill's rollback reference). Checkpoints contain sensitive
 project bytes: keep them in local private operational storage. Unknown input or collection
 changes invalidate stability. Report scope violations and preserve evidence for safe attribution.
+
+## Bounded evidence storage
+
+Follow the repository's storage rules and [local storage maintenance](references/storage-maintenance.md).
+Exclude `.workflow` and `graphify-out` from source recovery copies; observe required
+operational inputs individually, without recursively capturing generated homes or evidence.
+This excludes runtime outputs, not source tests, fixtures or configuration. Keep the
+same explicit watch/exclude policy across comparable observations.
+
+Use byte checkpoints only before changes needing recovery, not for every test or
+review observation. Reuse a stable checkpoint for the same unchanged candidate.
+The helper's 32 MiB unique-blob limit is a hard failure, never permission to silently
+omit inputs or increase the limit. Repository guidance requires a storage check
+before fresh isolated runs, and serial cache cleanup after owned processes stop,
+including failure/interruption. The total 10 GiB threshold is currently an owner
+instruction, not an automatic runner limit; do not claim otherwise.

@@ -1,7 +1,7 @@
 # MERGE into the trusted repository config. Do not overwrite unrelated settings.
 # Development default only. The user selects Astra for discovery and
 # Sol xhigh/max for ticket planning in the corresponding fresh session.
-model = "gpt-5.6-sol"
+model = "gpt-6.1-sol"
 model_reasoning_effort = "high"
 
 [agents]

@@ -1,0 +1,6 @@
+interface:
+  display_name: "brief-workflow"
+  short_description: "Brief all tickets, remaining work and user decisions"
+  default_prompt: "Use $brief-workflow to explain the current project's progress, all tickets and decision options to someone who has not read its documents."
+policy:
+  allow_implicit_invocation: false

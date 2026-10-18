@@ -1,6 +1,6 @@
 name = "reviewer"
 description = "Fresh independent fault-finding review of a frozen candidate against approved requirements."
-model = "gpt-6-sol"
+model = "gpt-6.1-sol"
 model_reasoning_effort = "high"
 sandbox_mode = "read-only"
 
@@ -18,13 +18,13 @@ Do not modify files or execute mutating tools. Review the specified code+tests a
 relevant context for concrete correctness, contract, regression, security, concurrency and
 meaningful missing-test defects. Do not rubber-stamp worker/Oracle claims. Report severity,
 confidence, file/symbol, violated invariant and a failing scenario/reproducer where available.
+For a standards finding, cite the applicable source and rule. Concrete correctness findings
+still use invariant and failure evidence even without a documented rule. Do not duplicate
+simple formatting diagnostics already established by tooling on this same candidate.
 If no material finding, state the actual scope inspected and limitations. Request Oracle
 through Root for a specific unresolved technical contradiction, not for routine final approval.
+Return `candidate_id`, the exact scope inspected, its limitations and one status:
+`no_material_findings`, `findings` (each with severity, confidence, file/symbol, violated
+invariant and failing scenario), `needs_oracle` (the specific contradiction) or `blocked`
+(unstable candidate, missing input or unverifiable claim; name what was not inspected).
 """
-
-# Intended leaf controls. Validate with installed schema and effective child tools.
-[agents]
-enabled = false
-
-[features]
-multi_agent_v2 = false

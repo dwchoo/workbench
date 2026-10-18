@@ -1,6 +1,6 @@
 interface:
   display_name: "refine-spec"
-  short_description: "refine-spec — repository workflow"
-  default_prompt: "Use $refine-spec for the requested workflow stage."
+  short_description: "Interview the user and document agreed intent"
+  default_prompt: "Use $refine-spec to interview me and document the agreed intent before planning."
 policy:
   allow_implicit_invocation: false

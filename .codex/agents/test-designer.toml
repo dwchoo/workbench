@@ -1,6 +1,6 @@
 name = "test_designer"
 description = "Independently design, author and run requirement-derived tests in an assigned test-only scope."
-model = "gpt-6-sol"
+model = "gpt-6.1-sol"
 model_reasoning_effort = "high"
 sandbox_mode = "workspace-write"
 
@@ -20,12 +20,10 @@ meaningful tests or identify existing coverage precisely; do not create filler t
 Write only approved tests/fixtures/test-only helpers; production fixes belong to Root/worker.
 For regressions, establish old-fail/new-pass when practical and safely available. Do not
 claim a failure reproduction you did not run. Return tests, acceptance coverage, candidate,
-commands/results, implementation defects, gaps and needs_oracle when warranted.
+commands/results, implementation defects, gaps and needs_oracle when warranted. In that
+coverage and gaps report, identify the observation boundary and any material limitation
+affecting the acceptance claim; group tests sharing the same boundary and limitation.
+Return `candidate_id` and one status: `tests_ready` (tests, acceptance-ID coverage, commands and
+results), `coverage_sufficient` (named existing tests and why; nothing added), `implementation_defect`
+(a valid failing test shows a production defect; Root/worker fixes it), `needs_oracle` or `blocked`.
 """
-
-# Intended leaf controls. Validate with installed schema and effective child tools.
-[agents]
-enabled = false
-
-[features]
-multi_agent_v2 = false

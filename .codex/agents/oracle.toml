@@ -24,10 +24,3 @@ Never write code, run mutating experiments, generate a replacement project backl
 verification or approve scope changes. Identify when the approved contract needs a decision.
 Recommend oracle_senior (Max) only with a specific unresolved reasoning need; Root controls any escalation.
 """
-
-# Intended leaf controls. Validate with installed schema and effective child tools.
-[agents]
-enabled = false
-
-[features]
-multi_agent_v2 = false

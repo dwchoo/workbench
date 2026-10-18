@@ -90,6 +90,17 @@ def commands(*extra):
 
 
 class ObservationPredicateTests(unittest.TestCase):
+    def test_user_only_skill_command_is_separate_from_model_discovery(self):
+        observed = launcher.observe_isolation(
+            state(CLEAN_PROMPT + '\n<skills>\n- to-worker: Workbench delegation\n</skills>\n'),
+            commands(("skill:to-worker", "skill"), ("skill:workbench-report", "skill")))
+        self.assertEqual(observed["skills"], ["to-worker"])
+        self.assertEqual(observed["skill_commands"], ["to-worker", "workbench-report"])
+        self.assertEqual(launcher.isolation_leaks(
+            observed, allowed_skills=launcher.role_skill_allowlist("manager"), role="manager"), [])
+        self.assertIn("skill:workbench-report", launcher.isolation_leaks(
+            observed, allowed_skills=launcher.role_skill_allowlist("worker"), role="worker"))
+
     def test_clean_isolated_state_has_no_leaks(self):
         observed = launcher.observe_isolation(state(CLEAN_PROMPT), commands())
         self.assertEqual(observed["context_files"], [])

@@ -1,0 +1,119 @@
+{
+  "schema_version": 1,
+  "revision": "wpr-r1.0-p1",
+  "authority": "2026-10-18 current conversation: initial $refine-spec, accepted recommendations U-01..U-12, then explicit $to-tickets docs/features/workbench-problem-report/BRIEF.md. AC-01..14 are agreed BRIEF inputs; G-01..08 are proposed verification elaborations pending exact bundle approval, not claims of completed checks.",
+  "acceptance_ids": [
+    "WPR-AC-01",
+    "WPR-AC-02",
+    "WPR-AC-03",
+    "WPR-AC-04",
+    "WPR-AC-05",
+    "WPR-AC-06",
+    "WPR-AC-07",
+    "WPR-AC-08",
+    "WPR-AC-09",
+    "WPR-AC-10",
+    "WPR-AC-11",
+    "WPR-AC-12",
+    "WPR-AC-13",
+    "WPR-AC-14"
+  ],
+  "gate_items": [
+    {
+      "id": "G-01",
+      "acceptance_ids": [
+        "WPR-AC-01",
+        "WPR-AC-03"
+      ],
+      "required_evidence_level": "runtime"
+    },
+    {
+      "id": "G-02",
+      "acceptance_ids": [
+        "WPR-AC-02",
+        "WPR-AC-09",
+        "WPR-AC-14"
+      ],
+      "required_evidence_level": "fixture"
+    },
+    {
+      "id": "G-03",
+      "acceptance_ids": [
+        "WPR-AC-08"
+      ],
+      "required_evidence_level": "fixture"
+    },
+    {
+      "id": "G-04",
+      "acceptance_ids": [
+        "WPR-AC-11",
+        "WPR-AC-12"
+      ],
+      "required_evidence_level": "fixture"
+    },
+    {
+      "id": "G-05",
+      "acceptance_ids": [
+        "WPR-AC-02",
+        "WPR-AC-04",
+        "WPR-AC-05",
+        "WPR-AC-06",
+        "WPR-AC-07",
+        "WPR-AC-08",
+        "WPR-AC-09",
+        "WPR-AC-10",
+        "WPR-AC-12",
+        "WPR-AC-13",
+        "WPR-AC-14"
+      ],
+      "required_evidence_level": "static"
+    },
+    {
+      "id": "G-06",
+      "acceptance_ids": [
+        "WPR-AC-01",
+        "WPR-AC-03",
+        "WPR-AC-11"
+      ],
+      "required_evidence_level": "fixture"
+    },
+    {
+      "id": "G-07",
+      "acceptance_ids": [
+        "WPR-AC-02",
+        "WPR-AC-04",
+        "WPR-AC-05",
+        "WPR-AC-06",
+        "WPR-AC-07",
+        "WPR-AC-08",
+        "WPR-AC-09",
+        "WPR-AC-10",
+        "WPR-AC-11",
+        "WPR-AC-12",
+        "WPR-AC-13",
+        "WPR-AC-14"
+      ],
+      "required_evidence_level": "skill_behavior"
+    },
+    {
+      "id": "G-08",
+      "acceptance_ids": [
+        "WPR-AC-01",
+        "WPR-AC-02",
+        "WPR-AC-03",
+        "WPR-AC-04",
+        "WPR-AC-05",
+        "WPR-AC-06",
+        "WPR-AC-07",
+        "WPR-AC-08",
+        "WPR-AC-09",
+        "WPR-AC-10",
+        "WPR-AC-11",
+        "WPR-AC-12",
+        "WPR-AC-13",
+        "WPR-AC-14"
+      ],
+      "required_evidence_level": "runtime"
+    }
+  ]
+}

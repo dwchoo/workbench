@@ -1347,7 +1347,34 @@ export default function workbenchG3Extension(pi: any, summarySDK?: Record<string
 		inbound = "";
 		previous?.end();
 	});
-	pi.on("input", () => publishState());
+	pi.on("input", (event: any) => {
+		publishState();
+		// OMP 18.11.1 expands inline skill tokens after this public hook, even
+		// with disableModelInvocation. Only a leading user slash invokes this skill.
+		if (role !== "manager" || subagentSession || shuttingDown
+			|| (event?.source !== "interactive" && event?.source !== "rpc")
+			|| typeof event.text !== "string") return;
+		const text = event.text;
+		const leading = text.trimStart();
+		// Match OMP's selection order: a leading slash/shell command owns its
+		// arguments; otherwise only the first inline skill token is selected.
+		if (leading.startsWith("/") || leading.startsWith("!")
+			|| /^\$\$?(?:[ \t\n\r]|$)/u.test(leading)) return;
+		const firstSkill = /(^|\s)\/skill:([^\s/]+(?:\/[^\s/]+)?)(?=\s|$)/u.exec(text);
+		if (firstSkill?.[2] !== "workbench-report") return;
+		const content = event.images?.length ? [{ type: "text", text }, ...event.images] : text;
+		// sendUserMessage bypasses the input parser. Preserve the original user
+		// content/attribution, including images. Never replay after an uncertain
+		// enqueue failure: native fallback could both duplicate and expand it.
+		const failed = () => {
+			try { pi.logger?.error?.("Workbench report literal forwarding failed; delivery outcome unknown; not retried."); }
+			catch { /* Logging cannot reopen the native expansion/replay path. */ }
+		};
+		try {
+			Promise.resolve(pi.sendUserMessage(content, { attribution: "user" })).catch(failed);
+		} catch { failed(); }
+		return { handled: true };
+	});
 	pi.on("agent_start", () => {
 		agentActive = true;
 		turnSequence += 1;

@@ -1,0 +1,82 @@
+{
+  "feature_id": "workbench-problem-report",
+  "status": "approved_for_implementation",
+  "approved_by": "user",
+  "approval_reference": "2026-10-18 current conversation: $implement docs/features/workbench-problem-report",
+  "brief_revision": "r1.0",
+  "spec_revision": "s1",
+  "plan_revision": "p1",
+  "planning_reference": "2026-10-18 current conversation: $to-tickets docs/features/workbench-problem-report/BRIEF.md",
+  "source_brief_approval": {
+    "status": "accepted_for_planning",
+    "approved_by": "user",
+    "approval_reference": "2026-10-18 explicit $to-tickets docs/features/workbench-problem-report/BRIEF.md in response to the presented r1.0 brief and next-command invitation; authorizes planning only.",
+    "bundle_files": [
+      "BRIEF.md"
+    ],
+    "bundle_sha256": "6ec73229a6252e25300d575aa18fedaf34035b6c3453ccaf629606c50e10749c",
+    "brief_revision": "r1.0"
+  },
+  "bundle_files": [
+    "BRIEF.md",
+    "SPEC.md",
+    "requirements-p1.json",
+    "PLAN.json",
+    "tickets/WPR-01.md",
+    "tickets/WPR-02.md",
+    "tickets/WPR-03.md",
+    "tickets/WPR-04.md",
+    "tickets/WPR-05.md"
+  ],
+  "bundle_sha256": "e6213dd03a3d0421d3da7b2951105361fbea04834286a876cac4693365d0e014",
+  "decision_references": [
+    {
+      "reference": "2026-10-18 current conversation, initial refine-spec request",
+      "decisions": [
+        "U-01"
+      ]
+    },
+    {
+      "reference": "2026-10-18 current conversation, reference-template request",
+      "decisions": [
+        "U-02"
+      ]
+    },
+    {
+      "reference": "2026-10-18 current conversation, answers 1-3: 1. 매니저에서만 / 2. 추천대로 / 3. 추천대로.",
+      "decisions": [
+        "U-03",
+        "U-04",
+        "U-05"
+      ]
+    },
+    {
+      "reference": "2026-10-18 current conversation, answers 4-6: 모두 추천대로 해줘.",
+      "decisions": [
+        "U-06",
+        "U-07",
+        "U-08"
+      ]
+    },
+    {
+      "reference": "2026-10-18 current conversation, answers 7-9 and size deferral: 추천대로 해줘.",
+      "decisions": [
+        "U-09",
+        "U-10",
+        "U-11",
+        "U-12"
+      ]
+    }
+  ],
+  "previous_record": {
+    "status": "agreement_requested",
+    "bundle_files": [
+      "BRIEF.md"
+    ],
+    "bundle_sha256": "6ec73229a6252e25300d575aa18fedaf34035b6c3453ccaf629606c50e10749c",
+    "brief_revision": "r1.0",
+    "note": "Historical agreement-requested record; now superseded for planning by the explicit to-tickets request. BRIEF bytes unchanged."
+  },
+  "implementation_authorized": true,
+  "note": "Exact presented r1.0/s1/p1 bundle accepted and implementation authorized by explicit implement request. Preserve scope, bytes, prior decisions; no commit/publication/deployment."
+}

@@ -13,19 +13,51 @@ Role filtering: `ROLE_SKILL_PATTERNS` in `src/workbench/backend/launcher.py`
 maps `manager`/`worker` to glob patterns written as `skills.includeSkills` in
 that role's overlay. An empty tuple means no role filter (every skill here is
 offered to that role). Current skills (C-D65, CW-18 U6): `to-worker` (manager
-only; how to use the `to_worker` tool) and `to-manager` (worker only; how to
-use the `to_manager` tool and answer staged deliveries), and (C-D70 (7))
+only; how to use the `to_worker` tool), `to-manager` (worker only; how to use
+the `to_manager` tool and answer staged deliveries), and (C-D70 (7))
 `workbench-recovery` (manager only, agent-only: what to do on a Workbench
 recovery notice with `workbench_status`, a follow-up, cancel or
-`restart_worker`). Their text must match the tool schemas in
-`omp_bridge/g3/bridge.ts`.
+`restart_worker`). These tool instructions match the schemas in
+`omp_bridge/g3/bridge.ts`. `workbench-report` is a separate Manager-only,
+user-only skill with its own report contract.
 
-OMP 18.7.0 (installed; 18.6.1 is not available locally) has no per-skill
+OMP 18.11.1 (measured by the invocation probe) has no per-skill
 frontmatter that hides a skill from the user's `/skill:` menu while the model
 still sees it: `hide`/`disableModelInvocation` hide it from the model, and
 `skills.enableSkillCommands: false` drops every skill command. So
 `workbench-recovery` is listed in the manager's slash menu; its description says
 it is agent-only.
+
+Use `/skill:workbench-report [symptom description]` as a leading Manager user
+command to prepare a Korean Markdown report about a Workbench problem. The
+skill reads `workbench-report/references/report-template.md` and saves through
+`workbench-report/scripts/report_io.py`; its instructions describe the bounded
+read-only investigation and sanitized save-failure fallback. Follow-up answers
+continue the same report without another slash invocation.
+
+`disableModelInvocation: true` excludes this skill from model discovery while
+retaining its user command. The Manager bridge input guard also prevents the
+OMP 18.11.1 inline parser from expanding this token in ordinary interactive/RPC
+user prose: it forwards the original text and images once with user attribution.
+Leading explicit commands retain native handling, as do unrelated skills.
+Workbench notices and peer messages use agent attribution and do not expand the
+token. Worker neither discovers nor offers the report skill. These observations
+are for OMP 18.11.1; other versions require their own runtime verification.
+
+In the installed persistent OMP 18.11.1 Manager session, a long helper JSON
+stdout line was truncated inline while the same call returned a readable
+artifact pointer. For this helper, use the built-in `read` tool with
+`{"path":"artifact://<same-call-returned-id>:raw:1-3000"}` to read only that
+pointer, and use the result only after verifying it contains the complete
+JSON. Shaking may wrap the current result in a numbered region; select only
+the region named by that helper response. Its line-truncation notice may
+return the original stdout's nested pointer. The skill permits only that
+same-call chain, at most two reads with distinct IDs. The tested range
+recovered a 32 KiB Markdown body, including escaping-heavy JSON above 50 KiB;
+`raw:1-1` was insufficient. Never discover artifacts or treat a truncated
+inline excerpt as complete. Missing, ambiguous or incomplete retrieval leaves
+save status unconfirmed. This behavior was measured for the default
+persistent session and is not guaranteed for other modes or OMP versions.
 
 The backend start-up isolation check reports any loaded skill that is not in
 this directory (after the role filter) as a leak.

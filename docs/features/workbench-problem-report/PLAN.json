@@ -1,0 +1,534 @@
+{
+  "schema_version": 1,
+  "feature_id": "workbench-problem-report",
+  "revision": "p1",
+  "status": "proposed_pending_bundle_approval",
+  "source_brief": {
+    "path": "BRIEF.md",
+    "revision": "r1.0",
+    "sha256": "6ec73229a6252e25300d575aa18fedaf34035b6c3453ccaf629606c50e10749c",
+    "authority": "2026-10-18 explicit $to-tickets for this presented brief; planning only"
+  },
+  "spec": {
+    "path": "SPEC.md",
+    "revision": "s1"
+  },
+  "requirements": {
+    "path": "requirements-p1.json",
+    "revision": "wpr-r1.0-p1"
+  },
+  "requirements_identity": "1a8d93fe92ded1abdfee782a5ce172a6a52c2abf1cc9a13b7b3c67df66a0d3a3",
+  "scheduling": {
+    "max_open_child_threads": 4,
+    "max_parallel_writer_workspaces": 2,
+    "workspace_policy": "isolated_when_parallel",
+    "dependency_gate": "integrated_and_validated",
+    "on_unavailable_isolation": "serial_with_disclosure",
+    "mutation_owner_per_physical_workspace": 1,
+    "initial_frontier": [
+      "WPR-01"
+    ],
+    "illustrative_frontiers": [
+      [
+        "WPR-01"
+      ],
+      [
+        "WPR-02",
+        "WPR-03"
+      ],
+      [
+        "WPR-04"
+      ],
+      [
+        "WPR-05"
+      ]
+    ],
+    "parallel_candidates": [
+      {
+        "tickets": [
+          "WPR-02",
+          "WPR-03"
+        ],
+        "after": "WPR-01 integrated G-01 pass",
+        "basis": "SPEC s1 freezes helper CLI/headings. WPR-02 uses independent temporary reference fixtures; WPR-03 local asset checks need no helper implementation. Exact file scopes and fixture namespaces differ. WPR-04 owns combined integration.",
+        "conditions": [
+          "separate verified writer workspaces",
+          "no shared mutable HOME/provider/data dir",
+          "free slots and compatible resource claims",
+          "Root serial integration"
+        ]
+      }
+    ]
+  },
+  "budget_policy": {
+    "operating_estimates": {
+      "total_child_invocations": 18,
+      "implementation": 4,
+      "independent_tests": 3,
+      "normal_reviews": 3,
+      "security_reviews": 1,
+      "correction_reserve": 5,
+      "oracle_reserve": 2
+    },
+    "explicit_user_limits": [],
+    "authority": "Root operating estimate under workflow-contract section 8; revalidate and resize under existing implementation authority; not a user ceiling or automatic Oracle dispatch."
+  },
+  "verification_units": [
+    {
+      "id": "WPR-U1",
+      "tickets": [
+        "WPR-01"
+      ],
+      "boundary": "G-01 decisive runtime evidence plus independent test assessment and frozen review before expansion"
+    },
+    {
+      "id": "WPR-U2",
+      "tickets": [
+        "WPR-02",
+        "WPR-03",
+        "WPR-04"
+      ],
+      "boundary": "G-02..06 local checks; independent tests; fresh code review and separate security review on frozen integrated unit"
+    },
+    {
+      "id": "WPR-U3",
+      "tickets": [
+        "WPR-05"
+      ],
+      "boundary": "G-07/G-08 final skill behavior and runtime; review integration deltas; no status-only acceptance"
+    }
+  ],
+  "tickets": [
+    {
+      "id": "WPR-01",
+      "title": "사용자 전용 호출 가능성 판별",
+      "kind": "feasibility",
+      "depends_on": [],
+      "acceptance_ids": [
+        "WPR-AC-01",
+        "WPR-AC-03"
+      ],
+      "deliverable": "실제 OMP에서 canary 사용자 slash 노출·확장, model discovery 제외, Worker 미노출을 판별한 probe와 근거",
+      "write_scope_hint": [
+        "tests/backend/workbench_report/__init__.py",
+        "tests/backend/workbench_report/invocation_probe.py"
+      ],
+      "resource_claims": [
+        {
+          "resource": "wpr:omp-runtime",
+          "mode": "exclusive"
+        },
+        {
+          "resource": "wpr:probe-private-home",
+          "mode": "exclusive"
+        }
+      ],
+      "workspace_requirement": "isolated_owned_probe_workspace",
+      "worker": "worker_senior",
+      "routing_hint": {
+        "reason_codes": [
+          "coupled_invariants"
+        ],
+        "evidence_refs": [
+          "SPEC.md#미해결-차단-조건과-위임한-기술-선택",
+          "tests/backend/live_omp_isolation_probe.py"
+        ]
+      },
+      "service_namespace": "owned:<run>/wpr01/home,project,localhost-provider; no user auth or existing backend",
+      "base_contract_requirement": "BRIEF r1.0 + SPEC s1; current repository snapshot; no product skill or feature assumed present",
+      "verification_unit": "WPR-U1",
+      "path": "tickets/WPR-01.md"
+    },
+    {
+      "id": "WPR-02",
+      "title": "안전한 Markdown 준비·저장 helper",
+      "kind": "implementation",
+      "depends_on": [
+        "WPR-01"
+      ],
+      "dependency_reasons": {
+        "WPR-01": "사용자 전용 호출이 가능한 OMP 조합의 통과 근거가 있어야 제품 후보를 확장한다. provider 부재나 timeout을 통과로 삼지 않는다."
+      },
+      "acceptance_ids": [
+        "WPR-AC-02",
+        "WPR-AC-08",
+        "WPR-AC-09",
+        "WPR-AC-11",
+        "WPR-AC-12",
+        "WPR-AC-14"
+      ],
+      "deliverable": "표준 입력 Markdown의 가림·heading/크기 검사·create-only 저장과 동일 전문 fallback",
+      "write_scope_hint": [
+        "omp_bridge/skills/workbench-report/scripts/report_io.py",
+        "tests/backend/workbench_report/test_report_io.py",
+        "tests/backend/workbench_report/test_report_io_independent.py"
+      ],
+      "resource_claims": [
+        {
+          "resource": "wpr:io-fixtures",
+          "mode": "exclusive"
+        },
+        {
+          "resource": "wpr:contract:s1",
+          "mode": "shared"
+        }
+      ],
+      "workspace_requirement": "isolated_if_parallel",
+      "worker": "worker_senior",
+      "routing_hint": {
+        "reason_codes": [
+          "coupled_invariants"
+        ],
+        "evidence_refs": [
+          "SPEC.md#4-python-출력-helper",
+          "SPEC.md#5-가림과-크기"
+        ]
+      },
+      "service_namespace": "owned:<run>/wpr02/output-fixtures; no network/database",
+      "base_contract_requirement": "integrated WPR-01 pass; SPEC s1 helper CLI/JSON contract; tests may supply a temporary canonical reference fixture without WPR-03",
+      "verification_unit": "WPR-U2",
+      "path": "tickets/WPR-02.md"
+    },
+    {
+      "id": "WPR-03",
+      "title": "사용자 인터뷰 skill과 reference 양식",
+      "kind": "implementation",
+      "depends_on": [
+        "WPR-01"
+      ],
+      "dependency_reasons": {
+        "WPR-01": "실측한 user-only frontmatter와 slash 확장 계약을 사용한다. probe가 실패하면 배포될 skill을 작성하지 않는다."
+      },
+      "acceptance_ids": [
+        "WPR-AC-02",
+        "WPR-AC-04",
+        "WPR-AC-05",
+        "WPR-AC-06",
+        "WPR-AC-07",
+        "WPR-AC-08",
+        "WPR-AC-09",
+        "WPR-AC-10",
+        "WPR-AC-12",
+        "WPR-AC-13",
+        "WPR-AC-14"
+      ],
+      "deliverable": "영어 skill/reference와 한국어 보고서 구조, 읽기 조사·필요 질문·누락·가림·fallback 지침",
+      "write_scope_hint": [
+        "omp_bridge/skills/workbench-report/SKILL.md",
+        "omp_bridge/skills/workbench-report/references/report-template.md",
+        "tests/backend/workbench_report/test_reference_contract.py",
+        "tests/backend/workbench_report/test_reference_contract_independent.py"
+      ],
+      "resource_claims": [
+        {
+          "resource": "wpr:skill-fixtures",
+          "mode": "exclusive"
+        },
+        {
+          "resource": "wpr:contract:s1",
+          "mode": "shared"
+        }
+      ],
+      "workspace_requirement": "isolated_if_parallel",
+      "worker": "worker",
+      "routing_hint": {
+        "reason_codes": [
+          "bounded_pattern"
+        ],
+        "evidence_refs": [
+          "SPEC.md#2-reference와-보고서",
+          "omp_bridge/skills/to-worker/SKILL.md"
+        ]
+      },
+      "service_namespace": "owned:<run>/wpr03/text-fixtures; no live OMP or backend needed for local asset checks",
+      "base_contract_requirement": "integrated WPR-01 pass and measured metadata; SPEC s1 frozen heading/helper contract; helper implementation is not needed for local asset checks",
+      "verification_unit": "WPR-U2",
+      "path": "tickets/WPR-03.md"
+    },
+    {
+      "id": "WPR-04",
+      "title": "Manager 전용 연결과 기존 격리 계약 보존",
+      "kind": "implementation",
+      "depends_on": [
+        "WPR-02",
+        "WPR-03"
+      ],
+      "dependency_reasons": {
+        "WPR-02": "가림·검사·저장 helper의 integrated fixture 근거를 소비한다.",
+        "WPR-03": "실제 skill/reference와 실측 metadata가 있어야 allowlist·command/모델 노출을 검증한다."
+      },
+      "acceptance_ids": [
+        "WPR-AC-01",
+        "WPR-AC-03",
+        "WPR-AC-11"
+      ],
+      "deliverable": "Manager allowlist에만 연결하고 기존 isolation/Worker 계약과 회귀 검사를 유지",
+      "write_scope_hint": [
+        "src/workbench/backend/launcher.py",
+        "omp_bridge/skills/README.md",
+        "tests/backend/test_paths_launcher.py",
+        "tests/backend/test_omp_isolation.py",
+        "tests/backend/workbench_report/test_manager_integration.py",
+        "tests/backend/workbench_report/test_manager_integration_independent.py"
+      ],
+      "resource_claims": [
+        {
+          "resource": "wpr:integration-workspace",
+          "mode": "exclusive"
+        },
+        {
+          "resource": "wpr:omp-runtime",
+          "mode": "exclusive"
+        }
+      ],
+      "workspace_requirement": "single_writer_then_root_serial_integration",
+      "worker": "worker_senior",
+      "routing_hint": {
+        "reason_codes": [
+          "coupled_invariants"
+        ],
+        "evidence_refs": [
+          "src/workbench/backend/launcher.py#ROLE_SKILL_PATTERNS",
+          "src/workbench/backend/launcher.py#observe_isolation"
+        ]
+      },
+      "service_namespace": "owned:<run>/wpr04/manager,worker-isolation; no production backend",
+      "base_contract_requirement": "WPR-02/03 integrated and local gates passed on a common source snapshot; preserve existing role tools/agents and unrelated skills",
+      "verification_unit": "WPR-U2",
+      "path": "tickets/WPR-04.md"
+    },
+    {
+      "id": "WPR-05",
+      "title": "최종 skill 동작·실제 OMP 통합 검증",
+      "kind": "integration_verification",
+      "depends_on": [
+        "WPR-04"
+      ],
+      "dependency_reasons": {
+        "WPR-04": "동일 후보에 연결된 skill/reference/helper/Manager roster와 현재 로컬 회귀 근거가 필요하다."
+      },
+      "acceptance_ids": [
+        "WPR-AC-01",
+        "WPR-AC-02",
+        "WPR-AC-03",
+        "WPR-AC-04",
+        "WPR-AC-05",
+        "WPR-AC-06",
+        "WPR-AC-07",
+        "WPR-AC-08",
+        "WPR-AC-09",
+        "WPR-AC-10",
+        "WPR-AC-11",
+        "WPR-AC-12",
+        "WPR-AC-13",
+        "WPR-AC-14"
+      ],
+      "deliverable": "실제 agent skill_behavior와 OMP/bridge/helper runtime 근거, 독립 테스트·fresh review·security review 및 최종 AC 추적",
+      "write_scope_hint": [
+        "tests/integration/live_workbench_report.py",
+        "tests/backend/workbench_report/test_skill_behavior_independent.py",
+        ".workflow/workbench-problem-report/runs/**"
+      ],
+      "resource_claims": [
+        {
+          "resource": "wpr:integration-workspace",
+          "mode": "exclusive"
+        },
+        {
+          "resource": "wpr:omp-runtime",
+          "mode": "exclusive"
+        },
+        {
+          "resource": "wpr:skill-behavior-eval",
+          "mode": "exclusive"
+        }
+      ],
+      "workspace_requirement": "root_integration_workspace",
+      "owner": "root",
+      "service_namespace": "owned:<run>/wpr05/HOME,project,backend,localhost-provider; all synthetic",
+      "base_contract_requirement": "frozen combined candidate with WPR-U1/U2 required local checks and independent review coverage; no product repair under verification-only scope",
+      "verification_unit": "WPR-U3",
+      "path": "tickets/WPR-05.md"
+    }
+  ],
+  "gate_items": [
+    {
+      "id": "G-01",
+      "owner_ticket": "WPR-01",
+      "acceptance_ids": [
+        "WPR-AC-01",
+        "WPR-AC-03"
+      ],
+      "requires_tickets": [
+        "WPR-01"
+      ],
+      "required_evidence_level": "runtime",
+      "check": "Real OMP temporary canary: Manager slash present+expands+passes user args, model discovery absent, Worker absent; plain user text/notice/peer inputs do not auto-expand. Store version, sanitized requests, output markers, cleanup; 0 paid model calls."
+    },
+    {
+      "id": "G-02",
+      "owner_ticket": "WPR-02",
+      "acceptance_ids": [
+        "WPR-AC-02",
+        "WPR-AC-09",
+        "WPR-AC-14"
+      ],
+      "requires_tickets": [
+        "WPR-02"
+      ],
+      "required_evidence_level": "fixture",
+      "check": "Helper public CLI with temporary canonical reference: complete Korean Markdown/unknown values retained; missing/empty/duplicate headings and oversize drafts rejected without silent clipping; source-independent saved artifact and omission marker cases."
+    },
+    {
+      "id": "G-03",
+      "owner_ticket": "WPR-02",
+      "acceptance_ids": [
+        "WPR-AC-08"
+      ],
+      "requires_tickets": [
+        "WPR-02"
+      ],
+      "required_evidence_level": "fixture",
+      "check": "Synthetic API key, bearer, password, credential URL, private key and path/error canaries are absent from saved file, stdout, stderr and fallback; markers remain; no raw temporary body file."
+    },
+    {
+      "id": "G-04",
+      "owner_ticket": "WPR-02",
+      "acceptance_ids": [
+        "WPR-AC-11",
+        "WPR-AC-12"
+      ],
+      "requires_tickets": [
+        "WPR-02"
+      ],
+      "required_evidence_level": "fixture",
+      "check": "Public CLI default/explicit/space-containing paths, concurrent filename collision, existing file/symlink, permission/disk/partial-write failures: no overwrite, truthful status and same sanitized complete fallback; 0600 output; only owned partial result cleaned."
+    },
+    {
+      "id": "G-05",
+      "owner_ticket": "WPR-03",
+      "acceptance_ids": [
+        "WPR-AC-02",
+        "WPR-AC-04",
+        "WPR-AC-05",
+        "WPR-AC-06",
+        "WPR-AC-07",
+        "WPR-AC-08",
+        "WPR-AC-09",
+        "WPR-AC-10",
+        "WPR-AC-12",
+        "WPR-AC-13",
+        "WPR-AC-14"
+      ],
+      "requires_tickets": [
+        "WPR-01",
+        "WPR-03"
+      ],
+      "required_evidence_level": "static",
+      "check": "Shipped skill and reference express the SPEC contract including template read, scope, questions, evidence, unknowns, secrets, missing data, limits, helper/fallback and no reproduction/delegation/repair; this is asset contract evidence only, not observed model compliance."
+    },
+    {
+      "id": "G-06",
+      "owner_ticket": "WPR-04",
+      "acceptance_ids": [
+        "WPR-AC-01",
+        "WPR-AC-03",
+        "WPR-AC-11"
+      ],
+      "requires_tickets": [
+        "WPR-01",
+        "WPR-02",
+        "WPR-03",
+        "WPR-04"
+      ],
+      "required_evidence_level": "fixture",
+      "check": "Product launcher/observe_isolation/role_skill_allowlist with real shipped assets allow report command for Manager only and reject ambient leaks; Worker roster/tools/agents unchanged; actual helper path resolves from skill; existing focused regressions pass."
+    },
+    {
+      "id": "G-07",
+      "owner_ticket": "WPR-05",
+      "acceptance_ids": [
+        "WPR-AC-02",
+        "WPR-AC-04",
+        "WPR-AC-05",
+        "WPR-AC-06",
+        "WPR-AC-07",
+        "WPR-AC-08",
+        "WPR-AC-09",
+        "WPR-AC-10",
+        "WPR-AC-11",
+        "WPR-AC-12",
+        "WPR-AC-13",
+        "WPR-AC-14"
+      ],
+      "requires_tickets": [
+        "WPR-01",
+        "WPR-02",
+        "WPR-03",
+        "WPR-04",
+        "WPR-05"
+      ],
+      "required_evidence_level": "skill_behavior",
+      "check": "Independent actual host-agent execution of frozen skill/reference on synthetic normal, partial, unknown-cause, unrelated-project and save-failure cases: questions, inline cited evidence, uncertainty, sanitized full fallback and no forbidden actions observed. Scripted provider replies or text assertions do not satisfy this gate."
+    },
+    {
+      "id": "G-08",
+      "owner_ticket": "WPR-05",
+      "acceptance_ids": [
+        "WPR-AC-01",
+        "WPR-AC-02",
+        "WPR-AC-03",
+        "WPR-AC-04",
+        "WPR-AC-05",
+        "WPR-AC-06",
+        "WPR-AC-07",
+        "WPR-AC-08",
+        "WPR-AC-09",
+        "WPR-AC-10",
+        "WPR-AC-11",
+        "WPR-AC-12",
+        "WPR-AC-13",
+        "WPR-AC-14"
+      ],
+      "requires_tickets": [
+        "WPR-01",
+        "WPR-02",
+        "WPR-03",
+        "WPR-04",
+        "WPR-05"
+      ],
+      "required_evidence_level": "runtime",
+      "check": "Final exact candidate through real OMP Manager slash expansion and actual owned WB bridge+helper with localhost scripted provider: shipped template is read, synthetic status/raw/missing ranges reach report, default/explicit/collision/failure outputs and Worker exclusion verified, artifact moved and read without original sources. This gate proves runtime wiring, with reasoning/interaction quality supplied separately by G-07; forbidden tool trace absent. Final independent review/security evidence current."
+    }
+  ],
+  "pending_evidence": [
+    {
+      "gate": "G-01",
+      "state": "not_run",
+      "impact": "All product expansion waits for decisive current OMP user-only evidence; no probe executed in planning."
+    },
+    {
+      "gate": "G-07",
+      "state": "not_run",
+      "impact": "Needs actual independent agent skill execution after implementation; scripted OMP is insufficient."
+    },
+    {
+      "gate": "G-08",
+      "state": "not_run",
+      "impact": "Needs final shipped assets, actual OMP and owned synthetic WB runtime after implementation."
+    }
+  ],
+  "scope_constraints": [
+    "No product/tests/worktrees/agents executed during this planning command.",
+    "No user auth, user DB/log mutation, paid model CLI, commit, publish or deploy.",
+    "Before isolated runs enforce .workflow <10 GiB and after owned processes stop clean reproducible caches per AGENTS.md.",
+    "Failed/inconclusive G-01 blocks expansion; no OMP fork, natural-language entrypoint replacement or automatic invocation relaxation without user decision."
+  ],
+  "baseline_reference": "../../../.workflow/workbench-problem-report/runs/planning-20261018/baseline.json",
+  "revision_history": [
+    {
+      "revision": "p1",
+      "reason": "Initial local planning from user-agreed BRIEF r1.0; no existing PLAN or completed ticket state."
+    }
+  ]
+}

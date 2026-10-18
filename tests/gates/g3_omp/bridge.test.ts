@@ -46,7 +46,8 @@ async function startBridge(role: "manager" | "worker" = "worker", eventSurfacePr
 
 	const handlers = new Map<string, (...args: any[]) => any>();
 	const registeredTools = new Map<string, Frame>();
-	const sent: Array<{ message: string; options: Frame }> = [];
+	const sent: Array<{ message: string | Frame[]; options: Frame }> = [];
+	const errors: string[] = [];
 	const state = { idle: true, pending: false, editor: "" as string | undefined };
 	let failAfterEnqueue = false;
 	let holdSend = false;
@@ -57,14 +58,14 @@ async function startBridge(role: "manager" | "worker" = "worker", eventSurfacePr
 		on(name: string, handler: (...args: any[]) => any) { handlers.set(name, handler); },
 		registerTool(tool: Frame) { registeredTools.set(tool.name, tool); },
 		zod: { object: (shape: Frame) => shape, string: () => "string" },
-		async sendUserMessage(message: string, options: Frame) {
+		async sendUserMessage(message: string | Frame[], options: Frame) {
 			sent.push({ message, options });
 			// OMP v18.2.10: omitted deliverAs starts a normal prompt when idle.
 			if (state.idle && !("deliverAs" in options)) startedTurns += 1;
 			if (holdSend) await new Promise<void>(resolve => { releaseSend = resolve; });
 			if (failAfterEnqueue) throw new Error("simulated ACK uncertainty after enqueue");
 		},
-		logger: { error() {} },
+		logger: { error(message: string) { errors.push(message); } },
 	};
 	const context = {
 		sessionManager: { getSessionId: () => SESSION_ID },
@@ -105,7 +106,7 @@ async function startBridge(role: "manager" | "worker" = "worker", eventSurfacePr
 		await rm(directory, { recursive: true, force: true });
 	}
 	return {
-		frames, sent, state, sockets, handlers, registeredTools, waitFor, request, close,
+		frames, sent, errors, api: pi, state, sockets, handlers, registeredTools, waitFor, request, close,
 		get startedTurns() { return startedTurns; },
 		get abortCalls() { return abortCalls; },
 		setFailAfterEnqueue(value: boolean) { failAfterEnqueue = value; },
@@ -908,4 +909,119 @@ test("provider request diagnostic event is absent without explicit opt-in", asyn
 	} finally {
 		await bridge.close();
 	}
+});
+
+test("Manager report literals preserve user text, images, attribution and one turn", async () => {
+	const bridge = await startBridge("manager");
+	try {
+		const input = bridge.handlers.get("input")!;
+		const text = "  사용자가 복사한 /skill:workbench-report resize 증상\n원문 그대로  ";
+		for (const source of ["interactive", "rpc"]) {
+			const before = bridge.sent.length;
+			assert.deepEqual(input({ text, source }), { handled: true });
+			assert.equal(bridge.sent.length, before + 1);
+			assert.deepEqual(bridge.sent.at(-1), { message: text, options: { attribution: "user" } });
+			assert.equal(bridge.startedTurns, bridge.sent.length);
+			await bridge.waitFor(frame => frame.kind === "state");
+		}
+		const images = [{ type: "image", data: "fixture", mimeType: "image/png" }];
+		assert.deepEqual(input({ text, source: "rpc", images }), { handled: true });
+		assert.deepEqual(bridge.sent.at(-1), {
+			message: [{ type: "text", text }, ...images], options: { attribution: "user" },
+		});
+		assert.equal(images.length, 1, "the original image list is not mutated");
+		assert.equal(bridge.startedTurns, 3);
+		assert.deepEqual(bridge.errors, []);
+	} finally { await bridge.close(); }
+});
+
+test("report guard preserves native commands and first-selected unrelated skills", async () => {
+	const bridge = await startBridge("manager");
+	try {
+		const input = bridge.handlers.get("input")!;
+		for (const text of [
+			"/skill:workbench-report", " \t/skill:workbench-report resize", "/skill:workbench-report\n증상",
+			"resize 증상", "ordinary /skill:to-worker arguments", "literal /skill:workbench-report-other args",
+			"literal /skill:workbench-report/reference args", "`/skill:workbench-report`",
+			"/skill:to-worker /skill:workbench-report literal argument",
+			"prose /skill:to-worker first /skill:workbench-report later",
+			"/model /skill:workbench-report", "!echo /skill:workbench-report",
+			"$ echo /skill:workbench-report", "$$ echo /skill:workbench-report",
+		]) assert.equal(input({ source: "rpc", text }), undefined, text);
+		assert.equal(bridge.sent.length, 0);
+		assert.deepEqual(input({ source: "rpc", text: "prose /skill:workbench-report first /skill:to-worker later" }),
+			{ handled: true });
+		assert.equal(bridge.sent.length, 1);
+	} finally { await bridge.close(); }
+});
+
+test("report guard is main Manager human-input only and does not reenter for extension messages", async () => {
+	for (const role of ["manager", "worker"] as const) {
+		const bridge = await startBridge(role);
+		try {
+			const input = bridge.handlers.get("input")!;
+			const text = "copied /skill:workbench-report literal";
+			assert.equal(input(undefined), undefined);
+			for (const source of ["extension", "agent", undefined, "unknown"])
+				assert.equal(input({ source, text }), undefined);
+			assert.equal(input({ source: "rpc", text: undefined }), undefined);
+			assert.equal(input({ source: "rpc", text: 12 }), undefined);
+			if (role === "worker") {
+				for (const source of ["interactive", "rpc"])
+					assert.equal(input({ source, text }), undefined);
+				assert.equal(bridge.sent.length, 0);
+			} else {
+				const send = bridge.api.sendUserMessage;
+				bridge.api.sendUserMessage = async (message, options) => {
+					assert.equal(input({ source: "extension", text: message }), undefined);
+					await send(message, options);
+				};
+				assert.deepEqual(input({ source: "rpc", text }), { handled: true });
+				assert.equal(bridge.sent.length, 1);
+				assert.equal(bridge.startedTurns, 1);
+				bridge.handlers.get("session_switch")!(undefined, { agent: { kind: "sub" } });
+				assert.equal(input({ source: "rpc", text }), undefined);
+				assert.equal(bridge.sent.length, 1, "subagent input does not forward as the Manager");
+			}
+			bridge.handlers.get("session_shutdown")!();
+			assert.equal(input({ source: "rpc", text }), undefined);
+		} finally { await bridge.close(); }
+	}
+});
+
+test("report forwarding uncertainty stays handled without native fallback or replay", async () => {
+	for (const synchronous of [false, true]) {
+		const bridge = await startBridge("manager");
+		try {
+			const input = bridge.handlers.get("input")!;
+			const text = "sensitive fixture /skill:workbench-report literal";
+			let attempts = 0;
+			if (synchronous) {
+				bridge.api.sendUserMessage = () => { attempts += 1; throw new Error(text); };
+				bridge.api.logger.error = () => { throw new Error("logger unavailable"); };
+			} else bridge.setFailAfterEnqueue(true);
+			assert.deepEqual(input({ source: "rpc", text }), { handled: true });
+			await delay(20);
+			assert.equal(synchronous ? attempts : bridge.sent.length, 1);
+			assert.equal(bridge.startedTurns, synchronous ? 0 : 1);
+			if (!synchronous) {
+				assert.equal(bridge.errors.length, 1);
+				assert.ok(!bridge.errors[0].includes(text));
+			}
+			await bridge.request({ kind: "pause" });
+			await bridge.request({ kind: "probe" });
+			assert.equal(synchronous ? attempts : bridge.sent.length, 1, "lifecycle does not replay uncertain input");
+		} finally { await bridge.close(); }
+	}
+});
+
+test("paused Manager still forwards literal manual input once", async () => {
+	const bridge = await startBridge("manager");
+	try {
+		assert.equal((await bridge.request({ kind: "pause" })).status, "paused");
+		assert.deepEqual(bridge.handlers.get("input")!({ source: "interactive", text: "copied /skill:workbench-report literal" }),
+			{ handled: true });
+		assert.equal(bridge.sent.length, 1);
+		assert.equal(bridge.sent[0].options.attribution, "user");
+	} finally { await bridge.close(); }
 });

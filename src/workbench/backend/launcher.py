@@ -133,9 +133,10 @@ ISOLATION_PROVIDER_IDS = (
 )
 # Role skill filter (skills.includeSkills globs) applied to omp_bridge/skills
 # (C-D65 (3), CW-18 U6): the manager loads only to-worker and (C-D70 (7)) its
-# agent-only recovery skill workbench-recovery, the worker only to-manager.
+# agent-only recovery skill workbench-recovery and user-only workbench-report;
+# the worker loads only to-manager.
 # These are the Workbench skills the isolation check expects.
-ROLE_SKILL_PATTERNS: dict[str, tuple[str, ...]] = {"manager": ("to-worker", "workbench-recovery"),
+ROLE_SKILL_PATTERNS: dict[str, tuple[str, ...]] = {"manager": ("to-worker", "workbench-recovery", "workbench-report"),
                                                    "worker": ("to-manager",)}
 OMP_ROLE_NAMES = ("manager", "worker")
 # What an isolated OMP 18.4.4 still shows: bundled task agents and bundled
@@ -814,8 +815,10 @@ def isolation_leaks(observed: Mapping[str, Any], *, allowed_skills: Sequence[str
     agents_allowed = ROLE_TASK_AGENTS.get(role, BUNDLED_TASK_AGENTS) if role else BUNDLED_TASK_AGENTS
     leaks = [] if observed.get("system_prompt_default", True) else ["system_prompt:replaced"]
     leaks += [f"context_file:{path}" for path in observed["context_files"]]
+    # The Manager allowlist admits the user command, not model discovery of
+    # this manual-only skill. Report either kind of exposure once as a leak.
     leaks += [f"skill:{name}" for name in sorted(set(observed["skills"]) | set(observed["skill_commands"]))
-              if name not in allowed]
+              if name not in allowed or (name == "workbench-report" and name in observed["skills"])]
     leaks += [f"rule:{rule}" for rule in observed["rules"]]
     leaks += [f"mcp:{name}" for name in observed["mcp_tools"]]
     leaks += [f"task_agent:{name}" for name in observed["task_agents"] if name not in agents_allowed]

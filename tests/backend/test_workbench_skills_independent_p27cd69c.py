@@ -16,7 +16,7 @@ from pathlib import Path
 from workbench.backend import flow_terminal, launcher
 
 SKILLS = Path(launcher.default_skills_dir())
-BRIDGE = Path(launcher.default_bridge_extension()).read_text(encoding="utf-8")
+BRIDGE = Path(launcher.default_bridge_extension()).with_name("bridge.ts").read_text(encoding="utf-8")
 
 
 def flat(text: str) -> str:

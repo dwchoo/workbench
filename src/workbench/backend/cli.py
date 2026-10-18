@@ -1026,7 +1026,7 @@ def parser() -> argparse.ArgumentParser:
     confirm.add_argument("--yes", action="store_true", help="confirm without prompting")
     confirm.add_argument("--json", action="store_true")
     confirm.set_defaults(handler=cmd_confirm_boot)
-    shutdown = common(sub.add_parser("shutdown", help="request and confirm a full backend shutdown"))
+    shutdown = common(sub.add_parser("shutdown", aliases=["down"], help="request and confirm a full backend shutdown"))
     shutdown.add_argument("--yes", action="store_true", help="confirm without prompting")
     shutdown.add_argument("--json", action="store_true")
     shutdown.set_defaults(handler=cmd_shutdown)

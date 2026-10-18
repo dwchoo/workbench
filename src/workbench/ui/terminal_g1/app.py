@@ -11,6 +11,7 @@ import sys
 import termios
 import time
 from collections import deque
+from functools import lru_cache
 from pathlib import Path
 
 from wcwidth import wcswidth
@@ -72,6 +73,8 @@ def _rgb_index(rgb: tuple[int, int, int]) -> int:
     return cube_index if cube_distance <= grey_distance else 232 + grey_step
 
 
+# This pure mapping repeats across redraws; bound entries by both value and palette size.
+@lru_cache(maxsize=4096)
 def _color_index(value: str, colors: int) -> int:
     named = {
         "black": 0,

@@ -1,0 +1,366 @@
+{
+  "schema_version": 1,
+  "feature_id": "dev-validation-log-cli-ux",
+  "revision": "p1",
+  "requirements_identity": "a4a96a2dfd9afc9d0e78926205c107d669dc3571e961b9fd44431d3a4f3dd756",
+  "status": "draft_pending_bundle_approval",
+  "source_brief": {
+    "path": "BRIEF.md",
+    "revision": "b1",
+    "derived_from": "../CLI-UX-PLAN.md"
+  },
+  "spec": {
+    "path": "SPEC.md",
+    "revision": "s1"
+  },
+  "requirements": {
+    "path": "requirements.json",
+    "revision": "ux-r1-planning-draft"
+  },
+  "baseline": {
+    "head": "1a7f97d354ee6244ec359645153d9a98ff613337",
+    "input_plan": {
+      "path": "../CLI-UX-PLAN.md",
+      "sha256": "bc7720255cd70f255c6e9998ccdc0c7aa1c347055f2b9546fe285c3d075e5623"
+    },
+    "source_manifest": {
+      "src/workbench/backend/cli.py": "e88673712eaabc92c41357de48f47a7fc17b6c7393a53d569a715a69c3814b2a",
+      "src/workbench/storage/important_log/reader.py": "64aa0d7ae11cdc5f13578522c1919c4b81b50e83eeee7ff77a1465a2feada2e4",
+      "src/workbench/storage/important_log/store.py": "4a60b43b168769f01b83d2d6b8409ea2f5baf21dbca5204d93a77c081667e9ca",
+      "src/workbench/contracts/logs_v1.py": "22c8baf98340774af3ea5679a8f5c8386789dc6a7e72e62a893276b07ebe8b25",
+      "src/workbench/ui/status_workbench/projection.py": "c48987c2e01cb41f12463831f704e1d5b9bc9b9151196bf58d9bc5d9e43aaedf",
+      "tests/backend/test_storage_status_cli.py": "dafc128b5b6d66fe5dac026abb072e13c7dbf12ee79edd9f1a7298e5f0817f04",
+      "tests/backend/test_storage_status_cli_independent.py": "e4ff3ef650bd4a72b2a8c43f0b6803c814a30ba4bb1038584f20793de6391e56",
+      "tests/integration/test_storage_operations_independent.py": "07e568eb1c8cc6f9f6e87136884b5448dffd846c77b863b234ee8b58923b74a0"
+    },
+    "dirty_work": "cli.py down alias, UI rendering and tests, user AGENTS/skills/config/bridge changes remain outside this followup. Re-read actual working tree at implement; no reset/stash/clean.",
+    "previous_delivery": "../approval.json and .workflow/dev-validation-log-storage-operations/runs/ops-20261018-01/outcome.json keep original scope; no current host lifecycle claim from old status"
+  },
+  "scheduling": {
+    "max_open_child_threads": 4,
+    "max_parallel_writer_workspaces": 1,
+    "workspace_policy": "single_candidate_writer_serial; isolation required before any simultaneous writers",
+    "dependency_gate": "01 integrated with local worker checks; coherent unit independently accepted only through02",
+    "on_unavailable_isolation": "serial_with_disclosure",
+    "initial_frontier_after_approval": [
+      "DVL-UX-01"
+    ],
+    "parallel_candidates": [],
+    "conflict_note": "Both displays share cli.py; test/review consume one frozen combined candidate. File separation alone does not authorize concurrent writers."
+  },
+  "budget_policy": {
+    "operating_estimates": {
+      "total": 7,
+      "worker": 2,
+      "test_designer": 2,
+      "reviewer": 3,
+      "reason": "one implementer + independent tests + fresh review + expected path-access security review; three bounded correction/verification reserves"
+    },
+    "explicit_user_limits": [],
+    "host_limits": "observe current host at dispatch; do not infer from PLAN",
+    "authority": "workflow-contract section8; Root-adjustable estimate for future authorized implement, not monetary quota or approval ceiling",
+    "no_calls_started": true
+  },
+  "tickets": [
+    {
+      "id": "DVL-UX-01",
+      "path": "tickets/DVL-UX-01.md",
+      "kind": "implementation",
+      "depends_on": [],
+      "acceptance_ids": [
+        "UX-AC-01",
+        "UX-AC-02",
+        "UX-AC-03",
+        "UX-AC-04",
+        "UX-AC-05",
+        "UX-AC-06"
+      ],
+      "deliverable": "status absence/failed-read guidance + show human formatter + USAGE migration with JSON/exit preserved",
+      "write_scope_hint": [
+        "src/workbench/backend/cli.py",
+        "tests/backend/test_important_cli_ux.py",
+        "docs/features/dev-validation-log-retention/storage-operations/USAGE.md"
+      ],
+      "resource_claims": [
+        {
+          "resource": "workspace:important-cli-ux-candidate",
+          "mode": "exclusive"
+        },
+        {
+          "resource": "file:src/workbench/backend/cli.py",
+          "mode": "exclusive"
+        },
+        {
+          "resource": "file:storage-operations-USAGE",
+          "mode": "exclusive"
+        }
+      ],
+      "workspace_requirement": "single_writer_workspace_preserving_baseline_dirty_changes",
+      "worker": "worker",
+      "routing_hint": {
+        "reason_codes": [
+          "bounded_pattern"
+        ],
+        "evidence_refs": [
+          "SPEC.md#현재-경계와-기술-상세",
+          "../CLI-UX-PLAN.md"
+        ]
+      },
+      "base_requirements": [
+        "explicit approval of this exact bundle",
+        "current source manifest and old dirty delta reconciled",
+        "owned temporary test namespace; no user auth/model/DB access"
+      ],
+      "local_validation": "worker parser/main quick checks and affected existing CLI regressions; independently accepted only in02"
+    },
+    {
+      "id": "DVL-UX-02",
+      "path": "tickets/DVL-UX-02.md",
+      "kind": "integration_verification",
+      "depends_on": [
+        "DVL-UX-01"
+      ],
+      "dependency_reasons": {
+        "DVL-UX-01": "Consumes both integrated formatters and USAGE; new behavior tests and frozen review require their stable candidate"
+      },
+      "acceptance_ids": [
+        "UX-AC-01",
+        "UX-AC-02",
+        "UX-AC-03",
+        "UX-AC-04",
+        "UX-AC-05",
+        "UX-AC-06"
+      ],
+      "deliverable": "independent requirement-derived tests + combined actual CLI/store smoke + frozen review/security disposition + final scope/cleanup/gate assessment",
+      "write_scope_hint": [
+        "tests/backend/test_important_cli_ux_independent.py",
+        "tests/integration/test_important_cli_ux_independent.py",
+        ".workflow/dev-validation-log-cli-ux/state.json",
+        ".workflow/dev-validation-log-cli-ux/runs/<owned-run>/**"
+      ],
+      "resource_claims": [
+        {
+          "resource": "workspace:important-cli-ux-candidate",
+          "mode": "exclusive"
+        },
+        {
+          "resource": "test-namespace:important-cli-ux-owned-temp",
+          "mode": "exclusive"
+        },
+        {
+          "resource": "integration-owner:important-cli-ux",
+          "mode": "exclusive"
+        }
+      ],
+      "workspace_requirement": "root_integration_workspace_single_mutation_owner",
+      "owner": "root",
+      "roles": {
+        "tests": "test_designer",
+        "review": "reviewer",
+        "security_if_triggered": "reviewer review_kind=security"
+      },
+      "predecessor_artifacts": [
+        "integrated01 candidate/source manifest + quick check logs",
+        "USAGE with human/show migration boundary"
+      ],
+      "verification_unit": [
+        "DVL-UX-01",
+        "DVL-UX-02"
+      ],
+      "product_fix_routing": "Return product fixes to bounded01 writer scope; test writer never mutates product, then delta review of affected candidate"
+    }
+  ],
+  "gate_items": [
+    {
+      "id": "G-UX-01-status",
+      "owner_ticket": "DVL-UX-02",
+      "acceptance_ids": [
+        "UX-AC-01",
+        "UX-AC-02"
+      ],
+      "requires_tickets": [
+        "DVL-UX-01",
+        "DVL-UX-02"
+      ],
+      "required_evidence_level": "fixture",
+      "check": "실제 parser/main: 경로 없음의 조건부 첫 사용 안내와 count/bytes 미확인·exit1; 존재/metadata 실패/catalog 없음/busy/unavailable을 미생성으로 오판하지 않음"
+    },
+    {
+      "id": "G-UX-02-show",
+      "owner_ticket": "DVL-UX-02",
+      "acceptance_ids": [
+        "UX-AC-03"
+      ],
+      "requires_tickets": [
+        "DVL-UX-01",
+        "DVL-UX-02"
+      ],
+      "required_evidence_level": "fixture",
+      "check": "Task/command 작은 기록의 subject/entry identity·facts/interpretations/unknowns·개행·source range/gap·source DB 표시"
+    },
+    {
+      "id": "G-UX-03-compat",
+      "owner_ticket": "DVL-UX-02",
+      "acceptance_ids": [
+        "UX-AC-04"
+      ],
+      "requires_tickets": [
+        "DVL-UX-01",
+        "DVL-UX-02"
+      ],
+      "required_evidence_level": "fixture",
+      "check": "--json 전체 key/type/value·exit·stdout/stderr·정렬·limit/page/nextAfter·정상빈결과·부분경고 유지; JSON 경로 추가 metadata 조회0"
+    },
+    {
+      "id": "G-UX-04-integration",
+      "owner_ticket": "DVL-UX-02",
+      "acceptance_ids": [
+        "UX-AC-01",
+        "UX-AC-02",
+        "UX-AC-03",
+        "UX-AC-04",
+        "UX-AC-05"
+      ],
+      "requires_tickets": [
+        "DVL-UX-01",
+        "DVL-UX-02"
+      ],
+      "required_evidence_level": "runtime",
+      "check": "전용 임시 actual store + 실제 reader/parser/main의 결합 CLI smoke; absent root 미생성, 기존 허용 read만, no model/verify/mutation, owned process/temp 정리. OMP/Backend/model E2E 증거로 확대하지 않음"
+    },
+    {
+      "id": "G-UX-05-review",
+      "owner_ticket": "DVL-UX-02",
+      "acceptance_ids": [
+        "UX-AC-05",
+        "UX-AC-06"
+      ],
+      "requires_tickets": [
+        "DVL-UX-01",
+        "DVL-UX-02"
+      ],
+      "required_evidence_level": "static",
+      "check": "USAGE의 기본show 변경 및 JSON envelope 전환, current frozen candidate의 독립 리뷰/범위/hash/cleanup, 실제 diff 보안trigger 처리, 기존 OPS/parent 기록 보존"
+    }
+  ],
+  "external_contracts": [
+    {
+      "path": "../requirements.json",
+      "sha256": "4e353acf244a9356ff1e78b972a2d3a561daa65c368d36bd2ed6b213125c89a2",
+      "acceptance_count": 8,
+      "gate_count": 7,
+      "operation": "preserve_original_scope_and_completed_DVL-OPS-01_02_03"
+    },
+    {
+      "path": "../../requirements-r0.9-p5.json",
+      "acceptance_count": 28,
+      "gate_count": 46,
+      "operation": "preserve_IDs_levels_authority_and_retained_limits; this local5gate does not replace original46",
+      "sha256": "d778a6b44c2384a979d4c581e1a8add76d6f13cf39b11b328f9138c2d2c864a2"
+    }
+  ],
+  "acceptance_trace": [
+    {
+      "acceptance_id": "UX-AC-01",
+      "implementation_ticket": "DVL-UX-01",
+      "verification_ticket": "DVL-UX-02",
+      "gate_ids": [
+        "G-UX-01-status",
+        "G-UX-04-integration"
+      ],
+      "public_interface": "logs important status/show with and without --json"
+    },
+    {
+      "acceptance_id": "UX-AC-02",
+      "implementation_ticket": "DVL-UX-01",
+      "verification_ticket": "DVL-UX-02",
+      "gate_ids": [
+        "G-UX-01-status",
+        "G-UX-04-integration"
+      ],
+      "public_interface": "logs important status/show with and without --json"
+    },
+    {
+      "acceptance_id": "UX-AC-03",
+      "implementation_ticket": "DVL-UX-01",
+      "verification_ticket": "DVL-UX-02",
+      "gate_ids": [
+        "G-UX-02-show",
+        "G-UX-04-integration"
+      ],
+      "public_interface": "logs important show --task|--command"
+    },
+    {
+      "acceptance_id": "UX-AC-04",
+      "implementation_ticket": "DVL-UX-01",
+      "verification_ticket": "DVL-UX-02",
+      "gate_ids": [
+        "G-UX-03-compat",
+        "G-UX-04-integration"
+      ],
+      "public_interface": "logs important status/show with and without --json"
+    },
+    {
+      "acceptance_id": "UX-AC-05",
+      "implementation_ticket": "DVL-UX-01",
+      "verification_ticket": "DVL-UX-02",
+      "gate_ids": [
+        "G-UX-04-integration",
+        "G-UX-05-review"
+      ],
+      "public_interface": "logs important status/show with and without --json"
+    },
+    {
+      "acceptance_id": "UX-AC-06",
+      "implementation_ticket": "DVL-UX-01",
+      "verification_ticket": "DVL-UX-02",
+      "gate_ids": [
+        "G-UX-05-review"
+      ],
+      "public_interface": "USAGE + source scope/review"
+    }
+  ],
+  "verification": {
+    "grouping": "one combined verification unit; no per-formatter duplicated final review",
+    "behavior_seams": [
+      "actual CLI parser/main",
+      "existing ImportantLogReader and owned tiny ImportantLogCatalog/store fixtures",
+      "existing partial/busy response fixture"
+    ],
+    "new_tests_not_written_yet": [
+      "tests/backend/test_important_cli_ux.py",
+      "tests/backend/test_important_cli_ux_independent.py",
+      "tests/integration/test_important_cli_ux_independent.py"
+    ],
+    "reuse_executed_during_implement": [
+      "tests.backend.test_storage_status_cli",
+      "tests.backend.test_storage_status_cli_independent",
+      "tests.integration.test_storage_operations_independent",
+      "relevant named direct-reader pagination regressions if affected"
+    ],
+    "retained_real_model": "storage-ops-hands-on-20261018-01 user-forwarded claude-wb report: Task stored/digest/source/CLI success. Only original Task/storage scope; no new command/model or full46 pass.",
+    "pending": [
+      "new CLI behavior not implemented/tested",
+      "independent tests/review not run",
+      "owned actual CLI/store smoke not run"
+    ],
+    "security": "new fixed path metadata access expected trigger: Root evaluates actual diff; if present separate security review + diff secret scan; no lockfile change planned",
+    "no_repetition": [
+      "paid model request",
+      "500MB volume/full46 suite",
+      "whole guard tamper matrix"
+    ],
+    "cleanup": "AGENTS storage boundary and owned temp/process cleanup in success/failure; existing readonly SQLite allowances retained"
+  },
+  "publication": {
+    "implementation_authorized": false,
+    "commit_or_publish_authorized": false,
+    "actual_raw_activation_authorized": false,
+    "actual_deletion_authorized": false,
+    "C2": "hold"
+  },
+  "revision_notes": [
+    "p1 new followup only; parent OPS ticket IDs/status/evidence unchanged",
+    "no new model selection, output quota, schema, engine, queue or verifier protocol"
+  ]
+}

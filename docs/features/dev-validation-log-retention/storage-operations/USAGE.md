@@ -16,6 +16,24 @@ omp-workbench logs raw-status --json
 omp-workbench logs important status --json
 ```
 
+`important status`는 기본적으로 사람이 읽는 형식으로 표시됩니다. 조회 결과가 불완전하고
+전용 중요 로그 디렉터리도 없다고 확인되면, 첫 사용 환경일 수 있으며 작업 기록이 저장된 뒤
+조회할 수 있다고 안내합니다. 디렉터리가 있거나 확인할 수 없는 경우에는 조회 문제로 표시하고,
+알 수 없는 DB 수와 bytes는 계속 미확인으로 둡니다. JSON 출력과 기존 종료 코드는 유지됩니다.
+
+`important show`는 Task 또는 command, 기록 종류와 시각, 사실·해석·미확인 내용, 출처 범위,
+누락 범위, DB UUID를 구분해 표시합니다. 본문은 저장된 내용 그대로 개행을 유지합니다.
+기본 출력은 더 이상 JSON lines 형식이 아닙니다. 전체 구조가 필요한 스크립트는 기존 JSON
+envelope를 요청해야 합니다.
+
+```sh
+omp-workbench logs important show --task <Task-UUID> --json
+omp-workbench logs important show --command <command-UUID> --json
+```
+
+JSON envelope의 `entries[]` 각 항목에는 읽기 결과가 `entry`에, DB UUID가
+`sourceDbUuids`에 있습니다. 다음 page cursor는 `nextAfter`에 유지됩니다.
+
 raw 상태는 legacy 실험 로그의 project 합계와 run별 한도, terminal의 명령별 한도, segmented raw 용량과 metadata 사용량을 각각 표시합니다. terminal 한도는 명령마다 적용되며 terminal 전체 합계 한도를 뜻하지 않습니다. segmented 저장소가 미생성이거나 부분 조회 상태이면 확인하지 못한 bytes를 0으로 간주하지 않습니다. 이들 값은 전체 data directory, 중요 DB, 기타 파일을 합친 용량 상한이 아닙니다.
 
 활성화 결정과 실제 신규 `source` 정책은 별도로 표시됩니다. 활성화된 기록이 있어도 보호 또는 재검증 상태라면 `legacy-stop`과 사유가 표시될 수 있습니다. 조회만으로 verify나 활성화를 하지 않습니다.

@@ -372,7 +372,109 @@ def cmd_summary_compat(args: argparse.Namespace) -> int:
     return EXIT_FAILURE if args.compat_action == "verify" and result.get("result") != "pass" else 0
 
 
-def _important_print(result: dict, args: argparse.Namespace) -> None:
+def _important_path_state(path: Path) -> str:
+    """Observe only whether the dedicated important-log path is present."""
+    try:
+        path.lstat()
+    except FileNotFoundError:
+        return "missing"
+    except OSError:
+        return "unknown"
+    return "present"
+
+
+def _important_unavailable_print(result: dict) -> None:
+    unavailable = result.get("unavailable")
+    print("부분 결과/조회 실패:", file=sys.stderr)
+    if isinstance(unavailable, list) and unavailable:
+        for item in unavailable:
+            if not isinstance(item, dict):
+                continue
+            identity = item.get("dbUuid")
+            reason = item.get("reason")
+            print(f"  DB {_plain(identity) if identity else '미확인'} · "
+                  f"사유 {_plain(reason) if reason else '미확인'}", file=sys.stderr)
+        return
+    print("  DB 미확인 · 사유 미확인", file=sys.stderr)
+
+
+def _important_body_section(body: dict, key: str, label: str) -> None:
+    values = body.get(key)
+    if not isinstance(values, list) or not values:
+        return
+    print(f"{label}:")
+    for value in values:
+        lines = (value if isinstance(value, str) else _plain(value)).split("\n")
+        print("  - " + _plain(lines[0]))
+        for line in lines[1:]:
+            print("    " + _plain(line))
+
+
+def _important_source_print(span: dict, *, gap: bool = False) -> None:
+    source = span.get("source")
+    if not isinstance(source, dict):
+        source = {}
+    kind = _plain(source.get("sourceKind")) or "미확인"
+    print(f"  - {kind}" + (f" · 사유 {_plain(span.get('reason'))}" if gap else ""))
+    labels = (("taskId", "Task ID"), ("revision", "revision"), ("runId", "run ID"),
+              ("commandId", "command ID"), ("messageId", "message ID"),
+              ("eventId", "event ID"))
+    details = [f"{label}={_plain(source[key])}" for key, label in labels if key in source]
+    if details:
+        print("    " + " · ".join(details))
+    start, end = span.get("start"), span.get("end")
+    if type(start) is int and type(end) is int:
+        print(f"    범위 [{start}, {end})")
+
+
+def _important_show_print(result: dict) -> None:
+    for row in result.get("entries", []):
+        if not isinstance(row, dict):
+            continue
+        entry = row.get("entry")
+        if not isinstance(entry, dict):
+            continue
+        subject = entry.get("subject")
+        if not isinstance(subject, dict):
+            subject = result.get("subject")
+        if not isinstance(subject, dict):
+            subject = {}
+        subject_kind = subject.get("kind")
+        subject_label = "Task" if subject_kind == "task" else "command"
+        subject_id = _plain(subject.get("id")) or "ID 미확인"
+        kind = _plain(entry.get("kind")) or "종류 미확인"
+        recorded = _plain(entry.get("recordedAt")) or "시각 미확인"
+        print(f"{subject_label} {subject_id} · {kind} · {recorded}")
+        entry_id = _plain(entry.get("entryId")) or "미확인"
+        print(f"기록 ID: {entry_id}")
+        body = entry.get("body")
+        if isinstance(body, dict):
+            for key, label in (("facts", "사실"), ("interpretations", "해석"),
+                               ("unknowns", "미확인")):
+                _important_body_section(body, key, label)
+        sources = entry.get("sources")
+        if isinstance(sources, list) and sources:
+            print("출처:")
+            for span in sources:
+                if isinstance(span, dict):
+                    _important_source_print(span)
+        else:
+            print("확인된 출처: 없음")
+        gaps = entry.get("sourceGaps")
+        if isinstance(gaps, list) and gaps:
+            print("누락 범위:")
+            for gap in gaps:
+                if isinstance(gap, dict):
+                    _important_source_print(gap, gap=True)
+        databases = row.get("sourceDbUuids")
+        if isinstance(databases, list) and databases:
+            print("DB UUID: " + ", ".join(_plain(value) for value in databases))
+        else:
+            print("DB UUID: 미확인")
+
+
+def _important_print(result: dict, args: argparse.Namespace, *,
+                     path_state: str | None = None) -> None:
     if args.json:
         print(json.dumps(result, sort_keys=True, ensure_ascii=False))
         return
@@ -390,6 +492,13 @@ def _important_print(result: dict, args: argparse.Namespace) -> None:
             print("important DB 상태: 일부 또는 확인 불가")
             count_text = f"{count}개" if type(count) is int and count >= 0 else "미확인"
             print(f"DB 수: {count_text} · 물리 크기: {_status_bytes(size)}")
+            if path_state == "missing":
+                print("중요 로그 저장소 경로가 없습니다.")
+                print("처음 사용하는 환경이라면 첫 작업 기록이 저장된 뒤 조회할 수 있습니다.")
+            elif path_state == "present":
+                print("저장소 경로가 있지만 DB 정보를 조회하지 못했습니다.")
+            elif path_state == "unknown":
+                print("저장소 경로 존재 여부를 확인하지 못했습니다.")
         databases = result.get("databases")
         if isinstance(databases, list):
             for row in databases:
@@ -414,8 +523,7 @@ def _important_print(result: dict, args: argparse.Namespace) -> None:
         if not result.get("subjects") and result.get("complete"):
             print("기록 없음")
     elif args.logs_action == "show":
-        for row in result.get("entries", []):
-            print(json.dumps(row, ensure_ascii=False, sort_keys=True))
+        _important_show_print(result)
         if not result.get("entries") and result.get("complete"):
             print("기록 없음")
     else:
@@ -423,8 +531,7 @@ def _important_print(result: dict, args: argparse.Namespace) -> None:
     if result.get("nextAfter"):
         print(f"다음 page: {result['nextAfter']}")
     if not result.get("complete", True):
-        print(f"부분 결과/조회 실패: {json.dumps(result.get('unavailable', []), ensure_ascii=False)}",
-              file=sys.stderr)
+        _important_unavailable_print(result)
 
 
 def cmd_important_read(args: argparse.Namespace) -> int:
@@ -443,7 +550,11 @@ def cmd_important_read(args: argparse.Namespace) -> int:
             result = reader.list_subjects(limit=args.limit, after=args.page)
         else:
             result = reader.show(_important_subject(args), limit=args.limit, after=args.page)
-        _important_print(result, args)
+        path_state = None
+        if (args.logs_action == "status" and not args.json
+                and result.get("complete") is not True):
+            path_state = _important_path_state(layout.important_logs)
+        _important_print(result, args, path_state=path_state)
         return 0 if result.get("complete") else EXIT_FAILURE
     except (OSError, ValueError, RuntimeError) as exc:
         print(f"important 조회 실패: {type(exc).__name__}: {exc}", file=sys.stderr)

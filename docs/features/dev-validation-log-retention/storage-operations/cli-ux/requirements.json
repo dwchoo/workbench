@@ -1,0 +1,56 @@
+{
+  "schema_version": 1,
+  "revision": "ux-r1-planning-draft",
+  "authority": "2026-10-18 현재 대화 U-UX-02 개선계획 요청 및 U-UX-03 $to-tickets docs/features/dev-validation-log-retention/storage-operations/CLI-UX-PLAN.md. 합의 방향의 후속 AC/gate 상세 초안이며 정확한 구현 bundle은 승인 전이다. 기존 parent28AC/46gate와 OPS8AC/7gate는 외부 reference로 보존한다.",
+  "acceptance_ids": [
+    "UX-AC-01",
+    "UX-AC-02",
+    "UX-AC-03",
+    "UX-AC-04",
+    "UX-AC-05",
+    "UX-AC-06"
+  ],
+  "gate_items": [
+    {
+      "id": "G-UX-01-status",
+      "acceptance_ids": [
+        "UX-AC-01",
+        "UX-AC-02"
+      ],
+      "required_evidence_level": "fixture"
+    },
+    {
+      "id": "G-UX-02-show",
+      "acceptance_ids": [
+        "UX-AC-03"
+      ],
+      "required_evidence_level": "fixture"
+    },
+    {
+      "id": "G-UX-03-compat",
+      "acceptance_ids": [
+        "UX-AC-04"
+      ],
+      "required_evidence_level": "fixture"
+    },
+    {
+      "id": "G-UX-04-integration",
+      "acceptance_ids": [
+        "UX-AC-01",
+        "UX-AC-02",
+        "UX-AC-03",
+        "UX-AC-04",
+        "UX-AC-05"
+      ],
+      "required_evidence_level": "runtime"
+    },
+    {
+      "id": "G-UX-05-review",
+      "acceptance_ids": [
+        "UX-AC-05",
+        "UX-AC-06"
+      ],
+      "required_evidence_level": "static"
+    }
+  ]
+}

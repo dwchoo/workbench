@@ -1,0 +1,21 @@
+{
+  "feature_id": "dev-validation-log-cli-ux",
+  "status": "approved_for_implementation",
+  "approved_by": "user",
+  "approval_reference": "2026-10-18 현재 대화: $implement docs/features/dev-validation-log-retention/storage-operations/cli-ux",
+  "planning_reference": "2026-10-18 현재 대화: $to-tickets docs/features/dev-validation-log-retention/storage-operations/CLI-UX-PLAN.md",
+  "source_intent_reference": "BRIEF.md U-UX-01~03; CLI-UX-PLAN.md",
+  "brief_revision": "b1",
+  "spec_revision": "s1",
+  "plan_revision": "p1",
+  "bundle_files": [
+    "BRIEF.md",
+    "SPEC.md",
+    "requirements.json",
+    "PLAN.json",
+    "tickets/DVL-UX-01.md",
+    "tickets/DVL-UX-02.md"
+  ],
+  "bundle_sha256": "310e99dbed84189d7779084c5f2c3e8501e7e45fbd6b1ae28ac24711a6f46b21",
+  "note": "정확한310e99db…a6f46b21 bundle의 구현·독립검증·리뷰를 사용자 명령으로 승인. 실제 삭제/raw활성화/게시/배포는 제외. 기존 계획 bytes는 유지."
+}

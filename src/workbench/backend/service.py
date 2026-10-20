@@ -149,6 +149,13 @@ class Backend:
                  disabled_raw_store: SegmentedRawStore | None = None,
                  summary_runtime: Any = None, summary_compatibility: Any = None):
         self.layout, self.plan, self.project_dir = layout, plan, project_dir
+        self.project_id = None
+        if os.path.lexists(layout.root / 'project.json'):
+            from workbench.backend.project import read_project_marker
+            marker = read_project_marker(layout.root)
+            if marker['project_root'] != project_dir:
+                raise ValueError('backend project root differs from the durable project marker')
+            self.project_id = marker['project_id']
         self.summary_runtime = summary_runtime
         self.summary_compatibility = summary_compatibility
         self.summary_scheduler: SummaryScheduler | None = None
@@ -268,6 +275,9 @@ class Backend:
         signal.signal(signal.SIGHUP, signal.SIG_IGN)
         status = 0
         try:
+            if self.project_id is not None:
+                from workbench.backend.runtime_paths import ensure_runtime_root
+                ensure_runtime_root(self.layout.runtime_root, self.layout.root, self.project_id)
             self._reconcile_startup()  # CW-19: before any pane, TaskFlow load, UI socket or record overwrite
             self._open()
             self._loop()
@@ -390,7 +400,7 @@ class Backend:
 
     def _prepare_omp_home(self) -> OmpHome:
         home = prepare_omp_home(self.layout.root, self.environment, skills_dir=default_skills_dir(),
-                                provider_ids=ISOLATION_PROVIDER_IDS)
+                                provider_ids=ISOLATION_PROVIDER_IDS, runtime_root=self.layout.runtime_root)
         # OMP has no setting for its native addon dir: say so when a Workbench OMP will extract into the user's.
         natives = natives_status(self.environment, home_environment(self.environment, home.environment()),
                                  self.plan.omp_version)
@@ -542,7 +552,7 @@ class Backend:
             command = omp_command(self.plan, overlay)
             self.panes[pane_id] = OmpPane(pane_id, role, command, env, cwd=self.project_dir)
             checks[role] = (command, isolation_check_environment(
-                self.environment, self.plan, role=role, absent_socket=layout.root / "isolation-check.sock",
+                self.environment, self.plan, role=role, absent_socket=(layout.runtime_root or layout.root) / "check.sock",
                 home=home_env), role_skill_allowlist(role))
             # The role token lives in the bridge, the OMP child environment and this
             # in-memory launch (never on disk) so an exited pane restarts as the same role.
@@ -831,7 +841,10 @@ class Backend:
     def _record(self) -> dict[str, Any]:
         return {"contract": {"name": ui_v1.CONTRACT_NAME, "version": ui_v1.VERSION},
                 "phase": self.phase, "reason": self.reason, "data_dir": str(self.layout.root),
-                "ui_socket": str(self.layout.ui_socket), "project_dir": self.project_dir,
+                "ui_socket": str(self.layout.ui_socket), "bridge_socket": str(self.layout.bridge_socket),
+                "runtime_root": str(self.layout.runtime_root or self.layout.root),
+                "project_id": self.project_id, "uid": os.geteuid(), "project_dir": self.project_dir,
+                "omp_runtime_root": str(self.omp_home.runtime_root) if getattr(self, "omp_home", None) and self.omp_home.runtime_root else None,
                 "boot_id": self.boot["boot_id"], "omp_version": self.plan.omp_version,
                 "shell": {"kind": self.plan.shell.kind, "executable": self.plan.shell.executable},
                 "omp_isolation": {key: self.omp_isolation.get(key) for key in
@@ -881,6 +894,9 @@ class Backend:
         return {"contract": {"name": ui_v1.CONTRACT_NAME, "version": ui_v1.VERSION},
                 "backend": {"pid": os.getpid(), "process": ref_dict(self.ref), "session_id": os.getsid(0),
                             "data_dir": str(self.layout.root), "project_dir": self.project_dir,
+                            "runtime_root": str(self.layout.runtime_root or self.layout.root),
+                            "project_id": self.project_id, "uid": os.geteuid(), "boot_id": self.boot["boot_id"],
+                            "omp_runtime_root": str(self.omp_home.runtime_root) if getattr(self, "omp_home", None) and self.omp_home.runtime_root else None,
                             "started_at": self.started_wall, "omp_version": self.plan.omp_version},
                 "phase": self.phase, "reason": self.reason,
                 "attached": self.ui is not None and self.ui.attached is not None,
@@ -2186,7 +2202,7 @@ def run_backend(layout: DataLayout, plan: LaunchPlan, project_dir: str) -> int:
 
 
 def main_backend(args: Any) -> int:
-    layout = DataLayout(Path(args.data_dir))
+    layout = DataLayout(Path(args.data_dir), runtime_root=Path(args.runtime_root) if getattr(args, "runtime_root", None) else None)
     plan = LaunchPlan(ShellChoice(args.shell_kind, args.shell_path), args.omp, args.omp_version,
                       args.bridge_extension, tuple(args.omp_arg or ()))
     try:

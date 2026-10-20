@@ -1,0 +1,4 @@
+include pyproject.toml
+recursive-include build_support *.py
+recursive-include omp_bridge *.ts *.md *.py *.yml
+recursive-include src/workbench *.json

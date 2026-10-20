@@ -46,7 +46,7 @@ class SkillFileTests(unittest.TestCase):
 
     def test_only_these_skill_directories_exist(self):
         dirs = sorted(entry.name for entry in SKILLS.iterdir() if entry.is_dir())
-        self.assertEqual(dirs, ["important-log-summary", "to-manager", "to-worker", "workbench-recovery"])  # C-D70 (7)
+        self.assertEqual(dirs, ["important-log-summary", "to-manager", "to-worker", "workbench-recovery", "workbench-report"])  # C-D70 (7)
 
     def test_default_entry_imports_and_forwards_to_actual_bridge(self):
         entry = Path(launcher.default_bridge_extension())
@@ -200,17 +200,17 @@ class SmokeCorrectionSkillTests(unittest.TestCase):
 
 class RoleFilterTests(unittest.TestCase):
     def test_role_patterns(self):
-        self.assertEqual(launcher.ROLE_SKILL_PATTERNS["manager"], ("to-worker", "workbench-recovery"))
+        self.assertEqual(launcher.ROLE_SKILL_PATTERNS["manager"], ("to-worker", "workbench-recovery", "workbench-report"))
         self.assertEqual(launcher.ROLE_SKILL_PATTERNS["worker"], ("to-manager",))
 
     def test_allowlists_follow_the_filter(self):
-        self.assertEqual(launcher.role_skill_allowlist("manager"), ("to-worker", "workbench-recovery"))
+        self.assertEqual(launcher.role_skill_allowlist("manager"), ("to-worker", "workbench-recovery", "workbench-report"))
         self.assertEqual(launcher.role_skill_allowlist("worker"), ("to-manager",))
         for role in ("manager", "worker"):
             self.assertNotIn("important-log-summary", launcher.role_skill_allowlist(role))
 
     def test_overlay_carries_the_role_filter_and_the_skills_dir(self):
-        for role, expected in (("manager", ["to-worker", "workbench-recovery"]), ("worker", ["to-manager"])):
+        for role, expected in (("manager", ["to-worker", "workbench-recovery", "workbench-report"]), ("worker", ["to-manager"])):
             overlay = launcher.role_overlay(role, project_dir=SKILLS, home=SKILLS)
             self.assertEqual(overlay["skills"], {"customDirectories": [str(SKILLS)],
                                                   "includeSkills": expected, "ignoredSkills": []})

@@ -138,12 +138,12 @@ class RoleOverlayTests(unittest.TestCase):
 
     def test_manager_keeps_bundled_agents_and_loses_the_workbench_ones(self):
         agents = self.overlay("manager")["task"]["disabledAgents"]
-        self.assertEqual(sorted(agents), sorted(launcher.WORKBENCH_AGENT_ROLES))
+        self.assertEqual(sorted(agents), sorted(set(launcher.WORKBENCH_AGENT_ROLES) | {"seance"}))
         self.assertFalse(set(agents) & launcher.BUNDLED_TASK_AGENTS)
 
     def test_worker_loses_every_bundled_agent_and_keeps_the_workbench_ones(self):
         agents = self.overlay("worker")["task"]["disabledAgents"]
-        self.assertEqual(set(agents), launcher.BUNDLED_TASK_AGENTS)
+        self.assertEqual(set(agents), launcher.BUNDLED_TASK_AGENTS | {"seance"})
         self.assertEqual(launcher.BUNDLED_TASK_AGENTS, set(launcher.BUNDLED_AGENT_ROLES))
 
     def test_only_the_worker_has_bash_and_eval_switched_off(self):
@@ -244,7 +244,7 @@ class LeakRuleTests(unittest.TestCase):
                         task_agents=["explorer"])
         self.assertEqual(launcher.isolation_leaks(seen, allowed_skills=(), role="worker"),
                          ["tool:computer", "tool:notebook", "tool:python", "tool:ssh"])
-        self.assertEqual(launcher.WORKER_BRIDGE_TOOLS, frozenset({"to_manager", "terminal"}))
+        self.assertEqual(launcher.WORKER_BRIDGE_TOOLS, frozenset({"to_manager", "terminal", "workbench_logs"}))
         manager = observed(tools=["bash", "eval", "python", "to_worker"])
         self.assertEqual(launcher.isolation_leaks(manager, allowed_skills=(), role="manager"), [])
 
@@ -375,6 +375,16 @@ class IsolationOverlayFileTests(unittest.TestCase):
 
     def test_isolation_evidence_version_is_the_checked_omp(self):
         self.assertEqual(launcher.EVIDENCE_OMP_VERSIONS["isolation"], "18.6.1")
+
+
+class UnsupportedBundledAgentsTests(unittest.TestCase):
+    def test_new_bundled_seance_is_disabled_for_both_roles_without_widening_permissions(self):
+        with tempfile.TemporaryDirectory() as directory:
+            for role in ('manager', 'worker'):
+                overlay = launcher.role_overlay(role, project_dir=directory, home=directory, environment={})
+                self.assertIn('seance', overlay['task']['disabledAgents'])
+        self.assertNotIn('seance', launcher.BUNDLED_AGENT_ROLES)
+        self.assertNotIn('seance', launcher.BUNDLED_TASK_AGENTS)
 
 
 if __name__ == "__main__":

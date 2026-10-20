@@ -20,6 +20,12 @@ export const SUMMARY_PARAMETERS = {
 const sha = (text: string) => createHash("sha256").update(text).digest("hex");
 const stable = (value: unknown) => canonicalJson(value);
 const bytes = (text: string) => Buffer.byteLength(text, "utf8");
+// The wheel keeps bridge resources under workbench/_assets; Python policy stays
+// in workbench/contracts. Detached verification retains the canonical source layout.
+const policyUrl = new URL(import.meta.url.endsWith("/_assets/omp_bridge/g3/summary_sdk.ts")
+  ? "../../../contracts/summary_compat_policy_v1.json"
+  : "../../src/workbench/contracts/summary_compat_policy_v1.json", import.meta.url);
+
 const boundInput = (prepared: RecordValue) => ({ request: parseSummaryRequest(prepared?.request),
   selected: prepared.selected, omitted: prepared.omitted, priorCumulative: prepared.priorCumulative,
   definitionDigest: prepared.definitionDigest, metadata: prepared.metadata,
@@ -194,7 +200,7 @@ async function dispatchSDK(options: DispatchOptions, verification: boolean): Pro
         || metadata.childSelection?.descriptorSource !== "manager_model_registry_getAll_all")
       return defer("model_metadata_unavailable");
     skill = readFileSync(fileURLToPath(new URL("../skills/important-log-summary/SKILL.md", import.meta.url)), "utf8");
-    policy = readFileSync(fileURLToPath(new URL("../../src/workbench/contracts/summary_compat_policy_v1.json", import.meta.url)), "utf8");
+    policy = readFileSync(fileURLToPath(policyUrl), "utf8");
     if (!options.sdk) return defer("sdk_api_unavailable");
     sdk = options.sdk;
     if (![sdk.AgentRegistry, sdk.AgentRegistry?.global, sdk.createAgentSession,
@@ -377,7 +383,7 @@ async function dispatchSDK(options: DispatchOptions, verification: boolean): Pro
               || String(child.sessionManager.getSessionId()) !== receipt.sessionId ? "stale_binding" :
             !Array.isArray(tools) || tools.length !== 1 || tools[0].name !== SUMMARY_TOOL_NAME ? "roster_mismatch" :
             sha(stable(tools[0].parameters)) !== schemaSha ? "schema_mismatch" :
-            sha(readFileSync(fileURLToPath(new URL("../../src/workbench/contracts/summary_compat_policy_v1.json", import.meta.url)), "utf8")) !== policySha
+            sha(readFileSync(fileURLToPath(policyUrl), "utf8")) !== policySha
               ? "policy_mismatch" :
             modelKey(model) !== modelKey(metadata.childSelection.model) || modelKey(context.model) !== modelKey(metadata.model)
               || stable(observeMetadata() ?? null) !== stable(metadata)

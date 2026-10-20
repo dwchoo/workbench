@@ -163,6 +163,7 @@ class PauseControlIndependentTests(unittest.TestCase):
             self.assertEqual(observed["counters"]["predicateCalls"], 0)
 
     def test_actual_no_send_then_confirm_allows_same_input_reserve_and_one_late_duplicate(self):
+        (self.root / "fixture.json").write_bytes(canonical_json({"caseControls": {}}))
         held = self.cli("--hold", self.request)
         self.assertEqual(held.returncode, 0, held.stderr.decode())
         self.assertEqual(self.record(self.request)["state"], "prepared")
@@ -187,7 +188,7 @@ class PauseControlIndependentTests(unittest.TestCase):
             "promptBytes": len(prompt.encode())}))
         control = runtime._RecoveryControl(self.root, pause_control=True)
         with owned_server(self.root, control) as (server, posts, violations):
-            body = {"model": "scripted", "tools": [{"function": {"name": "db_summary_save"}}],
+            body = {"model": "worker", "tools": [{"function": {"name": "db_summary_save"}}],
                     "messages": [{"role": "system", "content": SYSTEM}, {"role": "user", "content": [
                         {"type": "text", "text": "unattributed owned reminder"}, {"type": "text", "text": prompt}]}]}
             http = HTTPConnection("127.0.0.1", server.server_port, timeout=3)
@@ -300,7 +301,7 @@ class PauseControlIndependentTests(unittest.TestCase):
         unavailable = runtime.unavailable("owned_runtime_unavailable")
         with patch("workbench.backend.summary_compat_provider.observe_owned", return_value=unavailable) as observe:
             self.assertEqual(ScriptedCompatibilityProvider().observe(), unavailable)
-        observe.assert_called_once_with(ROOT, recovery_control=True, pause_control=True, restart_control=True)
+        observe.assert_called_once_with(ROOT, recovery_control=True, pause_control=True, restart_control=True, cases_control=True)
         for pause_control in (False, True):
             with self.subTest(pause_control=pause_control):
                 with patch.object(runtime.shutil, "which", return_value=str(Path(sys.executable).resolve())), \

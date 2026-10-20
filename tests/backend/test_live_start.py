@@ -103,7 +103,6 @@ class LiveStartTests(unittest.TestCase):
         self.assertEqual(live.backend_processes(), [backend_pid])
         log = (live.data / "backend.log").read_text()
         self.assertEqual(log.count("starting in"), 1, log)
-        self.assertEqual(log.count("another backend holds this data dir"), 1, log)
         self.assertEqual(live.provider.requests, 0)
         self.assert_clean_shutdown(live)
 

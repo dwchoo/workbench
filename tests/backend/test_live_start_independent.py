@@ -271,8 +271,16 @@ class IndependentLiveStartTests(unittest.TestCase):
         self.addCleanup(self.reap, holder, holder_ticks)
         self.addCleanup(holder.stdout.close)
         self.assertEqual(holder.stdout.readline().strip(), b"locked")
+        start_args = live.start_args("--no-attach", "--timeout", "12")
+        # start_args seeds the controlled provider before the product boundary.
+        # A held unknown owner authorizes no startup filesystem writes. Capture
+        # concrete names, content and timestamps instead of requiring a loser log.
+        def state():
+            return {str(path.relative_to(live.data)): (path.read_bytes(), path.stat().st_mtime_ns)
+                    for path in live.data.rglob("*") if path.is_file()}
+        before = state()
         started = time.monotonic()
-        result = live.cli(*live.start_args("--no-attach", "--timeout", "12"), timeout=90)
+        result = live.cli(*start_args, timeout=90)
         elapsed = time.monotonic() - started
         self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
         self.assertIn("did not become available", result.stderr)
@@ -281,9 +289,7 @@ class IndependentLiveStartTests(unittest.TestCase):
         while live.backend_processes() and time.monotonic() < deadline:
             time.sleep(0.05)
         self.assertEqual(live.backend_processes(), [])
-        log = (live.data / "backend.log").read_text()
-        self.assertIn("another backend holds this data dir", log)
-        self.assertNotIn("starting in", log)
+        self.assertEqual(state(), before, "held unknown owner must preserve data files")
         self.assertFalse((live.data / "ui.sock").exists())
         print(f"\n[observation] start against a live foreign lock holder returned after {elapsed:.1f}s "
               f"(--timeout 12; default START_TIMEOUT is 120s)", file=sys.stderr)

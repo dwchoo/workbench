@@ -319,7 +319,7 @@ class OverlayTests(HomeFixture):
                                        role="worker", token="t", bridge_socket=Path("/d/b"), home=home.environment())
         overlay = launcher.role_overlay("worker", project_dir=project, home=self.home, environment=env)
         # ambient definitions, then (C-D68) the worker's bundled agents; the installed Workbench ones are not ambient
-        self.assertEqual(overlay["task"]["disabledAgents"], ["proj-agent", "wb-agent", *launcher.BUNDLED_AGENT_ROLES])
+        self.assertEqual(overlay["task"]["disabledAgents"], ["seance", "proj-agent", "wb-agent", *launcher.BUNDLED_AGENT_ROLES])
         self.assertEqual(overlay["disabledProviders"], list(launcher.ISOLATION_PROVIDER_IDS))
         self.assertEqual(overlay["skills"]["customDirectories"], [str(launcher.default_skills_dir())])
 

@@ -8,6 +8,7 @@ from __future__ import annotations
 from copy import deepcopy
 from dataclasses import dataclass
 from hashlib import sha256
+from workbench.assets import canonical_path
 from pathlib import Path
 import re
 from typing import Any, Callable, Mapping, Sequence
@@ -40,8 +41,7 @@ class SummaryUnknown(RuntimeError):
 
 def skill_bytes() -> bytes:
     # Fixed shipped asset; never resolve a model-supplied skill name or path.
-    return (Path(__file__).resolve().parents[3] / "omp_bridge" / "skills" /
-            SKILL_NAME / "SKILL.md").read_bytes()
+    return canonical_path("omp_bridge/skills/" + SKILL_NAME + "/SKILL.md").read_bytes()
 
 
 @dataclass(frozen=True)

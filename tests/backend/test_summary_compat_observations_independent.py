@@ -148,7 +148,7 @@ class CompatibilityObservationsIndependent(unittest.TestCase):
         for row in supplied:
             self.assertEqual(rows[row["item"]], row)
         self.assertEqual(result["items"]["Q01-origin"], "not_run")  # A bare pass is not evidence.
-        self.assertEqual(result["result"], "inconclusive")
+        self.assertEqual(result["result"], "failed")
         self.assertEqual(record["observations"], raw["observations"])
         self.assertEqual(record["io"], raw["io"])
         self.assertFalse(service.verify_reference(result["id"]))

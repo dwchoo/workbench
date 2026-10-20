@@ -108,6 +108,7 @@ class StartRequirementTests(unittest.TestCase):
         with self.assertRaises(StartRequirementError) as caught:
             launcher.build_plan({"PATH": shells})
         self.assertIn("'omp'", str(caught.exception))
+        self.assertIn("wb setup", str(caught.exception))
         fake_omp = self.root / "omp"
         fake_omp.write_text("#!/bin/sh\necho omp/0.0-test\n")
         fake_omp.chmod(0o700)
@@ -268,7 +269,7 @@ class IsolationLaunchTests(unittest.TestCase):
         # disables every OMP bundled agent (it uses only the Workbench explorer/analyst)
         self.assertEqual(overlay["task"]["disabledAgents"][:2], ["sonic", "canary-agent"])
         self.assertEqual(sorted(overlay["task"]["disabledAgents"]),
-                         sorted({"sonic", "canary-agent", *launcher.BUNDLED_TASK_AGENTS}))
+                         sorted({"sonic", "canary-agent", "seance", *launcher.BUNDLED_TASK_AGENTS}))
         self.assertEqual(len(overlay["task"]["disabledAgents"]), len(set(overlay["task"]["disabledAgents"])))
         self.assertFalse({"explorer", "analyst"} & set(overlay["task"]["disabledAgents"]))
         self.assertEqual(overlay["disabledProviders"][:len(launcher.ISOLATION_PROVIDER_IDS)],

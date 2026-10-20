@@ -24,6 +24,7 @@ import time
 from typing import Any
 from uuid import uuid4
 
+from workbench.assets import canonical_path
 from workbench.backend.launcher import LaunchPlan, load_model_table, omp_environment
 from workbench.terminal.shell_g2.prototype import ShellChoice
 from workbench.backend.paths import DataLayout, write_private_json
@@ -346,7 +347,7 @@ def _copy_runtime(source: Path, root: Path) -> Path:
     runtime = root / "runtime"
     runtime.mkdir(mode=0o700)
     for name in ("src/workbench", "omp_bridge", "pyproject.toml"):
-        original = source / name
+        original = canonical_path(name, source)
         if not original.exists() or original.is_symlink():
             raise ValueError("runtime_assets_unavailable")
         paths = original.rglob("*") if original.is_dir() else [original]
@@ -354,7 +355,7 @@ def _copy_runtime(source: Path, root: Path) -> Path:
             raise ValueError("unsafe_runtime_assets")
         target = runtime / name
         if original.is_dir():
-            shutil.copytree(original, target, ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
+            shutil.copytree(original, target, ignore=shutil.ignore_patterns("__pycache__", "*.pyc", "_assets"))
         else:
             shutil.copyfile(original, target)
     for path in runtime.rglob("*"):

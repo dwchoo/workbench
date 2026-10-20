@@ -245,6 +245,7 @@ class PartialProviderIndependentTests(unittest.TestCase):
 
     def test_private_reserve_cli_writes_real_journal_and_rejects_oversized_input(self):
         root = self.owned()
+        (root / "fixture.json").write_bytes(canonical_json({"caseControls": {}}))
         (root / "home").mkdir(mode=0o700)
         (root / "data").mkdir(mode=0o700)
         catalog = ImportantLogCatalog(root / "data/important-logs", create=True)

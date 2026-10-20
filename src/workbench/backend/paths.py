@@ -47,15 +47,18 @@ def resolve_data_dir(cli_value: str | os.PathLike[str] | None,
 @dataclass(frozen=True, slots=True)
 class DataLayout:
     root: Path
+    runtime_root: Path | None = None
 
     @property
     def lock(self) -> Path: return self.root / "backend.lock"
     @property
     def record(self) -> Path: return self.root / "backend.json"
     @property
-    def ui_socket(self) -> Path: return self.root / "ui.sock"
+    def startup_admission(self) -> Path: return self.root / "backend-starting.json"
     @property
-    def bridge_socket(self) -> Path: return self.root / "bridge.sock"
+    def ui_socket(self) -> Path: return (self.runtime_root or self.root) / "ui.sock"
+    @property
+    def bridge_socket(self) -> Path: return (self.runtime_root or self.root) / "bridge.sock"
     @property
     def log(self) -> Path: return self.root / "backend.log"
     @property
@@ -132,6 +135,42 @@ class InstanceLock:
             raise
         self._fd = descriptor
 
+    def acquire_existing_readonly(self) -> None:
+        """Reserve an existing safe lock without creating/changing source bytes."""
+        descriptor = os.open(self.path, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC | os.O_NONBLOCK)
+        try:
+            info = os.fstat(descriptor)
+            if (not stat.S_ISREG(info.st_mode) or info.st_nlink != 1
+                    or info.st_uid != os.geteuid() or stat.S_IMODE(info.st_mode) != 0o600):
+                raise DataDirError("backend lock file is unsafe")
+            fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BaseException:
+            os.close(descriptor)
+            raise
+        self._fd = descriptor
+        try:self.verify_reservation(self.path)
+        except BaseException:
+            self.release()
+            raise
+
+    def verify_reservation(self, path: Path) -> None:
+        """Require this live caller-held fd and exact named kernel lock inode."""
+        if self._fd is None or Path(path) != self.path:
+            raise DataDirError("missing caller-owned lock reservation")
+        opened, named = os.fstat(self._fd), path.lstat()
+        expected=(os.major(opened.st_dev),os.minor(opened.st_dev),opened.st_ino)
+        fd_held=False
+        for line in Path(f'/proc/self/fdinfo/{self._fd}').read_text().splitlines():
+            parts=line.split()
+            if len(parts)>=9 and parts[0]=='lock:' and parts[2:5]==['FLOCK','ADVISORY','WRITE']:
+                major,minor,inode=parts[6].split(':')
+                if int(parts[5])==os.getpid() and (int(major,16),int(minor,16),int(inode))==expected:fd_held=True
+        if ((opened.st_dev, opened.st_ino) != (named.st_dev, named.st_ino)
+                or not stat.S_ISREG(named.st_mode) or named.st_nlink != 1
+                or named.st_uid != os.geteuid() or stat.S_IMODE(named.st_mode) != 0o600
+                or not fd_held or not self.held_by(os.getpid())):
+            raise DataDirError("caller-owned lock reservation identity changed")
+
     def held_elsewhere(self) -> bool:
         """Probe without keeping the lock (used by status/start checks)."""
         try:
@@ -150,6 +189,18 @@ class InstanceLock:
         finally:
             os.close(descriptor)
 
+    def held_by(self, pid: int) -> bool:
+        """Linux kernel flock owner for this exact inode; never a lock bypass."""
+        info = self.path.stat(follow_symlinks=False)
+        expected = (os.major(info.st_dev), os.minor(info.st_dev), info.st_ino)
+        for row in Path('/proc/locks').read_text().splitlines():
+            parts = row.split()
+            if len(parts) >= 8 and parts[1:4] == ['FLOCK', 'ADVISORY', 'WRITE']:
+                major, minor, inode = parts[5].split(':')
+                if (int(major, 16), int(minor, 16), int(inode)) == expected:
+                    return int(parts[4]) == pid
+        return False
+
     def release(self) -> None:
         if self._fd is not None:
             try:
@@ -159,14 +210,24 @@ class InstanceLock:
                 self._fd = None
 
 
-def write_private_json(path: Path, value: dict[str, Any]) -> None:
-    """Atomic, fsynced 0600 JSON write inside an existing private directory."""
-    write_private_bytes(path, json.dumps(value, sort_keys=True, separators=(",", ":")).encode())
+def write_private_json(path: Path, value: dict[str, Any], *, dir_fd: int | None = None,
+                       replace_existing: bool = True) -> None:
+    """Atomic 0600 JSON write; optional bound parent and no-clobber initial publication."""
+    write_private_bytes(path, json.dumps(value, sort_keys=True, separators=(",", ":")).encode(),
+                        dir_fd=dir_fd, replace_existing=replace_existing)
 
 
-def write_private_bytes(path: Path, payload: bytes) -> None:
-    """Atomic, fsynced 0600 write inside an existing private directory (replaces, never follows ``path``)."""
-    parent_fd = os.open(path.parent, os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC)
+def write_private_bytes(path: Path, payload: bytes, *, dir_fd: int | None = None,
+                        replace_existing: bool = True) -> None:
+    """Atomic, fsynced 0600 write in an existing directory, without following the target.
+
+    dir_fd binds all operations to an already validated parent directory. The caller
+    retains its fd; this function closes only its own duplicate. Default replacement
+    preserves existing update callers. Initial publication uses an atomic hard link
+    so a target appearing at any time is never replaced, including a symlink.
+    """
+    parent_fd = (os.dup(dir_fd) if dir_fd is not None else
+                 os.open(path.parent, os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC))
     name = f".{path.name}-{os.getpid()}-{os.urandom(6).hex()}"
     try:
         descriptor = os.open(name, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_CLOEXEC | os.O_NOFOLLOW,
@@ -176,7 +237,11 @@ def write_private_bytes(path: Path, payload: bytes) -> None:
                 stream.write(payload)
                 stream.flush()
                 os.fsync(stream.fileno())
-            os.replace(name, path.name, src_dir_fd=parent_fd, dst_dir_fd=parent_fd)
+            if replace_existing:
+                os.replace(name, path.name, src_dir_fd=parent_fd, dst_dir_fd=parent_fd)
+            else:
+                os.link(name, path.name, src_dir_fd=parent_fd, dst_dir_fd=parent_fd,
+                        follow_symlinks=False)
             os.fsync(parent_fd)
         finally:
             try:

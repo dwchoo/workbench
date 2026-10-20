@@ -87,7 +87,7 @@ def prepared_request(root):
 
 
 def first_body(root, request):
-    return {"model": "scripted", "max_completion_tokens": 8192,
+    return {"model": "worker", "max_completion_tokens": 8192,
             "tools": [{"type": "function", "function": {"name": "db_summary_save"}}],
             "messages": [{"role": "system", "content": SYSTEM},
                          {"role": "user", "content": [
@@ -277,7 +277,7 @@ class RecoveryControlIndependentTests(unittest.TestCase):
         unavailable = runtime.unavailable("owned_runtime_unavailable")
         with patch("workbench.backend.summary_compat_provider.observe_owned", return_value=unavailable) as observe:
             self.assertEqual(ScriptedCompatibilityProvider().observe(), unavailable)
-        observe.assert_called_once_with(ROOT, recovery_control=True, pause_control=True, restart_control=True)
+        observe.assert_called_once_with(ROOT, recovery_control=True, pause_control=True, restart_control=True, cases_control=True)
 
     def test_product_partial_recovery_observation_never_admits_or_clears_protection(self):
         owned = self.root / "runtime-owned"
@@ -332,8 +332,13 @@ class RecoveryControlIndependentTests(unittest.TestCase):
                         "stable_host": {"os_family": "Linux", "architecture": "x86_64", "python_minor": "3.12"}}
             service = SummaryCompatibility(self.root / "compat", identity=lambda: deepcopy(identity))
             service.protect({"episode": "existing", "reason": "guard_confirmation_unavailable"})
-            with patch("workbench.backend.summary_compat_provider.observe_owned", return_value=observed):
+            with patch("workbench.backend.summary_compat_provider.observe_owned", return_value=observed), \
+                    patch("workbench.backend.summary_compat_provider.observe_priority", return_value={
+                        "kind": "owned_product_priority_partial", "result": "inconclusive",
+                        "errors": ["priority_runtime_unavailable"], "native_launches": 0, "POSTs": [],
+                        "coverage_complete": False, "cleanup_complete": True}) as priority:
                 result = service.verify_scripted()
+            priority.assert_called_once()
             self.assertEqual(result["result"], "inconclusive")
             self.assertEqual(set(result["items"]), set(Q01_ITEMS))
             self.assertEqual(result["items"]["Q01-priority"], "not_run")

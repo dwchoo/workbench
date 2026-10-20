@@ -27,6 +27,7 @@ class RestartControlTests(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
+        (self.root / "fixture.json").write_text(json.dumps({"caseControls": {}}))
         (self.root / "home").mkdir(mode=0o700)
         (self.root / "data").mkdir(mode=0o700)
         self.layout = DataLayout(self.root / "data")
@@ -72,7 +73,7 @@ class RestartControlTests(unittest.TestCase):
         messages = [{"role": "system", "content": self.system}, {"role": "user", "content": prompt}]
         if continuation:
             messages.append({"role": "tool", "content": "received", "tool_call_id": "owned-save-1"})
-        return {"model": "scripted", "tools": [{"type": "function", "function": {"name": "db_summary_save"}}], "messages": messages}
+        return {"model": "worker", "tools": [{"type": "function", "function": {"name": "db_summary_save"}}], "messages": messages}
 
     def start_hold(self):
         self.process = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"], start_new_session=True,

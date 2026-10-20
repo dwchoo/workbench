@@ -25,14 +25,15 @@ class InstallAgentsTests(unittest.TestCase):
         return omp_home.prepare_omp_home(self.data, self.env, skills_dir=self.skills,
                                          provider_ids=launcher.ISOLATION_PROVIDER_IDS, **kwargs)
 
-    def test_prepare_installs_the_repo_definitions_private_into_the_workbench_agent_dir(self):
+    def test_prepare_links_canonical_definitions_in_the_private_workbench_agent_dir(self):
         home = self.prepare()
         installed = home.agent_dir / "agents"
         self.assertEqual(sorted(path.name for path in installed.iterdir()), ["explorer.md"])
         for source in launcher.default_agents_dir().glob("*.md"):
             target = installed / source.name
             self.assertEqual(target.read_bytes(), source.read_bytes())
-            self.assertEqual(stat.S_IMODE(os.stat(target).st_mode), 0o600)
+            self.assertTrue(target.is_symlink())
+            self.assertEqual(target.resolve(), source.resolve())
         self.assertEqual(stat.S_IMODE(os.stat(installed).st_mode), 0o700)
 
     def test_a_retired_analyst_definition_from_an_older_home_is_removed(self):
@@ -48,12 +49,16 @@ class InstallAgentsTests(unittest.TestCase):
         self.prepare()
         self.assertFalse((self.home / ".omp").exists())
 
-    def test_install_is_idempotent_and_repairs_an_edited_copy(self):
+    def test_install_is_idempotent_and_replaces_a_stale_copy_without_writing_the_source(self):
         home = self.prepare()
         target = home.agent_dir / "agents" / "explorer.md"
+        original = target.resolve().read_bytes()
+        target.unlink()
         target.write_text("tampered\n")
         self.prepare()
-        self.assertEqual(target.read_bytes(), (launcher.default_agents_dir() / "explorer.md").read_bytes())
+        self.assertTrue(target.is_symlink())
+        self.assertEqual(target.read_bytes(), original)
+        self.assertEqual((launcher.default_agents_dir() / "explorer.md").read_bytes(), original)
 
     def test_a_custom_agents_dir_and_an_unreadable_one(self):
         source = self.home / "src-agents"
@@ -75,8 +80,8 @@ class InstallAgentsTests(unittest.TestCase):
         self.assertEqual(names, ("foreign-agent",))
         manager = launcher.role_overlay("manager", project_dir=project, home=self.home, environment=env)
         worker = launcher.role_overlay("worker", project_dir=project, home=self.home, environment=env)
-        self.assertEqual(sorted(manager["task"]["disabledAgents"]), ["explorer", "foreign-agent"])
-        self.assertEqual(set(worker["task"]["disabledAgents"]), launcher.BUNDLED_TASK_AGENTS | {"foreign-agent"})
+        self.assertEqual(sorted(manager["task"]["disabledAgents"]), ["explorer", "foreign-agent", "seance"])
+        self.assertEqual(set(worker["task"]["disabledAgents"]), launcher.BUNDLED_TASK_AGENTS | {"foreign-agent", "seance"})
 
 
 if __name__ == "__main__":

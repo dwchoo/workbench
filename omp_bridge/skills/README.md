@@ -1,7 +1,8 @@
 # Workbench skills
 
-This directory is the only skill source the Workbench-launched OMP processes
-load (C-D59). The launcher passes it as `skills.customDirectories` in the
+The installed Workbench asset bundle carries this directory as product skill
+assets; it is the only skill source the Workbench-launched OMP processes load
+(C-D59). The launcher passes it as `skills.customDirectories` in the
 per-role overlay while every ambient skill source (`~/.agents/skills`,
 `~/.omp/agent/skills`, project `.omp/skills`, `.claude/skills`, ...) is turned
 off by `omp_bridge/omp-isolation.yml`.
@@ -67,3 +68,17 @@ exact bytes only to the request-specific restricted `task@Manager` summary
 session. It is not added to the ordinary Manager or Worker skill roster. The
 sole `db_summary_save` tool and startup checks live in the product adapter;
 the skill text itself grants no tool or repair authority.
+
+## Installed assets and project state
+
+The uv tool installation includes this skill tree, its references and helpers
+with the Workbench package. A research project does not need this checkout or
+a copy of `omp_bridge/skills/`; OMP receives the installed asset path through
+its role overlay. The Workbench package provides the immutable skill source,
+while each project's `.wb/` stores that project's durable task/log/workflow
+state and OMP conversation history.
+
+The project's OMP agent directory may link `agent.db` to the user's existing
+OMP authentication store. The link reuses that store in place; Workbench does
+not copy credential contents into `.wb/`. Per-project sockets and regenerable
+runtime caches live in a private runtime namespace outside `.wb/`.

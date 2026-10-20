@@ -29,6 +29,7 @@ class PauseControlTests(unittest.TestCase):
         self.root = Path(self.temporary.name)
         (self.root / "home").mkdir(mode=0o700)
         (self.root / "data").mkdir(mode=0o700)
+        (self.root / "fixture.json").write_text(json.dumps({"caseControls": {}}))
         self.layout = DataLayout(self.root / "data")
         self.catalog = ImportantLogCatalog(self.layout.important_logs, create=True)
         with TaskRepository(self.layout.tasks):
@@ -105,7 +106,7 @@ process.stdout.write(JSON.stringify({outcome,predicateCalls,childCreates,promptS
                 messages = [{"role": "system", "content": system}, {"role": "user", "content": prompt}]
                 if index:
                     messages.append({"role": "tool", "content": "received", "tool_call_id": "owned-save-1"})
-                body = {"model": "scripted", "tools": [{"type": "function", "function": {"name": "db_summary_save"}}], "messages": messages}
+                body = {"model": "worker", "tools": [{"type": "function", "function": {"name": "db_summary_save"}}], "messages": messages}
                 client = HTTPConnection(*server.server_address, timeout=2)
                 try:
                     client.request("POST", "/v1/chat/completions", json.dumps(body).encode())

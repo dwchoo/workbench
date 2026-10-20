@@ -40,7 +40,11 @@ class CompatibilityObservationIndependentTests(unittest.TestCase):
         for _ in range(600):
             nested = [nested]
         record["omp"]["extra"] = nested
+        configured = next(row for row in record["observations"]
+                          if row["kind"] == "owned_configured_metadata")
+        configured["omp"] = record["omp"]
         fixture.persist(record)
+        self.assertTrue(fixture.service.verify_reference(record["id"]), "complete deep descriptor fixture")
         self.assertLessEqual((fixture.directory / (record["id"] + ".json")).stat().st_size,
                              RECORD_LIMIT)
         # Also cover a normal current descriptor without the old extra field:

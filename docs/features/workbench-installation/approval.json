@@ -1,0 +1,29 @@
+{
+  "feature_id": "workbench-installation",
+  "status": "approved",
+  "approved_by": "user",
+  "approval_reference": "2026-10-19 현재 사용자: $implement docs/features/workbench-installation 및 implement skill 제공. 직전 제시된 BRIEF r0.4/SPEC s1/PLAN p1/8 tickets/test seams exact bundle 승인과 구현 요청.",
+  "brief_revision": "r0.4",
+  "spec_revision": "s1",
+  "plan_revision": "p1",
+  "bundle_files": [
+    "BRIEF.md",
+    "SPEC.md",
+    "PLAN.json",
+    "requirements-p1.json",
+    "tickets/WI-01.md",
+    "tickets/WI-02.md",
+    "tickets/WI-03.md",
+    "tickets/WI-04.md",
+    "tickets/WI-05.md",
+    "tickets/WI-06.md",
+    "tickets/WI-07.md",
+    "tickets/WI-08.md"
+  ],
+  "bundle_sha256": "d83933048ab5ecb18104abe3e9f0411c462c32af8316f4ac55ccab9ca3410049",
+  "planning_authority_reference": "2026-10-19 사용자 $to-tickets docs/features/workbench-installation/BRIEF.md 및 제공된 to-tickets skill",
+  "approval_scope": "BRIEF r0.4 WI-P01/P03~07 포함 SPEC s1/PLAN p1/requirements/8 tickets/test seams 승인. 제품 구현·격리 설치/검증 허용; commit/push/배포/실제 사용자 data 이관 제외.",
+  "implementation_authorized": true,
+  "digest_evidence": ".workflow/workbench-installation/runs/to-tickets-20261019-01/bundle-digest.json",
+  "approved_at": "2026-10-19T05:02:42.070102+00:00"
+}

@@ -27,7 +27,9 @@ import threading
 import time
 from uuid import uuid4
 
-SOURCE = Path(__file__).resolve().parents[3]
+from workbench.assets import runtime_root
+
+SOURCE = runtime_root()
 from workbench.backend import summary_compat_runtime as rt
 from workbench.backend.flow import HandoffJournal
 from workbench.backend.flow_terminal import TerminalService, _Command

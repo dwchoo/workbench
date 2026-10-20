@@ -38,22 +38,45 @@ START_TIMEOUT = 120.0
 ISOLATION_WAIT = 2 * ISOLATION_CHECK_TIMEOUT + 10.0
 
 
-def _layout(args: argparse.Namespace, *, create: bool = True) -> DataLayout:
-    """The data dir layout; ``create=False`` creates nothing (an existing dir is still checked)."""
-    root = resolve_data_dir(args.data_dir, os.environ)
-    layout = DataLayout(root)
+def _layout(args: argparse.Namespace, *, create: bool = False) -> DataLayout:
+    """Resolve project context without initializing a project during queries."""
+    from workbench.backend.project import resolve_project_context
+    context = resolve_project_context(Path.cwd(), os.environ, args.data_dir)
+    args._project_context = context
+    layout = DataLayout(context.data_root, runtime_root=context.runtime_root)
     layout.check_socket_paths()
-    if create or os.path.lexists(root):
-        ensure_private_dir(root)
+    from workbench.backend.process_identity import inspect_backend
+    identity = inspect_backend(layout)
+    args._backend_identity = identity
+    layout = identity.layout
+    if create:
+        if context.needs_initialization:
+            raise DataDirError(f'initialize this project with wb before writing state: {context.project_root}')
+        ensure_private_dir(layout.root)
     return layout
 
 
 def _running_snapshot(layout: DataLayout) -> dict | None:
-    try:
-        with UiClient(layout.ui_socket, name="workbench-cli", timeout=5) as client:
-            return client.snapshot()
-    except (NotRunning, ClientError, OSError):
+    from workbench.backend.process_identity import inspect_backend, BackendIdentityError
+    identity = inspect_backend(layout)
+    if identity.state != 'running':
         return None
+    record = identity.record
+    try:
+        with UiClient(identity.layout.ui_socket, name="workbench-cli", timeout=5,
+                      expected_process=record["processes"]["backend"]) as client:
+            snapshot = client.snapshot()
+        backend = snapshot.get('backend') or {}
+        expected = record['processes']['backend']
+        if (backend.get('pid') != expected['pid'] or (backend.get('process') or {}).get('start_ticks') != expected['start_ticks']
+                or backend.get('data_dir') != record['data_dir'] or backend.get('project_dir') != record['project_dir']):
+            raise BackendIdentityError('snapshot_mismatch', layout.root)
+        if identity.project_id is not None and any(backend.get(key) != record.get(key)
+                for key in ('project_id', 'runtime_root', 'uid', 'boot_id')):
+            raise BackendIdentityError('snapshot_project_runtime_mismatch', layout.root)
+        return snapshot
+    except (NotRunning, ClientError, OSError) as exc:
+        raise BackendIdentityError('live_endpoint_unavailable', layout.root) from exc
 
 
 def _bootstrap_source() -> str:
@@ -66,19 +89,30 @@ def _bootstrap_source() -> str:
 
 def spawn_backend(layout: DataLayout, plan: LaunchPlan, project_dir: str) -> int:
     """Double-fork into a new session; return the backend PID (not our child)."""
-    argv = [sys.executable, "-c", _bootstrap_source(), "_backend", "--data-dir", str(layout.root),
-            "--project-dir", project_dir, *plan.to_argv()]
+    from uuid import uuid4
+    from workbench.backend.process_identity import publish_startup_admission
+    startup_id = uuid4().hex
+    argv = [sys.executable, "-I", "-c", _bootstrap_source(), "_backend", "--data-dir", str(layout.root),
+            "--project-dir", project_dir, "--runtime-root", str(layout.runtime_root or layout.root),
+            "--startup-id", startup_id, *plan.to_argv()]
     read_end, write_end = os.pipe()
+    gate_read, gate_write = os.pipe()
     sys.stdout.flush()
     sys.stderr.flush()
     intermediate = os.fork()
     if intermediate == 0:  # pragma: no cover - child side
         try:
             os.close(read_end)
+            os.close(gate_write)
             os.setsid()
             backend = os.fork()
             if backend == 0:
                 os.close(write_end)
+                # Parent disappearance closes the pipe; a stopped parent cannot leave
+                # a gated child forever. No backend lock/process starts before admission.
+                if not select.select([gate_read], [], [], 5.0)[0] or os.read(gate_read, 1) != b'1':
+                    os._exit(1)
+                os.close(gate_read)
                 devnull = os.open(os.devnull, os.O_RDWR)
                 log = os.open(layout.log, os.O_WRONLY | os.O_CREAT | os.O_APPEND | os.O_NOFOLLOW, 0o600)
                 os.dup2(devnull, 0)
@@ -87,11 +121,13 @@ def spawn_backend(layout: DataLayout, plan: LaunchPlan, project_dir: str) -> int
                 os.closerange(3, 1 << 16)
                 os.chdir(project_dir)
                 os.execv(sys.executable, argv)
+            os.close(gate_read)
             os.write(write_end, str(backend).encode())
             os._exit(0)
         except BaseException:
             os._exit(1)
     os.close(write_end)
+    os.close(gate_read)
     try:
         raw = b""
         while chunk := os.read(read_end, 64):
@@ -99,9 +135,15 @@ def spawn_backend(layout: DataLayout, plan: LaunchPlan, project_dir: str) -> int
     finally:
         os.close(read_end)
     os.waitpid(intermediate, 0)
-    if not raw.isdigit():
-        raise RuntimeError("backend launch failed before exec")
-    return int(raw)
+    try:
+        if not raw.isdigit():
+            raise RuntimeError("backend launch failed before exec")
+        pid = int(raw)
+        publish_startup_admission(layout, project_dir, pid, startup_id)
+        os.write(gate_write, b'1')
+        return pid
+    finally:
+        os.close(gate_write)
 
 
 def _alive(pid: int) -> bool:
@@ -118,7 +160,7 @@ def _wait_started(layout: DataLayout, pid: int, timeout: float) -> dict | None:
         snapshot = _running_snapshot(layout)
         if snapshot is not None and snapshot["phase"] != "starting":
             return snapshot
-        if snapshot is None and not _alive(pid) and not InstanceLock(layout.lock).held_elsewhere():
+        if snapshot is None and pid > 0 and not _alive(pid) and not InstanceLock(layout.lock).held_elsewhere():
             # Our backend exited and no other backend holds the data dir.
             return None
         select.select([], [], [], 0.1)
@@ -147,6 +189,7 @@ def _print_summary(snapshot: dict, stream=sys.stdout) -> None:
     shell = panes.get("host_shell", {}).get("shell", {})
     print(f"backend pid {backend['pid']} phase {snapshot['phase']}"
           + (f" ({snapshot['reason']})" if snapshot.get("reason") else ""), file=stream)
+    print(f"project {backend.get('project_dir')} runtime {backend.get('runtime_root')}", file=stream)
     print(f"data dir {backend['data_dir']}", file=stream)
     for name, pane in panes.items():
         process = pane.get("process") or {}
@@ -237,11 +280,26 @@ def _print_recovery(snapshot: dict, stream=None) -> None:
         print(f"raw log: {raw['text']}", file=stream)
 
 
+def _verified_identity(layout: DataLayout):
+    from workbench.backend.process_identity import inspect_backend
+    identity = inspect_backend(layout)
+    if identity.state != 'running':
+        raise NotRunning(f'no verified backend is running for {layout.root}')
+    return identity
+
+
+def _verified_client(layout: DataLayout, **kwargs) -> UiClient:
+    identity = _verified_identity(layout)
+    return UiClient(identity.layout.ui_socket, expected_process=identity.record['processes']['backend'], **kwargs)
+
+
 def _attach(layout: DataLayout, args: argparse.Namespace) -> int:
+    identity = _verified_identity(layout)
+    expected = identity.record['processes']['backend']
     if getattr(args, "plain", False):
-        return run_attach(layout.ui_socket)
+        return run_attach(identity.layout.ui_socket, expected_process=expected)
     from workbench.ui.product import run_product
-    return run_product(layout.ui_socket)
+    return run_product(identity.layout.ui_socket, expected_process=expected)
 
 
 def omp_home_location(root: Path, environment: Mapping[str, str]) -> None:
@@ -269,33 +327,59 @@ def omp_home_requirements(layout: DataLayout, environment: Mapping[str, str]) ->
 
 
 def cmd_start(args: argparse.Namespace) -> int:
-    # Validated before anything is created: a refused start leaves no new directory (C-D64).
-    try:
-        omp_home_location(resolve_data_dir(args.data_dir, os.environ), os.environ)
-    except StartRequirementError as exc:
-        print(str(exc), file=sys.stderr)
-        return EXIT_REQUIREMENT
-    layout = _layout(args, create=False)
-    running = _running_snapshot(layout) if os.path.lexists(layout.root) else None
-    if running is not None:
-        print(f"backend already running (pid {running['backend']['pid']}); attaching instead of starting")
-    else:
+    from workbench.backend.project import initialize_project, project_initialization_lock
+    from workbench.backend.process_identity import inspect_backend
+    layout = _layout(args)
+    context = args._project_context
+    running = _running_snapshot(layout) if layout.root.exists() else None
+    if running is None and InstanceLock(layout.lock).held_elsewhere():
+        # Another admitted start already owns the data-dir lock. Never launch a duplicate.
+        running = _wait_started(layout, 0, args.timeout)
+        if running is None:
+            print(f'backend did not become available: identity/startup unavailable for {layout.root}; inspect its owner before retrying', file=sys.stderr)
+            return EXIT_FAILURE
+    if running is None:
         try:
+            omp_home_location(layout.root, os.environ)
             plan = build_plan(os.environ, omp=args.omp, omp_args=args.omp_arg or (),
                               bridge_extension=args.bridge_extension)
             omp_home_requirements(layout, os.environ)
         except StartRequirementError as exc:
             print(str(exc), file=sys.stderr)
             return EXIT_REQUIREMENT
-        ensure_private_dir(layout.root)
-        print(f"starting backend: shell {plan.shell.kind} ({plan.shell.executable}), {plan.omp_version}")
-        pid = spawn_backend(layout, plan, os.getcwd())
-        running = _wait_started(layout, pid, args.timeout)
+        if context.needs_initialization:
+            try:
+                context = initialize_project(context, environment=os.environ,
+                    interactive=bool(sys.stdin is not None and sys.stdin.isatty()),
+                    confirm=lambda root: input(f"WB project {root}. Create {root / '.wb'}? [y/N] ").strip().lower() == 'y')
+            except (DataDirError, EOFError) as exc:
+                print(f'project confirmation required: {context.project_root}: {exc}', file=sys.stderr)
+                return EXIT_REQUIREMENT
+            layout = DataLayout(context.data_root, runtime_root=context.runtime_root)
+        project_root = (args._backend_identity.project_root or context.project_root)
+        try:
+            with project_initialization_lock(project_root, os.environ):
+                identity = inspect_backend(layout)
+                if identity.state == 'running':
+                    layout = identity.layout
+                    running = _running_snapshot(layout)
+                elif identity.state == 'starting':
+                    running = _wait_started(layout, 0, args.timeout)
+                else:
+                    ensure_private_dir(layout.root)
+                    print(f'starting backend: shell {plan.shell.kind} ({plan.shell.executable}), {plan.omp_version}')
+                    pid = spawn_backend(layout, plan, str(project_root))
+                    running = _wait_started(layout, pid, args.timeout)
+        except DataDirError as exc:
+            if 'initialization/migration is locked' not in str(exc):
+                raise
+            # An independently admitted frontend may be between fork and lock acquisition.
+            running = _wait_started(layout, 0, args.timeout)
         if running is None:
-            print(f"backend did not become available; see {layout.log}", file=sys.stderr)
+            print(f'backend did not become available; see {layout.log}', file=sys.stderr)
             return EXIT_FAILURE
-        if running["backend"]["pid"] != pid:
-            print(f"another start won the race; using backend pid {running['backend']['pid']}")
+    else:
+        print(f"backend already running (pid {running['backend']['pid']}); attaching instead of starting")
     running = _wait_isolation(layout, running)
     _print_summary(running)
     if args.no_attach:
@@ -675,7 +759,7 @@ def cmd_raw_read(args: argparse.Namespace) -> int:
         layout = _layout(args, create=False)
         if args.logs_kind == "raw-status":
             try:
-                with UiClient(layout.ui_socket, name="workbench-cli", timeout=5) as client:
+                with _verified_client(layout, name="workbench-cli", timeout=5) as client:
                     answer = client.request(ClientType.RAW_STATUS)
                     result = answer["result"] if answer.get("ok") else {"status": "unavailable",
                                                                      "reason": answer.get("reason")}
@@ -690,7 +774,7 @@ def cmd_raw_read(args: argparse.Namespace) -> int:
         else:
             kind, identity = ("run", args.run_id) if args.run_id else ("command", args.command_id)
             try:
-                with UiClient(layout.ui_socket, name="workbench-cli", timeout=5) as client:
+                with _verified_client(layout, name="workbench-cli", timeout=5) as client:
                     answer = client.request(ClientType.RAW_QUERY, source_kind=kind, source_id=identity,
                                             offset=args.offset, limit=args.limit)
                     result = answer["result"] if answer.get("ok") else {"status": "unavailable",
@@ -749,7 +833,7 @@ def cmd_important_mutate(args: argparse.Namespace) -> int:
         # back to a local retry after sending an unknown-result mutation.
         running = _running_snapshot(layout) if os.path.lexists(layout.root) else None
         if running is not None:
-            with UiClient(layout.ui_socket, name="workbench-cli", timeout=60) as client:
+            with _verified_client(layout, name="workbench-cli", timeout=60) as client:
                 if args.logs_action == "delete-db":
                     answer = client.request(ClientType.IMPORTANT_DELETE_DB, db_uuid=identity, confirmed=True)
                 else:
@@ -848,7 +932,7 @@ def cmd_confirm_boot(args: argparse.Namespace) -> int:
             print("cancelled")
             return EXIT_FAILURE
     try:
-        with UiClient(layout.ui_socket, name="workbench-cli", timeout=10) as client:
+        with _verified_client(layout, name="workbench-cli", timeout=10) as client:
             answer = client.request(ClientType.CONFIRM_BOOT, boot_id=boot_id)
     except (NotRunning, ClientError, OSError) as exc:
         print(f"confirm-boot failed: {exc}", file=sys.stderr)
@@ -886,7 +970,7 @@ def cmd_shutdown(args: argparse.Namespace) -> int:
     verified, or none at all, is never shown as success, and no failure ends in a traceback (CW-16 O4)."""
     layout = _layout(args)
     try:
-        client = UiClient(layout.ui_socket, name="workbench-cli", timeout=10)
+        client = _verified_client(layout, name="workbench-cli", timeout=10)
     except NotRunning:
         print(f"no backend is running for {layout.root}", file=sys.stderr)
         return EXIT_NOT_RUNNING
@@ -1000,14 +1084,49 @@ def cmd_backend(args: argparse.Namespace) -> int:
     return main_backend(args)
 
 
+def cmd_setup(args) -> int:
+    from workbench.backend.setup import SetupError, run_setup
+    try:
+        result = run_setup(args.omp)
+    except (SetupError, OSError, ValueError, KeyboardInterrupt) as error:
+        result = {"state": "failed", "status": "failed", "reason": "interrupted" if isinstance(error, KeyboardInterrupt) else getattr(error, "code", type(error).__name__),
+                  "path": getattr(error, "path", None) or args.omp,
+                  "detail": getattr(error, "detail", None),
+                  "retry": "Fix the reported OMP/path/network issue and retry wb setup."}
+        print(json.dumps(result, ensure_ascii=False) if args.json else f"OMP setup failed: {result['reason']} ({result['path'] or 'user program prefix'}): {result['detail'] or ''}. {result['retry']}")
+        return EXIT_FAILURE
+    if args.json:
+        print(json.dumps(result, ensure_ascii=False))
+    else:
+        print(f"OMP {result['status']}: {result['path']} ({result['version']}); SDK loaded; real models unverified.")
+        print(result['login_guidance'])
+        print(result['update_guidance'])
+    return 0
+
+
+def cmd_migrate(args: argparse.Namespace) -> int:
+    from workbench.backend.migrate import migrate
+    result = migrate(Path(args.source), Path(args.project), os.environ)
+    print(json.dumps(result, ensure_ascii=False))
+    return 0
+
+
 def parser() -> argparse.ArgumentParser:
     root = argparse.ArgumentParser(prog="omp-workbench", description=__doc__.splitlines()[0])
     sub = root.add_subparsers(dest="command", required=True)
 
     def common(p: argparse.ArgumentParser) -> argparse.ArgumentParser:
-        p.add_argument("--data-dir", help="data dir (default: $WORKBENCH_DATA_DIR or $XDG_STATE_HOME/omp-workbench)")
+        p.add_argument("--data-dir", help="data dir (default: $WORKBENCH_DATA_DIR or nearest project .wb/)")
         return p
 
+    migration = sub.add_parser("migrate", help="copy a stopped legacy store to an absent project .wb")
+    migration.add_argument("--from", dest="source", required=True)
+    migration.add_argument("--project", required=True)
+    migration.set_defaults(handler=cmd_migrate)
+    setup = sub.add_parser("setup", help="prepare a shared user OMP installation")
+    setup.add_argument("--omp", help="existing OMP executable (before WORKBENCH_OMP, saved setup and PATH)")
+    setup.add_argument("--json", action="store_true")
+    setup.set_defaults(handler=cmd_setup)
     start = common(sub.add_parser("start", help="start (or reuse) the backend and attach"))
     start.add_argument("--omp", help="OMP executable (default: $WORKBENCH_OMP or 'omp' on PATH)")
     start.add_argument("--omp-arg", action="append", help="extra argument passed to both OMP processes")
@@ -1093,6 +1212,8 @@ def parser() -> argparse.ArgumentParser:
     backend = sub.add_parser("_backend", help=argparse.SUPPRESS)
     backend.add_argument("--data-dir", required=True)
     backend.add_argument("--project-dir", required=True)
+    backend.add_argument("--runtime-root", help=argparse.SUPPRESS)
+    backend.add_argument("--startup-id", help=argparse.SUPPRESS)
     backend.add_argument("--shell-kind", required=True, choices=("bash", "sh"))
     backend.add_argument("--shell-path", required=True)
     backend.add_argument("--omp", required=True)
@@ -1104,7 +1225,8 @@ def parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
-    args = parser().parse_args(argv)
+    values = list(sys.argv[1:] if argv is None else argv)
+    args = parser().parse_args(values or ["start"])
     try:
         return args.handler(args)
     except DataDirError as exc:

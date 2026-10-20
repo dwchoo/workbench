@@ -1,0 +1,169 @@
+{
+  "schema_version": 1,
+  "revision": "wi-r0.4-s1-p1-draft",
+  "authority": "2026-10-19 사용자 $to-tickets docs/features/workbench-installation/BRIEF.md 및 제공된 to-tickets skill: 계획 초안 작성 권한만 있음. BRIEF r0.4 WI-D01~10은 실제 개별 답변, WI-P01/P03~07와 WI-AC-10~15·신규 CLI/technical/test seam 상세는 전체 bundle 승인 대기. 이 JSON의 15 acceptance/11 gate는 제안된 완전한 검토 범위이며 승인/실행 권한이 아니다. 실제 승인 reference는 approval.json 및 .workflow state에 별도로 기록한다.",
+  "acceptance_ids": [
+    "WI-AC-01",
+    "WI-AC-02",
+    "WI-AC-03",
+    "WI-AC-04",
+    "WI-AC-05",
+    "WI-AC-06",
+    "WI-AC-07",
+    "WI-AC-08",
+    "WI-AC-09",
+    "WI-AC-10",
+    "WI-AC-11",
+    "WI-AC-12",
+    "WI-AC-13",
+    "WI-AC-14",
+    "WI-AC-15"
+  ],
+  "gate_items": [
+    {
+      "id": "G-WI-01",
+      "acceptance_ids": [
+        "WI-AC-04",
+        "WI-AC-07",
+        "WI-AC-08",
+        "WI-AC-14"
+      ],
+      "required_evidence_level": "runtime"
+    },
+    {
+      "id": "G-WI-02",
+      "acceptance_ids": [
+        "WI-AC-01",
+        "WI-AC-02",
+        "WI-AC-10"
+      ],
+      "required_evidence_level": "runtime"
+    },
+    {
+      "id": "G-WI-03",
+      "acceptance_ids": [
+        "WI-AC-03",
+        "WI-AC-05",
+        "WI-AC-06",
+        "WI-AC-10",
+        "WI-AC-11",
+        "WI-AC-15"
+      ],
+      "required_evidence_level": "fixture"
+    },
+    {
+      "id": "G-WI-04",
+      "acceptance_ids": [
+        "WI-AC-04",
+        "WI-AC-07",
+        "WI-AC-08",
+        "WI-AC-13",
+        "WI-AC-14"
+      ],
+      "required_evidence_level": "fixture"
+    },
+    {
+      "id": "G-WI-05",
+      "acceptance_ids": [
+        "WI-AC-04",
+        "WI-AC-07",
+        "WI-AC-08",
+        "WI-AC-14"
+      ],
+      "required_evidence_level": "runtime"
+    },
+    {
+      "id": "G-WI-06",
+      "acceptance_ids": [
+        "WI-AC-02",
+        "WI-AC-03",
+        "WI-AC-05",
+        "WI-AC-06",
+        "WI-AC-10",
+        "WI-AC-11",
+        "WI-AC-13",
+        "WI-AC-14",
+        "WI-AC-15"
+      ],
+      "required_evidence_level": "runtime"
+    },
+    {
+      "id": "G-WI-07",
+      "acceptance_ids": [
+        "WI-AC-09",
+        "WI-AC-12",
+        "WI-AC-15"
+      ],
+      "required_evidence_level": "fixture"
+    },
+    {
+      "id": "G-WI-08",
+      "acceptance_ids": [
+        "WI-AC-09",
+        "WI-AC-10",
+        "WI-AC-12"
+      ],
+      "required_evidence_level": "runtime"
+    },
+    {
+      "id": "G-WI-09",
+      "acceptance_ids": [
+        "WI-AC-01",
+        "WI-AC-02",
+        "WI-AC-03",
+        "WI-AC-04",
+        "WI-AC-05",
+        "WI-AC-06",
+        "WI-AC-07",
+        "WI-AC-08",
+        "WI-AC-09",
+        "WI-AC-10",
+        "WI-AC-11",
+        "WI-AC-12",
+        "WI-AC-13",
+        "WI-AC-14",
+        "WI-AC-15"
+      ],
+      "required_evidence_level": "static"
+    },
+    {
+      "id": "G-WI-10",
+      "acceptance_ids": [
+        "WI-AC-01",
+        "WI-AC-02",
+        "WI-AC-03",
+        "WI-AC-04",
+        "WI-AC-05",
+        "WI-AC-06",
+        "WI-AC-07",
+        "WI-AC-08",
+        "WI-AC-09",
+        "WI-AC-10",
+        "WI-AC-11",
+        "WI-AC-12",
+        "WI-AC-13",
+        "WI-AC-14",
+        "WI-AC-15"
+      ],
+      "required_evidence_level": "runtime"
+    },
+    {
+      "id": "G-WI-11",
+      "acceptance_ids": [
+        "WI-AC-01",
+        "WI-AC-02",
+        "WI-AC-03",
+        "WI-AC-04",
+        "WI-AC-07",
+        "WI-AC-09",
+        "WI-AC-10",
+        "WI-AC-11",
+        "WI-AC-12",
+        "WI-AC-13",
+        "WI-AC-14",
+        "WI-AC-15"
+      ],
+      "required_evidence_level": "static"
+    }
+  ]
+}

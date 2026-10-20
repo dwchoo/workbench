@@ -26,7 +26,9 @@ async function channel(role = "manager") {
   });
   await new Promise<void>(resolve => server.listen(socketPath, resolve));
   const environment = { WORKBENCH_G3_BRIDGE_SOCKET: socketPath, WORKBENCH_G3_ROLE: role,
-    WORKBENCH_G3_TOKEN: randomUUID(), WORKBENCH_G3_GENERATION: "7" };
+    WORKBENCH_G3_TOKEN: randomUUID(), WORKBENCH_G3_GENERATION: "7",
+    WORKBENCH_G3_SUMMARY_SELECTION: JSON.stringify({ source: "configured_worker_default",
+      selector: "fixture/owned:low", modelTableDigest: "a".repeat(64) }) };
   const previous = Object.fromEntries(Object.keys(environment).map(key => [key, process.env[key]]));
   Object.assign(process.env, environment);
   const calls = { registry: 0, definition: 0, editor: 0, effects: 0 };
@@ -36,7 +38,10 @@ async function channel(role = "manager") {
     baseUrl: "http://127.0.0.1:1/v1", contextWindow: 131072, maxTokens: 8192, tokenizer: "claude-v3" },
     thinkingLevel: "off", serviceTierByFamily: { fixture: "standard" },
     sessionManager: { getSessionId: () => sessionId } };
-  const context: any = { model: parent.model, sessionManager: parent.sessionManager,
+  const childModel = { ...parent.model };
+  const registry = { getAll: (scope: string) => { assert.equal(scope, "all"); return [childModel]; } };
+  parent.modelRegistry = registry;
+  const context: any = { model: parent.model, modelRegistry: registry, sessionManager: parent.sessionManager,
     isIdle: () => false, hasPendingMessages: () => true,
     ui: { getEditorText: () => { calls.editor++; return "unsent editor text"; } } };
   const sdk: any = { AgentRegistry: { global: () => { calls.registry++; return { list: () => [{ session: parent }] }; } },
@@ -86,7 +91,8 @@ test("passive runtime reads exact task bytes and preserves unknown budgets witho
     assert.equal(metadata.source, "parent_session_readback");
     assert.equal(metadata.parentSessionId, h.hello.ompSessionId);
     assert.equal(metadata.status, "inconclusive"); assert.equal(metadata.outputMeaning, "unknown");
-    for (const field of ["existingContextTokens", "outputCap", "reasoningTokens", "visibleResultTokens", "outputLimitEnforced"])
+    assert.equal(metadata.outputCap, 8192);
+    for (const field of ["existingContextTokens", "reasoningTokens", "visibleResultTokens", "outputLimitEnforced"])
       assert.equal(metadata[field], null);
     assert.deepEqual(metadata.unknowns, ["current_context_unavailable", "output_ceiling_enforcement_unavailable",
       "reasoning_budget_semantics_unavailable"]);

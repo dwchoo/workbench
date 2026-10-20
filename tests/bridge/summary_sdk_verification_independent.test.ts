@@ -27,13 +27,16 @@ function fixture() {
     baseUrl: "http://127.0.0.1:1/v1", contextWindow: 131072, maxTokens: 8192 };
   // Detached readback makes parent model drift different from canonical input tampering.
   const metadata = { source: "parent_session_readback", parentSessionId: parentId, epoch: "fixture-epoch",
+    childSelection: { source: "configured_worker_default", selector: "fixture/scripted:low",
+      modelTableDigest: "a".repeat(64), model: structuredClone(model), thinkingLevel: "low",
+      descriptorSource: "manager_model_registry_getAll_all", serviceTierSource: "parent_session_readback" },
     model: structuredClone(model), thinkingLevel: "off", serviceTierByFamily: {}, existingContextTokens: 0,
     outputCap: 8192, reasoningTokens: 0, visibleResultTokens: 8192, outputMeaning: "reasoning_and_visible",
-    outputLimitEnforced: true, outputLimitSource: "independent-mock-contract", estimator: "utf8_bytes_upper_bound" };
+    outputLimitEnforced: true, outputLimitSource: "host_default", estimator: "utf8_bytes_upper_bound" };
   let release!: () => void;
   const readiness = new Promise<void>(resolve => { release = resolve; });
   const counters = { ready: 0, observe: 0, write: 0 };
-  const registry = { awaitInitialBackgroundRefresh(_signal: AbortSignal) { counters.ready++; return readiness; } };
+  const registry = { getAll: (scope: string) => { assert.equal(scope, "all"); return [metadata.childSelection.model]; }, awaitInitialBackgroundRefresh(_signal: AbortSignal) { counters.ready++; return readiness; } };
   const context: any = { model, modelRegistry: registry, settings: { "power.sleepPrevention": "on" },
     sessionManager: { getSessionId: () => parentId } };
   const input = { role: "manager", context, prepared: { request, metadata, selected: [{ range: span, text: "work" }],

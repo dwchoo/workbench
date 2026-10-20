@@ -76,7 +76,7 @@ class RecoveryControlTests(unittest.TestCase):
         (self.root / "expected.json").write_text(json.dumps(expected))
 
     def post(self, request=None, *, continuation=False, system=None, content=None):
-        body = {"model": "scripted", "tools": [{"type": "function", "function": {"name": "db_summary_save"}}],
+        body = {"model": "worker", "tools": [{"type": "function", "function": {"name": "db_summary_save"}}],
             "messages": [{"role": "system", "content": system or self.system},
                          {"role": "user", "content": self.prompt_text(request) if content is None else content}]}
         if continuation:

@@ -480,7 +480,7 @@ __b_loop() {{
                     fi
                     __b_emit ACCEPT
                     __b_emit START
-                    if {shlex.quote(sys.executable)} {helper} --supervisor {shlex.quote(shell)} "$__b_payload"; then
+                    if {shlex.quote(sys.executable)} -I {helper} --supervisor {shlex.quote(shell)} "$__b_payload"; then
                         __b_status=0
                     else
                         __b_status=$?

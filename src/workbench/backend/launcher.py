@@ -47,6 +47,7 @@ import fnmatch
 from hashlib import sha256
 import json
 import os
+from workbench.assets import canonical_path
 from pathlib import Path
 import re
 import select
@@ -55,6 +56,7 @@ import shutil
 import signal
 import stat
 import subprocess
+import sys
 import tempfile
 import threading
 import time
@@ -98,29 +100,24 @@ class StartRequirementError(RuntimeError):
     """A start prerequisite is missing; the message is user guidance."""
 
 
-def _repository_root() -> Path:
-    # src/workbench/backend/launcher.py -> repository root
-    return Path(__file__).resolve().parents[3]
-
-
 def default_bridge_extension() -> Path:
-    return _repository_root() / "omp_bridge" / "g3" / "entry.ts"
+    return canonical_path("omp_bridge/g3/entry.ts")
 
 
 def default_isolation_overlay() -> Path:
-    return _repository_root() / "omp_bridge" / "omp-isolation.yml"
+    return canonical_path("omp_bridge/omp-isolation.yml")
 
 
 def default_skills_dir() -> Path:
-    return _repository_root() / "omp_bridge" / "skills"
+    return canonical_path("omp_bridge/skills")
 
 
 def default_models_file() -> Path:
-    return _repository_root() / "omp_bridge" / "omp-models.yml"
+    return canonical_path("omp_bridge/omp-models.yml")
 
 
 def default_agents_dir() -> Path:
-    return _repository_root() / "omp_bridge" / "agents"
+    return canonical_path("omp_bridge/agents")
 
 
 # -- C-D59 isolation constants (verified with OMP 18.4.4, re-run with 18.4.5) -
@@ -247,10 +244,15 @@ def build_plan(environment: Mapping[str, str], *, omp: str | None = None,
                omp_args: Sequence[str] = (), bridge_extension: str | None = None) -> LaunchPlan:
     """Check every start requirement before any backend process is created."""
     shell = choose_shell(environment)
-    candidate = omp or environment.get(OMP_ENV) or shutil.which("omp", path=environment.get("PATH", ""))
+    from workbench.backend.setup import SetupError, resolve_selection
+    try:
+        selection = resolve_selection(omp, environment)
+    except SetupError as exc:
+        raise StartRequirementError(f'OMP selection failed: {exc}. Run wb setup. No backend was started.') from exc
+    candidate = str(selection.path) if selection is not None else None
     if not candidate or not os.access(candidate, os.X_OK):
         raise StartRequirementError(
-            "OMP Workbench needs the 'omp' executable. Put it on PATH or pass --omp/WORKBENCH_OMP.\n"
+            f"OMP Workbench needs the 'omp' executable (selected {candidate or 'not found'}). Run 'wb setup', or pass --omp/WORKBENCH_OMP.\n"
             "No backend was started.")
     candidate = os.path.abspath(candidate)
     extension = Path(bridge_extension or environment.get(BRIDGE_EXTENSION_ENV) or default_bridge_extension())
@@ -677,7 +679,8 @@ def role_overlay(role: str, *, project_dir: Path | str, home: Path | str,
     patterns = tuple((ROLE_SKILL_PATTERNS if role_skills is None else role_skills).get(role, ()))
     skills: dict[str, Any] = {"customDirectories": [str(skills_dir or default_skills_dir())],
                               "includeSkills": list(patterns), "ignoredSkills": []}
-    agents = list(dict.fromkeys(user_disabled_agents))
+    # OMP 18.12 adds seance; it has no approved Workbench role.
+    agents = list(dict.fromkeys((*user_disabled_agents, "seance")))
     agents += [name for name in task_agent_names(project_dir, home, environment, tuple(WORKBENCH_AGENT_ROLES))
                if name not in agents]
     own = BUNDLED_AGENT_ROLES if role == "worker" else WORKBENCH_AGENT_ROLES
@@ -719,6 +722,7 @@ def omp_environment(base: Mapping[str, str], plan: LaunchPlan, *, role: str, tok
     env = {key: value for key, value in home_environment(base, home).items()
            if key not in _BRIDGE_KEYS and key not in _OMP_ENV_DROP}
     env.update({
+        "WORKBENCH_INSTALL_PYTHON": sys.executable,
         "TERM": DISPLAY_TERM,
         "COLORTERM": env.get("COLORTERM", "truecolor"),
         "WORKBENCH_G3_BRIDGE_SOCKET": str(bridge_socket),
@@ -738,7 +742,8 @@ def omp_environment(base: Mapping[str, str], plan: LaunchPlan, *, role: str, tok
 
 
 def shell_environment(base: Mapping[str, str]) -> dict[str, str]:
-    env = {key: value for key, value in base.items() if key not in _BRIDGE_KEYS}
+    env = {key: value for key, value in base.items()
+           if key not in _BRIDGE_KEYS and key != "WORKBENCH_INSTALL_PYTHON"}
     env["TERM"] = DISPLAY_TERM
     return env
 

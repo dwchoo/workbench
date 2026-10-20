@@ -197,6 +197,23 @@ def decode_body(codec: str, payload: bytes, decoded_bytes: int, checksum: str) -
     return parse_important_body(body)
 
 
+def decode_entry_row(row: sqlite3.Row) -> ImportantEntry:
+    if (row["sources_size"] > MAX_BODY_BYTES or row["gaps_size"] > MAX_BODY_BYTES
+            or row["payload_size"] > MAX_BODY_BYTES or row["payload_size"] != row["stored_bytes"]):
+        raise ImportantLogStoreError("important entry has oversized or inconsistent stored columns")
+    body = decode_body(row["body_codec"], row["body_payload"], row["decoded_bytes"], row["body_sha256"])
+    sources = decode_json(row["sources_json"], max_bytes=MAX_BODY_BYTES)
+    gaps = decode_json(row["source_gaps_json"], max_bytes=MAX_BODY_BYTES)
+    return parse_important_entry({
+        "schemaVersion": SCHEMA_VERSION, "entryId": row["entry_id"],
+        "subject": {"schemaVersion": SCHEMA_VERSION, "kind": row["subject_kind"], "id": row["subject_id"]},
+        "kind": row["kind"], "sources": sources, "sourceGaps": gaps, "recordedAt": row["recorded_at"],
+        "body": body, "bodyCodec": row["body_codec"], "decodedBytes": row["decoded_bytes"],
+        "storedBytes": row["stored_bytes"], "bodySha256": row["body_sha256"],
+        "originDbUuid": row["origin_db_uuid"],
+    })
+
+
 class ImportantLogStore:
     """One explicit UUID database. Catalog policy is a separate owner."""
 
@@ -429,20 +446,7 @@ class ImportantLogStore:
         return item
 
     def _entry_from_row(self, row: sqlite3.Row) -> ImportantEntry:
-        if (row["sources_size"] > MAX_BODY_BYTES or row["gaps_size"] > MAX_BODY_BYTES
-                or row["payload_size"] > MAX_BODY_BYTES or row["payload_size"] != row["stored_bytes"]):
-            raise ImportantLogStoreError("important entry has oversized or inconsistent stored columns")
-        body = decode_body(row["body_codec"], row["body_payload"], row["decoded_bytes"], row["body_sha256"])
-        sources = decode_json(row["sources_json"], max_bytes=MAX_BODY_BYTES)
-        gaps = decode_json(row["source_gaps_json"], max_bytes=MAX_BODY_BYTES)
-        return parse_important_entry({
-            "schemaVersion": SCHEMA_VERSION, "entryId": row["entry_id"],
-            "subject": {"schemaVersion": SCHEMA_VERSION, "kind": row["subject_kind"], "id": row["subject_id"]},
-            "kind": row["kind"], "sources": sources, "sourceGaps": gaps, "recordedAt": row["recorded_at"],
-            "body": body, "bodyCodec": row["body_codec"], "decodedBytes": row["decoded_bytes"],
-            "storedBytes": row["stored_bytes"], "bodySha256": row["body_sha256"],
-            "originDbUuid": row["origin_db_uuid"],
-        })
+        return decode_entry_row(row)
 
     def get_entry(self, entry_id: str) -> ImportantEntry | None:
         self._require_open()

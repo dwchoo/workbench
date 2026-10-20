@@ -44,6 +44,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 import json
 import os
+from workbench.assets import canonical_path
 from pathlib import Path
 import pwd
 import re
@@ -72,7 +73,8 @@ USER_ENV_PREFIX = "WORKBENCH_USER_"
 NATIVES_DIR_NAME = "natives"
 NATIVES_ADDON_PREFIX = "pi_natives."
 # Replaced by the Workbench home values (``OmpHome.environment``).
-HOME_ENV_REPLACED = ("PI_CONFIG_DIR", "PI_CODING_AGENT_DIR", "BUN_RUNTIME_TRANSPILER_CACHE_PATH")
+HOME_ENV_REPLACED = ("PI_CONFIG_DIR", "PI_CODING_AGENT_DIR", "BUN_RUNTIME_TRANSPILER_CACHE_PATH",
+                     "WORKBENCH_OMP_RUNTIME_ROOT")
 # Never passed to a Workbench OMP (and a leak when the checked OMP still has
 # one): a profile selects another agent dir (with its own logins) under
 # ~/.omp; the others point OMP config/session/data/db/cache at other
@@ -328,7 +330,7 @@ def home_config(skills_dir: Path | str, provider_ids: Sequence[str]) -> dict[str
 
 
 def default_agents_dir() -> Path:
-    return Path(__file__).resolve().parents[3] / "omp_bridge" / "agents"
+    return canonical_path("omp_bridge/agents")
 
 
 # C-D69 (3): Workbench-owned definitions that were removed from the source; an older home may still hold them.
@@ -336,14 +338,12 @@ RETIRED_AGENT_FILES = ("analyst.md",)
 
 
 def install_agents(agent_dir: Path, agents_dir: Path | str) -> tuple[str, ...]:
-    """Copy the Workbench-owned subagent definitions into ``<agent dir>/agents`` (C-D68).
+    """Link canonical Workbench definitions into the private OMP lookup directory.
 
-    OMP reads user agent definitions from there (the Workbench home, never
-    ``~/.omp``). Both OMPs see the directory; the per-role ``task.disabledAgents``
-    decides who may use which. Rewritten at every start/restart (0600) so repo
-    edits apply; a definition removed from the source is left (the launcher
-    disables unknown definitions it finds there), except the retired Workbench
-    ones (``RETIRED_AGENT_FILES``), which are deleted. Returns the file names.
+    OMP loads user agents from this directory. Per-role disabledAgents still
+    selects who may use them; definitions remain installed package resources.
+    Existing Workbench-owned copies/links are replaced atomically at startup.
+    Unknown definitions retain the existing ambient-agent filtering behavior.
     """
     try:
         sources = sorted(item for item in Path(agents_dir).iterdir() if item.suffix == ".md" and item.is_file())
@@ -351,7 +351,7 @@ def install_agents(agent_dir: Path, agents_dir: Path | str) -> tuple[str, ...]:
         raise OmpHomeError(f"cannot read the Workbench agent definitions in {agents_dir}: {exc}") from exc
     target = ensure_private_dir(agent_dir / AGENTS_DIR_NAME)
     for source in sources:
-        write_private_bytes(target / source.name, source.read_bytes())
+        _link_to(target / source.name, source.resolve(strict=True))
     for retired in RETIRED_AGENT_FILES:
         if retired not in {source.name for source in sources}:
             try:
@@ -381,6 +381,7 @@ class OmpHome:
     auth_identity: tuple[int, int] | None = None
     notes: tuple[str, ...] = field(default_factory=tuple)
     moved_aside: tuple[str, ...] = field(default_factory=tuple)
+    runtime_root: Path | None = None
 
     @property
     def link(self) -> Path:
@@ -391,8 +392,15 @@ class OmpHome:
         return self.agent_dir / CONFIG_NAME
 
     def environment(self) -> dict[str, str]:
-        return {"PI_CONFIG_DIR": self.config_dir, "PI_CODING_AGENT_DIR": str(self.agent_dir),
-                "BUN_RUNTIME_TRANSPILER_CACHE_PATH": str(self.root / TRANSPILER_CACHE_NAME)}
+        environment = {"PI_CONFIG_DIR": self.config_dir, "PI_CODING_AGENT_DIR": str(self.agent_dir),
+                       "BUN_RUNTIME_TRANSPILER_CACHE_PATH": str(self.root / TRANSPILER_CACHE_NAME)}
+        if self.runtime_root is not None:
+            environment.update({"BUN_RUNTIME_TRANSPILER_CACHE_PATH": str(self.runtime_root / TRANSPILER_CACHE_NAME),
+                "WORKBENCH_OMP_RUNTIME_ROOT": str(self.runtime_root),
+                "OMP_DAEMON_RUNTIME_DIR": str(self.runtime_root / 'daemons'),
+                "XDG_DATA_HOME": str(self.runtime_root / 'xdg-data'),
+                "XDG_CACHE_HOME": str(self.runtime_root / 'xdg-cache')})
+        return environment
 
 
 def _lexists(path: Path) -> bool:
@@ -422,11 +430,12 @@ def _link_to(link: Path, target: Path) -> None:
 
 
 def prepare_omp_home(data_root: Path | str, environment: Mapping[str, str], *, skills_dir: Path | str,
-                     provider_ids: Sequence[str], agents_dir: Path | str | None = None) -> OmpHome:
+                     provider_ids: Sequence[str], agents_dir: Path | str | None = None,
+                     runtime_root: Path | None = None) -> OmpHome:
     """Create/repair the Workbench OMP home; idempotent, run at every backend start and OMP restart.
 
     Creates ``omp-root`` and ``omp-root/agent`` (0700) and rewrites
-    ``config.yml`` and installs the Workbench subagent definitions
+    ``config.yml`` and links the Workbench subagent definitions
     (``agents_dir``, default ``omp_bridge/agents``) into ``agent/agents``.
     With a usable user auth store, ``agent.db`` becomes (or
     stays) a symlink to it; anything else named ``agent.db`` (an older
@@ -440,6 +449,40 @@ def prepare_omp_home(data_root: Path | str, environment: Mapping[str, str], *, s
     config_dir = config_dir_value(root, environment)
     ensure_private_dir(root)
     agent_dir = ensure_private_dir(root / AGENT_DIR_NAME)
+    ephemeral = None
+    if runtime_root is not None and Path(runtime_root) != Path(data_root):
+        from workbench.backend.project import read_project_marker
+        from workbench.backend.runtime_paths import ensure_runtime_root, resolve_runtime_root
+        marker = read_project_marker(Path(data_root))
+        # Embedded OMP daemon paths add components to their root; use the fixed short
+        # namespace even when the WB UI can fit a longer XDG socket namespace.
+        ephemeral = resolve_runtime_root(Path(data_root), marker['project_id'], {})
+        ensure_runtime_root(ephemeral, Path(data_root), marker['project_id'])
+        for name in ('xdg-data', 'xdg-cache', 'model-cache'):
+            ensure_private_dir(ephemeral / name)
+        ensure_private_dir(ephemeral / 'xdg-data/omp')
+        for parent, name, target in (
+                (root, 'cache', ephemeral / 'cache'),
+                (root, 'run', ephemeral / 'run'),
+                (root, TRANSPILER_CACHE_NAME, ephemeral / TRANSPILER_CACHE_NAME),
+                (agent_dir, 'cache', ephemeral / 'agent-cache'),
+                (agent_dir, 'terminal-sessions', ephemeral / 'terminal-sessions'),
+                (agent_dir, 'models.db', ephemeral / 'model-cache/models.db'),
+                (agent_dir, 'skill-descriptions.db', ephemeral / 'model-cache/skill-descriptions.db'),
+                # OMP's XDG data preference also covers persistent state. Keep those
+                # names bound to the durable home, including its existing auth policy.
+                (ephemeral / 'xdg-data/omp', 'sessions', agent_dir / 'sessions'),
+                (ephemeral / 'xdg-data/omp', 'history.db', agent_dir / 'history.db'),
+                (ephemeral / 'xdg-data/omp', AUTH_STORE_NAME, agent_dir / AUTH_STORE_NAME)):
+
+            link = parent / name
+            if not name.endswith('.db'):
+                ensure_private_dir(target)
+            if os.path.lexists(link):
+                if not link.is_symlink() or os.readlink(link) != str(target):
+                    raise OmpHomeError(f'refusing an unbound existing runtime cache path: {link}')
+            else:
+                os.symlink(target, link)
     write_private_bytes(agent_dir / CONFIG_NAME, _config_text(home_config(skills_dir, provider_ids)))
     install_agents(agent_dir, agents_dir if agents_dir is not None else default_agents_dir())
     store = user_auth_store(environment)
@@ -476,7 +519,7 @@ def prepare_omp_home(data_root: Path | str, environment: Mapping[str, str], *, s
     if withheld:
         notes.append(XDG_BASH_NOTE.format(names=", ".join(withheld), plural="them" if len(withheld) > 1 else "it"))
     return OmpHome(root=root, agent_dir=agent_dir, config_dir=config_dir, auth_store=store, linked=state.ok,
-                   auth_identity=state.identity, notes=tuple(notes), moved_aside=tuple(moved))
+                   auth_identity=state.identity, notes=tuple(notes), moved_aside=tuple(moved), runtime_root=ephemeral)
 
 
 def verify_omp_home(home: OmpHome) -> list[str]:
@@ -521,8 +564,7 @@ def withheld_user_values(base: Mapping[str, str]) -> dict[str, str]:
     The XDG values OMP would use, and the user's own location variables
     (``USER_LOCATION_KEYS``) so the check finds the user's store and dirs.
     """
-    values = {USER_ENV_PREFIX + key: base[key] for key in XDG_DIR_KEYS
-              if base.get(key) and _xdg_omp_dir(base, key) is not None}
+    values = {USER_ENV_PREFIX + key: base.get(key, '') for key in XDG_DIR_KEYS}
     values.update({USER_ENV_PREFIX + key: base[key] for key in USER_LOCATION_KEYS if key in base})
     return values
 
@@ -532,9 +574,12 @@ def user_environment(environment: Mapping[str, str]) -> dict[str, str]:
     env = {key: value for key, value in environment.items()
            if not key.startswith(USER_ENV_PREFIX) and key not in USER_LOCATION_KEYS}
     for key in XDG_DIR_KEYS:
-        value = environment.get(USER_ENV_PREFIX + key)
-        if value:
-            env[key] = value
+        if USER_ENV_PREFIX + key in environment:
+            value = environment[USER_ENV_PREFIX + key]
+            if value:
+                env[key] = value
+            else:
+                env.pop(key, None)
     for key in USER_LOCATION_KEYS:
         if USER_ENV_PREFIX + key in environment:
             env[key] = environment[USER_ENV_PREFIX + key]
@@ -543,7 +588,20 @@ def user_environment(environment: Mapping[str, str]) -> dict[str, str]:
 
 def home_env_leaks(environment: Mapping[str, str]) -> list[str]:
     """``env:<KEY>`` for every forbidden override still in a Workbench OMP's environment."""
-    return [f"env:{key}" for key in HOME_ENV_FORBIDDEN if key in environment]
+    allowed = {}
+    if environment.get('WORKBENCH_OMP_RUNTIME_ROOT'):
+        try:
+            from workbench.backend.project import read_project_marker
+            from workbench.backend.runtime_paths import resolve_runtime_root
+            data = Path(environment['PI_CODING_AGENT_DIR']).parent.parent
+            marker = read_project_marker(data)
+            runtime = resolve_runtime_root(data, marker['project_id'], {})
+            if environment['WORKBENCH_OMP_RUNTIME_ROOT'] == str(runtime):
+                allowed['OMP_DAEMON_RUNTIME_DIR'] = str(runtime / 'daemons')
+        except (OSError, ValueError, DataDirError, KeyError):
+            pass
+    return [f"env:{key}" for key in HOME_ENV_FORBIDDEN if key in environment
+            and (key not in allowed or environment[key] != allowed[key])]
 
 
 def without_user_values(environment: Mapping[str, str]) -> dict[str, str]:
@@ -587,7 +645,9 @@ def natives_status(user_env: Mapping[str, str], omp_env: Mapping[str, str], omp_
     status.update(dir=str(target), user_dir=str(own), present=_addon_present(target))
     if status["present"]:
         return status
-    if status["split"]:
+    if omp_env.get('WORKBENCH_OMP_RUNTIME_ROOT'):
+        status['note'] = f'OMP {version} prepares its project runtime native addon cache at {target} on first startup.'
+    elif status["split"]:
         status["note"] = (
             f"OMP {version} takes its native addon dir only from XDG_DATA_HOME or HOME; Workbench withholds "
             f"XDG_DATA_HOME (OMP would also keep the Workbench home's data under it), so the Workbench OMPs "

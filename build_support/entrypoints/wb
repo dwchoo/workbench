@@ -1,0 +1,24 @@
+#!/bin/sh
+# Resolve only this launcher: resolving bin/python would discard the tool venv.
+if [ -x /usr/bin/readlink ]; then
+    wb_readlink=/usr/bin/readlink
+elif [ -x /bin/readlink ]; then
+    wb_readlink=/bin/readlink
+else
+    printf '%s\n' 'WB requires system readlink with -f support (/usr/bin/readlink or /bin/readlink).' >&2
+    exit 126
+fi
+wb_entry=$("$wb_readlink" -f -- "$0") || {
+    printf '%s\n' 'WB could not resolve its installed entrypoint.' >&2
+    exit 126
+}
+if [ ! -f "$wb_entry" ]; then
+    printf '%s\n' 'WB installed entrypoint is unavailable.' >&2
+    exit 126
+fi
+wb_python=${wb_entry%/*}/python
+if [ ! -x "$wb_python" ]; then
+    printf '%s\n' 'WB installation Python is unavailable beside its installed entrypoint.' >&2
+    exit 126
+fi
+exec "$wb_python" -I -m workbench "$@"

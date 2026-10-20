@@ -1,4 +1,4 @@
-"""Checkout-only policy identity and private compatibility admission records.
+"""Canonical product policy identity and private compatibility admission records.
 
 The canonical JSON is the sole closure policy. Development verdicts are never
 imported. Complete owned evidence grants neither work authority nor raw activation.
@@ -20,6 +20,8 @@ import sys
 from threading import RLock
 from typing import Any, Callable
 from uuid import UUID, uuid4
+
+from workbench.assets import canonical_path, runtime_root
 
 from workbench.backend.paths import DataDirError, InstanceLock, ensure_private_dir, write_private_json, write_private_bytes
 from workbench.backend.summary_adapter import SummaryDeferred, _resolved_metadata
@@ -65,7 +67,7 @@ def _bound_install_assets(value: Any) -> bool:
 
 
 def checkout_root() -> Path:
-    return Path(__file__).resolve().parents[3]
+    return runtime_root()
 
 
 def _relative(value: Any) -> str:
@@ -79,9 +81,9 @@ def collect_runtime_identity(root: Path | None = None) -> dict[str, Any]:
     root = (root or checkout_root()).resolve()
 
     def checked_path(relative: str) -> Path:
-        path = root
-        for part in Path(_relative(relative)).parts:
-            path = path / part
+        parts = Path(_relative(relative)).parts
+        for index in range(1, len(parts) + 1):
+            path = canonical_path(Path(*parts[:index]).as_posix(), root)
             if path.is_symlink():
                 raise ValueError("symlink in runtime identity path")
         return path
@@ -128,9 +130,13 @@ def collect_runtime_identity(root: Path | None = None) -> dict[str, Any]:
         if entries[relative]["kind"] != "directory":
             unknowns.append("missing_runtime_root:" + relative)
             return
-        for path in sorted((root / relative).rglob("*")):
-            if "__pycache__" not in path.parts and path.suffix != ".pyc":
-                include(path.relative_to(root).as_posix())
+        base = checked_path(relative)
+        for path in sorted(base.rglob("*")):
+            suffix = path.relative_to(base)
+            # Collected resources have their own canonical omp_bridge names.
+            if ("__pycache__" not in suffix.parts and "_assets" not in suffix.parts
+                    and path.suffix != ".pyc"):
+                include((Path(relative) / suffix).as_posix())
 
     for relative in policy["product_runtime_roots"]:
         walk(_relative(relative))
@@ -149,7 +155,7 @@ def collect_runtime_identity(root: Path | None = None) -> dict[str, Any]:
         if name != "workbench" and not name.startswith("workbench."):
             return []
         base = "src/" + name.replace(".", "/")
-        return [p for p in (base + ".py", base + "/__init__.py") if (root / p).is_file()]
+        return [p for p in (base + ".py", base + "/__init__.py") if checked_path(p).is_file()]
 
     pending = [p for p, item in entries.items() if p.endswith(".py") and item["kind"] == "file"]
     visited: set[str] = set()
@@ -165,7 +171,7 @@ def collect_runtime_identity(root: Path | None = None) -> dict[str, Any]:
                 if entries[init]["kind"] == "file" and init not in visited:
                     pending.append(init)
         try:
-            tree = ast.parse((root / relative).read_bytes())
+            tree = ast.parse(checked_path(relative).read_bytes())
         except (SyntaxError, UnicodeError):
             unknowns.append("unreadable_python_closure:" + relative)
             continue

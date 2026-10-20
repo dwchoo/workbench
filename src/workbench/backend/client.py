@@ -43,7 +43,8 @@ class NotRunning(ClientError):
 
 class UiClient:
     def __init__(self, path: Path, *, name: str = "workbench-min-client",
-                 versions: tuple[int, ...] = ui_v1.SUPPORTED_VERSIONS, timeout: float = 10.0):
+                 versions: tuple[int, ...] = ui_v1.SUPPORTED_VERSIONS, timeout: float = 10.0,
+                 expected_process: dict[str, int] | None = None):
         self.path = Path(path)
         self.timeout = timeout
         self.sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
@@ -54,6 +55,19 @@ class UiClient:
             self.sock.close()
             raise NotRunning(f"no backend listening at {self.path}") from exc
         except OSError:
+            self.sock.close()
+            raise
+        try:
+            peer_pid, peer_uid, _peer_gid = struct.unpack('iII', self.sock.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, 12))
+            if peer_uid != os.geteuid():
+                raise ClientError('backend identity peer UID mismatch')
+            if expected_process is not None:
+                from workbench.backend.boot import read_boot_id
+                from workbench.backend.process_identity import process_state
+                if (peer_pid != expected_process.get('pid') or process_state(peer_pid,
+                        expected_process.get('start_ticks'), uid=peer_uid, boot_id=read_boot_id()) != 'alive'):
+                    raise ClientError('backend identity peer PID/startticks mismatch')
+        except BaseException:
             self.sock.close()
             raise
         self.decoder = ui_v1.FrameDecoder()
@@ -190,12 +204,13 @@ def _write_all(fd: int, data: bytes) -> None:
         view = view[written:]
 
 
-def run_attach(path: Path, *, stdin_fd: int = 0, stdout_fd: int = 1) -> int:
+def run_attach(path: Path, *, stdin_fd: int = 0, stdout_fd: int = 1,
+               expected_process: dict[str, int] | None = None) -> int:
     """Attach one terminal. Returns 0 on detach, 1 when the backend closed."""
     if not os.isatty(stdin_fd) or not os.isatty(stdout_fd):
         print("attach needs an interactive terminal (stdin/stdout must be a TTY)", file=sys.stderr)
         return 2
-    client = UiClient(path)
+    client = UiClient(path, expected_process=expected_process)
     rows, cols = _terminal_size(stdout_fd)
     try:
         attached = client.attach((rows, cols))

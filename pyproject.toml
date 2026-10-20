@@ -1,6 +1,7 @@
 [build-system]
 requires = ["setuptools>=68"]
-build-backend = "setuptools.build_meta"
+build-backend = "build_support.backend"
+backend-path = ["."]
 
 [project]
 name = "omp-workbench"
@@ -9,11 +10,15 @@ description = "Local contracts and harness for OMP Workbench"
 requires-python = ">=3.12"
 dependencies = ["pyte==0.8.2", "wcwidth==0.8.4"]
 
-[project.scripts]
-omp-workbench = "workbench.backend.cli:main"
-
 [tool.setuptools]
 package-dir = {"" = "src"}
+script-files = ["build_support/entrypoints/wb", "build_support/entrypoints/omp-workbench"]
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+"workbench.contracts" = ["*.json"]
+
+[tool.setuptools.cmdclass]
+build_py = "build_support.assets.BuildPy"

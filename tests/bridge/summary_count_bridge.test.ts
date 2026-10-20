@@ -36,7 +36,10 @@ async function harness(role = "manager") {
   let sessionId = "native-parent-actual", generation = 7;
   const model = { id: "fake-count-only", provider: "fixture", api: "openai-completions",
     baseUrl: "http://127.0.0.1:1/v1", contextWindow: 131072, maxTokens: 8192, tokenizer: "claude-v3" };
-  let metadata: any = { source: "parent_session_readback", parentSessionId: sessionId, epoch: "fixture-epoch-1", model };
+  let metadata: any = { source: "parent_session_readback", parentSessionId: sessionId, epoch: "fixture-epoch-1", model,
+    childSelection: { source: "configured_worker_default", selector: "fixture/fake-count-only:low",
+      modelTableDigest: "a".repeat(64), model, thinkingLevel: "low",
+      descriptorSource: "manager_model_registry_getAll_all", serviceTierSource: "parent_session_readback" } };
   const context: any = { model, sessionManager: { getSessionId: () => sessionId },
     isIdle: () => true, hasPendingMessages: () => false, ui: { getEditorText: () => "" },
     workbenchSummaryMetadata: () => metadata, abort() {} };
@@ -119,7 +122,10 @@ test("missing observer and unsupported actual family explicitly fall back withou
     stale.ownerDigest = sha(canonicalJson(stale.owner));
     assert.equal((await h.request({ query: stale })).reason, "input_count_owner_mismatch");
     h.setMetadata({ source: "parent_session_readback", epoch: query.owner.epoch,
-      parentSessionId: query.owner.parentSessionId, model: h.context.model });
+      parentSessionId: query.owner.parentSessionId, model: h.context.model,
+      childSelection: { source: "configured_worker_default", selector: "fixture/fake-count-only:low",
+        modelTableDigest: "a".repeat(64), model: h.context.model, thinkingLevel: "low",
+        descriptorSource: "manager_model_registry_getAll_all", serviceTierSource: "parent_session_readback" } });
     h.context.model.tokenizer = "unknown";
     const unsupported = await h.request({ query: h.query() });
     assert.equal(unsupported.status, "summary_count"); assert.equal(unsupported.proof.exact, false);

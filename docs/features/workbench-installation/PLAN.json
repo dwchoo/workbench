@@ -1,0 +1,888 @@
+{
+  "schema_version": 1,
+  "feature_id": "workbench-installation",
+  "revision": "p1",
+  "status": "draft_pending_combined_approval",
+  "source_brief": {
+    "path": "BRIEF.md",
+    "revision": "r0.4",
+    "sha256": "21bd3ccc3edb3814084391d6b9801e31dd11188a6b819d36e00c7bd4fc5a892f",
+    "approval": "개별 결정만 합의, whole BRIEF approval 없음"
+  },
+  "spec": {
+    "path": "SPEC.md",
+    "revision": "s1"
+  },
+  "requirements": {
+    "path": "requirements-p1.json",
+    "revision": "wi-r0.4-s1-p1-draft",
+    "approval_status": "draft"
+  },
+  "requirements_identity": "9121d63bd5912e2c2ba039e55e9c21fb9b5d284d76be6612371896ebfcf813b1",
+  "scheduling": {
+    "max_open_child_threads": 4,
+    "max_parallel_writer_workspaces": 2,
+    "workspace_policy": "isolated_when_parallel",
+    "dependency_gate": "integrated_and_validated",
+    "mutation_owner_per_physical_workspace": 1,
+    "on_unavailable_isolation": "serial_with_disclosure",
+    "initial_frontier": [
+      "WI-01",
+      "WI-03"
+    ],
+    "initial_frontier_authority": "승인 후 의존성 관점의 초기 후보이며 현재 runnable 권한 아님",
+    "parallel_candidates": [
+      {
+        "tickets": [
+          "WI-01",
+          "WI-03"
+        ],
+        "basis": "WI-01은 배포/SDK probe, WI-03은 이미 SPEC에 정의한 project context API. 공통 mutable HOME/OMP prefix 없이 격리하고 src/backend/cli는 둘 다 수정하지 않는다.",
+        "conditions": [
+          "분리·검증된 writer workspace",
+          "개별 HOME/XDG/TMP/uv cache/loopback port",
+          "source write/resource lease 재검사",
+          "Root serial integration"
+        ]
+      },
+      {
+        "tickets": [
+          "WI-02",
+          "WI-03"
+        ],
+        "basis": "WI-01 통과 후 WI-02 asset/package resolver와 WI-03 context/layout은 SPEC 계약으로 분리. WI-02가 paths.py까지 수정해야 한다면 동시 writer를 중단하고 Root가 범위·resource 충돌을 대조한다.",
+        "conditions": [
+          "WI-01 integrated G-WI-01 통과",
+          "위와 동일한 격리/lease",
+          "새 의존성은 승인 없이 임의 추가하지 않음"
+        ]
+      }
+    ],
+    "illustrative_frontiers": [
+      [
+        "WI-01",
+        "WI-03"
+      ],
+      [
+        "WI-02"
+      ],
+      [
+        "WI-04"
+      ],
+      [
+        "WI-05"
+      ],
+      [
+        "WI-06"
+      ],
+      [
+        "WI-07"
+      ],
+      [
+        "WI-08"
+      ]
+    ]
+  },
+  "budget_policy": {
+    "operating_estimates": {
+      "total_child_invocations": 36,
+      "implementation": 7,
+      "independent_tests": 5,
+      "general_reviews": 6,
+      "security_reviews": 2,
+      "correction_reserve": 14,
+      "oracle_reserve": 2
+    },
+    "explicit_user_limits": [],
+    "authority": "Root의 후속 구현 운영 추정치, workflow-contract §8. 사용자 ceiling 아님. 실제 host/role/effort·사용량·필수 검증을 보고 Root가 유한하게 재배분. Oracle 자동 호출 아님."
+  },
+  "verification_units": [
+    {
+      "id": "WI-U1",
+      "tickets": [
+        "WI-01"
+      ],
+      "boundary": "G-WI-01 decisive probe + 독립 test assessment + frozen general review 후 consumer 확대"
+    },
+    {
+      "id": "WI-U2",
+      "tickets": [
+        "WI-03"
+      ],
+      "boundary": "G-WI-03 fixture context/layout + independent tests/general review"
+    },
+    {
+      "id": "WI-U3",
+      "tickets": [
+        "WI-02",
+        "WI-04"
+      ],
+      "boundary": "G-WI-02/04/05 package/setup + independent tests/general review 및 별도 security review"
+    },
+    {
+      "id": "WI-U4",
+      "tickets": [
+        "WI-05"
+      ],
+      "boundary": "G-WI-06 session integration + independent tests/general review"
+    },
+    {
+      "id": "WI-U5",
+      "tickets": [
+        "WI-06",
+        "WI-07"
+      ],
+      "boundary": "G-WI-07/08/09 migration/docs + independent tests/general review, migration security delta 별도"
+    },
+    {
+      "id": "WI-U6",
+      "tickets": [
+        "WI-08"
+      ],
+      "boundary": "G-WI-10/11 전체 후보 independent test assessment와 fresh Standards/Spec 및 security. 재사용은 같은 unit/후보/영향 근거에 한정"
+    }
+  ],
+  "tickets": [
+    {
+      "id": "WI-01",
+      "path": "tickets/WI-01.md",
+      "kind": "feasibility",
+      "title": "OMP 배포 방식과 SDK 호환의 최소 판별",
+      "depends_on": [],
+      "dependency_reasons": {},
+      "acceptance_ids": [
+        "WI-AC-04",
+        "WI-AC-07",
+        "WI-AC-08",
+        "WI-AC-14"
+      ],
+      "deliverable": "현재 stable 배포의 실행 파일·실제 bridge SDK 로드·scripted child 세션을 판별한 배포 recipe 및 실패 분류",
+      "write_scope_hint": [
+        "tests/backend/installation/probe_omp_distribution.py",
+        "tests/backend/installation/probe_support.py",
+        "src/workbench/backend/install_recipe.py"
+      ],
+      "resource_claims": [
+        {
+          "resource": "wi:omp-download-cache",
+          "mode": "exclusive"
+        },
+        {
+          "resource": "wi:recipe-contract",
+          "mode": "exclusive"
+        }
+      ],
+      "workspace_requirement": "isolated_if_parallel",
+      "gate_item_ids": [
+        "G-WI-01"
+      ],
+      "required_contracts": [
+        "SPEC.md s1: 공개 인터페이스·상태·검증 계약"
+      ],
+      "authority_condition": "BRIEF r0.4의 확인 대기 제안과 SPEC s1/PLAN p1/tickets 및 test seams의 실제 bundle 승인과 구현 요청 필요",
+      "worker": "worker_senior",
+      "routing_hint": {
+        "reason_codes": [
+          "coupled_invariants"
+        ],
+        "evidence_refs": [
+          "SPEC.md#구현-결정",
+          "tickets/WI-01.md"
+        ]
+      }
+    },
+    {
+      "id": "WI-02",
+      "path": "tickets/WI-02.md",
+      "kind": "implementation",
+      "title": "개발 checkout 없이 동작하는 WB 패키지와 자산",
+      "depends_on": [
+        "WI-01"
+      ],
+      "dependency_reasons": {
+        "WI-01": "통합·검증된 OMP recipe와 실제 SDK/asset closure를 패키징 경로에 반영한다."
+      },
+      "acceptance_ids": [
+        "WI-AC-01",
+        "WI-AC-02",
+        "WI-AC-10"
+      ],
+      "deliverable": "wheel/sdist에 필요한 자산 전체를 포함하고 설치본 경로로 실행하는 wb/omp-workbench entry points",
+      "write_scope_hint": [
+        "pyproject.toml",
+        "MANIFEST.in",
+        "build_support/**",
+        "src/workbench/assets.py",
+        "src/workbench/_assets/**",
+        "src/workbench/backend/launcher.py",
+        "src/workbench/backend/omp_home.py",
+        "src/workbench/backend/summary_adapter.py",
+        "src/workbench/backend/summary_compat*.py",
+        "omp_bridge/g3/summary_sdk.ts",
+        "tests/backend/installation/test_package_assets.py",
+        "tests/backend/test_launcher*.py",
+        "tests/backend/test_omp_home*.py",
+        "tests/backend/test_summary*",
+        "tests/bridge/summary*"
+      ],
+      "resource_claims": [
+        {
+          "resource": "wi:asset-layout",
+          "mode": "exclusive"
+        },
+        {
+          "resource": "wi:build-output",
+          "mode": "exclusive"
+        }
+      ],
+      "workspace_requirement": "isolated_if_parallel",
+      "gate_item_ids": [
+        "G-WI-02"
+      ],
+      "required_contracts": [
+        "SPEC.md s1: 공개 인터페이스·상태·검증 계약"
+      ],
+      "authority_condition": "BRIEF r0.4의 확인 대기 제안과 SPEC s1/PLAN p1/tickets 및 test seams의 실제 bundle 승인과 구현 요청 필요",
+      "worker": "worker_senior",
+      "routing_hint": {
+        "reason_codes": [
+          "coupled_invariants"
+        ],
+        "evidence_refs": [
+          "SPEC.md#구현-결정",
+          "tickets/WI-02.md"
+        ]
+      }
+    },
+    {
+      "id": "WI-03",
+      "path": "tickets/WI-03.md",
+      "kind": "implementation",
+      "title": "프로젝트 식별과 영속 상태·runtime 경로 계약",
+      "depends_on": [],
+      "dependency_reasons": {},
+      "acceptance_ids": [
+        "WI-AC-03",
+        "WI-AC-05",
+        "WI-AC-06",
+        "WI-AC-10",
+        "WI-AC-11",
+        "WI-AC-15"
+      ],
+      "deliverable": "확인 후 .wb 초기화, 상위 탐색, 충돌 거절, Git 제외, 짧은 외부 runtime의 공개 context/layout API",
+      "write_scope_hint": [
+        "src/workbench/backend/project.py",
+        "src/workbench/backend/runtime_paths.py",
+        "src/workbench/backend/paths.py",
+        "tests/backend/installation/test_project_context.py",
+        "tests/backend/installation/test_runtime_paths.py",
+        "tests/backend/test_paths_launcher.py"
+      ],
+      "resource_claims": [
+        {
+          "resource": "wi:project-layout",
+          "mode": "exclusive"
+        }
+      ],
+      "workspace_requirement": "isolated_if_parallel",
+      "gate_item_ids": [
+        "G-WI-03"
+      ],
+      "required_contracts": [
+        "SPEC.md s1: 공개 인터페이스·상태·검증 계약"
+      ],
+      "authority_condition": "BRIEF r0.4의 확인 대기 제안과 SPEC s1/PLAN p1/tickets 및 test seams의 실제 bundle 승인과 구현 요청 필요",
+      "worker": "worker_senior",
+      "routing_hint": {
+        "reason_codes": [
+          "coupled_invariants"
+        ],
+        "evidence_refs": [
+          "SPEC.md#구현-결정",
+          "tickets/WI-03.md"
+        ]
+      }
+    },
+    {
+      "id": "WI-04",
+      "path": "tickets/WI-04.md",
+      "kind": "implementation",
+      "title": "wb setup의 OMP 점검과 사용자 전용 설치",
+      "depends_on": [
+        "WI-01",
+        "WI-02"
+      ],
+      "dependency_reasons": {
+        "WI-01": "실제로 가능한 배포·integrity·runtime recipe를 설치 transaction에 사용한다.",
+        "WI-02": "설치본 entry point/자산 resolver로 setup 결과를 확인한다."
+      },
+      "acceptance_ids": [
+        "WI-AC-04",
+        "WI-AC-07",
+        "WI-AC-08",
+        "WI-AC-13",
+        "WI-AC-14"
+      ],
+      "deliverable": "기존 OMP 우선 재사용, 없으면 당시 stable을 검증 후 준비하고 상태·실패·로그인을 안내하는 setup",
+      "write_scope_hint": [
+        "src/workbench/backend/setup.py",
+        "src/workbench/backend/install_recipe.py",
+        "src/workbench/backend/cli.py",
+        "src/workbench/backend/launcher.py",
+        "tests/backend/installation/test_setup.py",
+        "tests/backend/installation/live_setup.py",
+        "tests/backend/installation/probe_support.py",
+        "tests/backend/test_paths_launcher.py"
+      ],
+      "resource_claims": [
+        {
+          "resource": "wi:backend-cli",
+          "mode": "exclusive"
+        },
+        {
+          "resource": "wi:omp-download-cache",
+          "mode": "exclusive"
+        },
+        {
+          "resource": "wi:user-install-prefix",
+          "mode": "exclusive"
+        }
+      ],
+      "workspace_requirement": "isolated_if_parallel",
+      "gate_item_ids": [
+        "G-WI-04",
+        "G-WI-05"
+      ],
+      "required_contracts": [
+        "SPEC.md s1: 공개 인터페이스·상태·검증 계약"
+      ],
+      "authority_condition": "BRIEF r0.4의 확인 대기 제안과 SPEC s1/PLAN p1/tickets 및 test seams의 실제 bundle 승인과 구현 요청 필요",
+      "worker": "worker_senior",
+      "routing_hint": {
+        "reason_codes": [
+          "coupled_invariants"
+        ],
+        "evidence_refs": [
+          "SPEC.md#구현-결정",
+          "tickets/WI-04.md"
+        ]
+      }
+    },
+    {
+      "id": "WI-05",
+      "path": "tickets/WI-05.md",
+      "kind": "implementation",
+      "title": "프로젝트별 시작·재접속과 기존 CLI 호환",
+      "depends_on": [
+        "WI-03",
+        "WI-04"
+      ],
+      "dependency_reasons": {
+        "WI-03": "검증된 project context와 durable/runtime layout을 frontend/backend에 연결한다.",
+        "WI-04": "완료된 setup 선택/설치본과 startup requirements를 소비한다."
+      },
+      "acceptance_ids": [
+        "WI-AC-02",
+        "WI-AC-03",
+        "WI-AC-05",
+        "WI-AC-06",
+        "WI-AC-10",
+        "WI-AC-11",
+        "WI-AC-13",
+        "WI-AC-14",
+        "WI-AC-15"
+      ],
+      "deliverable": "wb 기본 실행과 기존 CLI가 root/cwd/runtime/data identity를 일관되게 사용하며 두 프로젝트를 격리",
+      "write_scope_hint": [
+        "src/workbench/backend/cli.py",
+        "src/workbench/backend/service.py",
+        "src/workbench/backend/client.py",
+        "src/workbench/backend/ui_server.py",
+        "src/workbench/backend/launcher.py",
+        "src/workbench/backend/paths.py",
+        "src/workbench/backend/omp_home.py",
+        "src/workbench/backend/summary_compat*.py",
+        "src/workbench/backend/summary_adapter.py",
+        "src/workbench/ui/**",
+        "tests/backend/installation/test_project_cli.py",
+        "tests/backend/installation/live_project_sessions.py",
+        "tests/backend/live_harness.py",
+        "tests/backend/test_live_start*.py",
+        "tests/backend/test_omp_home*.py"
+      ],
+      "resource_claims": [
+        {
+          "resource": "wi:backend-cli",
+          "mode": "exclusive"
+        },
+        {
+          "resource": "wi:project-layout",
+          "mode": "exclusive"
+        },
+        {
+          "resource": "wi:asset-layout",
+          "mode": "exclusive"
+        },
+        {
+          "resource": "wi:session-integration",
+          "mode": "exclusive"
+        }
+      ],
+      "workspace_requirement": "isolated_if_parallel",
+      "gate_item_ids": [
+        "G-WI-06"
+      ],
+      "required_contracts": [
+        "SPEC.md s1: 공개 인터페이스·상태·검증 계약"
+      ],
+      "authority_condition": "BRIEF r0.4의 확인 대기 제안과 SPEC s1/PLAN p1/tickets 및 test seams의 실제 bundle 승인과 구현 요청 필요",
+      "worker": "worker_senior",
+      "routing_hint": {
+        "reason_codes": [
+          "coupled_invariants"
+        ],
+        "evidence_refs": [
+          "SPEC.md#구현-결정",
+          "tickets/WI-05.md"
+        ]
+      }
+    },
+    {
+      "id": "WI-06",
+      "path": "tickets/WI-06.md",
+      "kind": "implementation",
+      "title": "원본을 보존하는 중단 상태 data-dir 이관",
+      "depends_on": [
+        "WI-05"
+      ],
+      "dependency_reasons": {
+        "WI-05": "실제 legacy/project backend의 중단·소유권·재오픈 계약과 session layout이 필요하다."
+      },
+      "acceptance_ids": [
+        "WI-AC-09",
+        "WI-AC-10",
+        "WI-AC-12",
+        "WI-AC-15"
+      ],
+      "deliverable": "중단 확인·복사·무결성/재오픈 검증·경로 재연결·완료 marker를 가진 wb migrate",
+      "write_scope_hint": [
+        "src/workbench/backend/migrate.py",
+        "src/workbench/backend/cli.py",
+        "src/workbench/backend/project.py",
+        "src/workbench/backend/paths.py",
+        "src/workbench/backend/omp_home.py",
+        "src/workbench/backend/service.py",
+        "src/workbench/tasks/repository.py",
+        "src/workbench/storage/log_raw/**",
+        "src/workbench/workflow/**",
+        "tests/backend/installation/test_migration.py",
+        "tests/backend/installation/live_migration.py",
+        "tests/tasks/test_repository.py",
+        "tests/storage/test_log_raw.py"
+      ],
+      "resource_claims": [
+        {
+          "resource": "wi:backend-cli",
+          "mode": "exclusive"
+        },
+        {
+          "resource": "wi:project-layout",
+          "mode": "exclusive"
+        },
+        {
+          "resource": "wi:migration-source-target",
+          "mode": "exclusive"
+        }
+      ],
+      "workspace_requirement": "isolated_if_parallel",
+      "gate_item_ids": [
+        "G-WI-07",
+        "G-WI-08"
+      ],
+      "required_contracts": [
+        "SPEC.md s1: 공개 인터페이스·상태·검증 계약"
+      ],
+      "authority_condition": "BRIEF r0.4의 확인 대기 제안과 SPEC s1/PLAN p1/tickets 및 test seams의 실제 bundle 승인과 구현 요청 필요",
+      "worker": "worker_senior",
+      "routing_hint": {
+        "reason_codes": [
+          "coupled_invariants"
+        ],
+        "evidence_refs": [
+          "SPEC.md#구현-결정",
+          "tickets/WI-06.md"
+        ]
+      }
+    },
+    {
+      "id": "WI-07",
+      "path": "tickets/WI-07.md",
+      "kind": "documentation",
+      "title": "독립 설치부터 운영·이관까지 사용자 안내",
+      "depends_on": [
+        "WI-04",
+        "WI-05",
+        "WI-06"
+      ],
+      "dependency_reasons": {
+        "WI-04": "실제 setup CLI와 실패/login 안내를 문서화한다.",
+        "WI-05": "통합된 project 실행/attach/detach/pause/shutdown의 출력을 문서화한다.",
+        "WI-06": "이관 CLI와 source/target 경계의 실제 동작을 문서화한다."
+      },
+      "acceptance_ids": [
+        "WI-AC-01",
+        "WI-AC-02",
+        "WI-AC-03",
+        "WI-AC-04",
+        "WI-AC-05",
+        "WI-AC-06",
+        "WI-AC-07",
+        "WI-AC-08",
+        "WI-AC-09",
+        "WI-AC-10",
+        "WI-AC-11",
+        "WI-AC-12",
+        "WI-AC-13",
+        "WI-AC-14",
+        "WI-AC-15"
+      ],
+      "deliverable": "Git/uv 설치, setup, project 실행·로그·detach/pause/종료·이관·업데이트 안내",
+      "write_scope_hint": [
+        "README.md",
+        "omp_bridge/skills/README.md"
+      ],
+      "resource_claims": [
+        {
+          "resource": "wi:user-documentation",
+          "mode": "exclusive"
+        }
+      ],
+      "workspace_requirement": "isolated_if_parallel",
+      "gate_item_ids": [
+        "G-WI-09"
+      ],
+      "required_contracts": [
+        "SPEC.md s1: 공개 인터페이스·상태·검증 계약"
+      ],
+      "authority_condition": "BRIEF r0.4의 확인 대기 제안과 SPEC s1/PLAN p1/tickets 및 test seams의 실제 bundle 승인과 구현 요청 필요",
+      "worker": "worker",
+      "routing_hint": {
+        "reason_codes": [
+          "bounded_pattern"
+        ],
+        "evidence_refs": [
+          "SPEC.md#구현-결정",
+          "tickets/WI-07.md"
+        ]
+      }
+    },
+    {
+      "id": "WI-08",
+      "path": "tickets/WI-08.md",
+      "kind": "integration_verification",
+      "title": "실제 uv 설치본의 통합·독립 검증",
+      "depends_on": [
+        "WI-02",
+        "WI-03",
+        "WI-04",
+        "WI-05",
+        "WI-06",
+        "WI-07"
+      ],
+      "dependency_reasons": {
+        "WI-02": "현재 통합된 predecessor의 동작·근거를 최종 acceptance 검증에 소비한다.",
+        "WI-03": "현재 통합된 predecessor의 동작·근거를 최종 acceptance 검증에 소비한다.",
+        "WI-04": "현재 통합된 predecessor의 동작·근거를 최종 acceptance 검증에 소비한다.",
+        "WI-05": "현재 통합된 predecessor의 동작·근거를 최종 acceptance 검증에 소비한다.",
+        "WI-06": "현재 통합된 predecessor의 동작·근거를 최종 acceptance 검증에 소비한다.",
+        "WI-07": "현재 통합된 predecessor의 동작·근거를 최종 acceptance 검증에 소비한다."
+      },
+      "acceptance_ids": [
+        "WI-AC-01",
+        "WI-AC-02",
+        "WI-AC-03",
+        "WI-AC-04",
+        "WI-AC-05",
+        "WI-AC-06",
+        "WI-AC-07",
+        "WI-AC-08",
+        "WI-AC-09",
+        "WI-AC-10",
+        "WI-AC-11",
+        "WI-AC-12",
+        "WI-AC-13",
+        "WI-AC-14",
+        "WI-AC-15"
+      ],
+      "deliverable": "전체 수락 기준에 대한 현재 설치 후보의 runtime 증거·독립 test assessment·Standards/Spec/security 리뷰와 최종 보고",
+      "write_scope_hint": [
+        "tests/integration/live_workbench_installation.py",
+        "tests/backend/installation/**",
+        "tests/backend/live_harness.py"
+      ],
+      "resource_claims": [
+        {
+          "resource": "wi:final-integration",
+          "mode": "exclusive"
+        },
+        {
+          "resource": "wi:omp-download-cache",
+          "mode": "exclusive"
+        },
+        {
+          "resource": "wi:build-output",
+          "mode": "exclusive"
+        }
+      ],
+      "workspace_requirement": "root_integration_workspace",
+      "gate_item_ids": [
+        "G-WI-10",
+        "G-WI-11"
+      ],
+      "required_contracts": [
+        "SPEC.md s1: 공개 인터페이스·상태·검증 계약"
+      ],
+      "authority_condition": "BRIEF r0.4의 확인 대기 제안과 SPEC s1/PLAN p1/tickets 및 test seams의 실제 bundle 승인과 구현 요청 필요",
+      "owner": "root"
+    }
+  ],
+  "gate_items": [
+    {
+      "id": "G-WI-01",
+      "owner_ticket": "WI-01",
+      "acceptance_ids": [
+        "WI-AC-04",
+        "WI-AC-07",
+        "WI-AC-08",
+        "WI-AC-14"
+      ],
+      "requires_tickets": [
+        "WI-01"
+      ],
+      "required_evidence_level": "runtime",
+      "check": "현재 stable의 실제 bridge/SDK import·bundled task·scripted child와 writer 귀환; recipe/무결성/실패 분류. wheel 설치는 G-WI-02/10."
+    },
+    {
+      "id": "G-WI-02",
+      "owner_ticket": "WI-02",
+      "acceptance_ids": [
+        "WI-AC-01",
+        "WI-AC-02",
+        "WI-AC-10"
+      ],
+      "requires_tickets": [
+        "WI-01",
+        "WI-02"
+      ],
+      "required_evidence_level": "runtime",
+      "check": "깨끗한 noneditable tool 설치·checkout 밖 entry points·필수 자산 hash/정책/role 분리; full project 운용은 G-WI-06/10."
+    },
+    {
+      "id": "G-WI-03",
+      "owner_ticket": "WI-03",
+      "acceptance_ids": [
+        "WI-AC-03",
+        "WI-AC-05",
+        "WI-AC-06",
+        "WI-AC-10",
+        "WI-AC-11",
+        "WI-AC-15"
+      ],
+      "requires_tickets": [
+        "WI-03"
+      ],
+      "required_evidence_level": "fixture",
+      "check": "context API의 초기화 확인/상위 탐색/flag-env 우선순위/충돌/Git 제외/runtime 길이·권한; backend 연결은 G-WI-06."
+    },
+    {
+      "id": "G-WI-04",
+      "owner_ticket": "WI-04",
+      "acceptance_ids": [
+        "WI-AC-04",
+        "WI-AC-07",
+        "WI-AC-08",
+        "WI-AC-13",
+        "WI-AC-14"
+      ],
+      "requires_tickets": [
+        "WI-01",
+        "WI-02",
+        "WI-04"
+      ],
+      "required_evidence_level": "fixture",
+      "check": "setup CLI 재사용/설치/중단·checksum·오류·동시 실행·login 안내와 기존 파일 보존."
+    },
+    {
+      "id": "G-WI-05",
+      "owner_ticket": "WI-04",
+      "acceptance_ids": [
+        "WI-AC-04",
+        "WI-AC-07",
+        "WI-AC-08",
+        "WI-AC-14"
+      ],
+      "requires_tickets": [
+        "WI-01",
+        "WI-02",
+        "WI-04"
+      ],
+      "required_evidence_level": "runtime",
+      "check": "격리 사용자 prefix의 실제 stable 설치와 CLI/SDK load, 반복 setup 재사용. 일반 start 무설치는 G-WI-06."
+    },
+    {
+      "id": "G-WI-06",
+      "owner_ticket": "WI-05",
+      "acceptance_ids": [
+        "WI-AC-02",
+        "WI-AC-03",
+        "WI-AC-05",
+        "WI-AC-06",
+        "WI-AC-10",
+        "WI-AC-11",
+        "WI-AC-13",
+        "WI-AC-14",
+        "WI-AC-15"
+      ],
+      "requires_tickets": [
+        "WI-01",
+        "WI-02",
+        "WI-03",
+        "WI-04",
+        "WI-05"
+      ],
+      "required_evidence_level": "runtime",
+      "check": "설치본 CLI로 A/B project 격리·subdir/동시 start·기존 explicit CLI·긴 경로·root/PID 불일치·detach/pause/shutdown·시작 시 다운로드 없음."
+    },
+    {
+      "id": "G-WI-07",
+      "owner_ticket": "WI-06",
+      "acceptance_ids": [
+        "WI-AC-09",
+        "WI-AC-12",
+        "WI-AC-15"
+      ],
+      "requires_tickets": [
+        "WI-03",
+        "WI-05",
+        "WI-06"
+      ],
+      "required_evidence_level": "fixture",
+      "check": "이관 source bytes/metadata 보존·대상 충돌/중첩·writers·실패/중단·원문 불변·경로 재결합·unknown 거절."
+    },
+    {
+      "id": "G-WI-08",
+      "owner_ticket": "WI-06",
+      "acceptance_ids": [
+        "WI-AC-09",
+        "WI-AC-10",
+        "WI-AC-12"
+      ],
+      "requires_tickets": [
+        "WI-01",
+        "WI-02",
+        "WI-03",
+        "WI-04",
+        "WI-05",
+        "WI-06"
+      ],
+      "required_evidence_level": "runtime",
+      "check": "실제 legacy 상태 중단→복사/검증→새 backend 재오픈·Task/raw/important/OMP session 조회·no replay·소유 프로세스 정리."
+    },
+    {
+      "id": "G-WI-09",
+      "owner_ticket": "WI-07",
+      "acceptance_ids": [
+        "WI-AC-01",
+        "WI-AC-02",
+        "WI-AC-03",
+        "WI-AC-04",
+        "WI-AC-05",
+        "WI-AC-06",
+        "WI-AC-07",
+        "WI-AC-08",
+        "WI-AC-09",
+        "WI-AC-10",
+        "WI-AC-11",
+        "WI-AC-12",
+        "WI-AC-13",
+        "WI-AC-14",
+        "WI-AC-15"
+      ],
+      "requires_tickets": [
+        "WI-04",
+        "WI-05",
+        "WI-06",
+        "WI-07"
+      ],
+      "required_evidence_level": "static",
+      "check": "README와 실제 --help·기본/명시 저장 경로·detach/pause/shutdown·이관/업데이트/제외 범위 일치; 동작 증거의 대체가 아님."
+    },
+    {
+      "id": "G-WI-10",
+      "owner_ticket": "WI-08",
+      "acceptance_ids": [
+        "WI-AC-01",
+        "WI-AC-02",
+        "WI-AC-03",
+        "WI-AC-04",
+        "WI-AC-05",
+        "WI-AC-06",
+        "WI-AC-07",
+        "WI-AC-08",
+        "WI-AC-09",
+        "WI-AC-10",
+        "WI-AC-11",
+        "WI-AC-12",
+        "WI-AC-13",
+        "WI-AC-14",
+        "WI-AC-15"
+      ],
+      "requires_tickets": [
+        "WI-01",
+        "WI-02",
+        "WI-03",
+        "WI-04",
+        "WI-05",
+        "WI-06",
+        "WI-07",
+        "WI-08"
+      ],
+      "required_evidence_level": "runtime",
+      "check": "현재 Git ref/wheel 설치 후보를 README 순서로 끝까지 실행; SDK·요약 fingerprint 보호·Manager report·Worker 미노출·프로젝트 독립성·이관 읽기·회귀/잔존 정리."
+    },
+    {
+      "id": "G-WI-11",
+      "owner_ticket": "WI-08",
+      "acceptance_ids": [
+        "WI-AC-01",
+        "WI-AC-02",
+        "WI-AC-03",
+        "WI-AC-04",
+        "WI-AC-07",
+        "WI-AC-09",
+        "WI-AC-10",
+        "WI-AC-11",
+        "WI-AC-12",
+        "WI-AC-13",
+        "WI-AC-14",
+        "WI-AC-15"
+      ],
+      "requires_tickets": [
+        "WI-01",
+        "WI-02",
+        "WI-03",
+        "WI-04",
+        "WI-05",
+        "WI-06",
+        "WI-07",
+        "WI-08"
+      ],
+      "required_evidence_level": "static",
+      "check": "고정된 최종 후보 Standards/Spec 독립 reviewer·별도 security reviewer·diff secret scan, lock 변경 시 dependency audit·scope 감사. 실행 통과 대체 아님."
+    }
+  ],
+  "issue_refs": [
+    "../../../.workflow/workbench-installation/issues.json"
+  ],
+  "evidence_status": "모든 제품 runtime/test/review gate not_run; planning의 구조 검증만 별도 기록"
+}

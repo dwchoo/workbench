@@ -231,13 +231,14 @@ def loop(win: "curses.window", client: UiClient, model: ProductModel, stdin_fd: 
     return status
 
 
-def run_product(path: Path, *, stdin_fd: int = 0, stdout_fd: int = 1) -> int:
+def run_product(path: Path, *, stdin_fd: int = 0, stdout_fd: int = 1,
+                expected_process: dict[str, int] | None = None) -> int:
     """Attach the product UI. 0 on detach, 1 when the backend closed/rejected/error, 2 without a TTY."""
     if not os.isatty(stdin_fd) or not os.isatty(stdout_fd):
         print("attach needs an interactive terminal (stdin/stdout must be a TTY); "
               "scripts can use `status --json`", file=sys.stderr)
         return 2
-    client = UiClient(path, name="workbench-ui")
+    client = UiClient(path, name="workbench-ui", expected_process=expected_process)
     rows, cols = _terminal_size(stdout_fd)
     model = ProductModel(ClientSender(client), rows, cols)
     layout_path = path.parent / LAYOUT_FILE  # per data dir: next to the UI socket

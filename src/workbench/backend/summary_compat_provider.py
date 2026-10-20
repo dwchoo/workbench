@@ -7,6 +7,7 @@ import time
 import subprocess
 from typing import Any
 
+from workbench.assets import runtime_root
 from workbench.backend.summary_compat_runtime import Q01_ITEMS, REQUIRED_CHECKS, _item_rows, observe_owned
 from workbench.backend.summary_compat_priority import observe_priority
 from workbench.backend.summary_compat_identity import observe_configured
@@ -76,7 +77,7 @@ def item_rows(observations: list) -> list:
 class ScriptedCompatibilityProvider:
     def observe(self) -> dict[str, Any]:
         started = time.monotonic()
-        source = Path(__file__).resolve().parents[3]
+        source = runtime_root()
         result = observe_owned(source, recovery_control=True, pause_control=True, restart_control=True, cases_control=True)
         if result["level"] != "inconclusive" or not result["observations"] or any(
                 row.get("cleanup_complete") is not True for row in result["observations"]):

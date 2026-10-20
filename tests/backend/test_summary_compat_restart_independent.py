@@ -97,7 +97,7 @@ prompt = sdk(prepared, True)['prompt']
 write_private_json(root / 'expected.json', {'requestId': request['requestId'],
     'systemSha': sha256(b'Owned independent restart fixture.').hexdigest(),
     'promptSha256': sha256(prompt.encode()).hexdigest(), 'promptBytes': len(prompt.encode())})
-body = {'model': 'scripted', 'tools': [{'function': {'name': 'db_summary_save'}}], 'messages': [
+body = {'model': 'worker', 'tools': [{'function': {'name': 'db_summary_save'}}], 'messages': [
     {'role': 'system', 'content': 'Owned independent restart fixture.'}, {'role': 'user', 'content': [
         {'type': 'text', 'text': 'unattributed fixture reminder'}, {'type': 'text', 'text': prompt}]}]}
 print(json.dumps({'fixture_phase': phase, 'source_bytes': len(raw), 'source_sha256': sha256(raw).hexdigest(),
@@ -330,7 +330,7 @@ class RestartControlIndependentTests(unittest.TestCase):
         prompt = json.dumps({"request": request})
         (self.root / "expected.json").write_bytes(canonical_json({"requestId": expected_id or request["requestId"],
             "systemSha": sha256(SYSTEM.encode()).hexdigest(), "promptSha256": sha256(prompt.encode()).hexdigest(), "promptBytes": len(prompt.encode())}))
-        return {"model": "scripted", "tools": [{"function": {"name": "db_summary_save"}}],
+        return {"model": "worker", "tools": [{"function": {"name": "db_summary_save"}}],
                 "messages": [{"role": "system", "content": SYSTEM}, {"role": "user", "content": prompt}]}
 
     def test_phase_or_request_binding_rejection_cannot_create_false_unknown(self):

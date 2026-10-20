@@ -39,6 +39,9 @@ async function channel() {
   const sessionId = "independent-parent";
   const metadata: any = { source: "parent_session_readback", parentSessionId: sessionId,
     epoch: "turn-1", model: structuredClone(model) };
+  metadata.childSelection = { source: "configured_worker_default", selector: "fixture/local-only:low",
+    modelTableDigest: "a".repeat(64), model: metadata.model, thinkingLevel: "low",
+    descriptorSource: "manager_model_registry_getAll_all", serviceTierSource: "parent_session_readback" };
   let idle = true;
   const context: any = { model, sessionManager: { getSessionId: () => sessionId },
     workbenchSummaryMetadata: () => metadata, isIdle: () => idle,

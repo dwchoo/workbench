@@ -52,7 +52,7 @@ State observations before interpretations. Describe each cause as a hypothesis, 
 Use the Manager's built-in `bash` tool with `pty: false` for the exact fixed helper interface from this skill's directory. Do not use Workbench's persistent host `terminal` for this save. Resolve the helper's absolute path relative to this `SKILL.md`, then pass the confirmed absolute WB project directory and, if requested, the user's output path. The following shows the command shape; replace the uppercase path placeholders with individually POSIX-shell-quoted path arguments and omit the optional `--output` argument when no user path was requested:
 
 ```text
-python3 'ABSOLUTE_SKILL_DIR/scripts/report_io.py' --project-dir 'ABSOLUTE_PROJECT_PATH' [--output 'USER_OUTPUT_PATH'] <<'WBR_REPORT_UNIQUE_7F3C9D2A'
+"${WORKBENCH_INSTALL_PYTHON:?WB installation Python unavailable}" -I 'ABSOLUTE_SKILL_DIR/scripts/report_io.py' --project-dir 'ABSOLUTE_PROJECT_PATH' [--output 'USER_OUTPUT_PATH'] <<'WBR_REPORT_UNIQUE_7F3C9D2A'
 <complete final UTF-8 Markdown>
 WBR_REPORT_UNIQUE_7F3C9D2A
 ```

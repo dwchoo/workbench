@@ -1163,6 +1163,11 @@ def cmd_update(args: argparse.Namespace) -> int:
     return run(args)
 
 
+def cmd_doctor(args: argparse.Namespace) -> int:
+    from workbench.backend.doctor import run
+    return run(args)
+
+
 def parser() -> argparse.ArgumentParser:
     root = argparse.ArgumentParser(prog="wb", description=__doc__.splitlines()[0])
     sub = root.add_subparsers(dest="command", required=True)
@@ -1174,6 +1179,10 @@ def parser() -> argparse.ArgumentParser:
     update = common(sub.add_parser('update', help='확인·백업 후 현재 uv Git 설치 업데이트'))
     update.add_argument('--ref', default='main', help='branch, tag 또는 commit (기본 main)')
     update.set_defaults(handler=cmd_update)
+
+    doctor = common(sub.add_parser('doctor', help='읽기 전용 로컬 상태 진단'))
+    doctor.add_argument('--json', action='store_true')
+    doctor.set_defaults(handler=cmd_doctor)
 
     migration = sub.add_parser("migrate", help="copy a stopped legacy store to an absent project .wb")
     migration.add_argument("--from", dest="source", required=True)

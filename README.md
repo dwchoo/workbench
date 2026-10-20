@@ -99,6 +99,7 @@ wb
 | `wb start --no-attach` | backend를 시작하거나 재사용한 뒤 화면 연결 없이 반환 |
 | `wb attach` | 현재 프로젝트의 실행 중 backend에 연결. `--plain`은 최소 터미널 client 사용 |
 | `wb status` | 현재 프로젝트 backend 상태 표시. `--json`은 JSON 출력 |
+| `wb doctor [--json]` | 설치·OMP·프로젝트·DB·backend·update 상태를 수정 없이 진단 |
 | `wb shutdown` | active work를 표시하고 확인을 받은 뒤 backend, 두 OMP session, host shell 전체 종료 |
 | `wb update [--ref REF]` | 현재 사용자 작업 확인·승인 종료·private 백업 후 uv Git 설치 업데이트 |
 | `wb confirm-boot` | 상태가 boot 확인을 요구할 때 환경 조건을 확인하고 진행 여부를 명시적으로 확인 |
@@ -184,6 +185,12 @@ wb start --omp /absolute/path/to/updated/omp
 ```
 
 여러 실행에 같은 선택을 적용하려면 `WORKBENCH_OMP`를 설정할 수 있습니다. 일반 터미널의 `omp`도 바꾸려면 기존 사용자 명령을 확인하고 원하는 OMP를 가리키도록 직접 관리하세요. OMP 자체의 다운로드·업데이트 방법은 선택한 OMP 배포의 안내를 따르세요.
+
+## 읽기 전용 진단
+
+`wb doctor` 또는 `wb doctor --data-dir /path/to/project/.wb --json`으로 현재 설치·Python/uv·선택 OMP·private 권한·DB/schema·backend/bridge·update/backup 상태를 확인합니다. 프로젝트가 없어도 전역 검사를 계속하며, 파일 초기화·권한 수정·복구·설치·프로세스 종료를 하지 않습니다. 인증 파일은 metadata만 확인하고 모델/provider 요청을 보내지 않습니다.
+
+필수 항목의 오류·미확인은 exit 1, 경고만 있으면 exit 0입니다. JSON은 `schema_version: 1`, `overall`, `checks`를 제공하며 상세 범위와 snapshot 한계는 [doctor 사용 안내](docs/features/workbench-doctor/USAGE.md)를 확인하세요.
 
 ## 설치본 skills
 

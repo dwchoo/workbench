@@ -1,0 +1,20 @@
+{
+  "feature_id": "workbench-doctor",
+  "status": "approved",
+  "approved_by": "user",
+  "approval_reference": "2026-10-20 사용자: 응 그렇게 해 (앞서 제시한 update→doctor 두 계획 묶음)",
+  "development_intent_reference": "2026-10-20 사용자: 이에 대한 개발을 하고 커밋 푸쉬하고 다음 개발... wb doctor도",
+  "brief_revision": "b1",
+  "spec_revision": "s1",
+  "plan_revision": "p1",
+  "bundle_files": [
+    "BRIEF.md",
+    "SPEC.md",
+    "requirements-p1.json",
+    "PLAN.json",
+    "tickets/WD-01.md",
+    "tickets/WD-02.md"
+  ],
+  "bundle_sha256": "63fff22db28b54c0b86d0e96e8ac081791a1f1c6ac42015ca7298b66e270ae48",
+  "implementation_authorized": true
+}

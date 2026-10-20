@@ -1,0 +1,253 @@
+{
+  "schema_version": 1,
+  "feature_id": "workbench-doctor",
+  "revision": "p1",
+  "source_brief": {
+    "path": "BRIEF.md",
+    "revision": "b1"
+  },
+  "spec": {
+    "path": "SPEC.md",
+    "revision": "s1"
+  },
+  "status": "draft_requires_bundle_confirmation",
+  "scheduling": {
+    "max_open_child_threads": 4,
+    "max_parallel_writer_workspaces": 1,
+    "workspace_policy": "isolated_when_parallel",
+    "dependency_gate": "integrated_and_validated",
+    "on_unavailable_isolation": "serial_with_disclosure"
+  },
+  "budget_policy": {
+    "operating_estimates": "Root가 남은 필수 작업에 맞춰 유한 호출 예산을 조정한다. 기존 담당/근거를 재사용하고 small fix마다 agent를 늘리지 않는다.",
+    "explicit_user_limits": []
+  },
+  "tickets": [
+    {
+      "id": "WD-01",
+      "path": "tickets/WD-01.md",
+      "title": "읽기 전용 doctor 진단 수직 구현",
+      "kind": "implementation",
+      "depends_on": [],
+      "acceptance_ids": [
+        "WD-AC-01",
+        "WD-AC-02",
+        "WD-AC-03",
+        "WD-AC-04",
+        "WD-AC-05"
+      ],
+      "deliverable": "게시된 WU 기반에서 read-only 검사·텍스트/JSON·exit·비밀 비노출을 한 행동씩 구현한다. 기존 설치/상태/DB 읽기 경계를 재사용하며 자동 수정 기능을 추가하지 않는다.",
+      "write_scope_hint": [
+        "src/workbench/backend/doctor.py",
+        "src/workbench/backend/cli.py",
+        "tests/backend/maintenance/test_doctor*.py",
+        "README.md",
+        "docs/features/workbench-doctor/USAGE.md"
+      ],
+      "resource_claims": [
+        {
+          "resource": "workbench-doctor:source",
+          "mode": "exclusive"
+        },
+        {
+          "resource": "workbench-doctor:private-runtime",
+          "mode": "exclusive"
+        }
+      ],
+      "workspace_requirement": "isolated_or_serial_with_disclosure",
+      "worker": "worker_senior",
+      "routing_hint": {
+        "reason_codes": [
+          "coupled_invariants"
+        ],
+        "evidence_refs": [
+          "SPEC.md",
+          "기존 shutdown/process/SQLite/install 경계의 결합"
+        ]
+      },
+      "verification_unit": "D1",
+      "base_requirements": [
+        "승인된 exact b1/s1/p1 bundle",
+        "현재 source/dirty baseline·scope·process/lease 대조",
+        "선행 ticket의 실제 통합·검증된 artifact",
+        "소유 private HOME/runtime/UV 환경. 실제 사용자 DB/auth/provider 제외",
+        "workbench-update done_verified 및 사용자 승인 commit/push 완료 ref를 Root가 실제 대조한 기반"
+      ],
+      "contract_requirements": [
+        "SPEC s1 공개 동작·독립 기대값·보존/실패 계약"
+      ]
+    },
+    {
+      "id": "WD-02",
+      "path": "tickets/WD-02.md",
+      "title": "설치본·보존·최종 독립 검증",
+      "kind": "integration_verification",
+      "depends_on": [
+        "WD-01"
+      ],
+      "acceptance_ids": [
+        "WD-AC-01",
+        "WD-AC-02",
+        "WD-AC-03",
+        "WD-AC-04",
+        "WD-AC-05"
+      ],
+      "deliverable": "checkout 밖 실제 설치본과 private project/backend에서 진단 결과·원본 보존을 확인한다. independent assessment와 final review/security 통과 후 Root가 별도로 commit/push한다.",
+      "write_scope_hint": [
+        "tests/integration/live_workbench_doctor.py",
+        "tests/backend/installation/live_project_sessions.py",
+        "docs/features/workbench-doctor/VERIFICATION.md"
+      ],
+      "resource_claims": [
+        {
+          "resource": "workbench-doctor:source",
+          "mode": "exclusive"
+        },
+        {
+          "resource": "workbench-doctor:private-runtime",
+          "mode": "exclusive"
+        }
+      ],
+      "workspace_requirement": "isolated_or_serial_with_disclosure",
+      "worker": "worker_senior",
+      "routing_hint": {
+        "reason_codes": [
+          "coupled_invariants"
+        ],
+        "evidence_refs": [
+          "SPEC.md",
+          "기존 shutdown/process/SQLite/install 경계의 결합"
+        ]
+      },
+      "verification_unit": "D1",
+      "base_requirements": [
+        "승인된 exact b1/s1/p1 bundle",
+        "현재 source/dirty baseline·scope·process/lease 대조",
+        "선행 ticket의 실제 통합·검증된 artifact",
+        "소유 private HOME/runtime/UV 환경. 실제 사용자 DB/auth/provider 제외",
+        "workbench-update done_verified 및 사용자 승인 commit/push 완료 ref를 Root가 실제 대조한 기반"
+      ],
+      "contract_requirements": [
+        "SPEC s1 공개 동작·독립 기대값·보존/실패 계약"
+      ],
+      "dependency_reasons": {
+        "WD-01": "현재 승인된 공개 계약·필수 gate가 Root에서 실제 통합·검증된 뒤 소비한다."
+      },
+      "dependency_satisfied_by": {
+        "WD-01": "상태 flag가 아닌 현재 source/candidate·gate·independent test/review·integration 근거의 대조"
+      }
+    }
+  ],
+  "gate_items": [
+    {
+      "id": "WD-G01",
+      "owner_ticket": "WD-01",
+      "acceptance_ids": [
+        "WD-AC-01",
+        "WD-AC-03",
+        "WD-AC-04"
+      ],
+      "requires_tickets": [
+        "WD-01"
+      ],
+      "required_evidence_level": "fixture",
+      "check": "공개CLI 텍스트/JSON·exit·각 건강/누락/오류/unknown 구분"
+    },
+    {
+      "id": "WD-G02",
+      "owner_ticket": "WD-01",
+      "acceptance_ids": [
+        "WD-AC-02",
+        "WD-AC-03"
+      ],
+      "requires_tickets": [
+        "WD-01"
+      ],
+      "required_evidence_level": "fixture",
+      "check": "diagnostic 전후 inventory·DB/schema·process 상태 보존 및 비밀 비노출"
+    },
+    {
+      "id": "WD-G03",
+      "owner_ticket": "WD-02",
+      "acceptance_ids": [
+        "WD-AC-01",
+        "WD-AC-02",
+        "WD-AC-03",
+        "WD-AC-04",
+        "WD-AC-05"
+      ],
+      "requires_tickets": [
+        "WD-01",
+        "WD-02"
+      ],
+      "required_evidence_level": "runtime",
+      "check": "실제 noneditable installed CLI·선택OMPversion·owned active/inactive 상태 진단"
+    },
+    {
+      "id": "WD-G04",
+      "owner_ticket": "WD-02",
+      "acceptance_ids": [
+        "WD-AC-01",
+        "WD-AC-02",
+        "WD-AC-03",
+        "WD-AC-04",
+        "WD-AC-05"
+      ],
+      "requires_tickets": [
+        "WD-01",
+        "WD-02"
+      ],
+      "required_evidence_level": "static",
+      "check": "fresh Standards/Spec·별도 Security/secret scan·scope audit 및 WU 게시 선행 확인"
+    }
+  ],
+  "acceptance_trace": [
+    {
+      "acceptance_id": "WD-AC-01",
+      "tickets": [
+        "WD-01",
+        "WD-02"
+      ],
+      "seam": "SPEC s1 공개CLI/실제보존·설치 seam",
+      "final_integration": "WD-02"
+    },
+    {
+      "acceptance_id": "WD-AC-02",
+      "tickets": [
+        "WD-01",
+        "WD-02"
+      ],
+      "seam": "SPEC s1 공개CLI/실제보존·설치 seam",
+      "final_integration": "WD-02"
+    },
+    {
+      "acceptance_id": "WD-AC-03",
+      "tickets": [
+        "WD-01",
+        "WD-02"
+      ],
+      "seam": "SPEC s1 공개CLI/실제보존·설치 seam",
+      "final_integration": "WD-02"
+    },
+    {
+      "acceptance_id": "WD-AC-04",
+      "tickets": [
+        "WD-01",
+        "WD-02"
+      ],
+      "seam": "SPEC s1 공개CLI/실제보존·설치 seam",
+      "final_integration": "WD-02"
+    },
+    {
+      "acceptance_id": "WD-AC-05",
+      "tickets": [
+        "WD-01",
+        "WD-02"
+      ],
+      "seam": "SPEC s1 공개CLI/실제보존·설치 seam",
+      "final_integration": "WD-02"
+    }
+  ],
+  "execution_order_note": "workbench-update의 검증·commit/push 완료 전 이 feature는 시작하지 않는다. 외부 선행 release는 Root가 baseline/precondition으로 실제 대조한다.",
+  "requirements_identity": "53c345791dfb2d621add891ed0c1e4ece31f8cba37024ccc1e070fe3613add31"
+}

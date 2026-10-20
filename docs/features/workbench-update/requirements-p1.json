@@ -1,0 +1,81 @@
+{
+  "schema_version": 1,
+  "revision": "wu-b1-s1-p1",
+  "authority": "2026-10-20 현재 대화: 사용자 개발·검증·commit/push와 update→doctor 순서 요청. active 작업은 먼저 묻고 승인 후 종료/기록/backup/update, WB 상태·세션·재개 정보 백업이라는 사용자 답변. 이 exact planning bundle/doctor 세부 범위는 아직 확인 전인 초안.",
+  "acceptance_ids": [
+    "WU-AC-01",
+    "WU-AC-02",
+    "WU-AC-03",
+    "WU-AC-04",
+    "WU-AC-05",
+    "WU-AC-06",
+    "WU-AC-07",
+    "WU-AC-08"
+  ],
+  "gate_items": [
+    {
+      "id": "WU-G01",
+      "acceptance_ids": [
+        "WU-AC-01",
+        "WU-AC-07"
+      ],
+      "required_evidence_level": "runtime"
+    },
+    {
+      "id": "WU-G02",
+      "acceptance_ids": [
+        "WU-AC-02",
+        "WU-AC-03",
+        "WU-AC-07"
+      ],
+      "required_evidence_level": "fixture"
+    },
+    {
+      "id": "WU-G03",
+      "acceptance_ids": [
+        "WU-AC-04",
+        "WU-AC-05",
+        "WU-AC-06",
+        "WU-AC-08"
+      ],
+      "required_evidence_level": "fixture"
+    },
+    {
+      "id": "WU-G04",
+      "acceptance_ids": [
+        "WU-AC-01",
+        "WU-AC-07",
+        "WU-AC-08"
+      ],
+      "required_evidence_level": "fixture"
+    },
+    {
+      "id": "WU-G05",
+      "acceptance_ids": [
+        "WU-AC-01",
+        "WU-AC-02",
+        "WU-AC-03",
+        "WU-AC-04",
+        "WU-AC-05",
+        "WU-AC-06",
+        "WU-AC-07",
+        "WU-AC-08"
+      ],
+      "required_evidence_level": "runtime"
+    },
+    {
+      "id": "WU-G06",
+      "acceptance_ids": [
+        "WU-AC-01",
+        "WU-AC-02",
+        "WU-AC-03",
+        "WU-AC-04",
+        "WU-AC-05",
+        "WU-AC-06",
+        "WU-AC-07",
+        "WU-AC-08"
+      ],
+      "required_evidence_level": "static"
+    }
+  ]
+}

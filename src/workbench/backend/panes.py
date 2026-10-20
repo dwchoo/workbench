@@ -870,6 +870,36 @@ class ShellPane(_OwnedSession, Pane):
                 "supervisor": ref_dict(self._supervisor_ref) if life.get("supervisor_pid") else None,
                 "unknown": list(life.get("unknown") or ()), "error": self.error}
 
+    def shutdown_work(self) -> dict[str, Any]:
+        """종료 동의에 표시할 현재 session jobs; shell 입력 없이 읽는다."""
+        with self.io_lock:
+            result = {'foreground_group': None, 'processes': [], 'unknown': True}
+            if not self._leader_proven():
+                return result
+            try:
+                self.state = self.shell.poll(0)
+                foreground = os.tcgetpgrp(self._master_fd)
+                members = self._session_members()
+                if members is None:
+                    return result
+                jobs = []
+                for pid in members:
+                    fields = _stat(pid)
+                    if not _live(fields) or int(fields[3]) != self.pid:
+                        return result  # member changed during observation
+                    jobs.append({'pid': pid, 'start_ticks': int(fields[19]),
+                                 'process_group': int(fields[2])})
+                if (not self._leader_proven() or os.tcgetpgrp(self._master_fd) != foreground
+                        or (foreground != self.pid and not any(job['process_group'] == foreground for job in jobs))):
+                    return result
+                state = self.shell_state()
+                unknown = bool(state['error'] or state['unknown'] or state['phase'] == 'unknown'
+                               or state['parent_mode'] in {'unknown', 'manual_input'} or self._pending)
+                return {'foreground_group': foreground, 'processes': sorted(jobs, key=lambda item: item['pid']),
+                        'unknown': unknown}
+            except (OSError, ValueError, IndexError, UnsafeShellState):
+                return result
+
     def info(self) -> dict[str, Any]:
         alive = self.alive()
         return {**super().info(), "process": ref_dict(self.ref), "alive": alive,

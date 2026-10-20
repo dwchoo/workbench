@@ -100,6 +100,7 @@ wb
 | `wb attach` | 현재 프로젝트의 실행 중 backend에 연결. `--plain`은 최소 터미널 client 사용 |
 | `wb status` | 현재 프로젝트 backend 상태 표시. `--json`은 JSON 출력 |
 | `wb shutdown` | active work를 표시하고 확인을 받은 뒤 backend, 두 OMP session, host shell 전체 종료 |
+| `wb update [--ref REF]` | 현재 사용자 작업 확인·승인 종료·private 백업 후 uv Git 설치 업데이트 |
 | `wb confirm-boot` | 상태가 boot 확인을 요구할 때 환경 조건을 확인하고 진행 여부를 명시적으로 확인 |
 | `wb setup` | 사용자 범위 OMP 준비·선택 |
 | `wb migrate --from <source> --project <project>` | 중단된 기존 data-dir을 새 프로젝트로 명시 이관 |
@@ -166,9 +167,11 @@ custom `models.yml`은 지원되는 credential-free configuration subset만 이�
 
 ## 업데이트
 
-Workbench를 바꿀 때는 먼저 사용 중인 모든 프로젝트의 backend를 `wb shutdown`으로 종료하고, 변경을 포함한 새 Git tag/commit을 명시해 uv tool을 다시 설치하세요. `wb start`와 `wb setup`은 자동으로 Workbench code를 업데이트하지 않습니다. 더 낮은 Workbench 버전으로 기존 `.wb/` DB를 열 수 있다는 보장은 없습니다.
+현재 사용자 uv 관리 Git 설치는 `wb update`로 업데이트합니다. 기본 `main` 또는 `wb update --ref TAG_OR_COMMIT`을 한 commit으로 고정하고 설치 준비를 먼저 확인합니다. 현재 사용자의 다른 프로젝트도 조사하므로 실행 위치의 프로젝트에만 한정되지 않습니다. 진행 중 작업이 있으면 대상·종료 영향을 표시하고 터미널에서 명시적으로 동의받습니다. 거절·EOF·Ctrl-C·비대화형 입력은 작업을 유지합니다. 작업이 없으면 별도 질문 없이 idle backend도 종료한 뒤 진행합니다.
 
-Workbench는 `wb update` 명령을 제공하지 않습니다. 또한 이미 선택되어 정상 동작하는 OMP를 시작할 때나 `wb setup`을 다시 실행할 때 자동으로 최신 버전으로 바꾸지 않습니다. WB가 관리하는 OMP 복사본을 업데이트하는 별도 명령도 없습니다. 준비된 다른 OMP 실행 파일을 검사하려면 모든 backend를 멈춘 다음 실제 경로를 명시하세요.
+종료·writer 부재를 확인하고 WB DB의 모든 기록 revision·작업 이력·양 역할 OMP session을 private 백업한 뒤 WB만 재설치합니다. 기본 백업은 `${XDG_STATE_HOME:-~/.local/state}/omp-workbench/updates/<run>/`에 남습니다. 프로젝트 소스·실험 산출물·공유 인증 DB·credential 사본·재생성 cache는 자동 복사하지 않습니다. `wb start`는 이전 작업·session·백업 위치를 안내하며, 중단된 명령을 자동 replay하지 않습니다. 실패하면 설치 상태를 미확인으로 보고하고 이전 ref 수동 재설치 명령과 백업 위치를 표시합니다. 자동 rollback/restore나 `--yes`/`--force` 우회는 없습니다. 상세 절차와 한계는 [업데이트 사용 안내](docs/features/workbench-update/USAGE.md)를 확인하세요.
+
+개발 checkout·editable/출처 미확인 설치는 자동 전환하지 않습니다. 목표 ref에 update/start fence가 없으면 작업 종료 전에 거절합니다. `wb start`와 `wb setup`은 Workbench code를 자동 업데이트하지 않습니다. 더 낮은 Workbench 버전으로 기존 `.wb/` DB를 열 수 있다는 보장은 없습니다. 정상 동작하는 OMP도 자동으로 최신 버전으로 바꾸지 않으며, WB가 관리하는 OMP 복사본을 업데이트하는 별도 명령은 없습니다. 준비된 다른 OMP 실행 파일을 검사하려면 모든 backend를 멈춘 다음 실제 경로를 명시하세요.
 
 ```sh
 wb setup --omp /absolute/path/to/updated/omp

@@ -1,0 +1,382 @@
+{
+  "schema_version": 1,
+  "feature_id": "workbench-update",
+  "revision": "p1",
+  "source_brief": {
+    "path": "BRIEF.md",
+    "revision": "b1"
+  },
+  "spec": {
+    "path": "SPEC.md",
+    "revision": "s1"
+  },
+  "status": "draft_requires_bundle_confirmation",
+  "scheduling": {
+    "max_open_child_threads": 4,
+    "max_parallel_writer_workspaces": 1,
+    "workspace_policy": "isolated_when_parallel",
+    "dependency_gate": "integrated_and_validated",
+    "on_unavailable_isolation": "serial_with_disclosure"
+  },
+  "budget_policy": {
+    "operating_estimates": "Root가 남은 필수 작업에 맞춰 유한 호출 예산을 조정한다. 기존 담당/근거를 재사용하고 small fix마다 agent를 늘리지 않는다.",
+    "explicit_user_limits": []
+  },
+  "tickets": [
+    {
+      "id": "WU-01",
+      "path": "tickets/WU-01.md",
+      "title": "설치 출처와 실제 자기 교체 판별",
+      "kind": "feasibility",
+      "depends_on": [],
+      "acceptance_ids": [
+        "WU-AC-01",
+        "WU-AC-07"
+      ],
+      "deliverable": "소유한 private noneditable uv 설치 두 ref로 실행중 updater의 자기 교체·실패 결과·설치 receipt·fence 소유권 경계를 실제 관측한다. 출처/runner seam을 고정하고 후속 준비 여부를 판정한다.",
+      "write_scope_hint": [
+        "tests/integration/live_workbench_update_probe.py"
+      ],
+      "resource_claims": [
+        {
+          "resource": "workbench-update:source",
+          "mode": "exclusive"
+        },
+        {
+          "resource": "workbench-update:private-runtime",
+          "mode": "exclusive"
+        }
+      ],
+      "workspace_requirement": "isolated_or_serial_with_disclosure",
+      "worker": "worker_senior",
+      "routing_hint": {
+        "reason_codes": [
+          "coupled_invariants"
+        ],
+        "evidence_refs": [
+          "SPEC.md",
+          "기존 shutdown/process/SQLite/install 경계의 결합"
+        ]
+      },
+      "verification_unit": "U1",
+      "base_requirements": [
+        "승인된 exact b1/s1/p1 bundle",
+        "현재 source/dirty baseline·scope·process/lease 대조",
+        "선행 ticket의 실제 통합·검증된 artifact",
+        "소유 private HOME/runtime/UV 환경. 실제 사용자 DB/auth/provider 제외"
+      ],
+      "contract_requirements": [
+        "SPEC s1 공개 동작·독립 기대값·보존/실패 계약"
+      ]
+    },
+    {
+      "id": "WU-02",
+      "path": "tickets/WU-02.md",
+      "title": "작업 확인·종료·백업·재개를 포함한 update 수직 구현",
+      "kind": "implementation",
+      "depends_on": [
+        "WU-01"
+      ],
+      "acceptance_ids": [
+        "WU-AC-01",
+        "WU-AC-02",
+        "WU-AC-03",
+        "WU-AC-04",
+        "WU-AC-05",
+        "WU-AC-06",
+        "WU-AC-07",
+        "WU-AC-08"
+      ],
+      "deliverable": "WU-01에서 판별된 runner로 공개 update를 연결한다. idle 자동 업데이트부터 active 확인/거절, 승인 종료, 검증된 private backup/재개 안내, 실패/경합까지 한 행동씩 개발한다.",
+      "write_scope_hint": [
+        "src/workbench/backend/update.py",
+        "src/workbench/backend/update_backup.py",
+        "src/workbench/backend/maintenance.py",
+        "src/workbench/backend/cli.py",
+        "src/workbench/backend/service.py",
+        "tests/backend/maintenance/test_update*.py"
+      ],
+      "resource_claims": [
+        {
+          "resource": "workbench-update:source",
+          "mode": "exclusive"
+        },
+        {
+          "resource": "workbench-update:private-runtime",
+          "mode": "exclusive"
+        }
+      ],
+      "workspace_requirement": "isolated_or_serial_with_disclosure",
+      "worker": "worker_senior",
+      "routing_hint": {
+        "reason_codes": [
+          "coupled_invariants"
+        ],
+        "evidence_refs": [
+          "SPEC.md",
+          "기존 shutdown/process/SQLite/install 경계의 결합"
+        ]
+      },
+      "verification_unit": "U2",
+      "base_requirements": [
+        "승인된 exact b1/s1/p1 bundle",
+        "현재 source/dirty baseline·scope·process/lease 대조",
+        "선행 ticket의 실제 통합·검증된 artifact",
+        "소유 private HOME/runtime/UV 환경. 실제 사용자 DB/auth/provider 제외"
+      ],
+      "contract_requirements": [
+        "SPEC s1 공개 동작·독립 기대값·보존/실패 계약"
+      ],
+      "dependency_reasons": {
+        "WU-01": "현재 승인된 공개 계약·필수 gate가 Root에서 실제 통합·검증된 뒤 소비한다."
+      },
+      "dependency_satisfied_by": {
+        "WU-01": "상태 flag가 아닌 현재 source/candidate·gate·independent test/review·integration 근거의 대조"
+      }
+    },
+    {
+      "id": "WU-03",
+      "path": "tickets/WU-03.md",
+      "title": "설치본 통합·보존·문서·최종 검증",
+      "kind": "integration_verification",
+      "depends_on": [
+        "WU-02"
+      ],
+      "acceptance_ids": [
+        "WU-AC-01",
+        "WU-AC-02",
+        "WU-AC-03",
+        "WU-AC-04",
+        "WU-AC-05",
+        "WU-AC-06",
+        "WU-AC-07",
+        "WU-AC-08"
+      ],
+      "deliverable": "실제 설치본의 두 프로젝트·active/idle·거절/승인·실패·원문/세션/재시작을 관측한다. 필수 검증 후 Root가 이 feature를 별도로 commit/push하고 doctor readiness를 연다.",
+      "write_scope_hint": [
+        "tests/integration/live_workbench_update.py",
+        "tests/backend/installation/live_project_sessions.py",
+        "README.md",
+        "docs/features/workbench-update/USAGE.md",
+        "docs/features/workbench-update/VERIFICATION.md"
+      ],
+      "resource_claims": [
+        {
+          "resource": "workbench-update:source",
+          "mode": "exclusive"
+        },
+        {
+          "resource": "workbench-update:private-runtime",
+          "mode": "exclusive"
+        }
+      ],
+      "workspace_requirement": "isolated_or_serial_with_disclosure",
+      "worker": "worker_senior",
+      "routing_hint": {
+        "reason_codes": [
+          "coupled_invariants"
+        ],
+        "evidence_refs": [
+          "SPEC.md",
+          "기존 shutdown/process/SQLite/install 경계의 결합"
+        ]
+      },
+      "verification_unit": "U2",
+      "base_requirements": [
+        "승인된 exact b1/s1/p1 bundle",
+        "현재 source/dirty baseline·scope·process/lease 대조",
+        "선행 ticket의 실제 통합·검증된 artifact",
+        "소유 private HOME/runtime/UV 환경. 실제 사용자 DB/auth/provider 제외"
+      ],
+      "contract_requirements": [
+        "SPEC s1 공개 동작·독립 기대값·보존/실패 계약"
+      ],
+      "dependency_reasons": {
+        "WU-02": "현재 승인된 공개 계약·필수 gate가 Root에서 실제 통합·검증된 뒤 소비한다."
+      },
+      "dependency_satisfied_by": {
+        "WU-02": "상태 flag가 아닌 현재 source/candidate·gate·independent test/review·integration 근거의 대조"
+      }
+    }
+  ],
+  "gate_items": [
+    {
+      "id": "WU-G01",
+      "owner_ticket": "WU-01",
+      "acceptance_ids": [
+        "WU-AC-01",
+        "WU-AC-07"
+      ],
+      "requires_tickets": [
+        "WU-01"
+      ],
+      "required_evidence_level": "runtime",
+      "check": "실제 private uv/Git 자기 교체·실패/runner/fence 관측"
+    },
+    {
+      "id": "WU-G02",
+      "owner_ticket": "WU-02",
+      "acceptance_ids": [
+        "WU-AC-02",
+        "WU-AC-03",
+        "WU-AC-07"
+      ],
+      "requires_tickets": [
+        "WU-01",
+        "WU-02"
+      ],
+      "required_evidence_level": "fixture",
+      "check": "공개CLI active/idle/unknown/거절·승인·정확한 종료 및 start/update 경합"
+    },
+    {
+      "id": "WU-G03",
+      "owner_ticket": "WU-02",
+      "acceptance_ids": [
+        "WU-AC-04",
+        "WU-AC-05",
+        "WU-AC-06",
+        "WU-AC-08"
+      ],
+      "requires_tickets": [
+        "WU-01",
+        "WU-02"
+      ],
+      "required_evidence_level": "fixture",
+      "check": "private snapshot/manifest/원본·revision·session·credential 제외·재개 안내 검증"
+    },
+    {
+      "id": "WU-G04",
+      "owner_ticket": "WU-02",
+      "acceptance_ids": [
+        "WU-AC-01",
+        "WU-AC-07",
+        "WU-AC-08"
+      ],
+      "requires_tickets": [
+        "WU-01",
+        "WU-02"
+      ],
+      "required_evidence_level": "fixture",
+      "check": "출처/ref/설치 실패 경계와 정확한 결과·수동 복구 안내"
+    },
+    {
+      "id": "WU-G05",
+      "owner_ticket": "WU-03",
+      "acceptance_ids": [
+        "WU-AC-01",
+        "WU-AC-02",
+        "WU-AC-03",
+        "WU-AC-04",
+        "WU-AC-05",
+        "WU-AC-06",
+        "WU-AC-07",
+        "WU-AC-08"
+      ],
+      "requires_tickets": [
+        "WU-01",
+        "WU-02",
+        "WU-03"
+      ],
+      "required_evidence_level": "runtime",
+      "check": "checkout 밖 실제 설치본·두 프로젝트·종료/backup·자기교체·재시작 보존"
+    },
+    {
+      "id": "WU-G06",
+      "owner_ticket": "WU-03",
+      "acceptance_ids": [
+        "WU-AC-01",
+        "WU-AC-02",
+        "WU-AC-03",
+        "WU-AC-04",
+        "WU-AC-05",
+        "WU-AC-06",
+        "WU-AC-07",
+        "WU-AC-08"
+      ],
+      "requires_tickets": [
+        "WU-01",
+        "WU-02",
+        "WU-03"
+      ],
+      "required_evidence_level": "static",
+      "check": "final Standards/Spec 독립 context·Security·secret scan·최종 scope audit"
+    }
+  ],
+  "acceptance_trace": [
+    {
+      "acceptance_id": "WU-AC-01",
+      "tickets": [
+        "WU-01",
+        "WU-02",
+        "WU-03"
+      ],
+      "seam": "SPEC s1 공개CLI/실제보존·설치 seam",
+      "final_integration": "WU-03"
+    },
+    {
+      "acceptance_id": "WU-AC-02",
+      "tickets": [
+        "WU-02",
+        "WU-03"
+      ],
+      "seam": "SPEC s1 공개CLI/실제보존·설치 seam",
+      "final_integration": "WU-03"
+    },
+    {
+      "acceptance_id": "WU-AC-03",
+      "tickets": [
+        "WU-02",
+        "WU-03"
+      ],
+      "seam": "SPEC s1 공개CLI/실제보존·설치 seam",
+      "final_integration": "WU-03"
+    },
+    {
+      "acceptance_id": "WU-AC-04",
+      "tickets": [
+        "WU-02",
+        "WU-03"
+      ],
+      "seam": "SPEC s1 공개CLI/실제보존·설치 seam",
+      "final_integration": "WU-03"
+    },
+    {
+      "acceptance_id": "WU-AC-05",
+      "tickets": [
+        "WU-02",
+        "WU-03"
+      ],
+      "seam": "SPEC s1 공개CLI/실제보존·설치 seam",
+      "final_integration": "WU-03"
+    },
+    {
+      "acceptance_id": "WU-AC-06",
+      "tickets": [
+        "WU-02",
+        "WU-03"
+      ],
+      "seam": "SPEC s1 공개CLI/실제보존·설치 seam",
+      "final_integration": "WU-03"
+    },
+    {
+      "acceptance_id": "WU-AC-07",
+      "tickets": [
+        "WU-01",
+        "WU-02",
+        "WU-03"
+      ],
+      "seam": "SPEC s1 공개CLI/실제보존·설치 seam",
+      "final_integration": "WU-03"
+    },
+    {
+      "acceptance_id": "WU-AC-08",
+      "tickets": [
+        "WU-02",
+        "WU-03"
+      ],
+      "seam": "SPEC s1 공개CLI/실제보존·설치 seam",
+      "final_integration": "WU-03"
+    }
+  ],
+  "requirements_identity": "1f7e19a5cb00e38d38ed4d91f925393d655d619514f984e45dbbca5ed3c4c87c"
+}

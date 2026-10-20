@@ -537,6 +537,7 @@ print(json.dumps({'session_files':[str(p) for p in sessions],'paused':True,'back
         with sqlite3.connect('file:' + str(history) + '?mode=ro', uri=True) as database:
             assert database.execute('SELECT prompt FROM history WHERE prompt=?',
                                     ('WI05_LOOPBACK_TURN_' + label,)).fetchall() == [('WI05_LOOPBACK_TURN_' + label,)]
+        database.close()  # with commits; it does not close WAL/SHM descriptors.
         record = json.loads((project / '.wb/backend.json').read_text())
         xdg = Path(record['omp_runtime_root']) / 'xdg-data/omp'
         assert (xdg / 'history.db').resolve() == history

@@ -226,6 +226,7 @@ class Backend:
         self._lock = InstanceLock(layout.lock)
         self._stop_signal: int | None = None
         self._shutdown_token: tuple[str, float] | None = None
+        self._shutdown_signature: str | None = None
         self._shutdown_confirmed = False
         self._last_state_digest: str | None = None
         self._last_state_at = 0.0
@@ -1297,7 +1298,13 @@ class Backend:
         active: list[dict[str, Any]] = []
         # An exited or killed shell has no work left: its request was closed as unknown (C-D63).
         if self.shell is not None and not self.shell.exited():
+            observed = self.shell.shutdown_work()
             state = self.shell.shell_state()
+            if observed['processes']:
+                active.append({'kind': 'shell_jobs', 'foreground_group': observed['foreground_group'],
+                               'processes': observed['processes']})
+            if observed['unknown']:
+                active.append({'kind': 'shell_unknown', 'detail': 'host shell work identity is not provable'})
             if state["request_id"] is not None and state["phase"] not in {"control_returned"}:
                 active.append({"kind": "shell_request", "request_id": state["request_id"], "phase": state["phase"]})
             if state["parent_mode"] == "manual_foreground":
@@ -1342,11 +1349,24 @@ class Backend:
                 found.append({**item, "start_ticks": ref.start_ticks})
         return found
 
+    def _shutdown_work_signature(self, active: list[dict[str, Any]], processes: dict) -> str:
+        # shutdown hold의 정상 tick은 같은 experiment를 active -> held로
+        # 표시한다. 표시 상태 대신 run identity를 결합하고 나머지는 대조한다.
+        work = [{**item, 'state': 'active'} if item.get('kind') == 'automation'
+                and item.get('state') == 'held' else item for item in active]
+        run = self._automation_view().get('run')
+        identity = None if run is None else {key: run.get(key) for key in
+                                            ('kind', 'task_id', 'revision', 'run_id')}
+        return json.dumps({'active': work, 'automation_run': identity, 'processes': processes}, sort_keys=True)
+
     def shutdown_request(self) -> dict[str, Any]:
         token = uuid4().hex
+        active = self._active_work()
+        processes = {name: asdict(ref) for name, ref in self.process_refs().items()}
+        self._shutdown_signature = self._shutdown_work_signature(active, processes)
         self._shutdown_token = (token, time.monotonic() + SHUTDOWN_TOKEN_TTL)
-        return {"token": token, "active": self._active_work(), "expires_in": SHUTDOWN_TOKEN_TTL,
-                "processes": {name: asdict(ref) for name, ref in self.process_refs().items()}}
+        return {"token": token, "active": active, "expires_in": SHUTDOWN_TOKEN_TTL,
+                "processes": processes, "scope_bound": True}
 
     def shutdown_confirm(self, token: str) -> dict[str, Any]:
         if self._shutdown_token is None:
@@ -1355,6 +1375,16 @@ class Backend:
         if token != expected or time.monotonic() > expires:
             self._shutdown_token = None
             raise Held(Reason.SHUTDOWN_TOKEN_MISMATCH, "shutdown token is stale or unknown; request again")
+        # 동의한 뒤 새 자동 작업을 먼저 막고, 표시한 작업·process를 다시
+        # 대조한다. 불일치 시 이 요청이 추가한 hold만 해제하고 거절한다.
+        added = self.hold.set(SHUTDOWN_HOLD)
+        current = self._shutdown_work_signature(self._active_work(),
+            {name: asdict(ref) for name, ref in self.process_refs().items()})
+        if current != self._shutdown_signature:
+            if added:
+                self.hold.clear(SHUTDOWN_HOLD)
+            self._shutdown_token = None
+            raise Held(Reason.SHUTDOWN_TOKEN_MISMATCH, 'work/process identity changed; request shutdown again')
         self._shutdown_confirmed = True
         _log("shutdown confirmed by UI")
         # The result follows in the CLOSING frame; the client waits for it up to this bound (CW-16 O4).

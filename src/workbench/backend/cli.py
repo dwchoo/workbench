@@ -335,6 +335,20 @@ def omp_home_requirements(layout: DataLayout, environment: Mapping[str, str], *,
 
 
 def cmd_start(args: argparse.Namespace) -> int:
+    from workbench.backend.maintenance import fence
+    no_attach = args.no_attach
+    args.no_attach = True
+    try:
+        with fence(shared=True):
+            status = _cmd_start(args)
+    finally:
+        args.no_attach = no_attach
+    if status == 0 and not no_attach:
+        return _attach(_layout(args), args)
+    return status
+
+
+def _cmd_start(args: argparse.Namespace) -> int:
     from workbench.backend.project import initialize_project, project_initialization_lock
     from workbench.backend.process_identity import inspect_backend
     layout = _layout(args)
@@ -390,9 +404,29 @@ def cmd_start(args: argparse.Namespace) -> int:
         print(f"backend already running (pid {running['backend']['pid']}); attaching instead of starting")
     running = _wait_isolation(layout, running)
     _print_summary(running)
+    _print_update_resume(layout)
     if args.no_attach:
         return 0
     return _attach(layout, args)
+
+
+def _print_update_resume(layout: DataLayout) -> None:
+    from workbench.backend.paths import read_private_json
+    marker = layout.root/'update-resume.json'
+    if not os.path.lexists(marker):
+        return
+    try:
+        value = read_private_json(marker)
+        if not value or value.get('schema_version') != 1:
+            raise ValueError('unknown maintenance marker')
+        print('업데이트 재개 안내: 중단된 명령·실험을 자동 재실행하지 않습니다.')
+        print('백업: '+_plain(value.get('backup')))
+        for key, label in (('task','이전 작업'),('sessions','양 역할 session'),
+                           ('state','마지막 확인 상태'),('shutdown','종료 결과')):
+            print(label+': '+json.dumps(value.get(key),ensure_ascii=False,sort_keys=True))
+        print('원래 프로젝트·기록·session을 검토한 뒤 명시적으로 재개하세요: '+_plain(value.get('resume')))
+    except (OSError, ValueError):
+        print('업데이트 재개 metadata를 확인할 수 없습니다. private updates manifest와 원본 기록을 검토하세요.', file=sys.stderr)
 
 
 def cmd_attach(args: argparse.Namespace) -> int:
@@ -1124,6 +1158,11 @@ def cmd_migrate(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_update(args: argparse.Namespace) -> int:
+    from workbench.backend.update import run
+    return run(args)
+
+
 def parser() -> argparse.ArgumentParser:
     root = argparse.ArgumentParser(prog="wb", description=__doc__.splitlines()[0])
     sub = root.add_subparsers(dest="command", required=True)
@@ -1131,6 +1170,10 @@ def parser() -> argparse.ArgumentParser:
     def common(p: argparse.ArgumentParser) -> argparse.ArgumentParser:
         p.add_argument("--data-dir", help="data dir (default: $WORKBENCH_DATA_DIR or nearest project .wb/)")
         return p
+
+    update = common(sub.add_parser('update', help='확인·백업 후 현재 uv Git 설치 업데이트'))
+    update.add_argument('--ref', default='main', help='branch, tag 또는 commit (기본 main)')
+    update.set_defaults(handler=cmd_update)
 
     migration = sub.add_parser("migrate", help="copy a stopped legacy store to an absent project .wb")
     migration.add_argument("--from", dest="source", required=True)

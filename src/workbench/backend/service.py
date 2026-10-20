@@ -47,6 +47,7 @@ from workbench.app.recovery import (
     SurvivorRegistry, model_hold, observe,
 )
 from workbench.backend.automation import AutomationController
+from workbench.backend.records_service import RecordService
 from workbench.backend.boot import FRESH, BootState, BootStore, read_boot_id
 from workbench.backend.flow import (
     HANDOFF_JOURNAL_NAME, HandoffService, accepts_keyword, environment_value_findings, rejected, sensitive_environment_values,
@@ -1587,6 +1588,8 @@ class Backend:
         """Bridge tool requests: the worker's ``terminal`` (C-D68) waits for its command; the manager's
         ``restart_worker`` and ``workbench_status`` (C-D70) are answered here; the rest is handoffs."""
         tool = request.get("tool")
+        if tool == "workbench_records":
+            return RecordService(self.layout, project_dir=self.project_dir).handle(peer.role, request)
         if tool == "workbench_logs":
             return self._workbench_logs_tool(peer, request)
         watchdog = getattr(self, "watchdog", None)  # a backend built without __init__ (tests) has none

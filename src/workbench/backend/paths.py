@@ -64,6 +64,8 @@ class DataLayout:
     @property
     def tasks(self) -> Path: return self.root / "tasks.sqlite3"
     @property
+    def records(self) -> Path: return self.root / "records.sqlite3"
+    @property
     def raw_logs(self) -> Path: return self.root / "raw-logs"
     @property
     def raw_v2(self) -> Path: return self.root / "raw-v2"

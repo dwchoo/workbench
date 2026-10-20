@@ -85,7 +85,7 @@ wb
 
 프로젝트마다 다음 영속 자료를 `<project>/.wb/`에 보관합니다.
 
-- `tasks.sqlite3`, `important-logs/`, `raw-logs/`, `backend.log`
+- `tasks.sqlite3`, `records.sqlite3`, `important-logs/`, `raw-logs/`, `backend.log`
 - `workflow/`와 Workbench 전용 OMP 설정·대화 session
 - 프로젝트 marker와 backend 기록
 
@@ -116,6 +116,20 @@ WORKBENCH_DATA_DIR=/path/to/old-data-dir wb status
 ```
 
 명시 경로가 있으면 해당 저장소를 직접 사용합니다. 예전 global 기본 경로를 자동으로 찾아 이관하거나 새 프로젝트에 연결하지 않습니다. 기존 저장소를 계속 쓸지 프로젝트로 이관할지는 사용자가 명시적으로 선택해야 합니다. `wb logs --help`는 현재 제공되는 로그 조회·관리 명령을 보여줍니다.
+
+## 작업 기록
+
+Manager·Worker에게 “이 내용을 기록해줘”라고 요청하면 일반 작업 메모·결정·진행 상황·실험 정리·인계는 프로젝트 `.wb/records.sqlite3`에 저장합니다. 새 세션에는 최근 기록의 제목·짧은 미리보기를 제공하며 본문은 필요할 때 조회합니다. 수정은 같은 기록의 새 revision으로 저장하고 이전 revision도 보존합니다. BRIEF·SPEC·ADR과 사용자 직접 호출용 WB 문제 보고서는 기존 문서 방식을 따릅니다.
+
+```sh
+wb records list
+wb records search '찾을 문자열'
+wb records show RECORD_ID --revision 1
+wb records history RECORD_ID
+wb records export RECORD_ID --revision 1 --output /path/to/note.md
+```
+
+조회·내보내기는 backend나 모델을 새로 시작하지 않습니다. Markdown 출력은 사용자가 요청한 사본이며 기존 파일을 덮어쓰거나 DB 원본을 바꾸지 않습니다. 저장·조회 실패는 빈 결과와 구분하며, 결과가 불명확한 기록 요청은 자동으로 다시 보내지 않습니다. 한도·페이지·실패 의미는 [작업 기록 사용법](docs/features/workbench-records/USAGE.md)을 참고하세요.
 
 ## 연결 해제, 일시정지, 종료
 

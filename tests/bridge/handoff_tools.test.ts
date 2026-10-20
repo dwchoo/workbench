@@ -89,15 +89,15 @@ function textOf(result: Frame): Frame {
 	return JSON.parse(result.content[0].text);
 }
 
-test("manager and worker retain their role tools and gain only read-only workbench_logs", async () => {
+test("manager and worker retain their role tools alongside logs and records", async () => {
 	for (const [role, own, other] of [["manager", "to_worker", "to_manager"], ["worker", "to_manager", "to_worker"]] as const) {
 		const bridge = await startBridge(role);
 		try {
 			// C-D68: the worker also has `terminal`, its only command execution path.
 			// C-D70: the manager also has its recovery tools restart_worker and workbench_status;
 			// C-D71 (1): and stop_survivor for processes a previous backend left running.
-			assert.deepEqual([...bridge.tools.keys()], role === "worker" ? ["workbench_logs", own, "terminal"]
-				: ["workbench_logs", own, "restart_worker", "workbench_status", "stop_survivor"], `${role} tools`);
+			assert.deepEqual([...bridge.tools.keys()], role === "worker" ? ["workbench_records", "workbench_logs", own, "terminal"]
+				: ["workbench_records", "workbench_logs", own, "restart_worker", "workbench_status", "stop_survivor"], `${role} tools`);
 			assert.equal(bridge.tools.has(other), false);
 			const tool = bridge.tools.get(own)!;
 			assert.equal(tool.loadMode, "essential", "schema must reach the provider without xd:// discovery");

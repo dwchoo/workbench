@@ -581,11 +581,17 @@ with socket.socket(socket.AF_UNIX) as server:
             child.wait(timeout=4)
         self.assertEqual(received.read_bytes(), b'')
 
-    def test_saved_setup_selection_is_used_without_installing_or_changing_it(self):
+    def test_saved_setup_command_is_used_without_installing_or_changing_it(self):
         candidate = self.base / 'saved-omp'
         probed = self.base / 'version-probed'
         candidate.write_text(f'#!/bin/sh\necho omp/18.12.2\n: > {probed}\n')
         candidate.chmod(0o700)
+        local = self.base / 'home/.local'
+        local.mkdir(mode=0o700)
+        command_dir = local / 'bin'
+        command_dir.mkdir(mode=0o700)
+        command = command_dir / 'omp'
+        command.symlink_to(candidate)
         config = self.base / 'config/omp-workbench'
         config.mkdir(parents=True, mode=0o700)
         config.parent.chmod(0o700)
@@ -598,6 +604,8 @@ with socket.socket(socket.AF_UNIX) as server:
         self.assertEqual(result.returncode, 2, result.stderr)
         self.assertIn('confirmation', result.stderr)
         self.assertTrue(probed.exists(), 'passive saved OMP selection was ignored')
+        self.assertTrue(command.is_symlink())
+        self.assertEqual(command.readlink(), candidate)
         self.assertEqual(selection.read_bytes(), original)
         self.assertEqual(list(self.project.iterdir()), [])
         self.assertFalse((self.base / 'home/.local/share/omp-workbench/tools').exists())

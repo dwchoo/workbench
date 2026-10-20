@@ -1,0 +1,94 @@
+{
+  "feature_id": "workbench-records",
+  "status": "approved_for_implementation",
+  "approved_by": "user",
+  "approval_reference": "2026-10-20 현재 대화: explicit $implement docs/features/workbench-records",
+  "brief_revision": "r0.2",
+  "spec_revision": "s1",
+  "plan_revision": "p1",
+  "planning_reference": "2026-10-20 current conversation: explicit $to-tickets docs/features/workbench-records/BRIEF.md",
+  "source_brief_approval": {
+    "feature_id": "workbench-records",
+    "status": "approved_for_planning",
+    "approved_by": "user",
+    "approval_reference": "2026-10-20 현재 대화: BRIEF r0.2 전체 확인 요청에 대한 사용자 답변 “그렇게 해서 확정하자.”",
+    "user_quote": "그렇게 해서 확정하자.",
+    "brief_revision": "r0.2",
+    "spec_revision": null,
+    "plan_revision": null,
+    "bundle_files": [
+      "BRIEF.md"
+    ],
+    "bundle_sha256": "3acff8fb4c8868e3abffe3f6f386a94580b31344e189e306ea0b974e4fa2864e",
+    "implementation_authorized": false,
+    "approval_scope": {
+      "decisions": [
+        "WR-D01",
+        "WR-D02",
+        "WR-D03",
+        "WR-D04",
+        "WR-D05",
+        "WR-D06"
+      ],
+      "accepted_proposals": [
+        "WR-P01",
+        "WR-P02",
+        "WR-P03",
+        "WR-P04",
+        "WR-P05"
+      ],
+      "acceptance_criteria": [
+        "WR-AC-01",
+        "WR-AC-02",
+        "WR-AC-03",
+        "WR-AC-04",
+        "WR-AC-05",
+        "WR-AC-06",
+        "WR-AC-07",
+        "WR-AC-08",
+        "WR-AC-09",
+        "WR-AC-10",
+        "WR-AC-11",
+        "WR-AC-12"
+      ],
+      "deferred_scope": [
+        "기록 삭제·자동 정리",
+        "기존 Markdown 수입",
+        "DB/Markdown 양방향 동기화",
+        "의미 검색·embedding·별도 검색 agent"
+      ]
+    },
+    "presented_brief": {
+      "revision": "r0.2",
+      "status_at_presentation": "agreement_requested",
+      "bundle_files": [
+        "BRIEF.md"
+      ],
+      "bundle_sha256": "a10e113a0c842b08f86ab1228fc6bfad82c128f51e0ca9e4679c0a34614f7ffb",
+      "preserved_copy": "../../../.workflow/workbench-records/runs/refine-20261020/presented-BRIEF-r0.2.md",
+      "digest_record": "../../../.workflow/workbench-records/runs/refine-20261020/presented-digest.json"
+    },
+    "finalization_note": "동일한 r0.2에서 상태·승인 근거·제안의 채택 상태·해소된 질문·인계 문구만 정리했다. 승인된 공개 동작과 수락 기준의 의미를 변경하지 않았다.",
+    "decision_record": "../../../.workflow/workbench-records/runs/refine-20261020/decisions.json",
+    "authorization_note": "후속 SPEC·ticket planning을 위한 BRIEF 합의다. 이 discovery에서 planning 실행·제품/테스트 구현·commit·게시·배포는 하지 않는다."
+  },
+  "bundle_files": [
+    "BRIEF.md",
+    "SPEC.md",
+    "requirements-p1.json",
+    "PLAN.json",
+    "tickets/WR-01.md",
+    "tickets/WR-02.md",
+    "tickets/WR-03.md",
+    "tickets/WR-04.md",
+    "tickets/WR-05.md",
+    "tickets/WR-06.md",
+    "tickets/WR-07.md"
+  ],
+  "bundle_sha256": "6e41dc4d029f65d3e3a728b1321650fd33c01d3aad4a8c36e02a915fec70c806",
+  "requirements_revision": "wr-r0.2-s1-p1",
+  "requirements_identity": "9fef12d1f7ca200417cedf8626df7127751028be7837156aa7794ab0b05fc103",
+  "implementation_authorized": true,
+  "planning_record": "../../../.workflow/workbench-records/runs/plan-p1-20261020/planning.json",
+  "note": "제시한 r0.2/s1/p1 exact bundle을 명시적 implement 요청으로 승인하고 개발·필수 독립 검증을 허가했다. BRIEF·SPEC·PLAN·requirements·ticket bytes와 digest는 유지한다. Commit·게시·배포·사용자 상태 이관은 제외한다."
+}

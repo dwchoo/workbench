@@ -107,7 +107,8 @@ class StartRequirementTests(unittest.TestCase):
         shells = self.bindir("shells", bash="/usr/bin/bash")
         with self.assertRaises(StartRequirementError) as caught:
             launcher.build_plan({"PATH": shells})
-        self.assertIn("'omp'", str(caught.exception))
+        self.assertIn("omp", str(caught.exception).casefold())
+        self.assertIn("No backend was started", str(caught.exception))
         self.assertIn("wb setup", str(caught.exception))
         fake_omp = self.root / "omp"
         fake_omp.write_text("#!/bin/sh\necho omp/0.0-test\n")
@@ -134,7 +135,8 @@ class StartRequirementTests(unittest.TestCase):
         self.assertEqual(worker_argv,
                          ["/x/omp", "--config", str(launcher.default_isolation_overlay()),
                           "--config", "/d/omp-isolation-worker.yml", "--no-extensions",
-                          "--append-system-prompt", launcher.WORKER_REPORTING_PROMPT, "--no-title", "--tools", ",".join(launcher.WORKER_TOOLS),
+                          "--append-system-prompt", launcher.WORKER_REPORTING_PROMPT + "\n\n" + launcher.RECORDS_PROMPT,
+                          "--no-title", "--tools", ",".join(launcher.WORKER_TOOLS),
                           "--no-session", "--extension", "/x/bridge.ts"])
         tools = worker_argv[worker_argv.index("--tools") + 1].split(",")
         self.assertFalse({"bash", "eval"} & set(tools))
@@ -143,7 +145,7 @@ class StartRequirementTests(unittest.TestCase):
         self.assertEqual(launcher.omp_command(plan, "/d/omp-isolation-manager.yml"),
                          ["/x/omp", "--config", str(launcher.default_isolation_overlay()),
                           "--config", "/d/omp-isolation-manager.yml", "--no-extensions",
-                          "--append-system-prompt", "", "--no-title", "--no-session",
+                          "--append-system-prompt", launcher.RECORDS_PROMPT, "--no-title", "--no-session",
                           "--extension", "/x/bridge.ts"])
         shell_env = launcher.shell_environment(base)
         self.assertNotIn("WORKBENCH_G3_TOKEN", shell_env)
@@ -170,10 +172,10 @@ class IsolationLaunchTests(unittest.TestCase):
         argv = launcher.omp_command(self.plan("--model", "m", "--config", "/u/mine.yml"), overlay)
         static = str(launcher.default_isolation_overlay())
         self.assertEqual(argv[0], "/x/omp")
-        # R1: an explicit (empty) --append-system-prompt keeps OMP from reading APPEND_SYSTEM.md
+        # R1: an explicit host prompt keeps OMP from reading APPEND_SYSTEM.md
         # user choice: --no-title (no session-title model call; TITLE_SYSTEM.md unused)
         self.assertEqual(argv[1:9], ["--config", static, "--config", str(overlay), "--no-extensions",
-                                     "--append-system-prompt", "", "--no-title"])
+                                     "--append-system-prompt", launcher.RECORDS_PROMPT, "--no-title"])
         # user --omp-arg / WORKBENCH_OMP_ARGS come after isolation and may override it
         self.assertEqual(argv[9:13], ["--model", "m", "--config", "/u/mine.yml"])
         self.assertEqual(argv[-2:], ["--extension", "/x/bridge.ts"])
@@ -182,7 +184,7 @@ class IsolationLaunchTests(unittest.TestCase):
         self.assertFalse(any(item.startswith("--profile") for item in argv))
         # CW-18 supplies the role prompt through the same slot
         role = launcher.omp_command(self.plan(), overlay, "ROLE PROMPT")
-        self.assertEqual(role[6:8], ["--append-system-prompt", "ROLE PROMPT"])
+        self.assertEqual(role[6:8], ["--append-system-prompt", launcher.RECORDS_PROMPT + "\n\nROLE PROMPT"])
         self.assertEqual(role.count("--append-system-prompt"), 1)
 
     def test_static_overlay_file_matches_investigated_settings(self):

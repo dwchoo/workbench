@@ -3,6 +3,9 @@ import net from "node:net";
 import { parseControlEnvelope } from "../contract/v1.ts";
 import { canonicalJson } from "../contract/logs_v1.ts";
 import { countSummaryFragments, dispatchSummarySDK, summaryCountOwner } from "./summary_sdk.ts";
+import { recordsContext } from "./records_context.ts";
+import { REQUEST_FIELDS } from "../contract/records_v1.ts";
+import { recordsTool } from "./records_tool.ts";
 import { modelMetadataObserver } from "./model_metadata.ts";
 
 type Role = "manager" | "worker";
@@ -304,7 +307,7 @@ const TO_MANAGER_PARAMETERS = {
 		},
 	},
 };
-type BridgeTool = "to_worker" | "to_manager" | "terminal" | "restart_worker" | "workbench_status" | "stop_survivor" | "workbench_logs";
+type BridgeTool = "to_worker" | "to_manager" | "terminal" | "restart_worker" | "workbench_status" | "stop_survivor" | "workbench_logs" | "workbench_records";
 const HANDOFF_TOOLS: Record<Role, { name: "to_worker" | "to_manager"; label: string; description: string; parameters: Frame }> = {
 	manager: {
 		name: "to_worker", label: "To worker", parameters: TO_WORKER_PARAMETERS,
@@ -367,7 +370,7 @@ const NOTICE_TYPES: Record<Role, Set<unknown>> = {
 // the tools are registered; at the subagent's session_start they are removed from that session's active tools
 // (pi.setActiveTools), which drops them from the subagent's provider request. The refusal stays as defence.
 const BRIDGE_TOOL_NAMES = new Set(["to_worker", "to_manager", "terminal", "restart_worker", "workbench_status",
-	"stop_survivor", "workbench_logs"]);
+	"stop_survivor", "workbench_logs", "workbench_records"]);
 const SUBAGENT_DETAIL = "Bridge tools are for the worker itself, not its subagents: only the worker itself reports "
 	+ "to the manager and runs commands. Return your findings to the worker instead.";
 
@@ -527,6 +530,7 @@ export default function workbenchG3Extension(pi: any, summarySDK?: Record<string
 		throw new Error("invalid G3 role or session generation");
 	}
 
+	const recentRecords = recordsContext(pi);
 	let socket: net.Socket | undefined;
 	let context: any;
 	let subagentSession = false;  // this instance serves a subagent session: no bridge connection, tools refuse
@@ -732,6 +736,13 @@ export default function workbenchG3Extension(pi: any, summarySDK?: Record<string
 		sessionGeneration: number,
 	): Promise<void> {
 		if (!isCurrentConnection(client, sessionId, sessionGeneration)) return;
+        if (frame.kind === "ready" && frame.sessionId === sessionId && frame.generation === sessionGeneration) {
+            recentRecords.ready(client, () => requestHandoff("workbench_records", randomUUID(),
+                Object.fromEntries(REQUEST_FIELDS.map(name => [name, name === "action" ? "recent" : null])),
+                undefined, 1500, context),
+                () => connected && isCurrentConnection(client, sessionId, sessionGeneration));
+            return;
+        }
 		const ack = (requestId: string, status: string, extra: Frame = {}) =>
 			acknowledge(client, sessionId, sessionGeneration, requestId, status, extra);
 		if (frame.kind === "probe" && typeof frame.requestId === "string") {
@@ -1153,6 +1164,8 @@ export default function workbenchG3Extension(pi: any, summarySDK?: Record<string
 	}
 
 	if (typeof pi.registerTool === "function") {
+		pi.registerTool(recordsTool((callId, args, signal, ctx) =>
+			requestHandoff("workbench_records", callId, args, signal, TOOL_RESULT_TIMEOUT_MS, ctx)));
 		pi.registerTool({
 			name: WORKBENCH_LOGS_TOOL.name,
 			label: WORKBENCH_LOGS_TOOL.label,
@@ -1327,6 +1340,7 @@ export default function workbenchG3Extension(pi: any, summarySDK?: Record<string
 		}
 		context = ctx;
 		ompSessionId = String(ctx.sessionManager.getSessionId());
+        recentRecords.start(ompSessionId, generation);
 		clearReconnect();
 		reconnectAttempt = 0;
 		const previous = socket;
@@ -1344,6 +1358,7 @@ export default function workbenchG3Extension(pi: any, summarySDK?: Record<string
 	pi.on("session_shutdown", () => {
 		if (activeDelivery?.workerStage) markDeliveryUnknown("session_shutdown");
 		shuttingDown = true;
+        recentRecords.stop();
 		failPendingTools(undefined, "session_shutdown");
 		clearReconnect();
 		const previous = socket;
@@ -1352,7 +1367,8 @@ export default function workbenchG3Extension(pi: any, summarySDK?: Record<string
 		inbound = "";
 		previous?.end();
 	});
-	pi.on("input", (event: any) => {
+	pi.on("input", async (event: any) => {
+        await recentRecords.beforeInput();
 		publishState();
 		// OMP 18.11.1 expands inline skill tokens after this public hook, even
 		// with disableModelInvocation. Only a leading user slash invokes this skill.

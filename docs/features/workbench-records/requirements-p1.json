@@ -1,0 +1,153 @@
+{
+  "schema_version": 1,
+  "revision": "wr-r0.2-s1-p1",
+  "authority": "2026-10-20 현재 대화: 사용자의 “그렇게 해서 확정하자.”로 BRIEF r0.2 WR-AC-01~12 전체 승인, docs/features/workbench-records/approval.json의 source_brief_approval과 refine-20261020 결정 기록. 이어서 명시적 $to-tickets docs/features/workbench-records/BRIEF.md가 planning을 허가했다. 아래 gate 세분화와 수준은 해당 동작의 s1/p1 검증 구체화이며 exact bundle 확인 대기다. 구조 검증은 plan 승인이나 실행 근거가 아니다.",
+  "acceptance_ids": [
+    "WR-AC-01",
+    "WR-AC-02",
+    "WR-AC-03",
+    "WR-AC-04",
+    "WR-AC-05",
+    "WR-AC-06",
+    "WR-AC-07",
+    "WR-AC-08",
+    "WR-AC-09",
+    "WR-AC-10",
+    "WR-AC-11",
+    "WR-AC-12"
+  ],
+  "gate_items": [
+    {
+      "id": "WR-G01-context-capability",
+      "acceptance_ids": [
+        "WR-AC-04",
+        "WR-AC-06"
+      ],
+      "required_evidence_level": "runtime"
+    },
+    {
+      "id": "WR-G02-durable-revisions",
+      "acceptance_ids": [
+        "WR-AC-01",
+        "WR-AC-07",
+        "WR-AC-08",
+        "WR-AC-11",
+        "WR-AC-12"
+      ],
+      "required_evidence_level": "fixture"
+    },
+    {
+      "id": "WR-G03-query-cli",
+      "acceptance_ids": [
+        "WR-AC-09",
+        "WR-AC-12"
+      ],
+      "required_evidence_level": "fixture"
+    },
+    {
+      "id": "WR-G04-markdown-snapshot",
+      "acceptance_ids": [
+        "WR-AC-02",
+        "WR-AC-10",
+        "WR-AC-12"
+      ],
+      "required_evidence_level": "fixture"
+    },
+    {
+      "id": "WR-G05-tool-roundtrip",
+      "acceptance_ids": [
+        "WR-AC-01",
+        "WR-AC-04",
+        "WR-AC-05",
+        "WR-AC-07",
+        "WR-AC-08",
+        "WR-AC-09",
+        "WR-AC-10",
+        "WR-AC-12"
+      ],
+      "required_evidence_level": "fixture"
+    },
+    {
+      "id": "WR-G06-session-preview",
+      "acceptance_ids": [
+        "WR-AC-04",
+        "WR-AC-06",
+        "WR-AC-09",
+        "WR-AC-12"
+      ],
+      "required_evidence_level": "runtime"
+    },
+    {
+      "id": "WR-G07-policy-cli",
+      "acceptance_ids": [
+        "WR-AC-02",
+        "WR-AC-03",
+        "WR-AC-05",
+        "WR-AC-10",
+        "WR-AC-12"
+      ],
+      "required_evidence_level": "fixture"
+    },
+    {
+      "id": "WR-G08-preservation-migrate",
+      "acceptance_ids": [
+        "WR-AC-07",
+        "WR-AC-08",
+        "WR-AC-11",
+        "WR-AC-12"
+      ],
+      "required_evidence_level": "fixture"
+    },
+    {
+      "id": "WR-G09-live-flow",
+      "acceptance_ids": [
+        "WR-AC-01",
+        "WR-AC-02",
+        "WR-AC-03",
+        "WR-AC-04",
+        "WR-AC-05",
+        "WR-AC-06",
+        "WR-AC-07",
+        "WR-AC-08",
+        "WR-AC-09",
+        "WR-AC-10",
+        "WR-AC-11",
+        "WR-AC-12"
+      ],
+      "required_evidence_level": "runtime"
+    },
+    {
+      "id": "WR-G10-installed-assets",
+      "acceptance_ids": [
+        "WR-AC-01",
+        "WR-AC-03",
+        "WR-AC-04",
+        "WR-AC-05",
+        "WR-AC-06",
+        "WR-AC-09",
+        "WR-AC-10",
+        "WR-AC-11",
+        "WR-AC-12"
+      ],
+      "required_evidence_level": "runtime"
+    },
+    {
+      "id": "WR-G11-final-review",
+      "acceptance_ids": [
+        "WR-AC-01",
+        "WR-AC-02",
+        "WR-AC-03",
+        "WR-AC-04",
+        "WR-AC-05",
+        "WR-AC-06",
+        "WR-AC-07",
+        "WR-AC-08",
+        "WR-AC-09",
+        "WR-AC-10",
+        "WR-AC-11",
+        "WR-AC-12"
+      ],
+      "required_evidence_level": "static"
+    }
+  ]
+}

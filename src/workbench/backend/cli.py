@@ -39,6 +39,11 @@ START_TIMEOUT = 120.0
 ISOLATION_WAIT = 2 * ISOLATION_CHECK_TIMEOUT + 10.0
 
 
+def _records_command(args: argparse.Namespace) -> int:
+    from workbench.backend.records_cli import cmd_records
+    return cmd_records(args)
+
+
 def _layout(args: argparse.Namespace, *, create: bool = False) -> DataLayout:
     """Resolve project context without initializing a project during queries."""
     from workbench.backend.project import resolve_project_context
@@ -1217,6 +1222,37 @@ def parser() -> argparse.ArgumentParser:
     compat_verify.add_argument("--scripted", action="store_true", required=True)
     compat_verify.add_argument("--json", action="store_true")
     compat_verify.set_defaults(handler=cmd_summary_compat)
+    records = sub.add_parser("records", help="read saved work records")
+    records_sub = records.add_subparsers(dest="records_action", required=True)
+
+    def records_read(name: str) -> argparse.ArgumentParser:
+        action = common(records_sub.add_parser(name))
+        action.add_argument("--json", action="store_true")
+        action.set_defaults(handler=_records_command)
+        return action
+
+    listed_records = records_read("list")
+    listed_records.add_argument("--task", help="filter by Task ID")
+    listed_records.add_argument("--limit", type=int, default=20)
+    listed_records.add_argument("--page", help="cursor returned as next_after")
+    searched_records = records_read("search")
+    searched_records.add_argument("query")
+    searched_records.add_argument("--task", help="filter by Task ID")
+    searched_records.add_argument("--limit", type=int, default=20)
+    searched_records.add_argument("--page", help="cursor returned as next_after")
+    shown_record = records_read("show")
+    shown_record.add_argument("record_id")
+    shown_record.add_argument("--revision", type=int)
+    history_records = records_read("history")
+    history_records.add_argument("record_id")
+    history_records.add_argument("--limit", type=int, default=20)
+    history_records.add_argument("--page", help="cursor returned as next_after")
+
+    export_records = records_read("export")
+    export_records.add_argument("record_id")
+    export_records.add_argument("--revision", type=int)
+    export_records.add_argument("--output", required=True, help="explicit Markdown output path (never overwritten)")
+
     backend = sub.add_parser("_backend", help=argparse.SUPPRESS)
     backend.add_argument("--data-dir", required=True)
     backend.add_argument("--project-dir", required=True)

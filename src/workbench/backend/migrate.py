@@ -60,6 +60,7 @@ def _classification(key, info):
                  'omp-root/logs','raw-logs','raw-logs/.status','raw-v2','important-logs','workflow','workflow/runs','workflow/terminal','workflow/worktrees'}
     if key in directories and stat.S_ISDIR(info.st_mode):return 'durable-directory'
     if key in ('tasks.sqlite3','tasks.sqlite3-wal','tasks.sqlite3-journal'):return 'task-database'
+    if key in ('records.sqlite3','records.sqlite3-journal'):return 'work-records-database'
     if key=='tasks.sqlite3-shm' or key.endswith(('.db-shm','.sqlite3-shm')):return 'sqlite-rebuild-index'
     if key=='backend.log':return 'backend-diagnostic-history'
     if key=='omp-root/agent/models.yml':return 'custom-model-configuration'
@@ -276,6 +277,24 @@ def _validate_task_schema(connection):
     finally:expected.close()
 
 
+def _validate_records_schema(connection):
+    from workbench.contracts.records_v1 import parse_record
+    from workbench.storage.work_records.store import _expected_schema, _SCHEMA_QUERY
+    if tuple(connection.execute(_SCHEMA_QUERY)) != _expected_schema():
+        raise DataDirError('migration records schema definitions differ from supported schema')
+    if connection.execute('SELECT id,kind FROM db_meta').fetchall() != [(1, 'workbench-records-v1')]:
+        raise DataDirError('migration records schema identity is unsupported')
+    if connection.execute("""SELECT 1 FROM records r LEFT JOIN revisions v USING(record_id)
+        GROUP BY r.record_id HAVING COUNT(v.revision)=0 LIMIT 1""").fetchone():
+        raise DataDirError('migration record has no saved revision')
+    connection.row_factory=sqlite3.Row
+    try:
+        for row in connection.execute("""SELECT r.record_id,r.created_at,v.revision,v.title,
+            v.body,v.task_id,v.recorded_at,v.actor FROM records r JOIN revisions v USING(record_id)"""):
+            parse_record(dict(row))
+    finally:connection.row_factory=None
+
+
 def _logical_rows(connection):
     result={}
     for (name,) in connection.execute("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name"):
@@ -292,6 +311,7 @@ def _logical_rows(connection):
 
 def _database_kind(relative):
     if relative=='tasks.sqlite3':return 'tasks'
+    if relative=='records.sqlite3':return 'work-records'
     if re.fullmatch(r'important-logs/[0-9a-f-]{36}\.sqlite3',relative):return 'important'
     if relative=='omp-root/agent/history.db':return 'omp-history'
     return None
@@ -441,6 +461,9 @@ def _recover_databases(source_fd,fd,inventory,source_record,directories):
                             _ended('DB_run_target_'+run,{'pid':ref.get('child_pid'),'start_ticks':ref.get('child_start_ticks')},
                                 source_uid,source_record.get('boot_id'))
                         if not refs and any(kind=='sent' for kind,_ in events):raise DataDirError('migration DB run_target sent without exact child identity')
+                elif kind=='work-records':
+                    if version!=1:raise DataDirError('migration records schema is unsupported')
+                    _validate_records_schema(connection)
                 elif kind=='omp-history':
                     tables={row[0] for row in connection.execute("SELECT name FROM sqlite_master WHERE type='table'")}
                     expected={'history','history_fts','history_fts_data','history_fts_idx','history_fts_docsize','history_fts_config','sqlite_sequence'}
@@ -466,7 +489,8 @@ def _recover_databases(source_fd,fd,inventory,source_record,directories):
                     if _logical_rows(destination)!=before:raise DataDirError('migration logical database content changed')
                     if destination.execute('PRAGMA integrity_check').fetchall()!=[('ok',)]:raise DataDirError('migration normalized integrity failed')
                     journal_format=tuple(recovery['journal_format'])
-                    if journal_format not in ((1,1),(2,2)) or (kind=='important' and journal_format!=(2,2)):
+                    if (journal_format not in ((1,1),(2,2)) or (kind=='important' and journal_format!=(2,2))
+                            or (kind=='work-records' and journal_format!=(1,1))):
                         raise DataDirError('migration database journal format is unsupported by its public reader')
                     normalized=bytearray(destination.serialize())
                     normalized[18:20]=bytes(journal_format)

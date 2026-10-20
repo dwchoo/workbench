@@ -1,4 +1,4 @@
-# OMP Workbench model table (C-D68 (4)). Read by the launcher at every OMP
+# Workbench model table (C-D68 (4)). Read by the launcher at every OMP
 # start and written into the generated per-role --config overlay (modelRoles,
 # tier.openai, task.agentServiceTierOverrides), so these values win over the
 # Workbench OMP home's config.yml on every start. A model change the user makes

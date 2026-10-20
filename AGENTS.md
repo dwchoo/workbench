@@ -1,4 +1,4 @@
-# OMP Workbench
+# Workbench
 
 Manager OMP·worker OMP·host persistent terminal을 연결하는 작업 환경. Task Inbox & Web Board는 후속 Phase 2 기능이다.
 

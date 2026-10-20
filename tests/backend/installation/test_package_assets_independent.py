@@ -115,7 +115,7 @@ class GitInstalledAssetsTests(unittest.TestCase):
         cls.commit=cls.command(['git','-C',str(cls.source),'rev-parse','HEAD']).strip()
         cls.command(['uv','tool','install','--python',sys.executable,
                      'git+'+cls.source.as_uri()+'@'+cls.commit])
-        cls.python=cls.artifact_run/'tools/omp-workbench/bin/python'
+        cls.python=cls.artifact_run/'tools/workbench/bin/python'
         cls.package=Path(cls.command([str(cls.python),'-I','-c',
                      'import workbench; from pathlib import Path; print(Path(workbench.__file__).parent)']).strip())
         # Make the original source location unavailable, then use only installed files.
@@ -136,7 +136,7 @@ from workbench.assets import canonical_path, package_root
 from workbench.backend.summary_compatibility import collect_runtime_identity
 from workbench.backend.summary_adapter import skill_bytes
 identity=collect_runtime_identity()
-print(json.dumps({'direct':json.loads(distribution('omp-workbench').read_text('direct_url.json')),
+print(json.dumps({'direct':json.loads(distribution('workbench').read_text('direct_url.json')),
                   'package':str(package_root()),'unknowns':identity['unknowns'],
                   'entries':{k:v['sha256'] for k,v in identity['runtime_entries'].items() if v['kind']=='file'},
                   'summary':sha256(skill_bytes()).hexdigest()}))

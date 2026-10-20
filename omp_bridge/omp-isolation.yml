@@ -1,4 +1,4 @@
-# OMP Workbench ambient-configuration isolation overlay (C-D59, C-D64).
+# Workbench ambient-configuration isolation overlay (C-D59, C-D64).
 #
 # Passed to both Workbench-launched OMP processes with `--config`. Since C-D64
 # they run in a Workbench-owned OMP home (PI_CONFIG_DIR/PI_CODING_AGENT_DIR

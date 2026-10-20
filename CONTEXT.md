@@ -5,7 +5,7 @@
 
 | 용어 | 의미 |
 |---|---|
-| OMP Workbench | Manager OMP, worker OMP, host persistent terminal과 내부 mailbox를 연결하는 작업 환경. PRD는 1차 core와 2차 부속 기능을 구분한다. |
+| Workbench | Manager OMP, worker OMP, host persistent terminal과 내부 mailbox를 연결하는 작업 환경. 이전 제품명은 OMP Workbench이며 Python 배포 이름은 `workbench`, 기본 명령은 `wb`다. PRD는 1차 core와 2차 부속 기능을 구분한다. |
 | WB 설치본 | 연구 프로젝트의 실행 환경과 독립적으로 설치·관리하는 Workbench 프로그램과 배포 자산. 프로젝트별 작업 이력·로그와 구분한다. |
 | WB 내장 skill | Workbench가 제공하고 설치본과 함께 관리하는 skill과 reference·helper 자산. 사용 중인 연구 프로젝트에 설치·복사하는 skill과 구분한다. |
 | WB 프로젝트 상태 | 특정 연구 프로젝트에 속하는 작업 이력·DB·로그 등 이어서 작업하는 데 필요한 영속 자료. 프로그램 설치본과 구분하며 저장·복구 경계는 설치·사용 BRIEF에서 정한다. |

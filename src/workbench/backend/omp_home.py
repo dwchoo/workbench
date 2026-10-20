@@ -117,7 +117,7 @@ PROVIDER_KEY_ENV = (
 )
 
 AUTH_GUIDANCE = (
-    "OMP Workbench shares only your OMP login and found no usable OMP auth store at {store} ({detail}).\n"
+    "Workbench shares only your OMP login and found no usable OMP auth store at {store} ({detail}).\n"
     "Run 'omp' once outside Workbench and sign in with /login, then start Workbench again.\n"
     "No OMP login yet but a provider API key? With no auth store at that path, a provider API key "
     "environment variable from 'omp --help' (for example ANTHROPIC_API_KEY or OPENAI_API_KEY) lets "

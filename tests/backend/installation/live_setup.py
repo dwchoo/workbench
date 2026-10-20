@@ -108,7 +108,7 @@ def main():
         run([uv, 'build', '-v', '--sdist', '--wheel', '--out-dir', str(dist), str(snapshot)], 'build')
         wheel = next(dist.glob('*.whl'))
         run([uv, 'tool', 'install', '--python', sys.executable, str(wheel)], 'install-wb')
-        python = private / 'uv_tool_dir/omp-workbench/bin/python'
+        python = private / 'uv_tool_dir/workbench/bin/python'
         metadata_program = '''import json, importlib.metadata as m
 from workbench.assets import package_root, canonical_path
 print(json.dumps({'package': str(package_root()), 'helper': str(canonical_path('omp_bridge/setup_probe.ts')),

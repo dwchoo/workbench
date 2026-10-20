@@ -88,7 +88,7 @@ _OMP_ENV_DROP = ("PI_AUTO_QA",)
 PROFILE_OPTION = "--profile"
 
 SHELL_REQUIREMENTS = (
-    "OMP Workbench needs Bash or a POSIX sh on PATH for its persistent host shell.\n"
+    "Workbench needs Bash or a POSIX sh on PATH for its persistent host shell.\n"
     "Neither 'bash' nor 'sh' was found in PATH={path!r}.\n"
     "Install bash (preferred) or make /bin/sh available on PATH, then run the start command again.\n"
     "Your login/default shell (for example zsh) is not used and does not need to change.\n"
@@ -252,7 +252,7 @@ def build_plan(environment: Mapping[str, str], *, omp: str | None = None,
     candidate = str(selection.path) if selection is not None else None
     if not candidate or not os.access(candidate, os.X_OK):
         raise StartRequirementError(
-            f"OMP Workbench needs the 'omp' executable (selected {candidate or 'not found'}). Run 'wb setup', or pass --omp/WORKBENCH_OMP.\n"
+            f"Workbench needs the 'omp' executable (selected {candidate or 'not found'}). Run 'wb setup', or pass --omp/WORKBENCH_OMP.\n"
             "No backend was started.")
     candidate = os.path.abspath(candidate)
     extension = Path(bridge_extension or environment.get(BRIDGE_EXTENSION_ENV) or default_bridge_extension())
@@ -265,7 +265,7 @@ def build_plan(environment: Mapping[str, str], *, omp: str | None = None,
     extra = tuple(omp_args) or tuple(shlex.split(environment.get(OMP_ARGS_ENV, "")))
     if any(_is_profile_arg(item) for item in extra):
         raise StartRequirementError(
-            "OMP Workbench runs OMP with its own OMP home; '--profile' would switch OMP to a profile under "
+            "Workbench runs OMP with its own OMP home; '--profile' would switch OMP to a profile under "
             "~/.omp and is not allowed in --omp-arg/WORKBENCH_OMP_ARGS.\nNo backend was started.")
     return LaunchPlan(shell, candidate, omp_version(candidate), str(extension.resolve()), extra)
 

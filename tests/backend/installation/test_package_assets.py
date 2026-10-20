@@ -42,7 +42,7 @@ class PackageAssetsTests(unittest.TestCase):
         cls.wheel = next((cls.artifact_run / 'dist').glob('*.whl'))
         cls.sdist = next((cls.artifact_run / 'dist').glob('*.tar.gz'))
         cls.command(['uv', 'tool', 'install', '--python', sys.executable, str(cls.sdist)])
-        cls.python = cls.artifact_run / 'tools/omp-workbench/bin/python'
+        cls.python = cls.artifact_run / 'tools/workbench/bin/python'
         (cls.artifact_run / 'artifact-hashes.json').write_text(json.dumps({
             p.name: sha256(p.read_bytes()).hexdigest() for p in (cls.wheel, cls.sdist)}, indent=2))
 

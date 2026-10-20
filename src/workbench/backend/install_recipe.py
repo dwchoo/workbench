@@ -135,7 +135,7 @@ class _OfficialRedirect(HTTPRedirectHandler):
 def _open_https(url: str, *, timeout: float):
     _https(url)
     return build_opener(_OfficialRedirect()).open(
-        Request(url, headers={"User-Agent": "omp-workbench/0.1"}), timeout=timeout)
+        Request(url, headers={"User-Agent": "workbench/0.1"}), timeout=timeout)
 
 
 def _fetch_json(url: str) -> dict:

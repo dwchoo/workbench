@@ -1112,7 +1112,7 @@ def cmd_migrate(args: argparse.Namespace) -> int:
 
 
 def parser() -> argparse.ArgumentParser:
-    root = argparse.ArgumentParser(prog="omp-workbench", description=__doc__.splitlines()[0])
+    root = argparse.ArgumentParser(prog="wb", description=__doc__.splitlines()[0])
     sub = root.add_subparsers(dest="command", required=True)
 
     def common(p: argparse.ArgumentParser) -> argparse.ArgumentParser:

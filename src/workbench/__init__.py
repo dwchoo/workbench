@@ -1,1 +1,1 @@
-"""OMP Workbench package."""
+"""Workbench package."""

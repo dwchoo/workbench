@@ -195,7 +195,7 @@ def _draw(
 ) -> None:
     rows, columns = stdscr.getmaxyx()
     stdscr.erase()
-    header = "OMP Workbench G1 | F6 focus  F7/F8 scrollback  F10 exit"
+    header = "Workbench G1 | F6 focus  F7/F8 scrollback  F10 exit"
     stdscr.addnstr(0, 0, header, max(1, columns - 1), curses.A_BOLD)
     content_top = 1
     content_height = max(1, rows - 2)

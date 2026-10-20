@@ -101,7 +101,7 @@ class InstalledRun:
             path.mkdir(mode=0o700)
             self.env[key] = str(path)
         self.command = self.private / 'uv_tool_bin_dir/wb'
-        self.python = self.private / 'uv_tool_dir/omp-workbench/bin/python'
+        self.python = self.private / 'uv_tool_dir/workbench/bin/python'
         self.projects = []
         self.provider = ThreadingHTTPServer(('127.0.0.1', 0), Provider)
         self.provider.requests = 0

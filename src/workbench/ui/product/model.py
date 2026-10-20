@@ -180,7 +180,7 @@ CLIP_NONE, CLIP_COUNTED, CLIP_EXEMPT = 0, 1, 2  # backlog item: not in an OSC 52
 
 # Provisional key choices (UR-UX will review). Shown only in the help overlay.
 HELP_LINES = (
-    "OMP Workbench 키 (임시 배치 — 사용자 UX 검토 대상)",
+    "Workbench 키 (임시 배치 — 사용자 UX 검토 대상)",
     "",
     "prefix = Ctrl-]   (그 외 모든 키는 focus된 pane에 원본 그대로 전달)",
     "  prefix prefix   prefix 바이트(0x1d)를 그대로 전송",

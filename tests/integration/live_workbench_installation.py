@@ -70,7 +70,7 @@ for d in m.distributions():
  dists.append({'name':d.metadata['Name'],'version':d.version,'metadata':metadata,
                'requires':d.requires or [],'metadata_sha256':sha256(metadata.encode()).hexdigest()})
 print(json.dumps({'package':str(package),'python':sys.executable,'sys_path':sys.path,
- 'identity':identity,'direct_url':json.loads(m.distribution('omp-workbench').read_text('direct_url.json')),
+ 'identity':identity,'direct_url':json.loads(m.distribution('workbench').read_text('direct_url.json')),
  'distributions':dists,'payload':{str(p.relative_to(package)):sha256(p.read_bytes()).hexdigest()
   for p in package.rglob('*') if p.is_file() and '__pycache__' not in p.parts and p.suffix!='.pyc'},
  'preflight_unverified_denied':True,'manager_report_user_only_worker_not_exposed':True}))
@@ -120,7 +120,7 @@ class FinalRun(sessions.InstalledRun):
                 continue
             assert digest(actual.read_bytes()) == expected, relative
         for member, expected in bundle['wheel_members'].items():
-            if member.startswith('omp_workbench-') and '/METADATA' in member:
+            if member.startswith('workbench-') and '/METADATA' in member:
                 assert digest((package.parent / member).read_bytes()) == expected
             if '.data/scripts/' in member:
                 target = self.python.parent / member.rsplit('/', 1)[1]

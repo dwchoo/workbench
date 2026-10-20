@@ -4,9 +4,9 @@ build-backend = "build_support.backend"
 backend-path = ["."]
 
 [project]
-name = "omp-workbench"
+name = "workbench"
 version = "0.1.0"
-description = "Local contracts and harness for OMP Workbench"
+description = "Workbench for project-local OMP sessions, tasks and logs"
 requires-python = ">=3.12"
 dependencies = ["pyte==0.8.2", "wcwidth==0.8.4"]
 

@@ -1,25 +1,46 @@
-# OMP Workbench
+# Workbench
 
 Workbench는 독립 프로그램으로 설치하고, 연구 프로젝트마다 별도 `.wb/`에 이력과 로그를 보관합니다. 연구 프로젝트에 Workbench checkout, Python 의존성, 내장 skills를 설치할 필요가 없습니다.
 
 ## 설치
 
-사전 준비물은 `uv`, 저장소에 접근할 수 있는 Git 인증, Python 3.12 이상입니다. 설치 launcher는 `/bin/sh`와 `-f` 옵션을 지원하는 실행 파일 `/usr/bin/readlink` 또는 `/bin/readlink`를 고정 경로에서 찾습니다. 사용자의 `PATH`에서 다른 `readlink`를 찾는 fallback은 없습니다.
+현재 검증 범위는 Linux x86_64 glibc입니다. `uv`, Git과 저장소 접근 권한, Python 3.12 이상이 필요합니다.
 
-현재 검증 범위는 Linux x86_64 glibc입니다. 이 범위를 모든 Linux 배포판·아키텍처의 지원 보장으로 확대하지 않습니다. `readlink -f` 또는 Workbench tool 환경의 Python interpreter가 없다는 launcher 진단이 나오면, 먼저 위 고정 경로의 OS utility와 Python 3.12 이상을 확인하세요. utility를 설치하거나 고친 뒤에도 tool interpreter가 없으면, 설치에 사용한 것과 같은 실제 Git ref로 uv tool 환경을 다시 만듭니다.
+`uv`가 없다면 [공식 설치 안내](https://docs.astral.sh/uv/getting-started/installation/)를 따르세요. Linux에서는 다음 명령을 사용할 수 있습니다. 설치 후 새 터미널을 열거나 설치기가 안내한 환경 파일을 적용합니다.
 
 ```sh
-uv tool install 'git+https://github.com/dwchoo/ai-exp-assistant.git@<implemented-tag-or-commit>'
+curl -LsSf https://astral.sh/uv/install.sh | sh
+```
+
+Workbench를 연구 프로젝트 밖의 uv tool 환경에 설치하고 OMP를 준비합니다.
+
+```sh
+uv tool install --python 3.12 'git+https://github.com/dwchoo/workbench.git@main'
 wb setup
 ```
 
-`<implemented-tag-or-commit>`은 이 구현이 포함된 저장소의 실제 tag 또는 commit으로 바꾸세요. 현재 uncommitted `main`은 아직 원격에서 설치할 수 있는 ref가 아닙니다. 해당 tag/commit이 원격에서 접근 가능해진 뒤 설치하세요. 재설치가 필요하면 같은 ref를 사용합니다.
+`wb` 명령을 찾지 못하면 `uv tool update-shell`을 실행한 뒤 새 터미널을 여세요. 같은 설치 버전을 재현하려면 `@main` 대신 실제 tag 또는 commit을 지정합니다. `main`은 이후 변경될 수 있습니다. uv tool 환경과 PATH 관리는 [uv tools 안내](https://docs.astral.sh/uv/guides/tools/)를 참고하세요.
+
+이전 이름인 `omp-workbench`로 설치한 사용자는 먼저 사용 중인 모든 프로젝트의 backend를 `wb shutdown`으로 종료한 뒤 기존 tool을 제거하고 위 새 주소로 설치하세요. 기존 설치가 있는지는 `uv tool list`로 확인할 수 있습니다.
 
 ```sh
-uv tool install --force --reinstall 'git+https://github.com/dwchoo/ai-exp-assistant.git@<implemented-tag-or-commit>'
+# 이전 omp-workbench tool이 설치된 경우에만 실행
+uv tool uninstall omp-workbench
+uv tool install --python 3.12 'git+https://github.com/dwchoo/workbench.git@main'
+wb setup
 ```
 
-`uv tool install`은 Workbench와 패키지에 포함된 skills·references·helpers를 uv 관리 환경에 둡니다. 아래 작업 폴더에는 이 저장소를 clone하거나 Workbench를 프로젝트 Python 환경에 추가하지 않아도 됩니다.
+배포 패키지 이름은 `workbench`이고 Python import 이름도 `workbench`입니다. 기본 명령 `wb`와 기존 `omp-workbench` 명령은 모두 유지합니다. 프로젝트 `.wb/`, 기존 setup 설정, 공유 OMP와 runtime 경로는 이름 변경 때문에 이동하거나 삭제하지 않습니다. 경로에 남아 있는 `omp-workbench`는 기존 설치와의 호환성을 위한 저장 위치입니다.
+
+같은 ref의 설치를 다시 만들려면 다음처럼 실행합니다.
+
+```sh
+uv tool install --force --reinstall --python 3.12 'git+https://github.com/dwchoo/workbench.git@main'
+```
+
+`uv tool install`은 Workbench와 내장 skills·references·helpers를 uv 관리 환경에 둡니다. 연구 프로젝트에 이 저장소를 clone하거나 Workbench를 프로젝트 Python 의존성으로 추가할 필요가 없습니다.
+
+설치 launcher는 `/bin/sh`와 `-f`를 지원하는 `/usr/bin/readlink` 또는 `/bin/readlink`를 사용합니다. launcher가 해당 utility나 tool interpreter를 찾지 못하면 고정 경로의 OS utility와 Python 환경을 확인한 뒤 같은 ref로 tool을 다시 설치하세요.
 
 ## OMP 준비와 로그인
 
@@ -138,3 +159,13 @@ wb setup --omp /absolute/path/to/updated/omp
 ## 설치본 skills
 
 설치본이 제공하는 skill source와 역할별 노출 계약은 [Workbench skills 안내](omp_bridge/skills/README.md)를 참고하세요. 이 문서는 연구 프로젝트에 skill을 복사하거나 별도 의존성을 설치하라고 요구하지 않습니다.
+
+## 프로그램 제거
+
+Workbench만 제거하려면 사용 중인 모든 프로젝트의 backend를 종료한 뒤 실행합니다.
+
+```sh
+uv tool uninstall workbench
+```
+
+OMP 자체, 프로젝트 `.wb/`와 기존 setup 설정은 유지됩니다. Workbench 전용 `uninstall` 명령이나 자동 데이터 정리 기능은 제공하지 않습니다.

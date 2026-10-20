@@ -133,7 +133,7 @@ class StableRecipeTests(unittest.TestCase):
                              "sha256": "1" * 64, "size": 1234},
                     "download": "https://build.stencil.so/fixture/omp"}
         def transport(request):
-            self.assertEqual(request.get_header("User-agent"), "omp-workbench/0.1")
+            self.assertEqual(request.get_header("User-agent"), "workbench/0.1")
             response = addinfourl(BytesIO(json.dumps(metadata).encode()), Message(), request.full_url, 200)
             response.msg = "OK"
             return response

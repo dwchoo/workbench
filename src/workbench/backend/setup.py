@@ -9,6 +9,7 @@ import json
 import os
 from pathlib import Path
 import selectors
+import shlex
 import shutil
 import signal
 import stat
@@ -120,8 +121,36 @@ class OMPSelection:
     source: str
 
 
-def resolve_selection(omp=None, environment=None) -> OMPSelection | None:
-    """Passive precedence only: explicit > environment > saved setup > PATH.
+def user_command(environment) -> Path:
+    home = Path(environment.get('HOME') or Path.home())
+    if not home.is_absolute():
+        raise SetupError('absolute_home_required')
+    return home / '.local/bin/omp'
+
+
+def resolve_runtime_selection(omp=None, environment=None) -> OMPSelection:
+    """Runtime keeps the stable command literal; setup provenance is not a fallback."""
+    environment = os.environ if environment is None else environment
+    for supplied, source in ((omp, 'explicit'), (environment.get('WORKBENCH_OMP'), 'environment')):
+        if supplied:
+            return OMPSelection(Path(supplied).absolute(), source)
+    command = user_command(environment)
+    try:
+        parent = _directory(command.parent)
+        try:
+            # Sticky ancestors such as /tmp are valid, but the command directory
+            # itself must not let another user create the default executable.
+            if stat.S_IMODE(os.fstat(parent).st_mode) & 0o022:
+                raise SetupError('unsafe_managed_ancestry', path=command)
+        finally:
+            os.close(parent)
+    except (OSError, SetupError) as error:
+        raise SetupError(getattr(error, 'code', 'unusable_user_command_parent'), path=command) from error
+    return OMPSelection(command, 'user_bin')
+
+
+def resolve_selection(omp=None, environment=None, *, prefer_user_command=False) -> OMPSelection | None:
+    """Passive installation lookup; setup checks user-bin before saved/PATH.
 
     A selected missing/broken candidate remains selected; callers must report it,
     never silently replace it. This read performs no probe, mkdir or download.
@@ -130,6 +159,8 @@ def resolve_selection(omp=None, environment=None) -> OMPSelection | None:
     for supplied, source in ((omp, 'explicit'), (environment.get('WORKBENCH_OMP'), 'environment')):
         if supplied:
             return OMPSelection(Path(supplied).absolute(), source)
+    if prefer_user_command and os.path.lexists(user_command(environment)):
+        return OMPSelection(user_command(environment), 'user_bin')
     record = _read_record(setup_paths(environment))
     if record is not None:
         return OMPSelection(Path(record['path']), 'setup')
@@ -290,10 +321,53 @@ def _checked_binary(binary, environment, expected_version=None):
     return inspected.version, before, sdk
 
 
-def _ready_result(record, status):
+def _command_link(record, environment):
+    binary = Path(record['path'])
+    command = user_command(environment)
+    status = 'created'
+    reason = warning = None
+    try:
+        parent = _directory(command.parent, create=True)
+        try:
+            try:
+                os.symlink(str(binary), command.name, dir_fd=parent)
+                status = 'created'
+            except FileExistsError:
+                try:
+                    matching = os.path.samestat(os.stat(command.name, dir_fd=parent), binary.stat())
+                except OSError:
+                    matching = False
+                if not matching:
+                    raise SetupError('command_link_conflict', path=command)
+                status = 'reused'
+        finally:
+            os.close(parent)
+    except (OSError, SetupError) as error:
+        status = 'warning'
+        reason = getattr(error, 'code', type(error).__name__)
+        warning = f'Could not prepare command link {command}: {reason}. OMP remains ready at {binary}.'
+    found = shutil.which('omp', path=environment.get('PATH', ''))
+    try:
+        on_path = found is not None and Path(found).resolve(strict=True) == binary
+    except (OSError, RuntimeError):
+        on_path = False
+    if on_path:
+        guidance = 'Current PATH resolves omp to the selected OMP.'
+    else:
+        guidance = f'Current PATH does not resolve omp to the selected OMP (found: {found or "none"}).'
+        if status in {'created', 'reused'}:
+            guidance += f' For this shell, run: export PATH={shlex.quote(str(command.parent))}:"$PATH"'
+        guidance += f' You can run the verified absolute executable instead: {shlex.quote(str(binary))}'
+    return {'path': str(command), 'status': status, 'on_path': on_path,
+            'resolved_path': found, 'reason': reason, 'warning': warning, 'guidance': guidance}
+
+
+def _ready_result(record, status, command_link):
     return {'state': 'ready', 'status': status, **{key: record[key] for key in ('path','version','sdk')},
+            'command_link': command_link,
             'real_models': 'unverified',
-            'login_guidance': f"Run {record['path']} and use the OMP /login flow. Login was not checked.",
+            'login_guidance': f"Run {'omp or ' if command_link['on_path'] else ''}{shlex.quote(record['path'])} "
+                              'outside Workbench, use the OMP /login flow, then run wb. Login was not checked.',
             'update_guidance': 'Stop Workbench backends before explicitly updating this OMP installation.'}
 
 
@@ -305,7 +379,7 @@ def run_setup(omp=None, environment=None) -> dict:
     retain_uncertain = False
     with _setup_lock(paths) as parent:
         try:
-            selection = resolve_selection(omp, environment)
+            selection = resolve_selection(omp, environment, prefer_user_command=True)
             recipe = None
             previous, previous_bytes = _read_record(paths, with_bytes=True)
             if selection is None:
@@ -360,7 +434,8 @@ def run_setup(omp=None, environment=None) -> dict:
                     raise SetupError('selection_rollback_failed', path=paths.selection,
                                      detail='Repair the filesystem and inspect the retained setup selection.') from rollback_error
                 raise
-            return _ready_result(record, 'installed' if installed else 'reused')
+            command_link = _command_link(record, environment)
+            return _ready_result(record, 'installed' if installed else 'reused', command_link)
         finally:
             if installed is not None and not committed and not retain_uncertain:
                 shutil.rmtree(installed)

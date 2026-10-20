@@ -46,13 +46,19 @@ uv tool install --force --reinstall --python 3.12 'git+https://github.com/dwchoo
 
 `wb setup`은 기존 실행 파일을 선택해 재사용하거나, 선택할 OMP가 없을 때 공식 stable 배포본을 사용자 전용 위치에 준비합니다. 준비가 끝나면 실행 경로·버전과 SDK 로드 여부를 표시합니다. SDK 로드는 실제 모델 연결 검증을 뜻하지 않습니다. setup은 OMP 로그인이나 연구 작업을 시작하지 않습니다.
 
-OMP 선택 순서는 `wb setup --omp` 인자, `WORKBENCH_OMP`, 이전 setup에서 저장한 경로, `PATH`의 `omp`입니다. 선택한 파일이 없거나 실행할 수 없으면 다른 파일로 조용히 바꾸지 않고 실패를 안내합니다. 직접 선택하려면 다음처럼 실행합니다.
+`wb setup`은 검증한 OMP를 가리키는 `~/.local/bin/omp` 절대 경로 symlink를 준비합니다. 공식 배포본과 기존 외부 실행 파일 모두 대상이며, 외부 실행 파일 자체는 변경하지 않습니다. 이전 설치도 `wb setup`을 다시 실행하면 저장된 설치를 재검사해 빠진 링크를 복구합니다. 이미 같은 실행 파일을 가리키거나 사용자 명령 자체가 실행 파일이면 그대로 재사용합니다. 다른 파일이나 링크는 덮어쓰지 않습니다. 출력에서 현재 `PATH`가 선택한 OMP를 가리키는지 확인하세요. `~/.local/bin`이 빠졌거나 다른 `omp`가 먼저 선택되면 출력된 `export PATH=...`를 현재 shell에서 실행할 수 있습니다. shell 설정 파일은 자동으로 바꾸지 않습니다. 링크를 준비하지 못해도 검증된 절대 실행 경로와 경고를 출력합니다.
+
+setup의 설치 검사 순서는 `wb setup --omp` 인자, `WORKBENCH_OMP`, 현재 `~/.local/bin/omp`, 이전 setup의 설치 기록, `PATH`의 `omp`입니다. 선택한 파일이 없거나 실행할 수 없으면 다른 파일로 조용히 바꾸지 않고 실패를 안내합니다. 직접 선택하려면 다음처럼 실행합니다.
 
 ```sh
 wb setup --omp /absolute/path/to/omp
 ```
 
-setup 출력에 표시된 OMP 실행 파일을 실행하고 OMP의 `/login` 흐름에서 로그인하세요. Workbench는 기존 사용자 OMP의 인증 저장소를 프로젝트별 OMP 설정에 연결해 사용합니다. 인증 DB나 비밀 값을 `.wb/`로 복사하지 않고 새 WB 인증 저장소도 만들지 않습니다. 한 번 로그인한 사용자 OMP 인증은 프로젝트들에서 공유될 수 있습니다.
+일반 `wb` 실행은 `PATH`나 저장된 버전 경로와 관계없이 `~/.local/bin/omp`를 기본 명령으로 사용합니다. `--omp`와 `WORKBENCH_OMP`를 지정하면 그 선택이 우선합니다. 기본 명령이 없거나 고장 나면 저장된 설치 경로로 우회하지 않고 `wb setup`을 안내합니다. setup 기록의 버전 경로는 설치 검사·복구용이며, WB 실행 시에는 symlink 경로를 유지합니다.
+
+일반 `omp`는 OMP 실행 파일로 직접 연결되며 WB wrapper가 아닙니다. WB 전용 인자와 bridge·격리 환경은 WB가 시작하는 OMP process에만 전달합니다. 사용자 OMP 설정·skills·명령이나 shell 환경을 전역으로 설치·변경하지 않습니다.
+
+`wb setup` 이후 출력에서 PATH가 확인되면 `omp`를, 그렇지 않으면 출력된 절대 경로 명령을 실행하고 OMP의 `/login` 흐름에서 로그인한 뒤 `wb`를 실행하세요. Workbench는 기존 사용자 OMP의 인증 저장소를 프로젝트별 OMP 설정에 연결해 사용합니다. 인증 DB나 비밀 값을 `.wb/`로 복사하지 않고 새 WB 인증 저장소도 만들지 않습니다. 한 번 로그인한 사용자 OMP 인증은 프로젝트들에서 공유될 수 있습니다.
 
 Workbench와 OMP의 사용자 위치는 연구 프로젝트 밖에 있습니다.
 
@@ -148,13 +154,19 @@ custom `models.yml`은 지원되는 credential-free configuration subset만 이�
 
 Workbench를 바꿀 때는 먼저 사용 중인 모든 프로젝트의 backend를 `wb shutdown`으로 종료하고, 변경을 포함한 새 Git tag/commit을 명시해 uv tool을 다시 설치하세요. `wb start`와 `wb setup`은 자동으로 Workbench code를 업데이트하지 않습니다. 더 낮은 Workbench 버전으로 기존 `.wb/` DB를 열 수 있다는 보장은 없습니다.
 
-Workbench는 `wb update` 명령을 제공하지 않습니다. 또한 이미 선택되어 정상 동작하는 OMP를 시작할 때나 `wb setup`을 다시 실행할 때 자동으로 최신 버전으로 바꾸지 않습니다. WB가 관리하는 OMP 복사본을 업데이트하는 별도 명령도 없습니다. 준비된 다른 OMP 실행 파일을 선택하려면 모든 backend를 멈춘 다음 실제 경로를 명시하세요.
+Workbench는 `wb update` 명령을 제공하지 않습니다. 또한 이미 선택되어 정상 동작하는 OMP를 시작할 때나 `wb setup`을 다시 실행할 때 자동으로 최신 버전으로 바꾸지 않습니다. WB가 관리하는 OMP 복사본을 업데이트하는 별도 명령도 없습니다. 준비된 다른 OMP 실행 파일을 검사하려면 모든 backend를 멈춘 다음 실제 경로를 명시하세요.
 
 ```sh
 wb setup --omp /absolute/path/to/updated/omp
 ```
 
-이 명령은 해당 실행 파일을 검사하고 setup 선택으로 기록합니다. OMP 자체의 다운로드·업데이트 방법은 선택한 OMP 배포의 안내를 따르세요.
+이 명령은 해당 실행 파일을 검사하고 설치 기록에 저장하지만, 기존 `~/.local/bin/omp`가 다른 실행 파일을 가리키면 링크를 덮어쓰지 않고 경고합니다. 이 경우 일반 `wb`의 기본 실행 파일도 바뀌지 않습니다. 새 실행 파일로 WB를 시작하려면 명시적으로 지정하세요.
+
+```sh
+wb start --omp /absolute/path/to/updated/omp
+```
+
+여러 실행에 같은 선택을 적용하려면 `WORKBENCH_OMP`를 설정할 수 있습니다. 일반 터미널의 `omp`도 바꾸려면 기존 사용자 명령을 확인하고 원하는 OMP를 가리키도록 직접 관리하세요. OMP 자체의 다운로드·업데이트 방법은 선택한 OMP 배포의 안내를 따르세요.
 
 ## 설치본 skills
 

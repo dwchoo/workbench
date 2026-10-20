@@ -19,6 +19,7 @@ import json
 import os
 from pathlib import Path
 import select
+import shlex
 import sys
 import time
 from typing import Mapping
@@ -310,7 +311,7 @@ def omp_home_location(root: Path, environment: Mapping[str, str]) -> None:
         raise StartRequirementError(f"{exc}\nNo backend was started.") from exc
 
 
-def omp_home_requirements(layout: DataLayout, environment: Mapping[str, str]) -> None:
+def omp_home_requirements(layout: DataLayout, environment: Mapping[str, str], *, omp: str | None = None) -> None:
     """C-D64: refuse to start without the user's OMP auth store (never created by Workbench).
 
     Also refused when the store's location cannot be resolved unambiguously
@@ -322,6 +323,8 @@ def omp_home_requirements(layout: DataLayout, environment: Mapping[str, str]) ->
     except OmpHomeError as exc:
         raise StartRequirementError(f"{exc}\nNo backend was started.") from exc
     if guidance:
+        if omp is not None:
+            guidance += f'\nSelected OMP executable: {shlex.quote(omp)}. Run it outside Workbench, use /login, then run wb.'
         raise StartRequirementError(guidance + "\nNo backend was started.")
     omp_home_location(layout.root, environment)
 
@@ -343,7 +346,7 @@ def cmd_start(args: argparse.Namespace) -> int:
             omp_home_location(layout.root, os.environ)
             plan = build_plan(os.environ, omp=args.omp, omp_args=args.omp_arg or (),
                               bridge_extension=args.bridge_extension)
-            omp_home_requirements(layout, os.environ)
+            omp_home_requirements(layout, os.environ, omp=plan.omp)
         except StartRequirementError as exc:
             print(str(exc), file=sys.stderr)
             return EXIT_REQUIREMENT
@@ -1099,6 +1102,11 @@ def cmd_setup(args) -> int:
         print(json.dumps(result, ensure_ascii=False))
     else:
         print(f"OMP {result['status']}: {result['path']} ({result['version']}); SDK loaded; real models unverified.")
+        link = result['command_link']
+        print(f"OMP command link {link['status']}: {link['path']}")
+        if link['warning']:
+            print(f"Warning: {link['warning']}")
+        print(link['guidance'])
         print(result['login_guidance'])
         print(result['update_guidance'])
     return 0
@@ -1128,7 +1136,7 @@ def parser() -> argparse.ArgumentParser:
     setup.add_argument("--json", action="store_true")
     setup.set_defaults(handler=cmd_setup)
     start = common(sub.add_parser("start", help="start (or reuse) the backend and attach"))
-    start.add_argument("--omp", help="OMP executable (default: $WORKBENCH_OMP or 'omp' on PATH)")
+    start.add_argument("--omp", help="OMP executable (default: $WORKBENCH_OMP or ~/.local/bin/omp)")
     start.add_argument("--omp-arg", action="append", help="extra argument passed to both OMP processes")
     start.add_argument("--bridge-extension", help="path to the G3 bridge extension")
     start.add_argument("--no-attach", action="store_true", help="start or reuse the backend without attaching")

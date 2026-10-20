@@ -118,7 +118,8 @@ PROVIDER_KEY_ENV = (
 
 AUTH_GUIDANCE = (
     "Workbench shares only your OMP login and found no usable OMP auth store at {store} ({detail}).\n"
-    "Run 'omp' once outside Workbench and sign in with /login, then start Workbench again.\n"
+    "Run 'wb setup' to prepare OMP and see its executable path. Run 'omp' if setup confirms PATH, "
+    "or run the absolute executable printed by setup, then sign in with /login and run wb again.\n"
     "No OMP login yet but a provider API key? With no auth store at that path, a provider API key "
     "environment variable from 'omp --help' (for example ANTHROPIC_API_KEY or OPENAI_API_KEY) lets "
     "Workbench start without the shared login; the key is passed to the Workbench OMPs as before.\n"

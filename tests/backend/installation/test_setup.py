@@ -101,6 +101,8 @@ time.sleep(30)
 
 
     def test_absent_omp_downloads_one_pinned_stable_into_private_versioned_prefix(self):
+        command = self.root / 'home/.local/bin/omp'
+        self.env['PATH'] = str(command.parent) + os.pathsep + self.env['PATH']
         artifact = self.executable('download-fixture', '88.2.3').read_bytes()
         expected_hash = sha256(artifact).hexdigest()
         download_url = 'https://build.stencil.so/fixture/omp'
@@ -123,6 +125,13 @@ time.sleep(30)
         self.assertIn('88.2.3', binary.parent.name)
         self.assertEqual(binary.read_bytes(), artifact)
         self.assertEqual(binary.stat().st_mode & 0o777, 0o700)
+        self.assertTrue(command.is_symlink())
+        self.assertEqual(os.readlink(command), str(binary))
+        invoked = subprocess.run(['omp', '--version'], env=self.env, capture_output=True,
+                                 text=True, timeout=5)
+        self.assertEqual((invoked.returncode, invoked.stdout.strip()), (0, 'omp/88.2.3'))
+        self.assertEqual(result['command_link']['status'], 'created')
+        self.assertTrue(result['command_link']['on_path'])
         record = json.loads(self.record.read_text())
         self.assertEqual((record['binary_sha256'], record['recipe']['version'], record['recipe']['sha256']),
                          (expected_hash, '88.2.3', expected_hash))
@@ -374,7 +383,7 @@ time.sleep(30)
         self.executable('alternative')
         code, output, error = self.cli()
         self.assertEqual(code, 1, error)
-        self.assertEqual(json.loads(output)['path'], str(binary))
+        self.assertEqual(json.loads(output)['path'], str(self.root / 'home/.local/bin/omp'))
         self.assertEqual(self.record.read_bytes(), saved)
 
 

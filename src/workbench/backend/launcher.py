@@ -244,11 +244,12 @@ def build_plan(environment: Mapping[str, str], *, omp: str | None = None,
                omp_args: Sequence[str] = (), bridge_extension: str | None = None) -> LaunchPlan:
     """Check every start requirement before any backend process is created."""
     shell = choose_shell(environment)
-    from workbench.backend.setup import SetupError, resolve_selection
+    from workbench.backend.setup import SetupError, resolve_runtime_selection
     try:
-        selection = resolve_selection(omp, environment)
+        selection = resolve_runtime_selection(omp, environment)
     except SetupError as exc:
-        raise StartRequirementError(f'OMP selection failed: {exc}. Run wb setup. No backend was started.') from exc
+        raise StartRequirementError(
+            f'OMP selection failed (selected {exc.path or "unknown"}): {exc}. Run wb setup. No backend was started.') from exc
     candidate = str(selection.path) if selection is not None else None
     if not candidate or not os.access(candidate, os.X_OK):
         raise StartRequirementError(
@@ -267,7 +268,11 @@ def build_plan(environment: Mapping[str, str], *, omp: str | None = None,
         raise StartRequirementError(
             "Workbench runs OMP with its own OMP home; '--profile' would switch OMP to a profile under "
             "~/.omp and is not allowed in --omp-arg/WORKBENCH_OMP_ARGS.\nNo backend was started.")
-    return LaunchPlan(shell, candidate, omp_version(candidate), str(extension.resolve()), extra)
+    try:
+        version = omp_version(candidate)
+    except StartRequirementError as exc:
+        raise StartRequirementError(f"{exc}. Run 'wb setup'. No backend was started.") from exc
+    return LaunchPlan(shell, candidate, version, str(extension.resolve()), extra)
 
 
 def _is_profile_arg(item: str) -> bool:

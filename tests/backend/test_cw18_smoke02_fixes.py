@@ -63,7 +63,7 @@ class CriteriaContractTests(unittest.TestCase):
         self.assertEqual(errors, [])
 
     def test_skill_explains_the_three_criteria_and_how_to_choose_result_file(self):
-        text = (ROOT / "omp_bridge/skills/to-worker/SKILL.md").read_text()
+        text = (ROOT / "omp_bridge/skills/to-worker/references/task-fields.md").read_text()
         self.assertRegex(text, r"(?i)all three .*required")
         line = next(l for l in text.splitlines() if "result_file" in l and "writes" in l)
         self.assertRegex(line, r"(?i)indeterminate")

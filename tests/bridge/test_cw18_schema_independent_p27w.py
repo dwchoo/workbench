@@ -40,7 +40,9 @@ def skill(name: str) -> tuple[dict, str]:
     match = re.match(r"---\n(.*?)\n---\n(.*)", text, re.S)
     assert match, f"{name}: no front matter"
     front = dict(line.split(": ", 1) for line in match.group(1).splitlines() if ": " in line)
-    return front, match.group(2)
+    references = ("task-fields.md", "task-results.md") if name == "to-worker" else ("reports.md", "terminal.md")
+    details = [(SKILLS / name / "references" / reference).read_text() for reference in references]
+    return front, "\n\n".join([match.group(2), *details])
 
 
 @unittest.skipUnless(shutil.which("node"), "node is required to load the bridge extension")
@@ -129,7 +131,8 @@ class SkillContentTests(unittest.TestCase):
             front, body = skill(name)
             self.assertEqual(front.get("name"), name)
             self.assertTrue(front.get("description"))
-            self.assertLess(len(body.splitlines()), 80, "about one page")
+            self.assertLessEqual(len((SKILLS / name / "SKILL.md").read_text().splitlines()), 60,
+                                 "entry stays concise")
             lowered = body.lower()
             for removed in ("approval_pending", "approve", "order-worker", "order-manager"):
                 self.assertNotIn(removed, lowered, f"{name} still mentions {removed}")

@@ -24,7 +24,9 @@ def flat(text: str) -> str:
 
 
 def skill(name: str) -> str:
-    return flat((SKILLS / name / "SKILL.md").read_text(encoding="utf-8"))
+    entry = (SKILLS / name / "SKILL.md").read_text(encoding="utf-8")
+    reference = "terminal.md" if name == "to-manager" else "task-fields.md"
+    return flat(entry + "\n" + (SKILLS / name / "references" / reference).read_text(encoding="utf-8"))
 
 
 def terminal_description() -> str:

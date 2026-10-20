@@ -10,6 +10,19 @@ off by `omp_bridge/omp-isolation.yml`.
 Layout: one directory per skill, `<name>/SKILL.md` with `name` and
 `description` frontmatter. This README is not a skill.
 
+Keep the `to-worker` and `to-manager` entrypoints within 5,000 characters,
+600 whitespace-delimited words and 60 lines, including frontmatter. Existing
+skill tests enforce all three limits. Keep essential role boundaries in the
+entrypoints; put field tables and conditional procedures in linked references
+with explicit read conditions. Read only the reference needed for the current
+action; do not preload the whole reference tree or duplicate its instructions.
+Reuse details already in context instead of reading them again on every call.
+
+The Workbench worker launch also appends a short reporting policy to OMP's
+system prompt. Routine progress stays in the host terminal/logs; Manager reports
+are reserved for actionable issues/decisions, explicit status requests and final
+Task results. Automatic monitor questions require no healthy acknowledgement.
+
 Role filtering: `ROLE_SKILL_PATTERNS` in `src/workbench/backend/launcher.py`
 maps `manager`/`worker` to glob patterns written as `skills.includeSkills` in
 that role's overlay. An empty tuple means no role filter (every skill here is

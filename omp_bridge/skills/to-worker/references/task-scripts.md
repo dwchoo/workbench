@@ -1,0 +1,9 @@
+# Task scripts and visible progress
+
+Apply when creating or editing task code. Staged `response_contract` replies remain marker-only, with no tools.
+
+- Reuse a suitable existing script. Save task-local helpers in `<project-root>/.wb/scripts/`; save reusable code and project deliverables in the appropriate project directory. Resolve paths from the project root, regardless of terminal cwd or `--data-dir`.
+- Save code before running it. Do not embed a whole program in `python -c`, a heredoc or a long shell command. Workbench's automatic command wrapping does not replace a maintained script. Short read-only queries and ordinary shell commands need no script.
+- Manager: authorize script edits in `spec.paths` and list file-based execution commands. Correct conflicting procedures before delegation; update paths/commands explicitly for follow-ups. Worker: request missing authorization and report `blocked`; never bypass the allowlist with inline code. Report saved paths and the invocation.
+- Keep the simplest implementation for today's task. Reuse code; parameterize run-varying inputs/outputs through arguments or existing configuration. Avoid machine-specific paths, credentials and duplicated logic. Keep useful defaults/constants; add no speculative framework, plugin system or abstraction.
+- Generated long-running code must show progress: update one line with stage and completed/total using available `tqdm` or carriage return plus flushing. With unknown totals, show actual count or stage and elapsed time, never invented percentages. Throttle updates; show errors/warnings separately and finish with a success/failure summary and newline. Non-interactive output uses sparse milestones. Prefer existing dependencies or the standard library; do not install a package just for a progress bar or rewrite a quick query/external command to add one.

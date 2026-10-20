@@ -58,12 +58,18 @@ class RequiredArgsAndEnvTests(unittest.TestCase):
         plan = base.plan_for(args=args)
         return launcher.omp_command(plan, overlay) if append is None else launcher.omp_command(plan, overlay, append)
 
-    def test_append_system_prompt_is_empty_and_no_title_is_present_for_both_roles(self):
+    def test_worker_reporting_role_is_injected_without_changing_manager_or_isolation(self):
         for role in ("manager", "worker"):
             with self.subTest(role=role):
                 command = self.command(role)
                 self.assertEqual(command.count("--append-system-prompt"), 1, command)
-                self.assertEqual(command[command.index("--append-system-prompt") + 1], "", command)
+                prompt = command[command.index("--append-system-prompt") + 1]
+                if role == "worker":
+                    self.assertIn("Workbench worker", prompt)
+                    self.assertIn("Do not send routine progress", prompt)
+                    self.assertIn("response_contract", prompt)
+                else:
+                    self.assertEqual(prompt, "", command)
                 self.assertEqual(command.count("--no-title"), 1, command)
                 self.assertGreater(command.index("--append-system-prompt"), command.index("--no-extensions"))
                 self.assertEqual(command.count("--extension"), 1)
@@ -73,7 +79,9 @@ class RequiredArgsAndEnvTests(unittest.TestCase):
     def test_the_append_slot_carries_a_role_prompt_without_adding_a_second_flag(self):
         command = self.command("worker", append="ROLE PROMPT for CW-18")
         self.assertEqual(command.count("--append-system-prompt"), 1)
-        self.assertEqual(command[command.index("--append-system-prompt") + 1], "ROLE PROMPT for CW-18")
+        prompt = command[command.index("--append-system-prompt") + 1]
+        self.assertIn("Do not send routine progress", prompt)
+        self.assertTrue(prompt.endswith("\n\nROLE PROMPT for CW-18"))
 
     def test_user_arguments_still_follow_every_isolation_argument(self):
         command = self.command("worker", args=("--thinking", "high"))

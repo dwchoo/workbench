@@ -329,7 +329,12 @@ const HANDOFF_TOOLS: Record<Role, { name: "to_worker" | "to_manager"; label: str
 	worker: {
 		name: "to_manager", label: "To manager", parameters: TO_MANAGER_PARAMETERS,
 		description: "Report to the Workbench manager OMP about the active Task: answer, progress, done, blocked "
-			+ "or report. Set every field you do not use to null. After done or blocked, end your turn. Never use it "
+			+ "or report. Report only new actionable problems/decisions, explicitly requested status/answers, "
+			+ "or the final Task result. Keep routine progress, elapsed/remaining time, budget updates and "
+			+ "healthy acknowledgements in the host terminal/logs; automatic checks do not request reports. "
+			+ "Avoid unsolicited repeat issue reports without new actionable evidence; explicit answers and "
+			+ "required final results still apply. "
+			+ "Set every field you do not use to null. After done or blocked, end your turn. Never use it "
 			+ "while answering a message that carries a response_contract.",
 	},
 };

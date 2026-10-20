@@ -11,7 +11,7 @@ would replace the agent dir and are never used.
 
 C-D59 isolation (kept): both OMP processes also get ``--config`` overlays (the
 static ``omp_bridge/omp-isolation.yml`` plus a per-role overlay generated in
-the data dir), ``--no-extensions``, ``--append-system-prompt ""`` and
+the data dir), ``--no-extensions``, an explicit ``--append-system-prompt`` and
 ``--no-title``, because project config (``<cwd>/.omp/config.yml`` etc.) still
 overrides the home config.yml and only ``--config`` wins over it. Ambient
 context files (AGENTS.md/CLAUDE.md), APPEND_SYSTEM.md, project skills, rules,
@@ -158,6 +158,19 @@ ROLE_TASK_AGENTS: dict[str, frozenset[str]] = {"manager": BUNDLED_TASK_AGENTS,
 # and in smoke-02 it was used to "wait" on a terminal command. A worker ``wait``
 # is a leak (outside this allowlist); the manager keeps it.
 WORKER_TOOLS = ("read", "grep", "glob", "edit", "write", "web_search", "todo", "task")
+WORKER_REPORTING_PROMPT = (
+    "Workbench worker: execute the delegated Task and conserve Manager context. "
+    "Do not send routine progress, percentages, elapsed/remaining time, budget updates, intermediate step "
+    "completions or 'no errors' reports to the Manager. Keep those in the host terminal and logs. "
+    "Use to_manager only for a new actionable problem or blocked work, a decision/scope change needed from "
+    "the Manager, an explicitly requested status/answer, or the required final Task result (done/blocked). "
+    "Do not send unsolicited repeat issue reports unless new evidence requires another decision; "
+    "explicit answers and required final results still apply. "
+    "Automatic terminal_check/status_check/periodic_review messages are monitoring cues, not requests for "
+    "progress or acknowledgements, even when delivered as a Manager question. If healthy, end the turn "
+    "locally without to_manager. A response_contract always takes precedence: return only its required "
+    "marker/JSON and use no tools."
+)
 # Built-in tools that must not appear in the worker OMP (reported as leaks).
 WORKER_FORBIDDEN_TOOLS = frozenset({"bash", "eval"})
 # The Workbench bridge tools of the worker (extension tools, not affected by --tools). p27-cd68-fix-01 P3-3:
@@ -284,7 +297,7 @@ def isolation_args(role_overlay: Path | str, append_system_prompt: str = "") -> 
 
     ``--append-system-prompt`` is always passed: OMP only falls back to an
     ambient APPEND_SYSTEM.md when the option is absent, and an empty value
-    appends nothing. CW-18 supplies the role prompt through this slot.
+    appends nothing. ``omp_command`` supplies the worker reporting role through this slot.
     ``--no-title`` skips the session-title model call (TITLE_SYSTEM.md unused).
     """
     return ["--config", str(default_isolation_overlay()), "--config", str(role_overlay), "--no-extensions",
@@ -311,8 +324,11 @@ def omp_command(plan: LaunchPlan, role_overlay: Path | str, append_system_prompt
     # Order matters: user arguments follow the isolation arguments (and may
     # override them); the explicit bridge extension still loads under
     # --no-extensions.
-    return [plan.omp, *isolation_args(role_overlay, append_system_prompt),
-            *role_tool_args(role or overlay_role(role_overlay)), *plan.omp_args,
+    selected_role = role or overlay_role(role_overlay)
+    prompt = "\n\n".join(part for part in (
+        WORKER_REPORTING_PROMPT if selected_role == "worker" else "", append_system_prompt) if part)
+    return [plan.omp, *isolation_args(role_overlay, prompt),
+            *role_tool_args(selected_role), *plan.omp_args,
             "--extension", plan.bridge_extension]
 
 

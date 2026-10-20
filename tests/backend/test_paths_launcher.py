@@ -134,7 +134,7 @@ class StartRequirementTests(unittest.TestCase):
         self.assertEqual(worker_argv,
                          ["/x/omp", "--config", str(launcher.default_isolation_overlay()),
                           "--config", "/d/omp-isolation-worker.yml", "--no-extensions",
-                          "--append-system-prompt", "", "--no-title", "--tools", ",".join(launcher.WORKER_TOOLS),
+                          "--append-system-prompt", launcher.WORKER_REPORTING_PROMPT, "--no-title", "--tools", ",".join(launcher.WORKER_TOOLS),
                           "--no-session", "--extension", "/x/bridge.ts"])
         tools = worker_argv[worker_argv.index("--tools") + 1].split(",")
         self.assertFalse({"bash", "eval"} & set(tools))

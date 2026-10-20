@@ -197,7 +197,10 @@ class MessageLimitContractTests(unittest.TestCase):
 
 
 def skill(name: str) -> str:
-    return " ".join((SKILLS / name / "SKILL.md").read_text().split())
+    reference = "reports.md" if name == "to-manager" else "task-fields.md"
+    entry = (SKILLS / name / "SKILL.md").read_text()
+    details = (SKILLS / name / "references" / reference).read_text()
+    return " ".join((entry + "\n" + details).split())
 
 
 class SkillTextTests(unittest.TestCase):

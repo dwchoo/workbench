@@ -134,9 +134,13 @@ RUNNING_DETAIL = ("The command keeps running in the host terminal. End your turn
                   "check shows a problem: Workbench sends you a check every 60 s while it runs and a completion "
                   "notice when it exits. The user can stop it in the host terminal.")
 CHECK_INSTRUCTION = ("Workbench check (automatic, every 60 s while your terminal command runs). Look at the new "
-                     "output for errors or a hang. Do not start another command and do not wait for it. If it is "
-                     "useful, report to the manager with to_manager (with no Task, tell the user in your reply); "
-                     "then end your turn with one short text line (never an empty reply). The completion notice "
+                     "output for errors or a hang. Do not start another command and do not wait for it. "
+                     "Use to_manager only for a new actionable problem or a needed manager decision, or an "
+                     "explicitly requested status; do not repeat the same issue without new actionable evidence "
+                     "(with no Task, tell the user only about actionable problems). Do not send routine progress, "
+                     "percentages, elapsed/remaining time, budget updates, intermediate completions or 'no errors' "
+                     "reports. An automatic check is not a request for a report or acknowledgement. "
+                     "End your turn with one short local text line (never an empty reply). The completion notice "
                      "follows when the command exits.")
 DONE_INSTRUCTION = ("Workbench notice: your terminal command ended. Read the result (the full output is in "
                     "log_path) and continue your work.")

@@ -23,8 +23,22 @@ def frontmatter(name: str) -> dict[str, str]:
     return dict(line.split(": ", 1) for line in match.group(1).splitlines())
 
 
-def body(name: str) -> str:
+def entry(name: str) -> str:
     return (SKILLS / name / "SKILL.md").read_text(encoding="utf-8")
+
+
+def body(name: str) -> str:
+    """Validate the entry plus explicitly linked reference contracts."""
+    path = SKILLS / name / "SKILL.md"
+    text = entry(name)
+    references = []
+    for target in re.findall(r"\[[^\]]+\]\(([^)]+\.md)(?:#[^)]*)?\)", text):
+        reference = (path.parent / target).resolve()
+        assert reference.is_relative_to(SKILLS.resolve()), target
+        assert reference.is_file(), f"broken skill reference: {target}"
+        if reference not in references:
+            references.append(reference)
+    return "\n\n".join([text, *(p.read_text(encoding="utf-8") for p in references)])
 
 
 def schema_properties(constant: str) -> set[str]:
@@ -42,7 +56,7 @@ class SkillFileTests(unittest.TestCase):
             fields = frontmatter(name)
             self.assertEqual(fields["name"], name)
             self.assertTrue(fields["description"].strip())
-            self.assertLessEqual(len(body(name).splitlines()), 90, "about one page")
+            self.assertLessEqual(len(entry(name).splitlines()), 60, "entry stays concise")
 
     def test_only_these_skill_directories_exist(self):
         dirs = sorted(entry.name for entry in SKILLS.iterdir() if entry.is_dir())
@@ -193,9 +207,10 @@ class SmokeCorrectionSkillTests(unittest.TestCase):
 
     def test_skills_stay_about_one_page(self):
         for name in ("to-worker", "to-manager"):
-            text = body(name)
-            self.assertLess(len(text.splitlines()), 70, name)
-            self.assertLess(len(text), 11000, name)  # C-D69: +procedure delegation, (6) manager-written commands
+            text = entry(name)
+            self.assertLessEqual(len(text.splitlines()), 60, name)
+            self.assertLessEqual(len(text), 5000, name)
+            self.assertLessEqual(len(text.split()), 600, name)
 
 
 class RoleFilterTests(unittest.TestCase):
@@ -265,7 +280,7 @@ class TerminalAndManagerRuleTests(unittest.TestCase):
         self.assertRegex(commands, r"`terminal_done`")
         self.assertNotRegex(commands, r"(?i)to wait again|wait for it again|wait for it with `command` null")
         self.assertNotRegex(text, r"(?i)run tests\)")  # no hint at another way to run commands
-        self.assertLess(len(text.splitlines()), 75)
+        self.assertLessEqual(len(entry("to-manager").splitlines()), 60)
 
     def test_to_worker_skill_bridge_and_result_carry_the_manager_rule(self):
         text = body("to-worker")
@@ -276,7 +291,7 @@ class TerminalAndManagerRuleTests(unittest.TestCase):
         self.assertIn("The worker does this Task; do not do it yourself", flow_tasks.MANAGER_RULE)
         self.assertIn("to_manager report", flow_tasks.MANAGER_RULE)
         self.assertGreaterEqual(FLOW_TASKS.count('"manager_rule": MANAGER_RULE'), 3)
-        self.assertLess(len(text), 11000)
+        self.assertLessEqual(len(entry("to-worker")), 5000)
 
     def test_bridge_registers_terminal_for_the_worker_only(self):
         self.assertRegex(BRIDGE, r'if \(role === "worker"\) \{\s*pi\.registerTool\(\{\s*name: TERMINAL_TOOL\.name')
@@ -295,7 +310,7 @@ class WorkerSubagentRuleTests(unittest.TestCase):
         self.assertRegex(sub, r"(?i)without `agent` fails")
         self.assertRegex(sub, r"(?i)never send `to_manager` reports and never run terminal commands")
         self.assertIn("`terminal`", section(text, "Running commands: `terminal`"))  # existing guidance intact
-        self.assertLess(len(text.splitlines()), 75)
+        self.assertLessEqual(len(entry("to-manager").splitlines()), 60)
 
     def test_agent_definitions_match_the_skill(self):
         agents = Path(launcher.default_bridge_extension()).parent.parent / "agents"

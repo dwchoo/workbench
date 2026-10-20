@@ -160,7 +160,9 @@ class WorkerHasNoWaitTool(unittest.TestCase):
 
 class TextSaysEndTheTurnWithOneShortLine(unittest.TestCase):
     def test_the_worker_skill(self):
-        text = (REPO / "omp_bridge/skills/to-manager/SKILL.md").read_text()
+        entry = (REPO / "omp_bridge/skills/to-manager/SKILL.md").read_text()
+        details = (REPO / "omp_bridge/skills/to-manager/references/terminal.md").read_text()
+        text = entry + "\n" + details
         self.assertRegex(text, SHORT_LINE)
         self.assertRegex(text, NO_EMPTY)
         self.assertRegex(text, re.compile(r"do not wait with repeated `?terminal`? calls", re.I))

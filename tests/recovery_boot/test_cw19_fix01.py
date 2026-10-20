@@ -48,7 +48,7 @@ from workbench.terminal.shell_g2.prototype import ShellChoice
 from workbench.ui.product.model import BOOT_RECONCILE_FAILED_TEXT, BOOT_WAIT_TEXT, ProductModel
 
 BOOT = "cccccccc-3333-4333-8333-cccccccccccc"
-SKILL = Path(__file__).resolve().parents[2] / "omp_bridge" / "skills" / "to-worker" / "SKILL.md"
+SKILL = Path(__file__).resolve().parents[2] / "omp_bridge/skills/to-worker/references/task-results.md"
 
 
 class Temp(unittest.TestCase):

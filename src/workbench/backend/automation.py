@@ -87,7 +87,11 @@ INTERRUPTION = {"none": "none", "not_needed": "not_needed", "requested": "reques
                 "stop_observed": "confirmed", "request_failed": "request_failed", "unknown": "unknown"}
 REVIEW_INSTRUCTION = ("Workbench periodic review (automatic, every 60 s while the experiment runs). Judge from "
                       "these public run facts whether the run looks healthy. Do not stop, restart or change "
-                      "anything. Use to_manager only when the manager has to act.")
+                      "anything. Use to_manager only when the manager has to act on a new problem or decision; "
+                      "do not repeat an issue without new actionable evidence. This automatic question is not a "
+                      "request for a status report or acknowledgement. Do not send routine progress, percentages, "
+                      "elapsed/remaining time, budget updates, intermediate completions or 'no errors' reports. "
+                      "If healthy, end your turn locally without to_manager.")
 
 
 def _iso(wall: float | None) -> str | None:

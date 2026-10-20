@@ -74,7 +74,8 @@ STATUS_CHECK_INSTRUCTION = (
     "Workbench status check (automatic): your Task is open and you have been idle for {idle} s with no terminal "
     "command running and no message on its way. If the Task is finished, report done with to_manager; if you are "
     "blocked, report blocked with to_manager (say why); if listed commands remain, run the next one with the "
-    "terminal tool; otherwise end your turn with one short text line (never an empty reply).")
+    "terminal tool; otherwise end your turn with one short local text line (never an empty reply). "
+    "This automatic check is not a request for routine progress or a healthy-status acknowledgement.")
 STALLED_HINT = (
     "Workbench notice: the worker sent no report and ran no command after {checks} automatic status checks. Use the "
     "workbench-recovery skill: call workbench_status, then decide: a follow-up to_worker on this task_id (continue or "

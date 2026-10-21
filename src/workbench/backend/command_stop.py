@@ -426,7 +426,13 @@ class StopEpisode:
         self.requested_at = _now()
         self.stage = "identifying"
         self.signals: list[dict[str, Any]] = []
-        self.stop_signal: str | None = None  # the last signal this episode sent (set just before it leaves)
+        self.stop_signal: str | None = None  # the last non-auxiliary signal this episode delivered
+        # held while a stage signals (re-entrant: the signalling thread asks the marker from inside its own send); a
+        # marker asked from another thread waits for a send in progress, so it never reports a signal that has not
+        # yet been shown to reach a process
+        self._send_lock = threading.RLock()
+        self._sending: int | None = None  # the thread id of a non-auxiliary send in progress
+        self._attempt: str | None = None  # the signal about to leave in that send
         self.result: dict[str, Any] | None = None
         self.done = threading.Event()
         self._settle = threading.Lock()  # the final result and the late correction are decided one at a time
@@ -545,26 +551,49 @@ class StopEpisode:
 
     def _send(self, pins: list[ProcessPin], signum: int, stage: str, failed: list[dict[str, Any]], *,
               auxiliary: bool) -> list[dict[str, int]]:
-        """Signal each pinned member; record the signal with the members reached and those that failed."""
-        at, sent = _now(), []
-        if pins and not auxiliary:
-            self.stop_signal = signal.Signals(signum).name  # before it leaves: the owner may see the end at once
-        for pin in pins:
-            outcome = pin.send(signum)
-            if outcome == SENT:
-                sent.append({"pid": pin.pid, "start_ticks": pin.start_ticks})
-            else:  # ESRCH reads as ``ended``, EPERM as ``permission_denied``
-                if outcome in _STALE_REASONS:
-                    self._mismatched.add(pin.pid)
-                failed.append({"pid": pin.pid, "reason": outcome})
+        """Signal each pinned member; record the signal with the members reached and those that failed.
+
+        The stop marker exists from just before the first signal leaves (the owner may see the end at once), but is
+        withdrawn again if the episode ends up having delivered no non-auxiliary signal (EPERM, a process gone): see
+        ``marker``."""
         name = signal.Signals(signum).name
-        if sent:
-            self.signals.append({"signal": name, "number": int(signum), "at": at, "stage": stage,
-                                 "auxiliary": auxiliary, "targets": sent, "failed": [dict(item) for item in failed]})
+        with self._send_lock:
+            if pins and not auxiliary:
+                self._sending, self._attempt = threading.get_ident(), name  # before it leaves
+            try:
+                at, sent = _now(), []
+                for pin in pins:
+                    outcome = pin.send(signum)
+                    if outcome == SENT:
+                        sent.append({"pid": pin.pid, "start_ticks": pin.start_ticks})
+                    else:  # ESRCH reads as ``ended``, EPERM as ``permission_denied``
+                        if outcome in _STALE_REASONS:
+                            self._mismatched.add(pin.pid)
+                        failed.append({"pid": pin.pid, "reason": outcome})
+                if sent:
+                    self.signals.append({"signal": name, "number": int(signum), "at": at, "stage": stage,
+                                         "auxiliary": auxiliary, "targets": sent,
+                                         "failed": [dict(item) for item in failed]})
+                    if not auxiliary:
+                        self.stop_signal = name
+            finally:
+                self._sending = self._attempt = None
         self._service.record({"type": "command_stop_signal", "command_id": self.command_id, "signal": name,
                               "at": at, "stage": stage, "targets": sent, "failed": list(failed),
                               "auxiliary": auxiliary})
         return sent
+
+    def marker(self) -> dict[str, str]:
+        """``{"stopped_by", "stop_signal"}`` if this episode delivered a non-auxiliary signal, else ``{}``.
+
+        Inside the signalling thread's own send the signal about to leave counts (the marker is there when it
+        leaves); any other caller waits for a send in progress and then sees only delivered signals."""
+        if self._sending == threading.get_ident():
+            name = self._attempt
+        else:
+            with self._send_lock:
+                name = self.stop_signal
+        return {} if name is None else {"stopped_by": self.requested_by, "stop_signal": name}
 
     def _stopped(self, pid: int) -> bool:
         stat = self._service.env.read_stat(pid)
@@ -791,11 +820,12 @@ class CommandStopService:
                 entry.episode.owner_ended()  # an episode that already ended unknown is corrected
 
     def stop_marker(self, command_id: str) -> dict[str, str]:
-        """``{"stopped_by", "stop_signal"}`` once a stop of this command has sent a signal, else ``{}``.
+        """``{"stopped_by", "stop_signal"}`` once a stop of this command has delivered a signal, else ``{}``.
 
         For the owner, which puts it on the command's result, notice and run record (the Worker must not take a
         command the Manager stopped for a failure of its own). ``stopped_by`` is the requester of the command's
-        one episode; ``stop_signal`` the last signal that episode sent.
+        one episode; ``stop_signal`` the last signal that episode delivered. A stop whose every signal was refused
+        (EPERM) or found its process gone marks nothing: the command's end is then not the stop's.
         """
         with self._lock:
             entry = self._live.get(command_id)
@@ -803,9 +833,7 @@ class CommandStopService:
                 gone = self._ended.get(command_id)
                 entry = gone.entry if gone is not None else None
             episode = entry.episode if entry is not None else None
-        if episode is None or episode.stop_signal is None:
-            return {}
-        return {"stopped_by": episode.requested_by, "stop_signal": episode.stop_signal}
+        return {} if episode is None else episode.marker()
 
     def surface(self, command_id: str) -> dict[str, Any] | None:
         """``{"state": "stopping"|"unknown", "stop": summary}`` while a stop is under way or unconfirmed, else None."""

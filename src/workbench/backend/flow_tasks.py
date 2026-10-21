@@ -53,10 +53,22 @@ and the owner of the single active Task:
   gets a cancelled TASK after its cancel; a TASK it never got needs no cancel
   notice). An unstarted Task closes at once; a free-work run is cancelled in
   the repository and the worker is told;
-  a host command in flight is never killed by Workbench (no CW-13 forced stop):
-  the Task is ``cancelling`` until the command exits, then the run is cancelled
-  without a judgment and the Task closes. The manager learns the end from a
-  notice in its next ``to_worker`` result.
+  a host command in flight is never killed because of a cancel (no CW-13 forced
+  stop): the Task is ``cancelling`` until the command exits, then the run is
+  cancelled without a judgment and the Task closes. The exit is the stop's to
+  bring about (CS-09): the running experiment is listed in ``host_commands`` and
+  registered in the stop service as ``command_id = run_id`` (owner ``manager``),
+  and the manager's ``stop_command`` ends it (SIGINT -> SIGTERM -> SIGKILL).
+  The manager learns the end from a notice in its next ``to_worker`` result.
+- Stopped runs (CS-09): when the runner observes the exit of a command that a stop
+  signalled and no cancel is pending, the run closes without analysis, judgment or
+  report as ``stopped`` (``last_result {run_id, outcome: "stopped", stopped_by,
+  exit_code, signal, run_closed}``; the repository gets ``complete_run`` with
+  ``{outcome: "stopped", judgment: null, stopped_by, ...}``, no new event kind),
+  the Task is ``finished`` and nothing is retried. A command that ended before any
+  signal takes the ordinary judgment path; with a cancel pending the cancel wins
+  (the Task closes ``cancelled`` at the observed exit). A stop that ended
+  ``unknown`` decides nothing: the runner keeps collecting until the exit shows.
 - Automation (CW-18 U3): an optional ``lifecycle`` hook (the backend's
   ``AutomationController``) learns each run's start (``experiment_started`` with
   the live ``WorkflowRun`` on the runner thread, ``work_started`` once the
@@ -101,6 +113,7 @@ from workbench.backend.flow import (
     ANALYSIS_RULES, DEFAULT_ANALYSIS, ActiveTask, HandoffDecision, HandoffJournal, HandoffRequest, OutboundMessage, accepts_keyword, held, rejected,
     experiment_command_error,
 )
+from workbench.backend.command_stop import CommandStopService, StopTarget
 from workbench.backend.flow_terminal import RETURN_WAIT, HostGate
 from workbench.contracts.v1 import ActorRole, MessageKind
 from workbench.ipc.bridge_g3.mailbox import MailboxStatus
@@ -181,9 +194,9 @@ def _commands_fields(commands: list[str] | None) -> dict[str, Any]:
 
 MANAGER_RULE = ("The worker does this Task; do not do it yourself (no commands, edits or checks for it). End "
                 "your turn and wait for the worker's to_manager report.")
-CANCEL_WAIT_DETAIL = ("The experiment's host command is still running; Workbench never kills it. The Task "
-                      "closes as cancelled when the command exits (the user can stop it in the host shell); "
-                      "no judgment is made.")
+CANCEL_WAIT_DETAIL = ("The experiment's host command is still running; a cancel never kills it. Stop it with "
+                      "stop_command (command_id = the run_id listed in host_commands); the user can also stop it in "
+                      "the host shell. The Task closes as cancelled when the command exits; no judgment is made.")
 CANCEL_NOTICE_AFTER_RESUME_DETAIL = ("Workbench is paused: the worker is told of the cancel after the resume "
                                      "(the notice was not sent yet and is delivered once).")
 CANCEL_NOTICE_AFTER_HOLD_DETAIL = ("Automatic delivery to the worker is held: the worker is told of the cancel once "
@@ -419,6 +432,12 @@ class TaskFlow:
         # CS-08: the commands of a Task that have not ended (the terminal service's; set by the backend); computed
         # when a view or the cancel response is built and never written to the ledger
         self.host_commands: Callable[[str], list[dict[str, Any]]] | None = None
+        # CS-09: the stop registry (set by the backend). A running experiment's host command is registered in it as
+        # ``command_id = run_id`` (owner ``manager``) and reported ended when the runner observed its exit.
+        self.command_stop: CommandStopService | None = None
+        self._stop_registered: set[str] = set()  # run ids registered and not yet reported ended
+        self._host_runs: dict[str, dict[str, Any]] = {}  # task id -> its running experiment command (host_commands)
+        self._run_requests: dict[str, str] = {}  # host shell request id -> the run id whose command it started
         # C-D70 (Q2, p27-cd70-02): told when a manager follow-up of a Task was submitted to the worker (the watchdog
         # starts its status checks and the worker_stalled notice over: a new instruction is a new chance)
         self.follow_up_submitted: Callable[[str], None] | None = None
@@ -735,11 +754,12 @@ class TaskFlow:
         decision = self._decide(request)
         result = decision.result
         if (request.tool == "to_worker" and request.args.get("cancel") is True
-                and isinstance(result, dict) and result.get("status") == "cancelled"):
+                and isinstance(result, dict) and result.get("status") in ("cancelled", "cancel_requested")):
             # CS-08: asked after the flow lock is released (the terminal service never waits on it); a cancel does
-            # not stop a command, so the response lists the Task's commands that still run.
+            # not stop a command, so the response lists the Task's commands that still run. An experiment's
+            # ``cancel_requested`` always has its running command (its detail says how to stop it).
             extra = self._host_command_fields(result["task_id"])
-            if extra["host_commands"]:
+            if extra["host_commands"] and result["status"] == "cancelled":
                 extra["host_command_note"] = HOST_COMMAND_NOTE
             decision = replace(decision, result={**result, **extra})
         return decision
@@ -751,12 +771,36 @@ class TaskFlow:
         "cannot be read" never looks like "nothing runs"; a readable list carries no marker. Limits: a command is
         not listed in the short span between its submit and the terminal service setting it current.
         """
+        experiment = self._experiment_host_commands(task_id)
         if self.host_commands is not None:
             try:
-                return {"host_commands": [dict(item) for item in self.host_commands(task_id)]}
+                return {"host_commands": [dict(item) for item in self.host_commands(task_id)] + experiment}
             except Exception:
                 pass
-        return {"host_commands": [], "host_commands_unavailable": True}
+        return {"host_commands": experiment, "host_commands_unavailable": True}
+
+    def experiment_command_for(self, request_id: Any) -> str | None:
+        """The ``command_id`` (run id) of the running experiment command that the host shell knows as request
+        ``request_id``, else None (for the user-Ctrl+C audit); takes only the flow lock."""
+        with self._lock:
+            return self._run_requests.get(request_id) if isinstance(request_id, str) else None
+
+    def _experiment_host_commands(self, task_id: str) -> list[dict[str, Any]]:
+        """CS-09: the Task's experiment command while it runs, as the ``host_commands`` item shape (owner
+        ``manager``, ``command_id`` = ``run_id``); ``[]`` once the runner observed its end."""
+        with self._lock:
+            running = self._host_runs.get(task_id)
+            running = None if running is None else dict(running)
+        if running is None:
+            return []
+        stopping = None
+        if self.command_stop is not None:
+            try:
+                stopping = self.command_stop.surface(running["command_id"])
+            except Exception:
+                stopping = None
+        return [{**running, "state": stopping["state"] if stopping else "running",
+                 "stop": stopping["stop"] if stopping else None}]
 
     def _decide(self, request: HandoffRequest) -> HandoffDecision:
         # the host shell is asked before the flow lock (its port takes the pane lock)
@@ -1718,8 +1762,13 @@ class TaskFlow:
                 self._save_task(task)
                 self._record({"type": "run_started", "task_id": task.task_id, "run_id": run.run_id,
                               "revision": revision})
-            self._notify_lifecycle("experiment_started", run)
-            self._follow(task, run, port)
+            try:
+                self._register_stop_target(task, run, port)
+                self._notify_lifecycle("experiment_started", run)
+                self._follow(task, run, port)
+            finally:
+                # whatever ended the follow (an exception included), the registry never keeps this command live
+                self._report_stop_end(run.run_id, {"status": "unknown", "reason": "owner_follow_stopped"})
         finally:
             if run is not None:
                 run.close()
@@ -1891,6 +1940,102 @@ class TaskFlow:
         with self._lock:
             return task.cancel_requested is not None
 
+    # -- CS-09: stopping an experiment's host command ---------------------------------------------
+    def _register_stop_target(self, task: FlowTask, run: Any, port: Any) -> None:
+        """Make the running experiment a listed host command and offer it to the stop service as ``command_id =
+        run_id`` (owner ``manager``)."""
+        task_id, raw_log = task.task_id, getattr(run, "raw_log", None)
+        with self._lock:
+            self._stop_registered.add(run.run_id)
+            self._host_runs[task_id] = {"command_id": run.run_id, "kind": "experiment", "owner": "manager",
+                                        "started_at": _now(), "log_path": None if raw_log is None else str(raw_log)}
+            request_id = (getattr(run, "_record", None) or {}).get("shell_request_id")
+            if isinstance(request_id, str):
+                self._run_requests[request_id] = run.run_id
+        if self.command_stop is not None:
+            self.command_stop.register(StopTarget(run.run_id, "manager", "experiment", task_id,
+                                                  identity=self._stop_identity(run, port),
+                                                  task_status=lambda: self.task_status(task_id)))
+
+    @staticmethod
+    def _stop_identity(run: Any, port: Any) -> Callable[[], dict[str, Any] | None]:
+        """The host shell's identity of this run's request, named by the run id (the stop service's command id).
+
+        The shell knows the run's request by the ``shell_request_id`` its workflow recorded at the start; an identity
+        of any other request (a later run in the same shell) is never offered."""
+        def identity() -> dict[str, Any] | None:
+            found = port.run_identity()
+            wanted = (getattr(run, "_record", None) or {}).get("shell_request_id")
+            if not found or wanted is None or found.get("request_id") != wanted:
+                return None
+            return {**found, "request_id": run.run_id}
+        return identity
+
+    @staticmethod
+    def _exit_result(record: Mapping[str, Any]) -> dict[str, Any]:
+        """The owner's final result of an experiment command, as the stop service takes it."""
+        status = record.get("exit_status")
+        if not isinstance(status, int) or isinstance(status, bool):
+            return {"status": "unknown", "reason": "exit status not observed"}
+        if status < 0:
+            return {"status": "exited", "exit_code": 128 - status, "signal": -status}
+        return {"status": "exited", "exit_code": status}
+
+    def _report_stop_end(self, run_id: str, result: Mapping[str, Any]) -> None:
+        """The runner observed the command's end (once per run); a stop service fault never changes the flow."""
+        with self._lock:
+            if run_id not in self._stop_registered:
+                return
+            self._stop_registered.discard(run_id)
+            for task_id, item in list(self._host_runs.items()):
+                if item["command_id"] == run_id:
+                    del self._host_runs[task_id]
+            for request_id, owner in list(self._run_requests.items()):
+                if owner == run_id:
+                    del self._run_requests[request_id]
+        if self.command_stop is None:
+            return
+        try:
+            self.command_stop.command_ended(run_id, result)
+        except Exception:
+            pass
+
+    def _stop_marks(self, run_id: str) -> dict[str, str]:
+        """``stopped_by``/``stop_signal`` when a stop signalled this run's command, else nothing."""
+        if self.command_stop is None:
+            return {}
+        try:
+            return self.command_stop.stop_marker(run_id)
+        except Exception:
+            return {}
+
+    def _finish_stopped(self, task: FlowTask, run: Any, record: Mapping[str, Any], marks: Mapping[str, str]) -> None:
+        """A stop ended the command and no cancel is pending: close the run as ``stopped`` (runner thread).
+
+        No analysis, judgment or report and no retry; the run closes with ``complete_run`` (no new event kind) and
+        the Task is ``finished`` (the worker is free)."""
+        exit_fields = {key: value for key, value in self._exit_result(record).items() if key in ("exit_code", "signal")}
+        details = {"outcome": "stopped", "judgment": None, "stopped_by": marks["stopped_by"],
+                   "stop_signal": marks["stop_signal"], **exit_fields}
+        with self._lock:
+            if task.cancel_requested is not None:  # a cancel asked meanwhile: it wins, nothing is judged
+                self._finish_cancel(task, run.run_id)
+                return
+            with self._repository() as repository:
+                current = repository.get_current_run(task.task_id)
+                if current is not None and current.get("run_id") == run.run_id:
+                    repository.complete_run(run.run_id, details)
+            if self._following == task.task_id:
+                self._following = None
+            task.last_result = {"run_id": run.run_id, "outcome": "stopped", "stopped_by": marks["stopped_by"],
+                                "exit_code": exit_fields.get("exit_code"), "signal": exit_fields.get("signal"),
+                                "run_closed": True}
+            self._record({"type": "run_ended", "task_id": task.task_id, **task.last_result})
+            task.run_id, task.held_reason = None, None
+            task.set_status("finished")  # the worker is free (C-D66)
+            self._save_task(task)
+        self._notify_lifecycle("run_ended", run.run_id)
+
     def _end_cancelled_run(self, task: FlowTask, run: Any) -> None:
         with self._lock:
             self._finish_cancel(task, run.run_id)
@@ -1900,9 +2045,11 @@ class TaskFlow:
         while True:
             record = run.collect(timeout=self._collect_slice, paused=self._paused_now())
             if record.get("shell_state") == "exited" and record.get("exit_confirmed"):
+                self._report_stop_end(run.run_id, self._exit_result(record))  # before the give-back and any judgment
                 break
             if record.get("shell_state") == "unknown":
                 self._set_held(task.task_id, "shell_unknown")  # CW-10: no judgment, no replay
+                self._report_stop_end(run.run_id, {"status": "unknown", "reason": "host shell state unknown"})
                 with self._lock:
                     if task.status != "cancelling":
                         task.set_status("held")
@@ -1913,6 +2060,10 @@ class TaskFlow:
         self._give_back(port, self._experiment)
         if self._cancelled(task):
             self._end_cancelled_run(task, run)
+            return
+        marks = self._stop_marks(run.run_id)
+        if marks:  # a stop signalled the command: no analysis, no judgment
+            self._finish_stopped(task, run, record, marks)
             return
         with self._lock:
             task.set_status("waiting_report")

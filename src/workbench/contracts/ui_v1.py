@@ -121,7 +121,12 @@ removed before any release; a client sending ``approval_decide`` gets
   (running|stopping|unknown), started_at, log_path, stop (a stop summary or
   null)}]``, ``[]`` when none. A closed (cancelled) Task keeps listing a command
   that still runs: cancelling never stops a command. A command with no Task
-  belongs to none. :data:`TASK_STATUSES` is unchanged.
+  belongs to none. An experiment's running host command (CS-09) is listed with
+  ``kind: experiment``, ``owner: manager`` and ``command_id`` = its ``run_id``
+  (what ``stop_command`` takes); the experiment ``cancel_requested`` response
+  carries the same ``host_commands``. A run a stop ended closes with
+  ``last_result.outcome: "stopped"`` (``stopped_by``, ``exit_code``, ``signal``),
+  the Task ``finished``; no new status. :data:`TASK_STATUSES` is unchanged.
 - ``worker``: ``{state, task_id}``; ``state`` is one of :data:`WORKER_STATES`
   (``busy`` while a Task is active, then ``task_id`` names it).
 - ``usage`` (CW-16, C-AC-21; additive): ``{task_id, runs_started,

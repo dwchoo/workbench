@@ -501,6 +501,7 @@ class Backend:
         # per-command stop (command-stop CS-02); an id only the journal knows is a previous backend's (CS-05)
         self.command_stop = CommandStopService(journal=self.handoffs.record,
                                                previous_backend=self._journaled_unfinished_command)
+        self.flow.command_stop = self.command_stop  # CS-09: a running experiment's host command is stoppable
         self.terminal = TerminalService(
             handoffs=self.handoffs, host_shell=self._host_shell_port, gate=host_gate,
             log_root=ensure_private_dir(layout.workflow / TERMINAL_DIRECTORY), automation=self._automation_port,
@@ -1286,6 +1287,11 @@ class Backend:
             command_id = request_id if terminal is not None and terminal.summary_command_active(request_id) else None
         except Exception:  # an unresolvable id is journaled as null; the record is always written
             command_id = None
+        if command_id is None:  # an experiment's command: its shell request id names the run (its command_id)
+            try:
+                command_id = self.flow.experiment_command_for(request_id)
+            except Exception:
+                command_id = None
         self._journal({"type": "command_interrupt", "requested_by": "user", "command_id": command_id,
                        "pid": event["pid"], "start_ticks": event["start_ticks"],
                        "process_group": event["process_group"], "delivered": event["delivered"],

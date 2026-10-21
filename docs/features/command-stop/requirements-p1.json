@@ -1,0 +1,175 @@
+{
+  "schema_version": 1,
+  "revision": "cs-b-r0.2-s1-p1",
+  "authority": "docs/features/command-stop/BRIEF.md r0.2 및 .workflow/command-stop/brief-approval.json: 2026-10-21 사용자 승인('승인', CS-D01~17·CS-AC-01~23 요약 제시 후). 이 acceptance/gate 목록은 BRIEF 승인 범위의 계획 요구이며 PLAN·SPEC·ticket bundle 자체는 아직 사용자 승인 전이다.",
+  "acceptance_ids": [
+    "CS-AC-01",
+    "CS-AC-02",
+    "CS-AC-03",
+    "CS-AC-04",
+    "CS-AC-05",
+    "CS-AC-06",
+    "CS-AC-07",
+    "CS-AC-08",
+    "CS-AC-09",
+    "CS-AC-10",
+    "CS-AC-11",
+    "CS-AC-12",
+    "CS-AC-13",
+    "CS-AC-14",
+    "CS-AC-15",
+    "CS-AC-16",
+    "CS-AC-17",
+    "CS-AC-18",
+    "CS-AC-19",
+    "CS-AC-20",
+    "CS-AC-21",
+    "CS-AC-22",
+    "CS-AC-23"
+  ],
+  "gate_items": [
+    {
+      "id": "CS-G01",
+      "acceptance_ids": [
+        "CS-AC-08"
+      ],
+      "required_evidence_level": "runtime"
+    },
+    {
+      "id": "CS-G02",
+      "acceptance_ids": [
+        "CS-AC-03",
+        "CS-AC-07",
+        "CS-AC-08",
+        "CS-AC-09",
+        "CS-AC-19"
+      ],
+      "required_evidence_level": "runtime"
+    },
+    {
+      "id": "CS-G03",
+      "acceptance_ids": [
+        "CS-AC-04",
+        "CS-AC-05"
+      ],
+      "required_evidence_level": "runtime"
+    },
+    {
+      "id": "CS-G04",
+      "acceptance_ids": [
+        "CS-AC-10",
+        "CS-AC-18",
+        "CS-AC-23"
+      ],
+      "required_evidence_level": "runtime"
+    },
+    {
+      "id": "CS-G05a",
+      "acceptance_ids": [
+        "CS-AC-06",
+        "CS-AC-13"
+      ],
+      "required_evidence_level": "fixture"
+    },
+    {
+      "id": "CS-G05b",
+      "acceptance_ids": [
+        "CS-AC-11",
+        "CS-AC-14",
+        "CS-AC-15",
+        "CS-AC-22"
+      ],
+      "required_evidence_level": "runtime"
+    },
+    {
+      "id": "CS-G06",
+      "acceptance_ids": [
+        "CS-AC-03",
+        "CS-AC-11"
+      ],
+      "required_evidence_level": "fixture"
+    },
+    {
+      "id": "CS-G07",
+      "acceptance_ids": [
+        "CS-AC-16",
+        "CS-AC-17"
+      ],
+      "required_evidence_level": "runtime"
+    },
+    {
+      "id": "CS-G08",
+      "acceptance_ids": [
+        "CS-AC-01",
+        "CS-AC-02"
+      ],
+      "required_evidence_level": "fixture"
+    },
+    {
+      "id": "CS-G09",
+      "acceptance_ids": [
+        "CS-AC-02",
+        "CS-AC-06",
+        "CS-AC-12",
+        "CS-AC-21",
+        "CS-AC-23"
+      ],
+      "required_evidence_level": "runtime"
+    },
+    {
+      "id": "CS-G10",
+      "acceptance_ids": [
+        "CS-AC-03",
+        "CS-AC-04",
+        "CS-AC-05",
+        "CS-AC-09",
+        "CS-AC-10"
+      ],
+      "required_evidence_level": "runtime"
+    },
+    {
+      "id": "CS-G11",
+      "acceptance_ids": [
+        "CS-AC-20"
+      ],
+      "required_evidence_level": "runtime"
+    },
+    {
+      "id": "CS-G12",
+      "acceptance_ids": [
+        "CS-AC-03",
+        "CS-AC-11"
+      ],
+      "required_evidence_level": "runtime"
+    },
+    {
+      "id": "CS-G13",
+      "acceptance_ids": [
+        "CS-AC-01",
+        "CS-AC-02",
+        "CS-AC-03",
+        "CS-AC-04",
+        "CS-AC-05",
+        "CS-AC-06",
+        "CS-AC-07",
+        "CS-AC-08",
+        "CS-AC-09",
+        "CS-AC-10",
+        "CS-AC-11",
+        "CS-AC-12",
+        "CS-AC-13",
+        "CS-AC-14",
+        "CS-AC-15",
+        "CS-AC-16",
+        "CS-AC-17",
+        "CS-AC-18",
+        "CS-AC-19",
+        "CS-AC-20",
+        "CS-AC-21",
+        "CS-AC-22",
+        "CS-AC-23"
+      ],
+      "required_evidence_level": "static"
+    }
+  ]
+}

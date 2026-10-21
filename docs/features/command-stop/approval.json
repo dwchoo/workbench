@@ -1,0 +1,36 @@
+{
+  "feature_id": "command-stop",
+  "status": "approved",
+  "approved_by": "user",
+  "approval_reference": "2026-10-21 사용자: 추천대로 해줘 (to-tickets 계획 묶음 요약과 seam S1~S7·setsid 후손 보고만·raw 모드 Ctrl+C 한계 추천안 제시 후)",
+  "decisions": {
+    "test_seams": "S1~S7 확정(S6·S7 신규, BRIEF seam 2는 tests/backend로 이동)",
+    "left_session_descendants": "신호 없이 보고만, 그것만 남으면 unknown",
+    "raw_mode_ctrl_c": "PTY에 \\x03 쓰기 방식의 한계 수락, 필요 시 Manager stop"
+  },
+  "brief_revision": "r0.2",
+  "spec_revision": "s1",
+  "plan_revision": "p1",
+  "requirements_identity": "22919fa9def168f908e1c2ed6e84b0464771171f488754a2df81a0f38efbe9e7",
+  "context_md_sha256_at_approval": "9dc3ccb4929d69970b085c07d3e8b91c5b55804ebad3ee1b4ab6da15b22cd3ca",
+  "bundle_files": [
+    "BRIEF.md",
+    "SPEC.md",
+    "requirements-p1.json",
+    "PLAN.json",
+    "tickets/CS-01.md",
+    "tickets/CS-02.md",
+    "tickets/CS-03.md",
+    "tickets/CS-04.md",
+    "tickets/CS-05.md",
+    "tickets/CS-06.md",
+    "tickets/CS-07.md",
+    "tickets/CS-08.md",
+    "tickets/CS-09.md",
+    "tickets/CS-10.md"
+  ],
+  "bundle_sha256": "9e3725ad4b0d31e4e58c626b81618d5056976b1d67e98fdab9c4e51dff6ede79",
+  "deferred": ["CS-O01", "CS-O02", "CS-O03", "CS-O10"],
+  "development_intent_reference": "2026-10-21 사용자: goal로 시작, 단위마다 테스트 선행·단계별 커밋, 결정·질문은 끝에 한 번에, teammate를 sonnet으로 해서 전부 개발",
+  "implementation_authorized": true
+}

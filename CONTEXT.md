@@ -47,3 +47,9 @@
 | 중요 로그 활성 DB | 새 중요 로그를 저장하는 현재 SQLite DB. 용량 정리 후에도 가득 차면 새 DB로 전환하고 이전 DB는 보존한다. |
 | 중요 로그 보존 DB | 활성 DB 전환 뒤 사용자 정리까지 보존하는 이전 중요 로그 SQLite DB. 자동 삭제 대상에서 제외하며 운영 metadata DB와 구분한다. 복수 DB의 정리가 필요함을 사용자에게 표시한다. |
 | WB 문제 보고서 | 사용자가 Manager OMP에서 직접 호출하는 skill로 작성하는 단일 Markdown 문서. WB 자체의 오류·불편·기대와 다른 동작에 관한 사용자 설명과 기존 자료의 읽기 조사 결과를 담고, 관측 사실·원인 가설·미확인을 구분한다. WB 이상과 관련된 실험 실패도 포함하며 코드 수정·재현 실행은 별도 작업이다. |
+| Workbench 실행 명령 | Worker의 `terminal` 도구 또는 Manager의 실험이 host terminal에서 시작해 Workbench가 command_id로 추적하는 명령. 사용자가 직접 시작한 shell·foreground 프로그램과 구분하며, 명령 stop과 Ctrl+C 직접 전달의 대상은 이것뿐이다. 세부 합의는 [명령 stop BRIEF](docs/features/command-stop/BRIEF.md)에서 관리한다. |
+| 명령 stop | Workbench 실행 명령 하나를 지정해 종료시키는 동작(SIGINT → 10초 → SIGTERM → 5초 → SIGKILL 후 잔존 확인). Task 취소나 host shell 전체 강제 종료와 다르며, 요청 수락만으로 종료됐다고 보고하지 않는다. |
+| 명령 상태 | Workbench 실행 명령의 상태. `running`, stop 진행 중인 `stopping`, 종료가 확인된 `exited`(exit code와 있다면 종료 signal 포함), 종료를 확인하지 못한 `unknown`(이유 기록, 이후 종료가 관측되면 `exited`로 정정하고 이력을 보존)을 구분한다. Task의 취소·완료 상태와 구분한다. |
+| 명령 소유권 | Workbench 실행 명령을 시작한 역할(Worker 또는 Manager)로 정하는 stop 권한의 기준. OMP 프로세스·세션이 아니라 역할 기준이므로 Worker 재시작 뒤에도 유지된다. |
+| 잔존 확인 | 명령 stop 뒤 그 process tree의 자식·재부모화된 프로세스·추적 가능한 별도 session 프로세스가 남았는지 확인한 결과. 확인하지 못한 범위는 확인 불가로 구분하며 깨끗함을 뜻하지 않는다. |
+| stopped (Run 결과) | 취소 없이 명령 stop으로 끝난 실험 Run의 결과. 실패·취소와 구분하며 성공/실패 판단을 하지 않고 stop 요청자를 기록한다. |

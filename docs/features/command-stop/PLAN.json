@@ -1,0 +1,1192 @@
+{
+  "schema_version": 1,
+  "feature_id": "command-stop",
+  "revision": "p1",
+  "source_brief": {
+    "path": "BRIEF.md",
+    "revision": "r0.2"
+  },
+  "spec": {
+    "path": "SPEC.md",
+    "revision": "s1"
+  },
+  "status": "draft_requires_bundle_confirmation",
+  "scheduling": {
+    "max_open_child_threads": 4,
+    "max_parallel_writer_workspaces": 2,
+    "workspace_policy": "isolated_when_parallel",
+    "dependency_gate": "integrated_and_validated",
+    "on_unavailable_isolation": "serial_with_disclosure"
+  },
+  "budget_policy": {
+    "operating_estimates": "Root가 남은 필수 작업(ticket별 독립 test_designer, 단위 review, 최종 Standards/Spec/security review, 정정 여유)에 맞춰 유한 호출 예산을 조정한다. 기존 근거를 재사용하고 small fix마다 agent를 늘리지 않는다.",
+    "explicit_user_limits": []
+  },
+  "tickets": [
+    {
+      "id": "CS-01",
+      "path": "tickets/CS-01.md",
+      "title": "실행 명령 신원(run identity)과 pidfd pin 기반",
+      "kind": "implementation",
+      "depends_on": [],
+      "acceptance_ids": [
+        "CS-AC-08"
+      ],
+      "deliverable": "PersistentShell/HostShellPort.run_identity, ProcessPin, scan_tracked, StopEnvironment port. 읽기 전용 기반이며 신호 단계·도구는 없다.",
+      "write_scope_hint": [
+        "src/workbench/backend/command_stop.py",
+        "src/workbench/terminal/shell_persistent/adapter.py",
+        "src/workbench/terminal/shell_g2/lifecycle.py",
+        "src/workbench/backend/panes.py",
+        "tests/terminal/test_run_identity.py",
+        "tests/backend/test_command_stop_pins.py"
+      ],
+      "resource_claims": [
+        {
+          "resource": "file:src/workbench/backend/command_stop.py",
+          "mode": "exclusive"
+        },
+        {
+          "resource": "file:src/workbench/backend/panes.py",
+          "mode": "exclusive"
+        },
+        {
+          "resource": "file:src/workbench/terminal/shell_persistent/adapter.py",
+          "mode": "exclusive"
+        },
+        {
+          "resource": "host-shell-pty-tests",
+          "mode": "shared"
+        }
+      ],
+      "workspace_requirement": "isolated_or_serial_with_disclosure",
+      "worker": "worker_senior",
+      "routing_hint": {
+        "reason_codes": [
+          "coupled_invariants"
+        ],
+        "evidence_refs": [
+          "SPEC.md#신원·신호-불변식",
+          "lifecycle/adapter/panes pin 선례의 결합"
+        ]
+      },
+      "verification_unit": "U1-identity",
+      "independent_verification": {
+        "required": true,
+        "role": "test_designer",
+        "reason": "프로세스 신원·pidfd 경계. test_designer가 불변식에서 시나리오를 먼저 도출한다."
+      },
+      "base_requirements": [
+        "승인된 exact BRIEF r0.2 / SPEC s1 / PLAN p1 bundle(승인 전에는 초안)",
+        "현재 source/dirty baseline(HEAD 53023c8, src·omp_bridge·tests 미커밋 변경 없음)·scope·process/lease 대조",
+        "선행 ticket의 실제 통합·검증된 artifact"
+      ],
+      "contract_requirements": [
+        "SPEC s1 공개 계약·불변식·실패 동작",
+        "BRIEF r0.2 CS-D01~17, CS-AC-01~23"
+      ]
+    },
+    {
+      "id": "CS-02",
+      "path": "tickets/CS-02.md",
+      "title": "Worker가 자기 명령을 SIGINT로 stop (terminal.stop)",
+      "kind": "implementation",
+      "depends_on": [
+        "CS-01"
+      ],
+      "dependency_reasons": {
+        "CS-01": "stop 흐름이 통합된 run_identity·ProcessPin·scan_tracked·StopEnvironment를 소비한다."
+      },
+      "acceptance_ids": [
+        "CS-AC-03",
+        "CS-AC-07",
+        "CS-AC-08",
+        "CS-AC-09",
+        "CS-AC-19",
+        "CS-AC-20"
+      ],
+      "deliverable": "CommandStopService/StopEpisode 뼈대, terminal.stop 입력 검증, SIGINT 단계, 등록부, stopping 표면, 기본 감사 레코드. 단독 출시 대상 아님(SIGINT 무시 시 unknown).",
+      "write_scope_hint": [
+        "src/workbench/backend/command_stop.py",
+        "src/workbench/backend/flow_terminal.py",
+        "src/workbench/backend/service.py",
+        "tests/backend/test_command_stop_terminal.py"
+      ],
+      "resource_claims": [
+        {
+          "resource": "file:src/workbench/backend/command_stop.py",
+          "mode": "exclusive"
+        },
+        {
+          "resource": "file:src/workbench/backend/flow_terminal.py",
+          "mode": "exclusive"
+        },
+        {
+          "resource": "file:src/workbench/backend/service.py",
+          "mode": "exclusive"
+        },
+        {
+          "resource": "host-shell-pty-tests",
+          "mode": "shared"
+        }
+      ],
+      "workspace_requirement": "isolated_or_serial_with_disclosure",
+      "worker": "worker_senior",
+      "routing_hint": {
+        "reason_codes": [
+          "coupled_invariants"
+        ],
+        "evidence_refs": [
+          "SPEC.md#Worker-terminal-도구의-stop-인자",
+          "HostGate·_follow·notice와의 결합"
+        ]
+      },
+      "verification_unit": "U2-engine",
+      "independent_verification": {
+        "required": true,
+        "role": "test_designer",
+        "reason": "프로세스 수명·signal·terminal 점유 중 동작. 신호 전송 경로가 shell 입력과 독립임을 요구에서 확인한다."
+      },
+      "base_requirements": [
+        "승인된 exact BRIEF r0.2 / SPEC s1 / PLAN p1 bundle(승인 전에는 초안)",
+        "현재 source/dirty baseline(HEAD 53023c8, src·omp_bridge·tests 미커밋 변경 없음)·scope·process/lease 대조",
+        "선행 ticket의 실제 통합·검증된 artifact"
+      ],
+      "contract_requirements": [
+        "SPEC s1 공개 계약·불변식·실패 동작",
+        "BRIEF r0.2 CS-D01~17, CS-AC-01~23"
+      ]
+    },
+    {
+      "id": "CS-03",
+      "path": "tickets/CS-03.md",
+      "title": "SIGTERM/SIGKILL 단계와 잔존 확인",
+      "kind": "implementation",
+      "depends_on": [
+        "CS-02"
+      ],
+      "dependency_reasons": {
+        "CS-02": "CS-02의 episode 뼈대와 SIGINT 단계 위에 단계 확장을 얹는다."
+      },
+      "acceptance_ids": [
+        "CS-AC-04",
+        "CS-AC-05",
+        "CS-AC-20"
+      ],
+      "deliverable": "SIGINT→10s→SIGTERM→5s→SIGKILL→5s 확인 자동 단계, tracked 재조사, residual(left_session 보고만), 정지(T) SIGCONT.",
+      "write_scope_hint": [
+        "src/workbench/backend/command_stop.py",
+        "src/workbench/backend/flow_terminal.py",
+        "tests/backend/test_command_stop_escalation.py"
+      ],
+      "resource_claims": [
+        {
+          "resource": "file:src/workbench/backend/command_stop.py",
+          "mode": "exclusive"
+        },
+        {
+          "resource": "file:src/workbench/backend/flow_terminal.py",
+          "mode": "exclusive"
+        },
+        {
+          "resource": "host-shell-pty-tests",
+          "mode": "shared"
+        }
+      ],
+      "workspace_requirement": "isolated_or_serial_with_disclosure",
+      "worker": "worker_senior",
+      "routing_hint": {
+        "reason_codes": [
+          "coupled_invariants"
+        ],
+        "evidence_refs": [
+          "SPEC.md#단계와-타이머",
+          "SPEC.md#추적-범위와-잔존-확인",
+          "subreaper lifetime과 신호 대상의 결합"
+        ]
+      },
+      "verification_unit": "U2-engine",
+      "independent_verification": {
+        "required": true,
+        "role": "test_designer",
+        "reason": "다중 프로세스 tree·subreaper·신호 단계. 잔존·추적 경계를 독립 시나리오로 확인한다."
+      },
+      "base_requirements": [
+        "승인된 exact BRIEF r0.2 / SPEC s1 / PLAN p1 bundle(승인 전에는 초안)",
+        "현재 source/dirty baseline(HEAD 53023c8, src·omp_bridge·tests 미커밋 변경 없음)·scope·process/lease 대조",
+        "선행 ticket의 실제 통합·검증된 artifact"
+      ],
+      "contract_requirements": [
+        "SPEC s1 공개 계약·불변식·실패 동작",
+        "BRIEF r0.2 CS-D01~17, CS-AC-01~23"
+      ]
+    },
+    {
+      "id": "CS-04",
+      "path": "tickets/CS-04.md",
+      "title": "반복 stop 멱등성, unknown, 늦은 종료 정정",
+      "kind": "implementation",
+      "depends_on": [
+        "CS-03"
+      ],
+      "dependency_reasons": {
+        "CS-03": "unknown 판정이 SIGKILL 이후 확인 단계의 완성된 단계 기계 위에서 정의된다."
+      },
+      "acceptance_ids": [
+        "CS-AC-10",
+        "CS-AC-18",
+        "CS-AC-23",
+        "CS-AC-20"
+      ],
+      "deliverable": "같은 episode 합류/원결과 반환(repeat), unknown(still_alive_after_sigkill, permission_denied), 늦은 종료 정정(corrected, history), 정정이 신호를 만들지 않음.",
+      "write_scope_hint": [
+        "src/workbench/backend/command_stop.py",
+        "src/workbench/backend/flow_terminal.py",
+        "tests/backend/test_command_stop_outcomes.py"
+      ],
+      "resource_claims": [
+        {
+          "resource": "file:src/workbench/backend/command_stop.py",
+          "mode": "exclusive"
+        },
+        {
+          "resource": "file:src/workbench/backend/flow_terminal.py",
+          "mode": "exclusive"
+        },
+        {
+          "resource": "host-shell-pty-tests",
+          "mode": "shared"
+        }
+      ],
+      "workspace_requirement": "isolated_or_serial_with_disclosure",
+      "worker": "worker_senior",
+      "routing_hint": {
+        "reason_codes": [
+          "coupled_invariants"
+        ],
+        "evidence_refs": [
+          "SPEC.md#결과-계약",
+          "SPEC.md#상태-전이-실패와-경계-동작",
+          "동시 요청·정정 경합"
+        ]
+      },
+      "verification_unit": "U2-engine",
+      "independent_verification": {
+        "required": true,
+        "role": "test_designer",
+        "reason": "동시성·idempotency·unknown 정정. 오류 주입 시나리오를 독립적으로 도출한다."
+      },
+      "base_requirements": [
+        "승인된 exact BRIEF r0.2 / SPEC s1 / PLAN p1 bundle(승인 전에는 초안)",
+        "현재 source/dirty baseline(HEAD 53023c8, src·omp_bridge·tests 미커밋 변경 없음)·scope·process/lease 대조",
+        "선행 ticket의 실제 통합·검증된 artifact"
+      ],
+      "contract_requirements": [
+        "SPEC s1 공개 계약·불변식·실패 동작",
+        "BRIEF r0.2 CS-D01~17, CS-AC-01~23"
+      ]
+    },
+    {
+      "id": "CS-05",
+      "path": "tickets/CS-05.md",
+      "title": "Manager stop_command, 인가 매트릭스, 재시작·취소·일시정지 중 stop",
+      "kind": "implementation",
+      "depends_on": [
+        "CS-03"
+      ],
+      "dependency_reasons": {
+        "CS-03": "Manager 요청도 SIGTERM/SIGKILL 단계까지 같은 episode를 쓴다. CS-04의 반복·unknown 의미는 같은 episode 코드에 얹히므로 resource로 직렬화하고 별도 의존은 두지 않는다."
+      },
+      "acceptance_ids": [
+        "CS-AC-06",
+        "CS-AC-11",
+        "CS-AC-13",
+        "CS-AC-14",
+        "CS-AC-15",
+        "CS-AC-22",
+        "CS-AC-20"
+      ],
+      "deliverable": "stop_command backend(_recovery_tool 경로), owner×requester 인가·거절, role 기준 소유권, 닫힌 Task·pause/boot hold 중 stop, stopped_by 표기.",
+      "write_scope_hint": [
+        "src/workbench/backend/command_stop.py",
+        "src/workbench/backend/flow_terminal.py",
+        "src/workbench/backend/flow_recovery.py",
+        "src/workbench/backend/service.py",
+        "tests/backend/test_command_stop_authority.py"
+      ],
+      "resource_claims": [
+        {
+          "resource": "file:src/workbench/backend/command_stop.py",
+          "mode": "exclusive"
+        },
+        {
+          "resource": "file:src/workbench/backend/flow_terminal.py",
+          "mode": "exclusive"
+        },
+        {
+          "resource": "file:src/workbench/backend/flow_recovery.py",
+          "mode": "exclusive"
+        },
+        {
+          "resource": "file:src/workbench/backend/service.py",
+          "mode": "exclusive"
+        },
+        {
+          "resource": "host-shell-pty-tests",
+          "mode": "shared"
+        }
+      ],
+      "workspace_requirement": "isolated_or_serial_with_disclosure",
+      "worker": "worker_senior",
+      "routing_hint": {
+        "reason_codes": [
+          "coupled_invariants"
+        ],
+        "evidence_refs": [
+          "SPEC.md#인가-매트릭스",
+          "C-AC-34/C-D45 한정과 pause/hold 정책의 결합"
+        ]
+      },
+      "verification_unit": "U3-authority",
+      "independent_verification": {
+        "required": true,
+        "role": "test_designer",
+        "reason": "권한 경계와 신호 전송. 거절 매트릭스와 Manager 자체 판단 범위를 독립적으로 확인한다."
+      },
+      "base_requirements": [
+        "승인된 exact BRIEF r0.2 / SPEC s1 / PLAN p1 bundle(승인 전에는 초안)",
+        "현재 source/dirty baseline(HEAD 53023c8, src·omp_bridge·tests 미커밋 변경 없음)·scope·process/lease 대조",
+        "선행 ticket의 실제 통합·검증된 artifact"
+      ],
+      "contract_requirements": [
+        "SPEC s1 공개 계약·불변식·실패 동작",
+        "BRIEF r0.2 CS-D01~17, CS-AC-01~23"
+      ]
+    },
+    {
+      "id": "CS-06",
+      "path": "tickets/CS-06.md",
+      "title": "OMP bridge 도구 schema·timeout과 model-facing 안내",
+      "kind": "implementation",
+      "depends_on": [],
+      "acceptance_ids": [
+        "CS-AC-03",
+        "CS-AC-11"
+      ],
+      "deliverable": "terminal.stop 인자, stop 결과 timeout 45s, Manager stop_command 도구, to_worker 설명, model-facing skill 문서. 계약-우선 병렬 작업; backend 결합은 CS-10 교차 검증.",
+      "write_scope_hint": [
+        "omp_bridge/g3/bridge.ts",
+        "omp_bridge/skills/**",
+        "tests/bridge/command_stop_bridge.test.ts"
+      ],
+      "resource_claims": [
+        {
+          "resource": "file:omp_bridge/g3/bridge.ts",
+          "mode": "exclusive"
+        },
+        {
+          "resource": "file:omp_bridge/skills",
+          "mode": "exclusive"
+        },
+        {
+          "resource": "node-bridge-tests",
+          "mode": "shared"
+        }
+      ],
+      "workspace_requirement": "isolated_or_serial_with_disclosure",
+      "worker": "worker",
+      "routing_hint": {
+        "reason_codes": [
+          "bounded_pattern"
+        ],
+        "evidence_refs": [
+          "SPEC.md#Worker-terminal-도구의-stop-인자",
+          "SPEC.md#Manager-stop_command-도구",
+          "stop_survivor·terminal 도구 등록 선례"
+        ]
+      },
+      "verification_unit": "U4-bridge",
+      "independent_verification": {
+        "required": true,
+        "role": "test_designer",
+        "reason": "도구 schema·timeout은 backend와의 인터페이스 계약이다. fake peer 독립 시나리오로 확인한다."
+      },
+      "base_requirements": [
+        "승인된 exact BRIEF r0.2 / SPEC s1 / PLAN p1 bundle(승인 전에는 초안)",
+        "현재 source/dirty baseline(HEAD 53023c8, src·omp_bridge·tests 미커밋 변경 없음)·scope·process/lease 대조",
+        "선행 ticket의 실제 통합·검증된 artifact",
+        "공유 인터페이스는 SPEC의 인자 이름·결과 형태·timeout 상수. backend 결합은 CS-10 교차 검증이 확인한다."
+      ],
+      "contract_requirements": [
+        "SPEC s1 공개 계약·불변식·실패 동작",
+        "BRIEF r0.2 CS-D01~17, CS-AC-01~23"
+      ]
+    },
+    {
+      "id": "CS-07",
+      "path": "tickets/CS-07.md",
+      "title": "사용자 단독 Ctrl+C의 foreground 직접 전달",
+      "kind": "implementation",
+      "depends_on": [
+        "CS-01"
+      ],
+      "dependency_reasons": {
+        "CS-01": "interrupt_run이 통합된 run_identity로 foreground 대상을 쓰기 직전에 재검증한다."
+      },
+      "acceptance_ids": [
+        "CS-AC-16",
+        "CS-AC-17",
+        "CS-AC-20"
+      ],
+      "deliverable": "단독 \\x03 input을 입력 owner·인수 상태와 무관하게 검증된 Workbench 실행 명령 foreground에 전달, 나머지 입력은 현행 거절, command_interrupt 감사.",
+      "write_scope_hint": [
+        "src/workbench/terminal/shell_persistent/adapter.py",
+        "src/workbench/backend/panes.py",
+        "src/workbench/backend/service.py",
+        "tests/terminal/test_command_interrupt.py"
+      ],
+      "resource_claims": [
+        {
+          "resource": "file:src/workbench/backend/panes.py",
+          "mode": "exclusive"
+        },
+        {
+          "resource": "file:src/workbench/terminal/shell_persistent/adapter.py",
+          "mode": "exclusive"
+        },
+        {
+          "resource": "file:src/workbench/backend/service.py",
+          "mode": "exclusive"
+        },
+        {
+          "resource": "host-shell-pty-tests",
+          "mode": "shared"
+        }
+      ],
+      "workspace_requirement": "isolated_or_serial_with_disclosure",
+      "worker": "worker_senior",
+      "routing_hint": {
+        "reason_codes": [
+          "coupled_invariants"
+        ],
+        "evidence_refs": [
+          "SPEC.md#사용자-Ctrl+C",
+          "C-AC-08/C-D52 입력 경계와의 결합"
+        ]
+      },
+      "verification_unit": "U5-interrupt",
+      "independent_verification": {
+        "required": true,
+        "role": "test_designer",
+        "reason": "입력 경계와 foreground 신호 전달. 거절 범위(일부 바이트 금지)를 독립적으로 확인한다."
+      },
+      "base_requirements": [
+        "승인된 exact BRIEF r0.2 / SPEC s1 / PLAN p1 bundle(승인 전에는 초안)",
+        "현재 source/dirty baseline(HEAD 53023c8, src·omp_bridge·tests 미커밋 변경 없음)·scope·process/lease 대조",
+        "선행 ticket의 실제 통합·검증된 artifact"
+      ],
+      "contract_requirements": [
+        "SPEC s1 공개 계약·불변식·실패 동작",
+        "BRIEF r0.2 CS-D01~17, CS-AC-01~23"
+      ]
+    },
+    {
+      "id": "CS-08",
+      "path": "tickets/CS-08.md",
+      "title": "free-work 취소 응답과 /task 상태에 실행 중 명령 표시",
+      "kind": "implementation",
+      "depends_on": [
+        "CS-02"
+      ],
+      "dependency_reasons": {
+        "CS-02": "host_commands가 CS-02의 명령 상태(stopping 포함)와 TerminalService 등록 표면을 소비한다."
+      },
+      "acceptance_ids": [
+        "CS-AC-01",
+        "CS-AC-02"
+      ],
+      "deliverable": "취소 응답·task_view·workbench_status의 host_commands와 host_command_note, 종료 문구 없음, ui_v1 additive 문서.",
+      "write_scope_hint": [
+        "src/workbench/backend/flow_tasks.py",
+        "src/workbench/backend/flow_terminal.py",
+        "src/workbench/backend/service.py",
+        "src/workbench/contracts/ui_v1.py",
+        "tests/backend/test_cancel_host_command.py"
+      ],
+      "resource_claims": [
+        {
+          "resource": "file:src/workbench/backend/flow_tasks.py",
+          "mode": "exclusive"
+        },
+        {
+          "resource": "file:src/workbench/backend/flow_terminal.py",
+          "mode": "exclusive"
+        },
+        {
+          "resource": "file:src/workbench/backend/service.py",
+          "mode": "exclusive"
+        },
+        {
+          "resource": "file:src/workbench/contracts/ui_v1.py",
+          "mode": "exclusive"
+        }
+      ],
+      "workspace_requirement": "isolated_or_serial_with_disclosure",
+      "worker": "worker",
+      "routing_hint": {
+        "reason_codes": [
+          "bounded_pattern"
+        ],
+        "evidence_refs": [
+          "SPEC.md#취소-응답CS-D01",
+          "terminal_runs 주입 선례"
+        ]
+      },
+      "verification_unit": "U6-cancel-view",
+      "independent_verification": {
+        "required": true,
+        "role": "test_designer",
+        "reason": "취소 의미 보존과 표시 문구. 프로세스 신호는 없다."
+      },
+      "base_requirements": [
+        "승인된 exact BRIEF r0.2 / SPEC s1 / PLAN p1 bundle(승인 전에는 초안)",
+        "현재 source/dirty baseline(HEAD 53023c8, src·omp_bridge·tests 미커밋 변경 없음)·scope·process/lease 대조",
+        "선행 ticket의 실제 통합·검증된 artifact"
+      ],
+      "contract_requirements": [
+        "SPEC s1 공개 계약·불변식·실패 동작",
+        "BRIEF r0.2 CS-D01~17, CS-AC-01~23"
+      ]
+    },
+    {
+      "id": "CS-09",
+      "path": "tickets/CS-09.md",
+      "title": "실험 host 명령 stop, stopped outcome, 취소와의 결합",
+      "kind": "implementation",
+      "depends_on": [
+        "CS-04",
+        "CS-05",
+        "CS-08"
+      ],
+      "dependency_reasons": {
+        "CS-04": "실험 Task의 닫힘이 unknown/정정 의미(CS-AC-23)를 소비한다.",
+        "CS-05": "Manager stop_command 경로와 owner×requester 인가 규칙을 실험 provider가 소비한다.",
+        "CS-08": "실험 취소 응답이 CS-08이 정한 host_commands 항목 스키마와 취소 응답 조립을 확장한다(같은 flow_tasks 코드)."
+      },
+      "acceptance_ids": [
+        "CS-AC-02",
+        "CS-AC-06",
+        "CS-AC-12",
+        "CS-AC-21",
+        "CS-AC-23",
+        "CS-AC-20"
+      ],
+      "deliverable": "TaskFlow 실험 등록부/provider, _finish_stopped(stopped outcome), 취소+stop 결합, 실험 취소 응답 host_commands.",
+      "write_scope_hint": [
+        "src/workbench/backend/flow_tasks.py",
+        "src/workbench/backend/command_stop.py",
+        "src/workbench/backend/service.py",
+        "src/workbench/contracts/ui_v1.py",
+        "tests/backend/test_experiment_command_stop.py"
+      ],
+      "resource_claims": [
+        {
+          "resource": "file:src/workbench/backend/flow_tasks.py",
+          "mode": "exclusive"
+        },
+        {
+          "resource": "file:src/workbench/backend/command_stop.py",
+          "mode": "exclusive"
+        },
+        {
+          "resource": "file:src/workbench/backend/service.py",
+          "mode": "exclusive"
+        },
+        {
+          "resource": "file:src/workbench/contracts/ui_v1.py",
+          "mode": "exclusive"
+        },
+        {
+          "resource": "host-shell-pty-tests",
+          "mode": "shared"
+        }
+      ],
+      "workspace_requirement": "isolated_or_serial_with_disclosure",
+      "worker": "worker_senior",
+      "routing_hint": {
+        "reason_codes": [
+          "coupled_invariants"
+        ],
+        "evidence_refs": [
+          "SPEC.md#실험-명령-stop과-outcomeCS-D16",
+          "_follow·cancel·repository run 종료의 결합"
+        ]
+      },
+      "verification_unit": "U7-experiment",
+      "independent_verification": {
+        "required": true,
+        "role": "test_designer",
+        "reason": "run 수명·취소 결합·stopped 닫힘. 판정 단계가 호출되지 않음을 독립적으로 확인한다."
+      },
+      "base_requirements": [
+        "승인된 exact BRIEF r0.2 / SPEC s1 / PLAN p1 bundle(승인 전에는 초안)",
+        "현재 source/dirty baseline(HEAD 53023c8, src·omp_bridge·tests 미커밋 변경 없음)·scope·process/lease 대조",
+        "선행 ticket의 실제 통합·검증된 artifact"
+      ],
+      "contract_requirements": [
+        "SPEC s1 공개 계약·불변식·실패 동작",
+        "BRIEF r0.2 CS-D01~17, CS-AC-01~23"
+      ]
+    },
+    {
+      "id": "CS-10",
+      "path": "tickets/CS-10.md",
+      "title": "최종 통합·실제 시간·감사·독립 검증",
+      "kind": "integration_verification",
+      "depends_on": [
+        "CS-06",
+        "CS-07",
+        "CS-09"
+      ],
+      "dependency_reasons": {
+        "CS-06": "교차 검증이 통합된 bridge schema를 소비한다.",
+        "CS-07": "Ctrl+C 통합 확인과 감사 완결성이 통합된 입력 경로를 소비한다.",
+        "CS-09": "실험 stop·취소 결합과 (CS-04, CS-05, CS-08을 포함하는) backend 전체가 통합된 상태에서 최종 검증한다."
+      },
+      "acceptance_ids": [
+        "CS-AC-01",
+        "CS-AC-02",
+        "CS-AC-03",
+        "CS-AC-04",
+        "CS-AC-05",
+        "CS-AC-06",
+        "CS-AC-07",
+        "CS-AC-08",
+        "CS-AC-09",
+        "CS-AC-10",
+        "CS-AC-11",
+        "CS-AC-12",
+        "CS-AC-13",
+        "CS-AC-14",
+        "CS-AC-15",
+        "CS-AC-16",
+        "CS-AC-17",
+        "CS-AC-18",
+        "CS-AC-19",
+        "CS-AC-20",
+        "CS-AC-21",
+        "CS-AC-22",
+        "CS-AC-23"
+      ],
+      "deliverable": "통합 후보에서 CS-AC-01~23 전부의 현재 증거(실제 10/5/5 s, bridge↔backend 교차, 감사 완결성, 실제 OMP schema capture, 넓은 회귀)와 fresh Standards/Spec review·security review·scope audit.",
+      "write_scope_hint": [
+        "tests/integration/live_command_stop.py",
+        "docs/features/command-stop/VERIFICATION.md"
+      ],
+      "resource_claims": [
+        {
+          "resource": "integration-workspace",
+          "mode": "exclusive"
+        },
+        {
+          "resource": "real-omp-binary",
+          "mode": "exclusive"
+        },
+        {
+          "resource": "host-shell-pty-tests",
+          "mode": "exclusive"
+        }
+      ],
+      "workspace_requirement": "root_integration_workspace",
+      "owner": "root",
+      "verification_unit": "UF-final",
+      "independent_verification": {
+        "required": true,
+        "role": "test_designer",
+        "reason": "최종 시나리오를 요구에서 도출하고 전 ticket의 독립 coverage를 재사용·보강한다."
+      },
+      "base_requirements": [
+        "승인된 exact BRIEF r0.2 / SPEC s1 / PLAN p1 bundle(승인 전에는 초안)",
+        "현재 source/dirty baseline(HEAD 53023c8, src·omp_bridge·tests 미커밋 변경 없음)·scope·process/lease 대조",
+        "선행 ticket의 실제 통합·검증된 artifact",
+        "live OMP schema 확인은 설치된 omp(기대 18.6.1)와 가짜 provider 방식. 없으면 not_run."
+      ],
+      "contract_requirements": [
+        "SPEC s1 공개 계약·불변식·실패 동작",
+        "BRIEF r0.2 CS-D01~17, CS-AC-01~23"
+      ]
+    }
+  ],
+  "gate_items": [
+    {
+      "id": "CS-G01",
+      "owner_ticket": "CS-01",
+      "acceptance_ids": [
+        "CS-AC-08"
+      ],
+      "requires_tickets": [
+        "CS-01"
+      ],
+      "required_evidence_level": "runtime",
+      "check": "실제 PTY 명령의 run identity가 /proc 직접 값과 일치, tracked/left_session 분류, pin 불일치는 신호 없이 stale"
+    },
+    {
+      "id": "CS-G02",
+      "owner_ticket": "CS-02",
+      "acceptance_ids": [
+        "CS-AC-03",
+        "CS-AC-07",
+        "CS-AC-08",
+        "CS-AC-09",
+        "CS-AC-19"
+      ],
+      "requires_tickets": [
+        "CS-01",
+        "CS-02"
+      ],
+      "required_evidence_level": "runtime",
+      "check": "terminal.stop으로 SIGINT stop: exited 130/SIGINT, stopping 관측, 점유 중 처리와 새 명령 거절, not_found/already_exited/stale, shell 복귀·로그 보존, 기본 감사 레코드"
+    },
+    {
+      "id": "CS-G03",
+      "owner_ticket": "CS-03",
+      "acceptance_ids": [
+        "CS-AC-04",
+        "CS-AC-05"
+      ],
+      "requires_tickets": [
+        "CS-01",
+        "CS-02",
+        "CS-03"
+      ],
+      "required_evidence_level": "runtime",
+      "check": "SIGINT→SIGTERM→SIGKILL 단계 간격·종료 signal, 잔존 후손 처리, 다른 session 후손 보고만(unknown)"
+    },
+    {
+      "id": "CS-G04",
+      "owner_ticket": "CS-04",
+      "acceptance_ids": [
+        "CS-AC-10",
+        "CS-AC-18",
+        "CS-AC-23"
+      ],
+      "requires_tickets": [
+        "CS-01",
+        "CS-02",
+        "CS-03",
+        "CS-04"
+      ],
+      "required_evidence_level": "runtime",
+      "check": "반복 stop 멱등, unknown(still_alive/permission_denied), 늦은 종료 정정과 이력, 정정이 신호를 만들지 않음"
+    },
+    {
+      "id": "CS-G05a",
+      "owner_ticket": "CS-05",
+      "acceptance_ids": [
+        "CS-AC-06",
+        "CS-AC-13"
+      ],
+      "requires_tickets": [
+        "CS-01",
+        "CS-02",
+        "CS-03",
+        "CS-05"
+      ],
+      "required_evidence_level": "fixture",
+      "check": "거절 매트릭스(not_owner/previous_backend_command/not_found)와 신원 불명 대상에 Manager 자체 판단 stop 불가"
+    },
+    {
+      "id": "CS-G05b",
+      "owner_ticket": "CS-05",
+      "acceptance_ids": [
+        "CS-AC-11",
+        "CS-AC-14",
+        "CS-AC-15",
+        "CS-AC-22"
+      ],
+      "requires_tickets": [
+        "CS-01",
+        "CS-02",
+        "CS-03",
+        "CS-05"
+      ],
+      "required_evidence_level": "runtime",
+      "check": "Manager stop_command 전 단계, 재시작 후 새 Worker stop, 닫힌 Task 명령 stop, pause·boot hold 중 stop과 새 명령 보류 유지"
+    },
+    {
+      "id": "CS-G06",
+      "owner_ticket": "CS-06",
+      "acceptance_ids": [
+        "CS-AC-03",
+        "CS-AC-11"
+      ],
+      "requires_tickets": [
+        "CS-06"
+      ],
+      "required_evidence_level": "fixture",
+      "check": "fake peer bridge 테스트: terminal stop 인자·timeout, stop_command strict schema·역할 제한·timeout"
+    },
+    {
+      "id": "CS-G07",
+      "owner_ticket": "CS-07",
+      "acceptance_ids": [
+        "CS-AC-16",
+        "CS-AC-17"
+      ],
+      "requires_tickets": [
+        "CS-01",
+        "CS-07"
+      ],
+      "required_evidence_level": "runtime",
+      "check": "단독 \\x03 전달(owner manager/인수 중간 상태), 혼합·paste·비-Workbench foreground는 현행 거절, 감사"
+    },
+    {
+      "id": "CS-G08",
+      "owner_ticket": "CS-08",
+      "acceptance_ids": [
+        "CS-AC-01",
+        "CS-AC-02"
+      ],
+      "requires_tickets": [
+        "CS-01",
+        "CS-02",
+        "CS-08"
+      ],
+      "required_evidence_level": "fixture",
+      "check": "free-work 취소 응답·/task의 host_commands, 안내 문구, 종료 문구 없음"
+    },
+    {
+      "id": "CS-G09",
+      "owner_ticket": "CS-09",
+      "acceptance_ids": [
+        "CS-AC-02",
+        "CS-AC-06",
+        "CS-AC-12",
+        "CS-AC-21",
+        "CS-AC-23"
+      ],
+      "requires_tickets": [
+        "CS-01",
+        "CS-02",
+        "CS-03",
+        "CS-04",
+        "CS-05",
+        "CS-08",
+        "CS-09"
+      ],
+      "required_evidence_level": "runtime",
+      "check": "실험 stop: stopped outcome, 취소+stop 닫힘, unknown 시 미닫힘과 이유, Worker 거절"
+    },
+    {
+      "id": "CS-G10",
+      "owner_ticket": "CS-10",
+      "acceptance_ids": [
+        "CS-AC-03",
+        "CS-AC-04",
+        "CS-AC-05",
+        "CS-AC-09",
+        "CS-AC-10"
+      ],
+      "requires_tickets": [
+        "CS-01",
+        "CS-02",
+        "CS-03",
+        "CS-04",
+        "CS-05",
+        "CS-06",
+        "CS-07",
+        "CS-08",
+        "CS-09",
+        "CS-10"
+      ],
+      "required_evidence_level": "runtime",
+      "check": "실제 기본 정책 10/5/5 s의 단계 간격과 총 시간, 점유 중 처리, 멱등"
+    },
+    {
+      "id": "CS-G11",
+      "owner_ticket": "CS-10",
+      "acceptance_ids": [
+        "CS-AC-20"
+      ],
+      "requires_tickets": [
+        "CS-01",
+        "CS-02",
+        "CS-03",
+        "CS-04",
+        "CS-05",
+        "CS-06",
+        "CS-07",
+        "CS-08",
+        "CS-09",
+        "CS-10"
+      ],
+      "required_evidence_level": "runtime",
+      "check": "결합 시나리오 후 journal에서 CS-AC-20의 모든 항목 조회, 환경 값·auth·argv 없음"
+    },
+    {
+      "id": "CS-G12",
+      "owner_ticket": "CS-10",
+      "acceptance_ids": [
+        "CS-AC-03",
+        "CS-AC-11"
+      ],
+      "requires_tickets": [
+        "CS-01",
+        "CS-02",
+        "CS-03",
+        "CS-04",
+        "CS-05",
+        "CS-06",
+        "CS-07",
+        "CS-08",
+        "CS-09",
+        "CS-10"
+      ],
+      "required_evidence_level": "runtime",
+      "check": "실제 OMP가 Worker terminal.stop과 Manager stop_command schema를 제공(captured request body). OMP 없으면 not_run"
+    },
+    {
+      "id": "CS-G13",
+      "owner_ticket": "CS-10",
+      "acceptance_ids": [
+        "CS-AC-01",
+        "CS-AC-02",
+        "CS-AC-03",
+        "CS-AC-04",
+        "CS-AC-05",
+        "CS-AC-06",
+        "CS-AC-07",
+        "CS-AC-08",
+        "CS-AC-09",
+        "CS-AC-10",
+        "CS-AC-11",
+        "CS-AC-12",
+        "CS-AC-13",
+        "CS-AC-14",
+        "CS-AC-15",
+        "CS-AC-16",
+        "CS-AC-17",
+        "CS-AC-18",
+        "CS-AC-19",
+        "CS-AC-20",
+        "CS-AC-21",
+        "CS-AC-22",
+        "CS-AC-23"
+      ],
+      "requires_tickets": [
+        "CS-01",
+        "CS-02",
+        "CS-03",
+        "CS-04",
+        "CS-05",
+        "CS-06",
+        "CS-07",
+        "CS-08",
+        "CS-09",
+        "CS-10"
+      ],
+      "required_evidence_level": "static",
+      "check": "fresh Standards/Spec review, 별도 security review·secret scan, scope audit, acceptance trace 완결"
+    }
+  ],
+  "acceptance_trace": [
+    {
+      "acceptance_id": "CS-AC-01",
+      "tickets": [
+        "CS-08"
+      ],
+      "seam": "S1",
+      "final_integration": "CS-10"
+    },
+    {
+      "acceptance_id": "CS-AC-02",
+      "tickets": [
+        "CS-08",
+        "CS-09"
+      ],
+      "seam": "S1",
+      "final_integration": "CS-10"
+    },
+    {
+      "acceptance_id": "CS-AC-03",
+      "tickets": [
+        "CS-02",
+        "CS-06"
+      ],
+      "seam": "S2,S4",
+      "final_integration": "CS-10"
+    },
+    {
+      "acceptance_id": "CS-AC-04",
+      "tickets": [
+        "CS-03"
+      ],
+      "seam": "S2",
+      "final_integration": "CS-10"
+    },
+    {
+      "acceptance_id": "CS-AC-05",
+      "tickets": [
+        "CS-03"
+      ],
+      "seam": "S2",
+      "final_integration": "CS-10"
+    },
+    {
+      "acceptance_id": "CS-AC-06",
+      "tickets": [
+        "CS-05",
+        "CS-09"
+      ],
+      "seam": "S3",
+      "final_integration": "CS-10"
+    },
+    {
+      "acceptance_id": "CS-AC-07",
+      "tickets": [
+        "CS-02"
+      ],
+      "seam": "S2",
+      "final_integration": "CS-10"
+    },
+    {
+      "acceptance_id": "CS-AC-08",
+      "tickets": [
+        "CS-01",
+        "CS-02"
+      ],
+      "seam": "S2,S6",
+      "final_integration": "CS-10"
+    },
+    {
+      "acceptance_id": "CS-AC-09",
+      "tickets": [
+        "CS-02"
+      ],
+      "seam": "S2",
+      "final_integration": "CS-10"
+    },
+    {
+      "acceptance_id": "CS-AC-10",
+      "tickets": [
+        "CS-04"
+      ],
+      "seam": "S2",
+      "final_integration": "CS-10"
+    },
+    {
+      "acceptance_id": "CS-AC-11",
+      "tickets": [
+        "CS-05",
+        "CS-06"
+      ],
+      "seam": "S2,S4",
+      "final_integration": "CS-10"
+    },
+    {
+      "acceptance_id": "CS-AC-12",
+      "tickets": [
+        "CS-09"
+      ],
+      "seam": "S1,S2",
+      "final_integration": "CS-10"
+    },
+    {
+      "acceptance_id": "CS-AC-13",
+      "tickets": [
+        "CS-05"
+      ],
+      "seam": "S3",
+      "final_integration": "CS-10"
+    },
+    {
+      "acceptance_id": "CS-AC-14",
+      "tickets": [
+        "CS-05"
+      ],
+      "seam": "S2",
+      "final_integration": "CS-10"
+    },
+    {
+      "acceptance_id": "CS-AC-15",
+      "tickets": [
+        "CS-05"
+      ],
+      "seam": "S2",
+      "final_integration": "CS-10"
+    },
+    {
+      "acceptance_id": "CS-AC-16",
+      "tickets": [
+        "CS-07"
+      ],
+      "seam": "S5",
+      "final_integration": "CS-10"
+    },
+    {
+      "acceptance_id": "CS-AC-17",
+      "tickets": [
+        "CS-07"
+      ],
+      "seam": "S5",
+      "final_integration": "CS-10"
+    },
+    {
+      "acceptance_id": "CS-AC-18",
+      "tickets": [
+        "CS-04"
+      ],
+      "seam": "S2,S7",
+      "final_integration": "CS-10"
+    },
+    {
+      "acceptance_id": "CS-AC-19",
+      "tickets": [
+        "CS-02"
+      ],
+      "seam": "S2",
+      "final_integration": "CS-10"
+    },
+    {
+      "acceptance_id": "CS-AC-20",
+      "tickets": [
+        "CS-02",
+        "CS-03",
+        "CS-04",
+        "CS-05",
+        "CS-07",
+        "CS-09"
+      ],
+      "seam": "S2,S5",
+      "final_integration": "CS-10"
+    },
+    {
+      "acceptance_id": "CS-AC-21",
+      "tickets": [
+        "CS-09"
+      ],
+      "seam": "S1,S2",
+      "final_integration": "CS-10"
+    },
+    {
+      "acceptance_id": "CS-AC-22",
+      "tickets": [
+        "CS-05"
+      ],
+      "seam": "S2",
+      "final_integration": "CS-10"
+    },
+    {
+      "acceptance_id": "CS-AC-23",
+      "tickets": [
+        "CS-04",
+        "CS-09"
+      ],
+      "seam": "S2",
+      "final_integration": "CS-10"
+    }
+  ],
+  "frontier_note": "초기 독립 frontier: CS-01, CS-06. 이후 CS-02/CS-07, CS-03/CS-08, CS-04/CS-05, CS-09, CS-10 순(예시이며 wave barrier 아님). CS-02·03·04·05는 command_stop.py/flow_terminal.py를, CS-02·05·07·08·09는 service.py를 배타 claim하므로 같은 시점에 하나씩만 쓴다.",
+  "execution_order_note": "구현 권한 전에는 product/test 코드를 쓰지 않는다. 테스트 seam S1~S7은 2026-10-21 사용자가 확정했다(SPEC 확정된 결정).",
+  "requirements_identity": "22919fa9def168f908e1c2ed6e84b0464771171f488754a2df81a0f38efbe9e7"
+}

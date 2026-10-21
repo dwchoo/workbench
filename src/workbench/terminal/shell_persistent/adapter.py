@@ -59,6 +59,8 @@ class _Transport(ManagedLifecycleProbe):
         if event == f"HANDOFF:{self.pid}":
             self.handoff_episode += 1
         super()._on_control_event(event)
+        if event.startswith("CHILD_PREPARED:"):
+            self._child_start = None  # a new child's ticks are unknown until EXEC_READY
         if event.startswith("EXEC_READY:") and not self.lifecycle.unknown:
             try:
                 self._child_start = self._proc(self.lifecycle.child_pid)[19]
@@ -318,6 +320,34 @@ class PersistentShell:
                     raise
             return self.snapshot()
 
+    def run_identity(self):
+        """Read-only identity of the outstanding managed request, or None without one.
+
+        Process refs are ``{"pid", "start_ticks"}`` from the lifecycle events and the start
+        ticks this adapter recorded (None when unconfirmed or already reaped). The numbers
+        are a claim to re-verify through a pin before any signal, never a license to signal.
+        """
+        t = self._transport
+        with t.boundary.lock:
+            life = t.lifecycle
+            if life.request_id is None:
+                return None
+
+            def ref(pid, start):
+                return {"pid": pid, "start_ticks": int(start) if start is not None else None} if pid else None
+            try:
+                boot_id = Path("/proc/sys/kernel/random/boot_id").read_text().strip() or None
+            except OSError:
+                boot_id = None
+            phase = ("ended" if life.lifetime == "ended" else "unknown" if life.unknown
+                     else "running" if life.experiment_started else "starting")
+            return {"request_id": life.request_id, "phase": phase,
+                    "parent": ref(t.pid, t._parent_start),
+                    "supervisor": ref(life.supervisor_pid, t._supervisor_start),
+                    "child": ref(life.child_pid, t._child_start),
+                    "child_group": life.child_group,
+                    "session": t.pid, "uid": os.geteuid(), "boot_id": boot_id}
+
     def snapshot(self):
         t, life = self._transport, self._transport.lifecycle
         phase = ("unknown" if life.unknown or t.boundary.uncertain or t.boundary.needs_review else "control_returned" if life.control_returned else
@@ -440,6 +470,7 @@ class PersistentShell:
                 raise UnsafeShellState("no clean direct same-parent handoff")
             if t.lifecycle.request_id is not None:
                 t.rearm_after_handoff()
+                t._child_start = None  # per-request start ticks never outlive their request
             t.return_to_manager()
             t.takeover_requested = False
             t.confirmed_target = None

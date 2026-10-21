@@ -1357,6 +1357,11 @@ class HostShellPort:
         with self._pane.io_lock:
             return self._pane.shell.snapshot()
 
+    def run_identity(self) -> dict[str, Any] | None:
+        """Read-only identity of the outstanding managed request (None without one)."""
+        with self._pane.io_lock:
+            return self._pane.shell.run_identity()
+
     def claim_manager(self) -> dict[str, Any]:
         with self._pane.io_lock:
             self._check()

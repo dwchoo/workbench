@@ -51,7 +51,7 @@ check `p27-cw16-compat-c18-r2`(exit 0)의 결과다. 같은 argv의 첫 실행 `
 
 각주
 1. plain PTY에는 outer 영속 계층이 없다. UI 자체의 detach와 재attach는 C5에서 확인했다.
-2. tmux 기본값 `set-clipboard external`에서는 tmux가 앱의 OSC 52를 버린다. 제품은 "복사됨: N자 (tmux는 set-clipboard on 또는 allow-passthrough on 필요)" 안내를 띄운다. 시험 harness가 격리 server에 `tmux set-option -g set-clipboard on`을 적용한 뒤에는 바깥 터미널이 OSC 52를 받았다. 이 설정은 제품이 아니라 harness가 적용했다. 따라서 tmux 사용자는 직접 `set-clipboard on` 또는 `allow-passthrough on`을 설정해야 한다.
+2. tmux 기본값 `set-clipboard external`에서는 tmux가 앱의 OSC 52를 버린다. 제품은 "복사됨: N자 (tmux: set -g allow-passthrough on / set -s set-clipboard on)" 안내를 띄운다. 시험 harness가 격리 server에 `tmux set-option -g set-clipboard on`을 적용한 뒤에는 바깥 터미널이 OSC 52를 받았다. 이 설정은 제품이 아니라 harness가 적용했다. 따라서 tmux 사용자는 직접 `set-clipboard on` 또는 `allow-passthrough on`을 설정해야 한다.
 3. Herdr 0.9.3은 약 1 MiB를 넘는 bracketed paste를 앱에 전달하지 않는다. B1 raw probe(C16 기록) 결과 1 MiB는 도착했고 1.9 MiB와 2 MiB+64는 도착하지 않았다. C18 compat 보고서도 같은 이유로 Herdr 경로의 2 MiB 거절을 "해당 없음"으로 기록했다. 대신 shell 줄이 깨끗하게 유지되는 것을 확인했다.
 
 **자식이 입력을 읽지 않을 때의 queue_full paste 거절**은 이 live matrix에서 실행하지 않았다. C18 regression-a의 live 테스트 `test_live_contract_independent.test_queue_full_on_a_stalled_real_pane_rejects_whole_frame_with_reason`가 실제 pane에서 통과로 관측했고(OMP 18.8.0, VERIFICATION §4.1), fixture 테스트(`test_product_paste_independent`, `test_product_pty_independent`)도 있다. 이 live 테스트는 outer 조합(tmux·Herdr)별로 돌린 것이 아니다.

@@ -2780,7 +2780,24 @@ class DragToCopyTests(unittest.TestCase):
                 self.assertEqual(tmux, "tmux" in model.notice)
                 self.assertIn("복사됨: 3자", model.notice)
                 if tmux:
-                    self.assertIn("set-clipboard on 또는 allow-passthrough on", model.notice)
+                    self.assertIn("set -g allow-passthrough on", model.notice)
+                    self.assertIn("set -s set-clipboard on", model.notice)
+                    self.assertLess(model.notice.index("set -g allow-passthrough on"),
+                                    model.notice.index("set -s set-clipboard on"))
+
+    def test_tmux_copy_notice_with_a_three_digit_count_fits_79_columns(self):
+        from wcwidth import wcswidth
+        model = ProductModel(self.sender, 30, 120, clock=lambda: 1000.0, monotonic=self.ticker,
+                             environ={"TMUX": "/tmp/tmux-1/default,1,0"})
+        model.apply_snapshot(snapshot())
+        model.on_display(display("manager_omp", b"\r\n".join((b"x" * 40, b"x" * 40, b"x" * 41))))
+        self.mouse_on(model, 0, 0, 0)
+        self.mouse_on(model, 32, 40, 2)
+        self.mouse_on(model, 0, 40, 2, release=True)
+        self.assertTrue(model.notice.startswith("복사됨: 123자"), model.notice)
+        self.assertIn("set -g allow-passthrough on", model.notice)
+        self.assertIn("set -s set-clipboard on", model.notice)
+        self.assertLessEqual(wcswidth(model.notice), 79, model.notice)
 
     def test_environment_tmux_is_read_when_no_environ_is_given(self):
         import os

@@ -53,7 +53,7 @@ OSC52_MAX_BYTES = 4 * -(-MAX_COPY_BYTES // 3) + 16
 OSC52_PANES = (PaneId.MANAGER_OMP, PaneId.WORKER_OMP)  # never the host shell (C-D69 (1))
 _OSC52_SELECTIONS = frozenset(b"cpqs01234567")
 AUTOSCROLL_SECONDS = 0.05  # while a drag is held outside the pane, its history scrolls one line per this interval
-TMUX_HINT = " (tmux는 set-clipboard on 또는 allow-passthrough on 필요)"
+TMUX_HINT = " (tmux: set -g allow-passthrough on / set -s set-clipboard on)"
 ALT_SCREEN_MODES = {47, 1047, 1049}
 MOUSE_TRACKING_MODES = {1000, 1002, 1003}  # one tracking-mode state, like a real terminal (see _track_bracketed)
 MOTION_MODES = {1002, 1003}  # the pane's app asked for motion reports (1002: while pressed, 1003: any)
@@ -1453,7 +1453,7 @@ class ProductModel:
         osc = b"\x1b]52;c;" + base64.b64encode(data) + b"\x07"
         environ = os.environ if self._environ is None else self._environ
         tmux = bool(environ.get("TMUX"))
-        # inside tmux the plain sequence works with set-clipboard on; the passthrough copy with allow-passthrough on
+        # inside tmux the plain sequence works with `set -s set-clipboard on`; the passthrough copy with `set -g allow-passthrough on`
         self._out += osc + (b"\x1bPtmux;" + osc.replace(b"\x1b", b"\x1b\x1b") + b"\x1b\\" if tmux else b"")
         self.notice = notice + (TMUX_HINT if tmux else "")
 

@@ -89,7 +89,7 @@ function textOf(result: Frame): Frame {
 test("C-D68 (1)/(3): terminal exists only for the worker; the manager keeps to_worker with the manager rule", async () => {
 	const worker = await startBridge("worker");
 	try {
-		assert.deepEqual([...worker.tools.keys()].sort(), ["terminal", "to_manager", "workbench_logs"]);
+		assert.deepEqual([...worker.tools.keys()].sort(), ["terminal", "to_manager", "workbench_logs", "workbench_records"]);
 		const terminal = worker.tools.get("terminal")!;
 		assert.equal(terminal.loadMode, "essential", "the model must see it without discovery");
 		assert.match(terminal.description, /no other way to run commands/i);
@@ -98,7 +98,7 @@ test("C-D68 (1)/(3): terminal exists only for the worker; the manager keeps to_w
 	const manager = await startBridge("manager");
 	try {
 		// C-D70 (3)/(5): the manager also has restart_worker and workbench_status, never terminal (p27-cd70-test-01 edit).
-		assert.deepEqual([...manager.tools.keys()].sort(), ["restart_worker", "stop_command", "stop_survivor", "to_worker", "workbench_logs", "workbench_status"]);  // C-D71 (1): stop_survivor (p27-cw19-test-01 edit); CS-06: stop_command (cs06-test-01 edit)
+		assert.deepEqual([...manager.tools.keys()].sort(), ["restart_worker", "stop_command", "stop_survivor", "to_worker", "workbench_logs", "workbench_records", "workbench_status"]);  // C-D71 (1): stop_survivor (p27-cw19-test-01 edit); CS-06: stop_command (cs06-test-01 edit)
 		const description = manager.tools.get("to_worker")!.description as string;
 		// C-D68 (3): work handed over with to_worker is not done by the manager; it waits for the worker's report.
 		assert.match(description, /do not do it yourself/i);

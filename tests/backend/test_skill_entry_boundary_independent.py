@@ -61,15 +61,16 @@ class SkillEntryBoundaryIndependentTests(unittest.TestCase):
     def test_physical_internal_asset_is_excluded_by_overlay_and_rejected_by_ordinary_isolation(self):
         skills = launcher.default_skills_dir()
         physical = {path.parent.name for path in skills.glob("*/SKILL.md")}
-        self.assertEqual(physical, {"to-worker", "to-manager", "workbench-recovery", "important-log-summary"})
-        for role, expected in (("manager", {"to-worker", "workbench-recovery"}), ("worker", {"to-manager"})):
+        self.assertEqual(physical, {"to-worker", "to-manager", "workbench-recovery", "important-log-summary", "workbench-report"})
+        for role, expected in (("manager", {"to-worker", "workbench-recovery", "workbench-report"}), ("worker", {"to-manager"})):
             with self.subTest(role=role):
                 overlay = launcher.role_overlay(role, project_dir=skills, home=skills)
                 offered = {name for name in physical if any(fnmatchcase(name, pattern)
                            for pattern in overlay["skills"]["includeSkills"])}
                 self.assertEqual(offered, expected)
                 self.assertEqual(set(launcher.role_skill_allowlist(role)), expected)
-                observed = {"context_files": [], "skills": sorted(offered), "skill_commands": sorted(offered),
+                # workbench-report is manual-only: a slash command, never in the model skill roster.
+                observed = {"context_files": [], "skills": sorted(offered - {"workbench-report"}), "skill_commands": sorted(offered),
                             "rules": [], "mcp_tools": [], "task_agents": [], "other_commands": [],
                             "system_prompt_default": True}
                 self.assertEqual(launcher.isolation_leaks(observed, allowed_skills=tuple(offered)), [])

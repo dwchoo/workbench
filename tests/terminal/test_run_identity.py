@@ -111,6 +111,27 @@ class RunIdentityTests(ManagedShellCase):
         self.assertEqual(identity["child"]["pid"], child)
 
 
+class MainExitObservedTests(ManagedShellCase):
+    """``main_exit``: how the command's main process ended, as the lifecycle observed it (None until then).
+
+    Expected values are the ones the command itself produces: ``exit 3`` and a ``kill -TERM`` of itself.
+    """
+
+    def test_main_exit_is_none_while_the_command_runs(self):
+        self.run_recording_pid("exec sleep 30")
+        self.assertIsNone(self.shell.run_identity()["main_exit"])
+
+    def test_main_exit_carries_the_exit_code_of_a_command_that_exited(self):
+        self.run_recording_pid("exec bash -c 'exit 3'")
+        until(self.shell, lambda s: s["lifecycle"]["lifetime"] == "ended")
+        self.assertEqual(self.shell.run_identity()["main_exit"], {"exit_code": 3, "signal": None})
+
+    def test_main_exit_carries_the_signal_of_a_command_that_was_killed(self):
+        self.run_recording_pid("exec bash -c 'kill -TERM $$'")
+        until(self.shell, lambda s: s["lifecycle"]["lifetime"] == "ended")
+        self.assertEqual(self.shell.run_identity()["main_exit"], {"exit_code": 128 + 15, "signal": 15})
+
+
 class _PaneStandIn:
     """Just what ``HostShellPort`` touches; the shell behind it is the real one."""
 

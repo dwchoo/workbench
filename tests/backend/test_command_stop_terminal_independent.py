@@ -661,22 +661,41 @@ class StopRunningCommandTests(RealRig):
         self.assertEqual(self.records_of("command_stop_finished")[0]["status"], "exited")
         self.assertEqual(self.terminal.current()["status"], "exited")
 
-    def test_a_command_that_ignores_sigint_is_unknown_and_nothing_stronger_is_sent(self):
-        # CS-02 stops at the SIGINT stage: unknown, still occupied; later stages belong to CS-03
-        started = self.run_command("trap '' INT; sleep 3.6")
-        (pid,) = self.find("sleep", "3.6")
+    def test_a_command_that_ignores_every_signal_is_escalated_to_sigkill_and_then_unknown(self):
+        # CS-03 supersedes the CS-02 stop at SIGINT: the stages go on to SIGKILL (CS-AC-04); when even SIGKILL has
+        # no effect (S7: a signal that leaves but changes nothing, like a D-state process) the answer is unknown.
+        started = self.run_command("trap '' INT TERM; sleep 6.6")
+        (pid,) = self.find("sleep", "6.6")
+        self.make_sigkill_ineffective()
         began = time.monotonic()
         result = self.stop(started["command_id"])
-        self.assertEqual(result["status"], "unknown", result)
-        self.assertGreaterEqual(time.monotonic() - began, POLICY.sigint_wait - 0.1)
-        self.assertEqual({signum for _, signum in self.env.attempts}, {signal.SIGINT}, "no SIGTERM/SIGKILL yet")
+        self.assertEqual((result["status"], result["reason"]), ("unknown", "still_alive_after_sigkill"), result)
+        total = POLICY.sigint_wait + POLICY.sigterm_wait + POLICY.sigkill_wait
+        self.assertGreaterEqual(time.monotonic() - began, total - 0.1, "every stage was served in full")
+        self.assertEqual([item["signal"] for item in result["signals"]], ["SIGINT", "SIGTERM", "SIGKILL"])
+        self.assertEqual({signum for _, signum in self.env.attempts},
+                         {signal.SIGINT, signal.SIGTERM, signal.SIGKILL})
         self.assertTrue(alive(pid))
+        self.assertIn(pid, [item["pid"] for item in result["residual"]["alive"]], "the survivor is reported")
         self.assertEqual(self.query()["status"], "unknown", "not ended, not stopping any more: unknown")
         self.assertEqual(self.run_command("echo no", wait=1)["status"], "terminal_command_running",
                          "an unknown command is not reported as safe to replace")
         self.assertTrue(wait_until(lambda: self.terminal.current()["running"] is False, 10))
         self.assertEqual(self.terminal.current()["status"], "exited", "the owner reports its own end")
         self.assert_user_owns_the_shell_again()
+
+    def make_sigkill_ineffective(self):
+        """S7: SIGKILL is accepted (recorded as attempted) but changes nothing; every other signal is delivered."""
+        original, env = self.env.pidfd_send_signal, self.env
+
+        def kill_has_no_effect(fd, signum):
+            if signum == signal.SIGKILL:
+                with env.lock:
+                    env.attempts.append((env.fd_pid.get(fd), signum))
+                return
+            original(fd, signum)
+        env.pidfd_send_signal = kill_has_no_effect
+        self.addCleanup(lambda: env.__dict__.pop("pidfd_send_signal", None))
 
 
 class NoSignalTests(RealRig):
@@ -1081,14 +1100,30 @@ class JournalTests(RealRig):
         self.kill_owned_and_wait_for_the_owner(pid)
 
     def test_an_unknown_end_is_recorded_with_its_reason_and_the_residual(self):
-        started = self.run_command("trap '' INT; sleep 3.7")
-        (pid,) = self.find("sleep", "3.7")
+        # the unknown now comes after the full escalation: SIGKILL did not take effect (S7)
+        started = self.run_command("trap '' INT TERM; sleep 6.7")
+        (pid,) = self.find("sleep", "6.7")
+        ticks = proc(pid).ticks
+        original, env = self.env.pidfd_send_signal, self.env
+
+        def kill_has_no_effect(fd, signum):
+            if signum == signal.SIGKILL:
+                with env.lock:
+                    env.attempts.append((env.fd_pid.get(fd), signum))
+                return
+            original(fd, signum)
+        env.pidfd_send_signal = kill_has_no_effect
+        self.addCleanup(lambda: env.__dict__.pop("pidfd_send_signal", None))
         result = self.stop(started["command_id"])
         self.assertEqual(result["status"], "unknown", result)
         finished = self.records_of("command_stop_finished")[0]
         self.assertEqual((finished["status"], finished["reason"]), ("unknown", result["reason"]))
-        self.assertTrue(finished["reason"])
+        self.assertEqual(finished["reason"], "still_alive_after_sigkill")
         self.assertIn("unchecked", finished["residual"])
+        self.assertIn({"pid": pid, "start_ticks": ticks}, finished["residual"]["alive"],
+                      "the residual is journaled with the survivor")
+        self.assertEqual([r["signal"] for r in self.records_of("command_stop_signal")],
+                         ["SIGINT", "SIGTERM", "SIGKILL"], "each stage left its own signal record")
         self.assertTrue(wait_until(lambda: self.terminal.current()["running"] is False, 10))
 
 

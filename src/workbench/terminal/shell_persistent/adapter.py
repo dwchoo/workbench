@@ -351,7 +351,8 @@ class PersistentShell:
         """Read-only identity of the outstanding managed request, or None without one.
 
         Process refs are ``{"pid", "start_ticks"}`` from the lifecycle events and the start
-        ticks this adapter recorded (None when unconfirmed or already reaped). The numbers
+        ticks this adapter recorded (None when unconfirmed or already reaped) and ``main_exit``
+        (``{"exit_code", "signal"}`` once the main process's end was observed, else None). The numbers
         are a claim to re-verify through a pin before any signal, never a license to signal.
         """
         t = self._transport
@@ -368,11 +369,15 @@ class PersistentShell:
                 boot_id = None
             phase = ("ended" if life.lifetime == "ended" else "unknown" if life.unknown
                      else "running" if life.experiment_started else "starting")
+            # how the main process ended, once observed (a negative lifecycle value is "killed by signal -n")
+            main_exit = (None if life.main_exit is None else
+                         {"exit_code": 128 - life.main_exit, "signal": -life.main_exit} if life.main_exit < 0
+                         else {"exit_code": life.main_exit, "signal": None})
             return {"request_id": life.request_id, "phase": phase,
                     "parent": ref(t.pid, t._parent_start),
                     "supervisor": ref(life.supervisor_pid, t._supervisor_start),
                     "child": ref(life.child_pid, t._child_start),
-                    "child_group": life.child_group,
+                    "child_group": life.child_group, "main_exit": main_exit,
                     "session": t.pid, "uid": os.geteuid(), "boot_id": boot_id}
 
     def interrupt_run(self):

@@ -352,25 +352,6 @@ class StopRunningCommandTests(RealStopFixture):
         for secret in (ENV_VALUE, "sleep 606.1", "606.1", "cmdline"):
             self.assertNotIn(secret, text, "no environment value, argv or command string in the stop records")
 
-    def test_a_command_that_ignores_sigint_is_unknown_after_the_stage_and_keeps_the_terminal(self):
-        # The SIGINT stage is the only one in this ticket: no escalation, and the owner still decides the end
-        started = self.run_command("trap '' INT; sleep 4.3")
-        pids = pids_running("sleep", "4.3")
-        self.assertEqual(len(pids), 1, pids)
-        began = time.monotonic()
-        result = self.stop(started["command_id"])
-        waited = time.monotonic() - began
-        self.assertEqual(result["status"], "unknown", result)
-        self.assertEqual(result["reason"], "still_alive_after_sigint")
-        self.assertGreaterEqual(waited, REDUCED.sigint_wait - 0.1)
-        self.assertEqual([item["signal"] for item in result["signals"]], ["SIGINT"], "nothing stronger was sent")
-        self.assertTrue(proc_exists(pids[0]))
-        self.assertEqual(self.query()["status"], "unknown", "still not ended: the surface says unknown")
-        self.assertEqual(self.run_command("echo no", wait=1)["status"], "terminal_command_running")
-        self.assertTrue(wait_until(lambda: self.terminal.current()["running"] is False, 10))
-        self.assertEqual(self.terminal.current()["status"], "exited", "it ended by itself; the owner reports it")
-        self.assert_user_owns_the_shell_again()
-
     def bystander(self, seconds):
         process = subprocess.Popen(["sleep", seconds], stdin=subprocess.DEVNULL)
         self.addCleanup(lambda: (process.poll() is None and process.kill(), process.wait()))
@@ -407,6 +388,39 @@ class StopRunningCommandTests(RealStopFixture):
         self.assertIsNone(outsider.poll())
         records = [r for r in journal(self.root) if r["type"].startswith("command_stop")]
         self.assertNotIn("command_stop_signal", [r["type"] for r in records])
+
+
+class IneffectiveSignalsEnvironment(LinuxStopEnvironment):
+    """S7: SIGTERM and SIGKILL are accepted but have no effect (as for a process in uninterruptible sleep)."""
+
+    def pidfd_send_signal(self, fd, signum):
+        if signum in (signal.SIGTERM, signal.SIGKILL):
+            return
+        super().pidfd_send_signal(fd, signum)
+
+
+class StopStagesExhaustedTests(RealStopFixture):
+    def make_stop_env(self):
+        return IneffectiveSignalsEnvironment()
+
+    def test_a_command_that_survives_every_stage_is_unknown_and_keeps_the_terminal(self):
+        # CS-03: SIGINT is ignored by the command and SIGTERM/SIGKILL do nothing (injected): all stages run out
+        started = self.run_command("trap '' INT; sleep 6.3")
+        pids = pids_running("sleep", "6.3")
+        self.assertEqual(len(pids), 1, pids)
+        began = time.monotonic()
+        result = self.stop(started["command_id"])
+        waited = time.monotonic() - began
+        self.assertEqual(result["status"], "unknown", result)
+        self.assertEqual(result["reason"], "still_alive_after_sigkill")
+        self.assertGreaterEqual(waited, REDUCED.sigint_wait + REDUCED.sigterm_wait + REDUCED.sigkill_wait - 0.1)
+        self.assertEqual([item["signal"] for item in result["signals"]], ["SIGINT", "SIGTERM", "SIGKILL"])
+        self.assertTrue(proc_exists(pids[0]))
+        self.assertEqual(self.query()["status"], "unknown", "still not ended: the surface says unknown")
+        self.assertEqual(self.run_command("echo no", wait=1)["status"], "terminal_command_running")
+        self.assertTrue(wait_until(lambda: self.terminal.current()["running"] is False, 10))
+        self.assertEqual(self.terminal.current()["status"], "exited", "it ended by itself; the owner reports it")
+        self.assert_user_owns_the_shell_again()
 
 
 class ShiftedTicksEnvironment(LinuxStopEnvironment):

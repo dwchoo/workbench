@@ -1,19 +1,29 @@
-"""Per-command stop foundation: process pins and the tracked-process scan (CS-01).
+"""Per-command stop: process pins, the tracked-process scan (CS-01), and the stop service (CS-02).
 
-Read-only building blocks. Nothing here decides *whether* to stop a command;
 ``ProcessPin.send`` is the only place a signal can leave, and only for a process
 whose pid, start ticks, uid and boot were re-read from ``/proc`` after its pidfd
 was opened. argv, command strings and ``comm`` never decide a target.
+
+``CommandStopService`` keeps the registry of stoppable commands (the owner of a command, e.g.
+``TerminalService``, registers a ``StopTarget`` and reports its end with ``command_ended``) and
+runs one ``StopEpisode`` thread per command: identify the run, pin the tracked members, send
+SIGINT, then wait for the *owner* to observe the end (never ``/proc``) up to the stage time.
+A stop request is not a waiter of the command: it neither consumes nor delays the owner's completion
+path. CS-02 has the SIGINT stage only: a command that outlives it ends the episode as ``unknown``
+(SIGTERM/SIGKILL, repeat requests and the ``unknown`` correction are later tickets).
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from contextlib import ExitStack
+from dataclasses import dataclass, field
 import errno
 import os
 from pathlib import Path
 import select
 import signal
+import threading
 import time
+from typing import Any, Callable, Mapping
 
 BOOT_ID_PATH = Path("/proc/sys/kernel/random/boot_id")
 _DEAD_STATES = frozenset({"Z", "X"})
@@ -278,3 +288,333 @@ def scan_tracked(identity: dict, env: StopEnvironment | None = None, *,
         elif pid in descendants:
             left.append(stat)
     return TrackScan(tuple(tracked), tuple(left))
+
+
+# -- the stop service (CS-02) ---------------------------------------------------------------------
+
+UNCHECKED = "Processes started outside the host shell session are not checked."
+ENDED_KEPT = 256  # ended command ids remembered for ``already_exited``
+_STALE_REASONS = frozenset({STALE, IDENTITY_CHANGED, DIFFERENT_UID, "identity_mismatch"})
+
+
+def _now() -> str:
+    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+
+
+@dataclass(frozen=True, slots=True)
+class StopPolicy:
+    """Stage times in seconds (SIGINT -> SIGTERM -> SIGKILL, then ``unknown``); injected so tests can shorten them.
+
+    ``identity_wait`` (the run's identity becoming known) is not part of the stage time and ``call_wait`` is how long
+    one stop call waits for its episode.
+    """
+
+    identity_wait: float = 3.0
+    sigint_wait: float = 10.0
+    sigterm_wait: float = 5.0
+    sigkill_wait: float = 5.0
+    call_wait: float = 25.0
+    poll_interval: float = 0.02
+
+
+@dataclass(eq=False)
+class StopTarget:
+    """What an owner offers for stopping one of its commands.
+
+    ``identity`` returns ``PersistentShell.run_identity()``-shaped data for the outstanding run (or None).
+    ``forbidden`` lists pids that must never be signalled whatever the scan says.
+    """
+
+    command_id: str
+    owner: str  # "worker" | "manager"
+    kind: str  # "terminal" | "experiment"
+    task_id: str | None
+    identity: Callable[[], Mapping[str, Any] | None]
+    forbidden: Callable[[], frozenset[int]] = lambda: frozenset()
+
+
+@dataclass(eq=False)
+class _Entry:
+    target: StopTarget
+    ended: threading.Event = field(default_factory=threading.Event)
+    final: Mapping[str, Any] | None = None  # the owner's final result, once it observed the end
+    episode: StopEpisode | None = None
+    repeats: int = 0
+
+
+def _members(stats) -> list[dict[str, int]]:
+    return [{"pid": stat.pid, "start_ticks": stat.start_ticks} for stat in stats]
+
+
+def _left_session(stats) -> list[dict[str, int]]:
+    return [{"pid": stat.pid, "start_ticks": stat.start_ticks, "session": stat.session} for stat in stats]
+
+
+def _complete(identity: Mapping[str, Any] | None, command_id: str) -> bool:
+    """The run is this command's, is running, and every field a pin needs is known."""
+    if not identity or identity.get("request_id") != command_id or identity.get("phase") != "running":
+        return False
+    child, parent, supervisor = identity.get("child"), identity.get("parent"), identity.get("supervisor")
+    return (all(isinstance(ref, dict) and type(ref.get("pid")) is int and type(ref.get("start_ticks")) is int
+                for ref in (child, parent, supervisor))
+            and type(identity.get("child_group")) is int and type(identity.get("session")) is int
+            and type(identity.get("uid")) is int and isinstance(identity.get("boot_id"), str))
+
+
+class StopEpisode:
+    """The one stop of one command: a thread drives the stages; callers wait on ``done``."""
+
+    def __init__(self, service: CommandStopService, entry: _Entry, requested_by: str):
+        self._service, self._entry, self.requested_by = service, entry, requested_by
+        self.command_id = entry.target.command_id
+        self.requested_at = _now()
+        self.stage = "identifying"
+        self.signals: list[dict[str, Any]] = []
+        self.result: dict[str, Any] | None = None
+        self.done = threading.Event()
+        self._started = service.env.monotonic()
+        self._identity: Mapping[str, Any] | None = None
+        self._thread = threading.Thread(target=self._run, daemon=True, name=f"command-stop-{self.command_id[:8]}")
+
+    def start(self) -> None:
+        self._thread.start()
+
+    def summary(self) -> dict[str, Any]:
+        return {"state": "stopping" if not self.done.is_set() else (self.result or {}).get("status"),
+                "stage": self.stage, "requested_by": self.requested_by, "requested_at": self.requested_at,
+                "signals": [dict(item) for item in self.signals]}
+
+    # -- the stages ----------------------------------------------------------------------------
+    def _run(self) -> None:
+        try:
+            result = self._drive()
+        except Exception as exc:  # never leave a waiting call hanging
+            result = self._unknown(f"episode_error:{type(exc).__name__}")
+        self._finish(result)
+
+    def _drive(self) -> dict[str, Any]:
+        service, entry, policy, env = self._service, self._entry, self._service.policy, self._service.env
+        scan = self._await_identity()
+        if scan is None:
+            return self._after_end(None) if entry.ended.is_set() else self._unknown("identity_unavailable")
+        identity = self._identity
+        child = identity["child"]
+        # the run identity names the command process: if its pid reads as another process, every claim of the
+        # identity (and so every member found through it) is untrusted
+        main_changed = any(stat.pid == child["pid"] and stat.start_ticks != child["start_ticks"]
+                           for stat in scan.tracked)
+        service.record({"type": "command_stop_target", "command_id": self.command_id, "pid": child["pid"],
+                        "start_ticks": child["start_ticks"], "process_group": identity["child_group"],
+                        "session": identity["session"], "uid": identity["uid"], "boot_id": identity["boot_id"],
+                        "supervisor": identity["supervisor"], "tracked": _members(scan.tracked),
+                        "left_session": _left_session(scan.left_session)})
+        if main_changed:
+            return self._stale()
+        failed: list[dict[str, Any]] = []
+        with ExitStack() as pins:
+            live = []
+            for stat in scan.tracked:
+                pin = pins.enter_context(ProcessPin.open(env, stat.pid, stat.start_ticks, uid=identity["uid"],
+                                                         boot_id=identity["boot_id"]))
+                if pin.status == PINNED:
+                    live.append(pin)
+                elif pin.status != ENDED:
+                    failed.append({"pid": stat.pid, "reason": "identity_mismatch" if pin.status == STALE
+                                   else pin.status})
+            sent = []
+            if live:
+                self.stage = "sigint"
+                at = _now()
+                for pin in live:
+                    outcome = pin.send(signal.SIGINT)
+                    if outcome == SENT:
+                        sent.append({"pid": pin.pid, "start_ticks": pin.start_ticks})
+                    elif outcome != ENDED:
+                        failed.append({"pid": pin.pid, "reason": outcome})
+                if sent:
+                    self.signals.append({"signal": "SIGINT", "number": int(signal.SIGINT), "at": at,
+                                         "stage": "sigint", "auxiliary": False, "targets": sent,
+                                         "failed": [dict(item) for item in failed]})
+                service.record({"type": "command_stop_signal", "command_id": self.command_id, "signal": "SIGINT",
+                                "at": at, "stage": "sigint", "targets": sent, "failed": list(failed),
+                                "auxiliary": False})
+            if not sent and failed and not entry.ended.is_set():
+                # nothing could be signalled: before any signal, a changed identity is ``stale``
+                if all(item["reason"] in _STALE_REASONS for item in failed):
+                    return self._stale()
+                return self._unknown(failed[0]["reason"])
+        # the owner decides when the command is over: ``/proc`` never does
+        self.stage = "sigint_wait"
+        deadline = env.monotonic() + policy.sigint_wait
+        if self._wait_owner(deadline):
+            return self._after_end(identity)
+        return self._unknown("still_alive_after_sigint", identity)
+
+    def _await_identity(self):
+        """The tracked scan once the run's identity is complete, or None (ended, closed or ``identity_wait`` over)."""
+        service, entry, policy, env = self._service, self._entry, self._service.policy, self._service.env
+        deadline = env.monotonic() + policy.identity_wait
+        while not entry.ended.is_set():
+            try:
+                identity = entry.target.identity()
+            except Exception:
+                identity = None
+            if _complete(identity, self.command_id):
+                scan = scan_tracked(identity, env, forbidden=frozenset(entry.target.forbidden()))
+                if scan.tracked:
+                    self._identity = identity
+                    return scan
+            if env.monotonic() >= deadline or service.closed.is_set():
+                return None
+            entry.ended.wait(policy.poll_interval)
+        return None
+
+    def _wait_owner(self, deadline: float) -> bool:
+        service, entry, env = self._service, self._entry, self._service.env
+        while not entry.ended.is_set():
+            remaining = deadline - env.monotonic()
+            if remaining <= 0 or service.closed.is_set():
+                return False
+            entry.ended.wait(min(remaining, 0.1))
+        return True
+
+    # -- results -------------------------------------------------------------------------------
+    def _base(self, status: str, **extra: Any) -> dict[str, Any]:
+        return {"status": status, "command_id": self.command_id, "requested_by": self.requested_by, **extra}
+
+    def _residual(self, identity: Mapping[str, Any] | None) -> dict[str, Any]:
+        alive, left = [], []
+        if identity is not None:
+            try:
+                scan = scan_tracked(identity, self._service.env,
+                                    forbidden=frozenset(self._entry.target.forbidden()))
+                alive = _members(scan.tracked)
+                left = _left_session(scan.left_session)
+            except Exception:
+                return {"checked": False, "alive": [], "left_session": [], "unchecked": UNCHECKED}
+        return {"checked": identity is not None, "alive": alive, "left_session": left, "unchecked": UNCHECKED}
+
+    def _after_end(self, identity: Mapping[str, Any] | None) -> dict[str, Any]:
+        final = self._entry.final or {}
+        if not self.signals:  # the command ended by itself before any signal left
+            return self._base("already_exited", exit_code=final.get("exit_code"), signal=final.get("signal"),
+                              ended_at=_now(), signals=[])
+        extra = {"signals": [dict(item) for item in self.signals], "residual": self._residual(identity)}
+        if final.get("status") == "exited":
+            number = final.get("signal")
+            return self._base("exited", exit_code=final.get("exit_code"), signal=number,
+                              signal_name=signal.Signals(number).name if type(number) is int and number in
+                              signal.Signals._value2member_map_ else None, **extra)
+        return self._base("unknown", reason=final.get("reason") or "owner_unknown", **extra)
+
+    def _unknown(self, reason: str, identity: Mapping[str, Any] | None = None) -> dict[str, Any]:
+        return self._base("unknown", reason=reason, signals=[dict(item) for item in self.signals],
+                          residual=self._residual(identity))
+
+    def _stale(self) -> dict[str, Any]:
+        self._service.record({"type": "command_stop_refused", "command_id": self.command_id,
+                              "requested_by": self.requested_by, "status": "stale", "reason": "identity_mismatch"})
+        return self._base("stale", reason="identity_mismatch", signals=[])
+
+    def _finish(self, result: dict[str, Any]) -> None:
+        elapsed = round(self._service.env.monotonic() - self._started, 3)
+        self._service.record({"type": "command_stop_finished", "command_id": self.command_id,
+                              "status": result["status"], "exit_code": result.get("exit_code"),
+                              "signal": result.get("signal"), "reason": result.get("reason"),
+                              "residual": result.get("residual"), "elapsed_seconds": elapsed,
+                              "repeat_requests": self._entry.repeats})
+        self.stage = "done"
+        self.result = result
+        self.done.set()
+
+
+class CommandStopService:
+    """The registry of stoppable commands and the episodes that stop them."""
+
+    def __init__(self, *, journal: Callable[[dict[str, Any]], Any], policy: StopPolicy = StopPolicy(),
+                 env: StopEnvironment | None = None):
+        self._journal, self.policy = journal, policy
+        self.env = env or LinuxStopEnvironment()
+        self._lock = threading.Lock()
+        self._live: dict[str, _Entry] = {}
+        self._ended: dict[str, dict[str, Any]] = {}
+        self.closed = threading.Event()
+
+    def record(self, record: dict[str, Any]) -> None:
+        """One audit record; a journal failure never changes what a stop does."""
+        try:
+            self._journal({**record, "at": record.get("at") or _now()})
+        except Exception:
+            pass
+
+    def close(self) -> None:
+        self.closed.set()  # episodes are daemon threads: they stop signalling and end, shutdown never waits on them
+
+    # -- the owner's side ----------------------------------------------------------------------
+    def register(self, target: StopTarget) -> None:
+        with self._lock:
+            self._live[target.command_id] = _Entry(target)
+
+    def command_ended(self, command_id: str, result: Mapping[str, Any]) -> None:
+        """The owner observed the command's end (its final result)."""
+        with self._lock:
+            entry = self._live.pop(command_id, None)
+            self._ended[command_id] = {"exit_code": result.get("exit_code"), "signal": result.get("signal"),
+                                       "ended_at": _now()}
+            while len(self._ended) > ENDED_KEPT:
+                del self._ended[next(iter(self._ended))]
+        if entry is not None:
+            entry.final = dict(result)
+            entry.ended.set()
+
+    def surface(self, command_id: str) -> dict[str, Any] | None:
+        """``{"state": "stopping"|"unknown", "stop": summary}`` while a stop is under way or unconfirmed, else None."""
+        with self._lock:
+            entry = self._live.get(command_id)
+            episode = entry.episode if entry is not None else None
+        if episode is None:
+            return None
+        summary = episode.summary()
+        if not episode.done.is_set():
+            return {"state": "stopping", "stop": summary}
+        if (episode.result or {}).get("status") == "unknown":
+            return {"state": "unknown", "stop": summary}
+        return None
+
+    # -- a stop request ------------------------------------------------------------------------
+    def stop(self, requested_by: str, command_id: str, *, reason: str | None = None) -> dict[str, Any]:
+        """Stop one command and wait for the final state (at most ``policy.call_wait``); never raises."""
+        base = {"command_id": command_id, "requested_by": requested_by}
+        if self.closed.is_set():
+            return self._refused(base, "refused", "backend_shutdown")
+        with self._lock:
+            entry = self._live.get(command_id)
+            ended = dict(self._ended[command_id]) if entry is None and command_id in self._ended else None
+            joined = entry is not None and entry.episode is not None
+            if entry is not None and not joined:
+                entry.episode = StopEpisode(self, entry, requested_by)
+            elif joined:
+                entry.repeats += 1
+            episode = entry.episode if entry is not None else None
+        if entry is None:
+            if ended is None:
+                return self._refused(base, "not_found", "unknown_command")
+            result = {"status": "already_exited", **base, **ended}
+            return self._refused(result, "already_exited", "command_ended")
+        if not joined:
+            target = entry.target
+            self.record({"type": "command_stop_requested", "command_id": command_id, "requested_by": requested_by,
+                         "kind": target.kind, "owner": target.owner, "task_id": target.task_id,
+                         "task_status": None, "reason": reason})
+            episode.start()
+        if not episode.done.wait(self.policy.call_wait):
+            return {"status": "stopping", **base, "stop": episode.summary()}
+        return {**(episode.result or {}), **({"repeat": True} if joined else {})}
+
+    def _refused(self, result: dict[str, Any], status: str, reason: str) -> dict[str, Any]:
+        result = {**result, "status": status}
+        if status != "already_exited":
+            result["reason"] = reason
+        self.record({"type": "command_stop_refused", "command_id": result["command_id"],
+                     "requested_by": result["requested_by"], "status": status, "reason": reason})
+        return result

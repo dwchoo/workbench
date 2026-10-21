@@ -98,6 +98,7 @@ import time
 from typing import Any, Callable, Iterable, Mapping
 from uuid import uuid4
 
+from workbench.backend.command_stop import CommandStopService, StopTarget
 from workbench.backend.flow import (
     HandoffService, environment_value_findings, rejected,
 )
@@ -121,7 +122,8 @@ CHECK_INTERVAL = 60  # C-D68 (8): 1 minute
 NOTICE_RETRY = 2.0  # a busy or unreachable worker: the next delivery attempt
 NOTIFIER_TICK = 0.5
 CALLS_KEPT = 256  # terminal calls remembered for a late abandon signal
-_KEYS = frozenset({"command"})
+_KEYS = frozenset({"command", "stop"})
+_COMMAND_ID = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}")  # the bridge's pattern
 # The child prints the command line for the user, then becomes ``<shell> -c <command>`` (same PID).
 ECHO_SCRIPT = 'printf \'[worker] $ %s\\n\' "$1"; exec "$0" -c "$1"'
 _ANSI = re.compile(rb"\x1b\[[0-?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b[P^_][^\x1b]*\x1b\\|\x1b[@-Z\\-_]")
@@ -132,7 +134,9 @@ RUNNING_DETAIL = ("The command keeps running in the host terminal. End your turn
                   "repeated terminal calls to wait for it, and do not start another command (a new one is refused "
                   "until it ends). Do not send progress reports about it unless the user or the manager asks or a "
                   "check shows a problem: Workbench sends you a check every 60 s while it runs and a completion "
-                  "notice when it exits. The user can stop it in the host terminal.")
+                  "notice when it exits. The user can stop it in the host terminal. To stop it yourself (the user "
+                  "asks, or it hangs), call terminal with the stop argument set to this command_id and no command; "
+                  "the call waits for the final state.")
 CHECK_INSTRUCTION = ("Workbench check (automatic, every 60 s while your terminal command runs). Look at the new "
                      "output for errors or a hang. Do not start another command and do not wait for it. "
                      "Use to_manager only for a new actionable problem or a needed manager decision, or an "
@@ -212,15 +216,30 @@ class HostGate:
                 self.owner = None
 
 
+def stop_target(args: Mapping[str, Any]) -> str | None:
+    """The ``command_id`` a validated ``terminal`` call asks to stop; None for null or an empty ``stop`` (unused)."""
+    stop = args.get("stop")
+    return stop if isinstance(stop, str) and stop.strip() else None
+
+
 def validate_terminal_arguments(args: object) -> list[str]:
     """Errors naming the field and the expected value (never the value sent)."""
     if not isinstance(args, dict):
-        return ["arguments: must be an object {command}"]
-    errors = [f"{name}: unknown field; only command" for name in sorted(set(args) - _KEYS)]
+        return ["arguments: must be an object {command, stop?}"]
+    errors = [f"{name}: unknown field; only command and stop" for name in sorted(set(args) - _KEYS)]
     command = args.get("command")
     if command is not None and (not isinstance(command, str) or len(command) > COMMAND_MAX or "\x00" in command):
         errors.append(f"command: a shell command string (at most {COMMAND_MAX} characters, no NUL; one longer than "
                       "a host shell request runs from a script file Workbench writes), or null for the current state")
+    stop = args.get("stop")
+    if stop is not None:
+        if not isinstance(stop, str):
+            errors.append("stop: a command_id (uuid) string, or null")
+        elif stop.strip():
+            if not _COMMAND_ID.fullmatch(stop):
+                errors.append("stop: a command_id (lowercase canonical uuid), or null")
+            if isinstance(command, str) and command.strip():  # a blank command is "not used" (strict schema)
+                errors.append("stop: cannot be combined with command; give command null to stop a command")
     return errors
 
 
@@ -378,6 +397,8 @@ class _Command:
     notice_due: float = 0.0
     notice_logged: set = field(default_factory=set)
 
+    port: Any = None  # the HostShellPort that runs it: the stop service reads the run identity through it
+
     summary_revision: int | None = None
     summary_started: bool = False
     summary_observed: int = 0
@@ -519,8 +540,10 @@ class TerminalService:
                  subject_capture_failure: Callable[[], None] | None = None,
                  segmented_raw_port: DisabledSegmentedRawPort | None = None,
                  segmented_raw_port_factory: Callable[[], DisabledSegmentedRawPort | None] | None = None,
-                 repository_factory: Callable[[], Any] | None = None):
+                 repository_factory: Callable[[], Any] | None = None,
+                 command_stop: CommandStopService | None = None):
         self._repository_factory = repository_factory
+        self._command_stop = command_stop  # the stop registry: this service is its StopTarget provider
         self._handoffs = handoffs
         self._subject_log = subject_log
         self._subject_capture_failure = subject_capture_failure
@@ -651,7 +674,22 @@ class TerminalService:
         view.update(command.raw_fields())
         if command.result is not None:
             view["status"] = command.result.get("status")
+        else:
+            stopping = self._stop_surface(command)
+            view["state"] = stopping["state"] if stopping else "running"
+            if stopping:
+                view["stop"] = stopping["stop"]
         return view
+
+    def _stop_surface(self, command: _Command) -> dict[str, Any] | None:
+        """``{"state": "stopping"|"unknown", "stop": summary}`` while a stop of this running command is under way
+        or unconfirmed; None otherwise (and for a command that has ended)."""
+        if self._command_stop is None or command.done.is_set():
+            return None
+        try:
+            return self._command_stop.surface(command.command_id)
+        except Exception:
+            return None
 
     def watch_state(self) -> dict[str, Any]:
         """C-D70 (1)/(6): whether a worker command runs or its completion notice is still to be sent, and the
@@ -663,12 +701,16 @@ class TerminalService:
             last = None
             if command is not None:
                 result = command.result or {}
+                stopping = self._stop_surface(command)
                 last = {"command_id": command.command_id, "command": shown_command(command.command),
-                        "state": "running" if not command.done.is_set() else result.get("status") or "unknown",
+                        "state": (stopping["state"] if stopping else "running") if not command.done.is_set()
+                        else result.get("status") or "unknown",
                         "exit_code": result.get("exit_code"), "signal": result.get("signal"),
                         "started_at": command.started_at, "duration_seconds": result.get("duration_seconds"),
                         "log_path": str(command.log_path), "task_id": command.task_id, "owner": "worker",
                         **command.raw_fields()}
+                if stopping:
+                    last["stop"] = stopping["stop"]
         return {"running": running, "notice_pending": pending, "operated_by": self.host_operator(), "last": last}
 
     # -- requests ---------------------------------------------------------------------
@@ -709,6 +751,9 @@ class TerminalService:
             self._journal({"type": "terminal_request", "key": key_dict, "redacted": "invalid_arguments",
                            "errors": errors})
             return rejected("invalid_arguments", errors=errors)
+        stop = stop_target(args)
+        if stop is not None:
+            return self._stop_request(parsed, key_dict, stop)
         command = args.get("command")
         if isinstance(command, str) and not command.strip():
             command = None  # strict schema: a blank optional field means "not used" (D1)
@@ -737,6 +782,15 @@ class TerminalService:
         if isinstance(started, dict):
             return started
         return self._await(started, deadline, key)
+
+    def _stop_request(self, parsed: Any, key_dict: dict[str, Any], command_id: str) -> dict[str, Any]:
+        """``stop``: not a new command and not a waiter. It never reaches the host terminal, the gate or the
+        pause/hold checks; the stop service signals the command's own processes and waits for the final state."""
+        if self._command_stop is None:
+            return rejected("stop_unavailable")
+        self._journal({"type": "terminal_request", "key": key_dict, "request_id": parsed.request_id,
+                       "command": None, "stop": command_id, "task_id": self._task_id()})
+        return self._command_stop.stop("worker", command_id)
 
     def _not_in_task_commands(self, command: str, key_dict: dict[str, Any]) -> dict[str, Any] | None:
         """C-D69 (6)(b): while the worker's active Task lists commands, only those run (text as given; only
@@ -788,10 +842,12 @@ class TerminalService:
             return {**command.result, **command.tail()}
         data, dropped = command.take_unseen()
         text, truncated = output_tail(data)
-        return {"status": "running", "command_id": command.command_id, "command": command.command,
-                "log_path": str(command.log_path), "elapsed_seconds": round(time.monotonic() - command.started, 3),
+        stopping = self._stop_surface(command)
+        return {"status": stopping["state"] if stopping else "running", "command_id": command.command_id,
+                "command": command.command, "log_path": str(command.log_path),
+                "elapsed_seconds": round(time.monotonic() - command.started, 3),
                 "output_tail": text, "output_tail_truncated": truncated or dropped, "detail": RUNNING_DETAIL,
-                **command.raw_fields()}
+                **({"stop": stopping["stop"]} if stopping else {}), **command.raw_fields()}
 
     def _await(self, command: _Command, deadline: float, key: tuple) -> dict[str, Any]:
         wakeup = threading.Event()
@@ -1221,6 +1277,7 @@ class TerminalService:
             command.summary_started = confirmed is not None
             self._configure_summary_capture(command)
             self._remember_run(command)
+            self._register_stop_target(command, port)
             thread = threading.Thread(target=self._follow, args=(port, command), daemon=True,
                                       name=f"terminal-{command.command_id[:8]}")
             self._threads = [item for item in self._threads if item.is_alive()] + [thread]
@@ -1487,6 +1544,24 @@ class TerminalService:
                     wakeup.set()
             self._drop_check(command, "superseded")  # the completion notice replaces it
             self._refresh_notice(command)
+        self._report_stop_end(command)
+
+    def _register_stop_target(self, command: _Command, port: Any) -> None:
+        """Offer the command to the stop service: its run identity is read through the port that runs it."""
+        command.port = port
+        if self._command_stop is None:
+            return
+        self._command_stop.register(StopTarget(command.command_id, "worker", "terminal", command.task_id,
+                                               identity=lambda: command.port.run_identity()))
+
+    def _report_stop_end(self, command: _Command) -> None:
+        """The owner observed the end: the stop service learns the final result (after every completion step)."""
+        if self._command_stop is None:
+            return
+        try:
+            self._command_stop.command_ended(command.command_id, command.result or {})
+        except Exception:
+            pass  # a stop service fault never changes how a command ends
 
     def _collect(self, port: Any, command: _Command) -> dict[str, Any]:
         while True:

@@ -58,6 +58,7 @@ from workbench.backend.flow_recovery import (
     validate_stop_survivor_arguments,
 )
 from workbench.backend.flow_tasks import FLOW_LEDGER_NAME, ExperimentPorts, TaskFlow
+from workbench.backend.command_stop import CommandStopService
 from workbench.backend.flow_terminal import (
     ABANDON_TOOL, TERMINAL_DIRECTORY, TERMINAL_TOOL, HostGate, TerminalService,
 )
@@ -200,6 +201,7 @@ class Backend:
         self.flow: TaskFlow | None = None
         # C-D68: the worker's terminal tool (its only command execution path), sharing the host-shell gate.
         self.terminal: TerminalService | None = None
+        self.command_stop: CommandStopService | None = None
         # ui_v1 pause/resume go to these; CW-18 U3 binds them to the AutomationController in _open.
         self.pause_hook = self._default_pause
         self.resume_hook = self._default_resume
@@ -496,6 +498,7 @@ class Backend:
             subject_log=self.subject_log,
             subject_capture_failure=self._mark_important_capture_unknown)
         self.handoffs.configure(policy=self.flow, active_task=self.flow.active_task)
+        self.command_stop = CommandStopService(journal=self.handoffs.record)  # per-command stop (command-stop CS-02)
         self.terminal = TerminalService(
             handoffs=self.handoffs, host_shell=self._host_shell_port, gate=host_gate,
             log_root=ensure_private_dir(layout.workflow / TERMINAL_DIRECTORY), automation=self._automation_port,
@@ -511,7 +514,7 @@ class Backend:
             subject_capture_failure=self._mark_important_capture_unknown,
             segmented_raw_port=self.segmented_raw_port,
             segmented_raw_port_factory=self._new_raw_port,
-            repository_factory=lambda: TaskRepository(layout.tasks))
+            repository_factory=lambda: TaskRepository(layout.tasks), command_stop=self.command_stop)
         self.flow.terminal_runs = self.terminal.runs_for_task  # C-D69 (6)(d): the done report's commands run
         self.watchdog = self._make_watchdog()  # C-D70: status checks, stalled/restart/recovery notices
         # p27-cd70-02 Q2: a manager follow-up the worker accepted re-arms the status checks and worker_stalled
@@ -757,6 +760,8 @@ class Backend:
             scheduler.close()  # no fresh request, bounded existing bridge dispatch settles
         if self.flow is not None:
             self.flow.close()  # the runner stops before the panes close; a run left current stays unknown
+        if getattr(self, "command_stop", None) is not None:  # a backend built without __init__ (tests) has none
+            self.command_stop.close()  # stop episodes are daemon threads: they stop signalling, shutdown never waits
         if self.terminal is not None:
             self.terminal.close()  # a worker command still running stays in the host shell; its wait ends
         if self._isolation_thread is not None:

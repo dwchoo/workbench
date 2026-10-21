@@ -227,7 +227,7 @@ class RefusalTests(ServiceFixture):
         self.assertEqual(WAIT_SECONDS, 120)
         self.assertEqual(validate_terminal_arguments({"command": "ls"}), [])
         errors = validate_terminal_arguments({"command": "ls", "timeout_seconds": 1800})
-        self.assertEqual(errors, ["timeout_seconds: unknown field; only command"])
+        self.assertEqual(errors, ["timeout_seconds: unknown field; only command and stop"])
         fresh = self.make_terminal(lambda: self.port)
         self.assertEqual(fresh._wait_seconds, 120)
         fresh.close()

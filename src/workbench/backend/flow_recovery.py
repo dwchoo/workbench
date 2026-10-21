@@ -42,6 +42,7 @@ reads in-memory state, except one bridge ``probe`` of the worker at most every
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import re
 import threading
 import time
 from typing import Any, Callable, Iterable, Mapping
@@ -63,7 +64,9 @@ RESTARTS_SHOWN = 5
 RESTART_WORKER_TOOL = "restart_worker"
 STATUS_TOOL = "workbench_status"
 STOP_SURVIVOR_TOOL = "stop_survivor"  # C-D71 (1): end one proven process the previous backend left running
-MANAGER_TOOLS = (RESTART_WORKER_TOOL, STATUS_TOOL, STOP_SURVIVOR_TOOL)
+STOP_COMMAND_TOOL = "stop_command"  # command-stop CS-05: end one command Workbench tracks (not a survivor)
+MANAGER_TOOLS = (RESTART_WORKER_TOOL, STATUS_TOOL, STOP_SURVIVOR_TOOL, STOP_COMMAND_TOOL)
+_COMMAND_ID = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")  # canonical lowercase uuid
 WORKER_NOTICE_TYPES = ("terminal_check", "terminal_done", "status_check")
 MANAGER_NOTICE_TYPES = ("worker_stalled", "report_delivery_unknown", "worker_restarted", "manager_recovery",
                         "worker_terminal_done",  # p27-cd70-02 Q3: a previous worker session's command ended
@@ -155,6 +158,21 @@ def validate_stop_survivor_arguments(args: object) -> list[str]:
     reason = args.get("reason")
     if not isinstance(reason, str) or not reason.strip() or len(reason) > REASON_MAX:
         errors.append(f"reason: a non-empty text of at most {REASON_MAX} characters is required")
+    return errors
+
+
+def validate_stop_command_arguments(args: object) -> list[str]:
+    """CS-05: ``{command_id, reason}``, both required; the errors name the field, never the value sent."""
+    if not isinstance(args, Mapping):
+        return ["arguments: an object {command_id, reason} is required"]
+    errors = [f"{name}: not a stop_command field (allowed: command_id, reason)" for name in sorted(set(args) - {"command_id", "reason"})]
+    command_id = args.get("command_id")
+    if not isinstance(command_id, str) or not _COMMAND_ID.fullmatch(command_id):
+        errors.append("command_id: required, the command_id (lowercase canonical uuid) of a command to stop")
+    reason = args.get("reason")
+    if not isinstance(reason, str) or not reason.strip() or len(reason) > REASON_MAX or "\x00" in reason:
+        errors.append(f"reason: required, a non-blank string of at most {REASON_MAX} characters (why the command "
+                      "is stopped; it is recorded)")
     return errors
 
 
@@ -584,6 +602,6 @@ class Watchdog:
         return [{"role": item.role.value, **item.notice} for item in self._queue]
 
 
-__all__ = ["BACKEND_RESTARTED_HINT", "STOP_SURVIVOR_TOOL", "validate_stop_survivor_arguments", "EDITOR_WAIT", "IDLE_LIMIT", "MANAGER_NOTICE_TYPES", "MANAGER_TOOLS", "MAX_CHECKS", "PROBE_INTERVAL",
+__all__ = ["BACKEND_RESTARTED_HINT", "STOP_COMMAND_TOOL", "STOP_SURVIVOR_TOOL", "validate_stop_command_arguments", "validate_stop_survivor_arguments", "EDITOR_WAIT", "IDLE_LIMIT", "MANAGER_NOTICE_TYPES", "MANAGER_TOOLS", "MAX_CHECKS", "PROBE_INTERVAL",
            "RESTART_DETAIL", "RESTART_NO_TASK_DETAIL", "RESTART_NO_TASK_PENDING_DETAIL", "RESTART_PENDING_DETAIL", "restart_detail", "RESTART_WORKER_TOOL", "STATUS_TOOL", "WORKER_NOTICE_TYPES", "WatchPorts", "Watchdog",
            "bounded", "validate_restart_arguments", "validate_status_arguments"]

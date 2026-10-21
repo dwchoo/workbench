@@ -54,8 +54,8 @@ from workbench.backend.flow import (
 )
 from workbench.backend.flow_recovery import (
     BACKEND_RESTARTED_HINT, RESTART_WORKER_TOOL, restart_detail, RESTARTS_SHOWN, STATUS_REPORTS_MAX, STATUS_TOOL,
-    STOP_SURVIVOR_TOOL, WatchPorts, Watchdog, bounded, validate_restart_arguments, validate_status_arguments,
-    validate_stop_survivor_arguments,
+    STOP_COMMAND_TOOL, STOP_SURVIVOR_TOOL, WatchPorts, Watchdog, bounded, validate_restart_arguments,
+    validate_status_arguments, validate_stop_command_arguments, validate_stop_survivor_arguments,
 )
 from workbench.backend.flow_tasks import FLOW_LEDGER_NAME, ExperimentPorts, TaskFlow
 from workbench.backend.command_stop import CommandStopService
@@ -498,7 +498,9 @@ class Backend:
             subject_log=self.subject_log,
             subject_capture_failure=self._mark_important_capture_unknown)
         self.handoffs.configure(policy=self.flow, active_task=self.flow.active_task)
-        self.command_stop = CommandStopService(journal=self.handoffs.record)  # per-command stop (command-stop CS-02)
+        # per-command stop (command-stop CS-02); an id only the journal knows is a previous backend's (CS-05)
+        self.command_stop = CommandStopService(journal=self.handoffs.record,
+                                               previous_backend=self._journaled_unfinished_command)
         self.terminal = TerminalService(
             handoffs=self.handoffs, host_shell=self._host_shell_port, gate=host_gate,
             log_root=ensure_private_dir(layout.workflow / TERMINAL_DIRECTORY), automation=self._automation_port,
@@ -514,7 +516,8 @@ class Backend:
             subject_capture_failure=self._mark_important_capture_unknown,
             segmented_raw_port=self.segmented_raw_port,
             segmented_raw_port_factory=self._new_raw_port,
-            repository_factory=lambda: TaskRepository(layout.tasks), command_stop=self.command_stop)
+            repository_factory=lambda: TaskRepository(layout.tasks), command_stop=self.command_stop,
+            task_status=self._task_status)
         self.flow.terminal_runs = self.terminal.runs_for_task  # C-D69 (6)(d): the done report's commands run
         self.flow.host_commands = self.terminal.commands_for_task  # CS-08: cancel response and Task views
         self.watchdog = self._make_watchdog()  # C-D70: status checks, stalled/restart/recovery notices
@@ -1655,7 +1658,7 @@ class Backend:
         if watchdog is not None and getattr(peer.role, "value", peer.role) == "worker" \
                 and tool in (TERMINAL_TOOL, "to_manager"):
             watchdog.worker_acted(str(tool))  # C-D70 (1): the worker acted; its status checks start over
-        if tool in (RESTART_WORKER_TOOL, STATUS_TOOL, STOP_SURVIVOR_TOOL):
+        if tool in (RESTART_WORKER_TOOL, STATUS_TOOL, STOP_SURVIVOR_TOOL, STOP_COMMAND_TOOL):
             return self._recovery_tool(peer, request)
         if request.get("tool") in (TERMINAL_TOOL, ABANDON_TOOL):
             terminal = self.terminal
@@ -1868,13 +1871,16 @@ class Backend:
                 result = self._restart_worker(parsed, key_dict, started)
             elif parsed.tool == STOP_SURVIVOR_TOOL:
                 result = self._stop_survivor(parsed, key_dict)
+            elif parsed.tool == STOP_COMMAND_TOOL:
+                result = self._stop_command(parsed, key_dict)
             else:
                 result = self._workbench_status(parsed, key_dict)
         except Exception as exc:  # a restart may have started: its outcome is not known here
             result = {"status": "outcome_unknown", "reason": f"backend_error:{type(exc).__name__}"}
         with self._recovery_lock:
             self._recovery_inflight.discard(key)
-            self._recovery_results[key] = result
+            if not (parsed.tool == STOP_COMMAND_TOOL and result.get("status") == "stopping"):
+                self._recovery_results[key] = result  # an interim "stopping" is asked again, not replayed
             while len(self._recovery_results) > 256:
                 del self._recovery_results[next(iter(self._recovery_results))]
         if parsed.tool in (RESTART_WORKER_TOOL, STOP_SURVIVOR_TOOL):
@@ -1957,6 +1963,49 @@ class Backend:
                            "generation": None if peer is None else peer.generation},
                 "previous": result.get("previous"), "survivors": result.get("survivors"), "task": task,
                 "terminal": terminal, "detail": restart_detail(self._worker_task_open(), ready=peer is not None)}
+
+    def _task_status(self, task_id: str) -> str | None:
+        """The status of a Task (``closed`` for a cancelled one) for the stop audit record."""
+        return self.flow.task_status(task_id) if self.flow is not None else None
+
+    def _journaled_unfinished_command(self, command_id: str) -> bool:
+        """The terminal journal holds a start of ``command_id`` and no end of it. The stop service asks only for ids
+        it does not hold itself, so this is a command a previous backend started and may have left running.
+
+        Limit: every unknown id reads the whole terminal journal once (a rare, manager-initiated call)."""
+        started = False
+        for record in self.handoffs.read_records(("terminal_started", "terminal_ended")):
+            if record.get("command_id") == command_id:
+                if record["type"] == "terminal_ended":
+                    return False
+                started = True
+        return started
+
+    def _stop_command(self, parsed: Any, key_dict: dict[str, Any]) -> dict[str, Any]:
+        """CS-05: the manager stops one command Workbench tracks (a Worker ``terminal`` command, later an experiment
+        run), without a user approval (CS-D06). The stop service decides the owner rule and runs the SIGINT ->
+        SIGTERM -> SIGKILL episode; the result is its final state. Survivors of a previous backend are not reachable
+        from here (``stop_survivor``)."""
+        args = parsed.args
+        errors = validate_stop_command_arguments(args)
+        if errors:
+            self._journal({"type": "stop_command_request", "key": key_dict, "redacted": "invalid_arguments",
+                           "errors": errors})
+            return rejected("invalid_arguments", errors=errors)
+        reason, command_id = args["reason"].strip(), args["command_id"]
+        try:
+            findings = environment_value_findings({"reason": reason}, self._sensitive_values())
+        except Exception:
+            findings = ["reason:environment_check_unavailable"]
+        if findings:
+            self._journal({"type": "stop_command_request", "key": key_dict, "redacted": "environment_value",
+                           "fields": findings})
+            return rejected("environment_value", fields=findings,
+                            detail="Never put environment variable values in the reason.")
+        self._journal({"type": "stop_command_request", "key": key_dict, "command_id": command_id, "reason": reason})
+        if self.command_stop is None:
+            return rejected("stop_unavailable")
+        return self.command_stop.stop("manager", command_id, reason=reason)
 
     def _stop_survivor(self, parsed: Any, key_dict: dict[str, Any]) -> dict[str, Any]:
         """C-D71 (1): the manager ends one proven process the previous backend left running (or leaves it)."""

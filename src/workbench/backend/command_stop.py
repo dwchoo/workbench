@@ -16,6 +16,13 @@ A command has one episode (CS-04): a repeat request joins it while it runs and, 
 result (``repeat: true``) without any new signal or timer. An ``unknown`` is never shown as exited: only when the
 owner later observes the command's end is the same episode corrected to ``exited`` (``corrected: true``, ``history``
 holding the earlier ``unknown`` and its reason; no signal is sent). An ``unknown`` the owner itself declared is final.
+
+Who may stop what (CS-05, ``STOPPABLE_BY``): the request is checked against the owner role of the registered command
+before anything else. The Manager stops the Worker's and its own commands, the Worker only its own
+(``refused: not_owner`` otherwise, also for an ended command); the owner is a role, so a restarted Worker session, a
+paused automation, a boot-confirmation hold or a closed Task change nothing. An id the service does not hold but the
+journal remembers as started and not ended is ``refused: previous_backend_command`` (``stop_survivor``); every
+refusal signals nothing and is recorded as ``command_stop_refused``.
 """
 from __future__ import annotations
 
@@ -307,6 +314,15 @@ STAGES = (("sigint", signal.SIGINT, "sigint_wait"),
 # than the last ENDED_KEPT ended commands is ``not_found`` again, whatever happened to it
 ENDED_KEPT = 256
 _STALE_REASONS = frozenset({STALE, IDENTITY_CHANGED, DIFFERENT_UID, "identity_mismatch"})
+# who may stop a command of which owner (CS-D02): the Manager stops the Worker's and its own commands, the Worker
+# only its own. The owner is a role, never an OMP session, a Task or the requester's earlier calls.
+STOPPABLE_BY = {"worker": frozenset({"worker"}), "manager": frozenset({"worker", "manager"})}
+
+
+PREVIOUS_BACKEND_DETAIL = (
+    "This command was started by a previous Workbench backend, whose processes Workbench cannot verify as the "
+    "command. It is not stopped from here: use workbench_status to see what that backend left running and "
+    "stop_survivor for a proven survivor.")
 
 
 def _now() -> str:
@@ -334,7 +350,9 @@ class StopTarget:
     """What an owner offers for stopping one of its commands.
 
     ``identity`` returns ``PersistentShell.run_identity()``-shaped data for the outstanding run (or None).
-    ``forbidden`` lists pids that must never be signalled whatever the scan says.
+    ``forbidden`` lists pids that must never be signalled whatever the scan says. ``task_status`` returns the status
+    of the command's Task as it is when a stop is requested (None without a Task or when unknown); it is read for the
+    audit record only and a closed Task never changes what a stop may do.
     """
 
     command_id: str
@@ -343,6 +361,7 @@ class StopTarget:
     task_id: str | None
     identity: Callable[[], Mapping[str, Any] | None]
     forbidden: Callable[[], frozenset[int]] = lambda: frozenset()
+    task_status: Callable[[], str | None] = lambda: None
 
 
 @dataclass(eq=False)
@@ -407,6 +426,7 @@ class StopEpisode:
         self.requested_at = _now()
         self.stage = "identifying"
         self.signals: list[dict[str, Any]] = []
+        self.stop_signal: str | None = None  # the last signal this episode sent (set just before it leaves)
         self.result: dict[str, Any] | None = None
         self.done = threading.Event()
         self._settle = threading.Lock()  # the final result and the late correction are decided one at a time
@@ -527,6 +547,8 @@ class StopEpisode:
               auxiliary: bool) -> list[dict[str, int]]:
         """Signal each pinned member; record the signal with the members reached and those that failed."""
         at, sent = _now(), []
+        if pins and not auxiliary:
+            self.stop_signal = signal.Signals(signum).name  # before it leaves: the owner may see the end at once
         for pin in pins:
             outcome = pin.send(signum)
             if outcome == SENT:
@@ -727,8 +749,10 @@ class CommandStopService:
     """The registry of stoppable commands and the episodes that stop them."""
 
     def __init__(self, *, journal: Callable[[dict[str, Any]], Any], policy: StopPolicy = StopPolicy(),
-                 env: StopEnvironment | None = None):
+                 env: StopEnvironment | None = None,
+                 previous_backend: Callable[[str], bool] | None = None):
         self._journal, self.policy = journal, policy
+        self._previous_backend = previous_backend
         self.env = env or LinuxStopEnvironment()
         self._lock = threading.Lock()
         self._live: dict[str, _Entry] = {}
@@ -766,6 +790,23 @@ class CommandStopService:
             if entry.episode is not None:
                 entry.episode.owner_ended()  # an episode that already ended unknown is corrected
 
+    def stop_marker(self, command_id: str) -> dict[str, str]:
+        """``{"stopped_by", "stop_signal"}`` once a stop of this command has sent a signal, else ``{}``.
+
+        For the owner, which puts it on the command's result, notice and run record (the Worker must not take a
+        command the Manager stopped for a failure of its own). ``stopped_by`` is the requester of the command's
+        one episode; ``stop_signal`` the last signal that episode sent.
+        """
+        with self._lock:
+            entry = self._live.get(command_id)
+            if entry is None:
+                gone = self._ended.get(command_id)
+                entry = gone.entry if gone is not None else None
+            episode = entry.episode if entry is not None else None
+        if episode is None or episode.stop_signal is None:
+            return {}
+        return {"stopped_by": episode.requested_by, "stop_signal": episode.stop_signal}
+
     def surface(self, command_id: str) -> dict[str, Any] | None:
         """``{"state": "stopping"|"unknown", "stop": summary}`` while a stop is under way or unconfirmed, else None."""
         with self._lock:
@@ -797,15 +838,20 @@ class CommandStopService:
             entry = self._live.get(command_id)
             gone = self._ended.get(command_id) if entry is None else None
             owner = entry if entry is not None else (gone.entry if gone is not None else None)
-            joined = owner is not None and owner.episode is not None
-            if owner is not None and not joined:
+            denied = owner is not None and owner.target.owner not in STOPPABLE_BY.get(requested_by, ())
+            joined = owner is not None and not denied and owner.episode is not None
+            if owner is not None and not denied and not joined:
                 owner.episode = StopEpisode(self, owner, requested_by)
             elif joined:
                 owner.repeats += 1
             episode = owner.episode if owner is not None else None
             repeats = owner.repeats if owner is not None else 0
+        if denied:  # live or ended, never the state of a command that is not this requester's to stop
+            return self._refused(base, "refused", "not_owner")
         if episode is None:
             if gone is None:
+                if self._from_previous_backend(command_id):
+                    return self._refused(base, "refused", "previous_backend_command", detail=PREVIOUS_BACKEND_DETAIL)
                 return self._refused(base, "not_found", "unknown_command")
             # the command ended without a stop episode: its last state, with the same record pair for every id the
             # service remembers (the request, then its refusal; for a declared unknown the request, then a finish).
@@ -836,10 +882,30 @@ class CommandStopService:
         self.record({"type": "command_stop_requested", "command_id": target.command_id if target else command_id,
                      "requested_by": requested_by, "kind": target.kind if target else None,
                      "owner": target.owner if target else None, "task_id": target.task_id if target else None,
-                     "task_status": None, "reason": reason})
+                     "task_status": self._task_status(target), "reason": reason})
 
-    def _refused(self, result: dict[str, Any], status: str, reason: str) -> dict[str, Any]:
+    @staticmethod
+    def _task_status(target: StopTarget | None) -> str | None:
+        if target is None or target.task_id is None:
+            return None
+        try:
+            status = target.task_status()
+        except Exception:
+            return None  # the audit record says nothing rather than something wrong
+        return status if isinstance(status, str) else None
+
+    def _from_previous_backend(self, command_id: str) -> bool:
+        """The terminal journal shows a start of this id that no end followed and this backend does not hold: a
+        previous backend's. Workbench cannot prove who that process is now, so it is not stopped from here."""
+        try:
+            return bool(self._previous_backend is not None and self._previous_backend(command_id))
+        except Exception:
+            return False  # unreadable: nothing is claimed about the id
+
+    def _refused(self, result: dict[str, Any], status: str, reason: str, *, detail: str | None = None) -> dict[str, Any]:
         result = {**result, "status": status}
+        if detail is not None:
+            result["detail"] = detail
         if status != "already_exited":
             result["reason"] = reason
         self.record_refusal(result["command_id"], result["requested_by"], status, reason)

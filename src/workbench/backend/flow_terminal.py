@@ -123,6 +123,7 @@ NOTICE_RETRY = 2.0  # a busy or unreachable worker: the next delivery attempt
 NOTIFIER_TICK = 0.5
 CALLS_KEPT = 256  # terminal calls remembered for a late abandon signal
 _KEYS = frozenset({"command", "stop"})
+STOP_MARKS = ("stopped_by", "stop_signal")  # on a command a stop signalled: who stopped it, the last signal sent
 _COMMAND_ID = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}")  # the bridge's pattern
 # The child prints the command line for the user, then becomes ``<shell> -c <command>`` (same PID).
 ECHO_SCRIPT = 'printf \'[worker] $ %s\\n\' "$1"; exec "$0" -c "$1"'
@@ -339,7 +340,7 @@ def _run_entry(command: str, log_path: str, script_path: str | None, result: Map
                              "duration_seconds": result.get("duration_seconds"), "log_path": log_path}
     if script_path is not None:
         entry["script_path"] = script_path
-    for key in ("log_format", "raw_log_ref", "read_command", "raw_source_status", "raw_source_error"):
+    for key in ("log_format", "raw_log_ref", "read_command", "raw_source_status", "raw_source_error", *STOP_MARKS):
         if key in result:
             entry[key] = result[key]
     return entry
@@ -541,8 +542,10 @@ class TerminalService:
                  segmented_raw_port: DisabledSegmentedRawPort | None = None,
                  segmented_raw_port_factory: Callable[[], DisabledSegmentedRawPort | None] | None = None,
                  repository_factory: Callable[[], Any] | None = None,
-                 command_stop: CommandStopService | None = None):
+                 command_stop: CommandStopService | None = None,
+                 task_status: Callable[[str], str | None] | None = None):
         self._repository_factory = repository_factory
+        self._task_status = task_status  # a Task's status by id, for the stop audit record (CS-05)
         self._command_stop = command_stop  # the stop registry: this service is its StopTarget provider
         self._handoffs = handoffs
         self._subject_log = subject_log
@@ -1136,7 +1139,7 @@ class TerminalService:
                       "status": result.get("status"), "exit_code": result.get("exit_code"),
                       "signal": result.get("signal"), "log_path": str(command.log_path),
                       "duration_seconds": result.get("duration_seconds"), "instruction": MANAGER_DONE_INSTRUCTION,
-                      **command.raw_fields()}
+                      **command.raw_fields(), **{key: result[key] for key in STOP_MARKS if key in result}}
             outcome = self._send(notice, self._notify_manager)
         else:
             notice = {"notice_id": command.notice_id, "type": "terminal_done", "command_id": command.command_id,
@@ -1146,7 +1149,7 @@ class TerminalService:
                       "log_path": str(command.log_path), "duration_seconds": result.get("duration_seconds"),
                       "instruction": DONE_INSTRUCTION if command.segmented_raw_port is None else
                       "Workbench notice: command ended. log_path is a source descriptor; use read_command for retained ranges.",
-                      **command.raw_fields()}
+                      **command.raw_fields(), **{key: result[key] for key in STOP_MARKS if key in result}}
             outcome = self._send(notice)
         with self._lock:
             if outcome in ("deferred", "not_connected", "paused"):
@@ -1281,6 +1284,9 @@ class TerminalService:
             port.release_hold(HOLD_REASON)
             with self._lock:
                 self._current = command
+            # registered before the start is journaled: a stop asked for an id the journal already shows started
+            # must find it here, or it would read as a previous backend's command
+            self._register_stop_target(command, port)
             started = {"type": "terminal_started", "command_id": command.command_id, "key": key_dict,
                        "task_id": task, "command": command.command, "cwd": command.cwd,
                        "started_at": command.started_at, "log_path": str(command.log_path),
@@ -1291,7 +1297,6 @@ class TerminalService:
             command.summary_started = confirmed is not None
             self._configure_summary_capture(command)
             self._remember_run(command)
-            self._register_stop_target(command, port)
             thread = threading.Thread(target=self._follow, args=(port, command), daemon=True,
                                       name=f"terminal-{command.command_id[:8]}")
             self._threads = [item for item in self._threads if item.is_alive()] + [thread]
@@ -1389,7 +1394,8 @@ class TerminalService:
             for command_id, entry in reversed(held.runs if held is not None else ()):
                 if command_id == command.command_id:
                     entry.update(status=result.get("status") or "unknown", exit_code=result.get("exit_code"),
-                                 signal=result.get("signal"), duration_seconds=result.get("duration_seconds"))
+                                 signal=result.get("signal"), duration_seconds=result.get("duration_seconds"),
+                                 **{key: result[key] for key in STOP_MARKS if key in result})
                     entry.update(command.raw_fields())
                     break
 
@@ -1420,7 +1426,8 @@ class TerminalService:
             result = ({"status": ended.get("status"), "exit_code": ended.get("exit_code"),
                        "signal": ended.get("signal"), "duration_seconds": ended.get("duration_seconds")}
                       if ended is not None else {"status": "running" if command_id == current else "unknown"})
-            for key in ("log_format", "raw_log_ref", "read_command", "raw_source_status", "raw_source_error"):
+            for key in ("log_format", "raw_log_ref", "read_command", "raw_source_status", "raw_source_error",
+                        *STOP_MARKS):
                 if ended is not None and key in ended:
                     result[key] = ended[key]
                 elif key in started:
@@ -1548,12 +1555,14 @@ class TerminalService:
             result["log_truncated"] = True
         if command.log_error is not None:
             result["log_error"] = command.log_error
+        result.update(self._stop_marks(command))
         self._journal({"type": "terminal_ended", "command_id": command.command_id, "status": result["status"],
                        "exit_code": result.get("exit_code"), "signal": result.get("signal"),
                        "reason": result.get("reason"), "started_at": command.started_at, "ended_at": _now(),
                        "duration_seconds": duration, "log_path": str(command.log_path),
                        "log_bytes": command.log_bytes, "log_truncated": command.log_truncated,
-                       "cwd": command.cwd, **command.raw_fields()})
+                       "cwd": command.cwd, **command.raw_fields(),
+                       **{key: result[key] for key in STOP_MARKS if key in result}})
         self._finish_run(command, result)
         command.result = result
         command.done.set()
@@ -1565,13 +1574,28 @@ class TerminalService:
             self._drop_check(command, "superseded")  # the completion notice replaces it
             self._refresh_notice(command)
 
+    def _stop_marks(self, command: _Command) -> dict[str, str]:
+        """``stopped_by``/``stop_signal`` when a stop signalled this command, else nothing (a service fault: nothing)."""
+        if self._command_stop is None:
+            return {}
+        try:
+            return self._command_stop.stop_marker(command.command_id)
+        except Exception:
+            return {}
+
     def _register_stop_target(self, command: _Command, port: Any) -> None:
         """Offer the command to the stop service: its run identity is read through the port that runs it."""
         command.port = port
         if self._command_stop is None:
             return
         self._command_stop.register(StopTarget(command.command_id, "worker", "terminal", command.task_id,
-                                               identity=lambda: command.port.run_identity()))
+                                               identity=lambda: command.port.run_identity(),
+                                               task_status=lambda: self._status_of(command.task_id)))
+
+    def _status_of(self, task_id: str | None) -> str | None:
+        if task_id is None or self._task_status is None:
+            return None
+        return self._task_status(task_id)
 
     def _report_stop_end(self, command: _Command) -> None:
         """The owner observed the end: the stop service learns the final result (after every completion step)."""

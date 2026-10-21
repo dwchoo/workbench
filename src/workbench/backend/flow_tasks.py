@@ -691,6 +691,12 @@ class TaskFlow:
                     "message_state": self._task_message_state.get(task.task_id),
                     "worker_session": None if task.worker_session is None else list(task.worker_session)}
 
+    def task_status(self, task_id: str) -> str | None:
+        """A Task's status by id (``closed`` once cancelled or closed), else None; takes only the flow lock, no view."""
+        with self._lock:
+            task = self.tasks.get(task_id)
+            return None if task is None else task.status
+
     def task_session(self, task_id: str) -> list[Any] | None:
         """The worker session ``[session_id, generation]`` that has this Task's TASK (C-D70 (4)), or None."""
         with self._lock:

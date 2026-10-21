@@ -189,6 +189,7 @@ CANCEL_NOTICE_AFTER_RESUME_DETAIL = ("Workbench is paused: the worker is told of
 CANCEL_NOTICE_AFTER_HOLD_DETAIL = ("Automatic delivery to the worker is held: the worker is told of the cancel once "
                                    "the hold lifts (the notice was not sent yet and is delivered once).")
 CANCEL_NOTICE_FAILED_DETAIL = "The Task is cancelled, but the cancel notice could not be queued for the worker."
+HOST_COMMAND_NOTE = "Cancel does not stop the command; stop it with terminal stop / stop_command."
 
 
 def _under(path: str, root: Path | str) -> bool:
@@ -415,6 +416,9 @@ class TaskFlow:
         self._home_cwd: str | None = None
         # C-D69 (6): the terminal service's record of the commands run for a Task (set by the backend)
         self.terminal_runs: Callable[[str], list[dict[str, Any]]] | None = None
+        # CS-08: the commands of a Task that have not ended (the terminal service's; set by the backend); computed
+        # when a view or the cancel response is built and never written to the ledger
+        self.host_commands: Callable[[str], list[dict[str, Any]]] | None = None
         # C-D70 (Q2, p27-cd70-02): told when a manager follow-up of a Task was submitted to the worker (the watchdog
         # starts its status checks and the worker_stalled notice over: a new instruction is a new chance)
         self.follow_up_submitted: Callable[[str], None] | None = None
@@ -665,7 +669,16 @@ class TaskFlow:
         """ui_v1 ``task``: the current Task, else the most recent one (closed), else None."""
         with self._lock:
             task = self.active() or (list(self.tasks.values())[-1] if self.tasks else None)
-            return None if task is None else task.view()
+            view = None if task is None else task.view()
+        return None if view is None else self._with_host_commands(view)
+
+    def _with_host_commands(self, view: dict[str, Any]) -> dict[str, Any]:
+        """CS-08: the view plus the Task's commands that have not ended; asked after the flow lock is released and
+        never part of a stored record. A closed (cancelled) Task keeps showing its still-running commands. The list
+        in a cancel response is the snapshot at that moment: when the HandoffService answers the same tool call
+        again from its result cache, the earlier snapshot is returned, not a fresh one."""
+        view.update(self._host_command_fields(view["task_id"]))
+        return view
 
     def watch_view(self) -> dict[str, Any] | None:
         """C-D70 (1): the open (busy) Task as the watchdog sees it, else None."""
@@ -702,7 +715,7 @@ class TaskFlow:
                          "commands": None if task.commands is None else list(task.commands),
                          "task_message_id": task.task_message_id,
                          "worker_session": None if task.worker_session is None else list(task.worker_session)})
-            return view
+        return self._with_host_commands(view)
 
     def worker_view(self) -> dict[str, Any]:
         """ui_v1 ``worker``: busy while a Task occupies it (C-D66)."""
@@ -713,6 +726,33 @@ class TaskFlow:
 
     # -- the HandoffPolicy -----------------------------------------------------------
     def decide(self, request: HandoffRequest, _active: ActiveTask | None) -> HandoffDecision:
+        decision = self._decide(request)
+        result = decision.result
+        if (request.tool == "to_worker" and request.args.get("cancel") is True
+                and isinstance(result, dict) and result.get("status") == "cancelled"):
+            # CS-08: asked after the flow lock is released (the terminal service never waits on it); a cancel does
+            # not stop a command, so the response lists the Task's commands that still run.
+            extra = self._host_command_fields(result["task_id"])
+            if extra["host_commands"]:
+                extra["host_command_note"] = HOST_COMMAND_NOTE
+            decision = replace(decision, result={**result, **extra})
+        return decision
+
+    def _host_command_fields(self, task_id: str) -> dict[str, Any]:
+        """CS-08: ``host_commands`` (the Task's commands that have not ended) for a view or the cancel response.
+
+        When no provider is wired or it fails, the list is ``[]`` with ``host_commands_unavailable: true`` so that
+        "cannot be read" never looks like "nothing runs"; a readable list carries no marker. Limits: a command is
+        not listed in the short span between its submit and the terminal service setting it current.
+        """
+        if self.host_commands is not None:
+            try:
+                return {"host_commands": [dict(item) for item in self.host_commands(task_id)]}
+            except Exception:
+                pass
+        return {"host_commands": [], "host_commands_unavailable": True}
+
+    def _decide(self, request: HandoffRequest) -> HandoffDecision:
         # the host shell is asked before the flow lock (its port takes the pane lock)
         size_error = self._host_shell_size_error(request.args) if request.tool == "to_worker" else None
         with self._lock:

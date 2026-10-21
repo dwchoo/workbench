@@ -691,6 +691,20 @@ class TerminalService:
         except Exception:
             return None
 
+    def commands_for_task(self, task_id: str) -> list[dict[str, Any]]:
+        """CS-08: the not yet ended commands run for ``task_id`` (running, stopping or unknown), for the Task views and
+        the cancel response; ``[]`` once they ended. A command without a Task (``task_id`` null) belongs to none.
+
+        Limit: between a command's submit and ``_current`` being set it is not listed yet."""
+        with self._lock:
+            command = self._current
+            if command is None or command.task_id != task_id or command.done.is_set():
+                return []
+            stopping = self._stop_surface(command)
+            return [{"command_id": command.command_id, "kind": "terminal", "owner": "worker",
+                     "state": stopping["state"] if stopping else "running", "started_at": command.started_at,
+                     "log_path": str(command.log_path), "stop": stopping["stop"] if stopping else None}]
+
     def watch_state(self) -> dict[str, Any]:
         """C-D70 (1)/(6): whether a worker command runs or its completion notice is still to be sent, and the
         latest command (id, short command, state, exit code or signal, start, log path)."""

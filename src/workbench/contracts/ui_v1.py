@@ -115,6 +115,13 @@ removed before any release; a client sending ``approval_decide`` gets
   ``closed`` with ``closed_reason`` such as ``done``, ``cancelled``,
   ``superseded_by_new_task``). ``held_reason`` says why a start or step waits,
   e.g. ``host_terminal_busy``. ``since`` is when ``status`` last changed.
+  ``host_commands`` (command-stop CS-08; additive, computed when the view is
+  built and never stored): the Task's host commands that have not ended,
+  ``[{command_id, kind (terminal|experiment), owner (worker|manager), state
+  (running|stopping|unknown), started_at, log_path, stop (a stop summary or
+  null)}]``, ``[]`` when none. A closed (cancelled) Task keeps listing a command
+  that still runs: cancelling never stops a command. A command with no Task
+  belongs to none. :data:`TASK_STATUSES` is unchanged.
 - ``worker``: ``{state, task_id}``; ``state`` is one of :data:`WORKER_STATES`
   (``busy`` while a Task is active, then ``task_id`` names it).
 - ``usage`` (CW-16, C-AC-21; additive): ``{task_id, runs_started,

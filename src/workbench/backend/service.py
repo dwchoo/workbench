@@ -516,6 +516,7 @@ class Backend:
             segmented_raw_port_factory=self._new_raw_port,
             repository_factory=lambda: TaskRepository(layout.tasks), command_stop=self.command_stop)
         self.flow.terminal_runs = self.terminal.runs_for_task  # C-D69 (6)(d): the done report's commands run
+        self.flow.host_commands = self.terminal.commands_for_task  # CS-08: cancel response and Task views
         self.watchdog = self._make_watchdog()  # C-D70: status checks, stalled/restart/recovery notices
         # p27-cd70-02 Q2: a manager follow-up the worker accepted re-arms the status checks and worker_stalled
         self.flow.follow_up_submitted = lambda task_id: self.watchdog.worker_acted("manager_follow_up")

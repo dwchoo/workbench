@@ -16,4 +16,4 @@ Send every field; set each one you do not use to null (not a placeholder value).
   - If the user gave only a log condition, do not invent a result file or text: ask which file the run writes, or (with their agreement) make the command write one, e.g. `set -o pipefail; ./exp.sh | tee out/result.txt` with `result_contains` equal to `log_contains`.
 - `task_id`: the active Task a follow-up or cancel belongs to (null for a new Task). With it, `to_worker` messages the worker on the same Task (status `queued`).
 - `run: true` (with the current `task_id`): re-run the experiment (e.g. a new commit). At most 3 re-runs per Task; after that report to the user instead. Otherwise null.
-- `cancel: true` (with `task_id`): cancel the Task; the worker is told and becomes free. Otherwise null.
+- `cancel: true` (with `task_id`): cancel the Task; the worker is told and becomes free. Otherwise null. Cancel does not stop a command: a worker `terminal` command or an experiment run keeps running after the Task is cancelled. To stop it, call `stop_command` with its `command_id` (the experiment's `run_id`) and a `reason`; the cancel response lists such commands in `host_commands`.

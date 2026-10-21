@@ -97,7 +97,7 @@ test("manager and worker retain their role tools alongside logs and records", as
 			// C-D70: the manager also has its recovery tools restart_worker and workbench_status;
 			// C-D71 (1): and stop_survivor for processes a previous backend left running.
 			assert.deepEqual([...bridge.tools.keys()], role === "worker" ? ["workbench_records", "workbench_logs", own, "terminal"]
-				: ["workbench_records", "workbench_logs", own, "restart_worker", "workbench_status", "stop_survivor"], `${role} tools`);
+				: ["workbench_records", "workbench_logs", own, "restart_worker", "workbench_status", "stop_survivor", "stop_command"], `${role} tools`);
 			assert.equal(bridge.tools.has(other), false);
 			const tool = bridge.tools.get(own)!;
 			assert.equal(tool.loadMode, "essential", "schema must reach the provider without xd:// discovery");
@@ -426,7 +426,7 @@ test("worker registers terminal: strict, essential, one nullable command (no wai
 		const parameters = tool.parameters as Schema;
 		assert.equal(parameters.additionalProperties, false);
 		// C-D68 (9): the wait is fixed at 120 s; the worker sets none.
-		assert.deepEqual(Object.keys(parameters.properties), ["command"]);
+		assert.deepEqual(Object.keys(parameters.properties), ["command", "stop"]);  // CS-06: additive optional stop
 		assert.deepEqual([...parameters.required], ["command"]);
 		assert.deepEqual(parameters.properties.command.type, ["string", "null"]);
 		assert.doesNotMatch(JSON.stringify(parameters) + tool.description, /timeout_seconds|1800/);

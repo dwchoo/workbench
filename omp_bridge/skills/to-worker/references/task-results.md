@@ -5,6 +5,7 @@ The result returns at once. The worker's outcome arrives later as a `to_manager`
 - `dispatched`: the Task (or re-run) started; `manager_rule` repeats that the worker does it. End your turn; the report comes as a new message.
 - `queued`: your follow-up message reached the same Task. End your turn.
 - `cancelled` / `cancel_requested`: the Task is closed / the worker is being told. End your turn and wait for the confirmation before a new Task.
+  - Cancelling does not stop a running command. If the response has `host_commands` (each with `command_id`, `kind` `terminal` or `experiment`, `owner`, `state`, `log_path`) or a `host_command_note`, a command is still running (for an experiment `command_id` is the `run_id`; `cancel_requested` with `held_reason` `cancel_waiting_for_host_exit` waits for it). The same list is in `workbench_status` as `task.host_commands`. Stop it only if it should not finish: `stop_command` (`command_id`, `reason`), then read its result (see [stop results](#stop_command-results)). The response never says the command stopped.
 - `worker_busy`: see above; end your turn and wait for the report, or cancel.
 - `rejected` (with a reason): the call was invalid. `errors`/`detail` name the field and the expected value (for example `spec.execution` must be null for kind `work`); fix exactly that and send once more; do not resend it unchanged.
 - `held` (nothing was sent; the reason says why, so do not loop):
@@ -14,6 +15,15 @@ The result returns at once. The worker's outcome arrives later as a `to_manager`
   - `held:target_not_connected`, `held:mailbox_unavailable`, `held:journal_unavailable`, `held:metadata_unavailable`: the worker or Workbench is not ready. Tell the user; retry only after they say it is fixed. `held:boot_confirmation_required` (user runs `python -m workbench confirm-boot`), `held:model_hold:worker` (worker model error; lifts on its next clean turn), `held:shutdown_closing`: tell the user once; do not loop.
 - A Task can also show `held:<reason>` on its own. `held:host_terminal_busy`: the experiment runs in the user's host terminal only when it is idle (clean prompt, no job, no background or suspended job); the start is retried, so do not work around it and never operate the host terminal yourself. If it stays, ask the user to clear the host shell: take it over (prefix t, then c), finish or kill their jobs, run `wb-handoff` again, hand the shell back to the manager (prefix h), then take it over again (prefix t, c) so it sits at an idle user-owned prompt, where automation starts. `held:host_terminal_busy:worker_terminal_command`: the worker's own `terminal` command still runs in the host terminal. Wait; the run starts after it ends. Do not ask the user to take over or kill it. `held:backend_restarted`: Workbench restarted mid-Task; nothing is replayed. Follow its `backend_restarted` notice (workbench-recovery). `held:worker_busy`, `held:manager_busy`, `held:worker_not_connected`: wait; it is retried. `held:shell_unknown`: the host shell state is unknown; no result was judged; ask the user.
 - After a `done`/`blocked` report, read it, check it against the goal, then decide: follow-up, re-run, a new Task, or answer the user. The worker is free as soon as the report reached you, so you may send a new `to_worker` in the same turn that reads the report; do not wait for another turn.
+
+## `stop_command` results
+`stop_command` waits for the stop (about 25 s) and returns `command_id`, `requested_by` `manager` and a `status`:
+- `exited`: it ended (`exit_code`, `signal`, `residual`; `residual.unchecked` lists what Workbench did not check).
+- `unknown`: not confirmed ended (`reason`); do not claim it stopped. `host_commands` keeps showing it; check `workbench_status` later, or `stop_command` again (joins the same stop, `repeat: true`).
+- `already_exited`, `not_found`, `stale`: nothing was sent (finished, unknown id, or the process changed).
+- `refused`: `reason` `previous_backend_command` (use `stop_survivor` with the `survivor_id` from `workbench_status`) or `backend_shutdown`.
+- `stopping`: still in progress after the wait; check `workbench_status` later. Do not repeat the call in a loop.
+- A stopped experiment closes as `outcome` `stopped` (with `stopped_by`) without analysis or retry; a stopped worker command ends with `stopped_by` and the worker should not re-run it. If cancel and stop both happened, the cancel wins and the Task closes `cancelled`.
 
 ## Notices
 A `to_worker` result may carry `notices[]`: things that ended a Task while you were not looking. Read them every time and update your picture of the Task; each is shown once.

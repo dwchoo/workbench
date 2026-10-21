@@ -63,7 +63,7 @@ class SchemaAgreementTests(unittest.TestCase):
         # C-D70 (3)/(5): the manager also has restart_worker and workbench_status (p27-cd70-test-01 edit); they are
         # answered by the backend itself, not by HandoffService (TOOL_ROLES below stays the two handoff tools).
         self.assertEqual(sorted(t["name"] for t in self.tools["manager"]),
-                         ["restart_worker", "stop_survivor", "to_worker", "workbench_logs", "workbench_status"])
+                         ["restart_worker", "stop_command", "stop_survivor", "to_worker", "workbench_logs", "workbench_status"])  # CS-06: stop_command (cs06-test-01 edit)
         self.assertEqual(sorted(t["name"] for t in self.tools["worker"]),
                          ["terminal", "to_manager", "workbench_logs"])
         self.assertEqual({name: role.value for name, role in flow.TOOL_ROLES.items()},

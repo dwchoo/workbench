@@ -307,7 +307,7 @@ const TO_MANAGER_PARAMETERS = {
 		},
 	},
 };
-type BridgeTool = "to_worker" | "to_manager" | "terminal" | "restart_worker" | "workbench_status" | "stop_survivor" | "workbench_logs" | "workbench_records";
+type BridgeTool = "to_worker" | "to_manager" | "terminal" | "restart_worker" | "workbench_status" | "stop_survivor" | "stop_command" | "workbench_logs" | "workbench_records";
 const HANDOFF_TOOLS: Record<Role, { name: "to_worker" | "to_manager"; label: string; description: string; parameters: Frame }> = {
 	manager: {
 		name: "to_worker", label: "To worker", parameters: TO_WORKER_PARAMETERS,
@@ -322,7 +322,9 @@ const HANDOFF_TOOLS: Record<Role, { name: "to_worker" | "to_manager"; label: str
 			+ "busy you get worker_busy with the current task; wait for its to_manager report (done/blocked) or "
 			+ "cancel the task. Without task_id (null) a new Task is dispatched at once (status dispatched; the user "
 			+ "delegated this, no approval step). With the current task_id it is a follow-up message for the "
-			+ "worker (status queued), run: true re-runs an experiment, cancel: true cancels the Task. Set every "
+			+ "worker (status queued), run: true re-runs an experiment, cancel: true cancels the Task. Cancel does not "
+			+ "stop a running command: to stop it use stop_command (command_id from workbench_status host_commands or "
+			+ "the cancel response). Set every "
 			+ "field you do not use to null. The result returns at once; then end your turn: the worker's to_manager "
 			+ "report arrives as a new message (never wait or poll for it). A Workbench notice (worker_stalled, "
 			+ "worker_restarted, report_delivery_unknown, manager_recovery, backend_restarted) means: follow the "
@@ -349,6 +351,8 @@ const HANDOFF_TOOLS: Record<Role, { name: "to_worker" | "to_manager"; label: str
 const TERMINAL_WAIT_S = 120;
 // The backend's own wait ends after TERMINAL_WAIT_S; this covers its start (hold, wb-handoff, submit).
 const TERMINAL_RESULT_SLACK_MS = 30_000;
+// CS-06: result timeout of a stop (terminal stop / stop_command); the backend answers within its 25 s call wait.
+const STOP_RESULT_TIMEOUT_MS = 45_000;
 const TERMINAL_ABORT_DETAIL = "Waiting stopped. A command that already started keeps running in the host terminal; "
 	+ "end your turn: Workbench sends a check every 60 s while it runs and a completion notice when it exits.";
 // C-D68 (8): the backend learns that a terminal call stopped waiting (abort or this bridge's own timeout), so the
@@ -370,7 +374,7 @@ const NOTICE_TYPES: Record<Role, Set<unknown>> = {
 // the tools are registered; at the subagent's session_start they are removed from that session's active tools
 // (pi.setActiveTools), which drops them from the subagent's provider request. The refusal stays as defence.
 const BRIDGE_TOOL_NAMES = new Set(["to_worker", "to_manager", "terminal", "restart_worker", "workbench_status",
-	"stop_survivor", "workbench_logs", "workbench_records"]);
+	"stop_survivor", "stop_command", "workbench_logs", "workbench_records"]);
 const SUBAGENT_DETAIL = "Bridge tools are for the worker itself, not its subagents: only the worker itself reports "
 	+ "to the manager and runs commands. Return your findings to the worker instead.";
 
@@ -408,6 +412,10 @@ const TERMINAL_PARAMETERS = {
 				+ "(another gets not_in_task_commands and nothing runs). A command longer than one host shell request "
 				+ "(about 2,800 plain ASCII characters; non-ASCII, newlines and quotes take more) runs from a script file "
 				+ "Workbench writes (<shell> <file>)." },
+		stop: { ...OPTIONAL_UUID,
+			description: "A command_id to stop (from a terminal result, a terminal_check/terminal_done notice or "
+				+ `commands_run); give it with command null. A stop is not a new command (nothing is typed into the host `
+				+ `terminal) and it works while the command runs. ${NOT_USED}` },
 	},
 };
 const TERMINAL_TOOL = {
@@ -423,7 +431,11 @@ const TERMINAL_TOOL = {
 		+ "you get status running: end your turn and do not start another command; end your turn with one short text "
 		+ "line (never an empty reply); do not use the wait tool or repeated terminal calls to wait; do not send "
 		+ "progress reports about it unless the user or the manager asks or a check shows a problem. Workbench "
-		+ "sends you a check every 60 s while it runs and a completion notice when it exits.",
+		+ "sends you a check every 60 s while it runs and a completion notice when it exits. "
+		+ "To stop a running command give its command_id as stop with command null: a stop is not a new command, "
+		+ "it works while that command occupies the host terminal, and it waits for the stop result (exited, "
+		+ "unknown, already_exited, not_found, stale, refused; stopping if it is still in progress, then check "
+		+ "again with command null). Stop only when the command is no longer wanted.",
 };
 
 // C-D70 (3)/(6): the manager's recovery tools. restart_worker ends only the worker OMP process Workbench started
@@ -484,7 +496,31 @@ const STOP_SURVIVOR_TOOL = {
 		+ "an unknown or changed one. Leaving a survivor running is fine when it still does useful work. Recorded "
 		+ "and shown to the user.",
 };
-const MANAGER_TOOLS = [RESTART_WORKER_TOOL, WORKBENCH_STATUS_TOOL, STOP_SURVIVOR_TOOL];
+// CS-06: stop one Workbench-run command (a worker terminal command or the experiment run the manager started) by
+// its command_id. Unlike stop_survivor (a previous backend's leftovers) this targets a command the current backend
+// tracks. The call waits for the stop to finish, so its result limit is STOP_RESULT_TIMEOUT_MS.
+const STOP_COMMAND_TOOL = {
+	name: "stop_command" as const, label: "Stop command", parameters: {
+		type: "object",
+		additionalProperties: false,
+		required: ["command_id", "reason"],
+		properties: {
+			command_id: { type: "string", pattern: UUID_PATTERN.source,
+				description: "The command to stop: a command_id from workbench_status (task.host_commands), a cancel "
+					+ "response, or the experiment's run_id." },
+			reason: { type: "string", minLength: 1, maxLength: RESTART_REASON_MAX,
+				description: "Why it is stopped (required, recorded in the audit log; no secret values)." },
+		},
+	},
+	description: "Stop one command Workbench runs in the host terminal (the worker's terminal command or an experiment "
+		+ "run) by its command_id, with a reason: SIGINT, then SIGTERM, then SIGKILL, each after a grace period, sent only to the processes Workbench "
+		+ "verified as that command's. Cancelling a Task does not stop its command; use this. The call waits for the "
+		+ "result: exited (with exit_code, signal and a residual check), unknown (not confirmed ended; see reason), "
+		+ "already_exited, not_found, stale, refused (see reason), or stopping if it is still in progress. Does not "
+		+ "end the host shell, the worker or any other process; use stop_survivor for a previous backend's leftovers. "
+		+ "Recorded in the audit log.",
+};
+const MANAGER_TOOLS = [RESTART_WORKER_TOOL, WORKBENCH_STATUS_TOOL, STOP_SURVIVOR_TOOL, STOP_COMMAND_TOOL];
 const WORKBENCH_LOGS_TOOL = {
 	name: "workbench_logs" as const, label: "Workbench logs", parameters: {
 		type: "object", additionalProperties: false,
@@ -512,6 +548,9 @@ const WORKBENCH_LOGS_TOOL = {
 // How long this bridge waits for the backend's terminal result (C-D68 (9): fixed; the call's arguments do not
 // change it).
 export function terminalTimeoutMs(params?: unknown): number {
+	// CS-06: a stop call waits for the stop episode (backend CALL_WAIT 25 s), so it gets its own, longer limit.
+	const stop = typeof params === "object" && params !== null ? (params as Frame).stop : undefined;
+	if (typeof stop === "string" && stop.trim().length > 0) return STOP_RESULT_TIMEOUT_MS;
 	// C-D68 (10): a call without a command returns the current state at once.
 	if (typeof params === "object" && params !== null && (params as Frame).command === null) return TOOL_RESULT_TIMEOUT_MS;
 	return TERMINAL_WAIT_S * 1000 + TERMINAL_RESULT_SLACK_MS;
@@ -1204,7 +1243,8 @@ export default function workbenchG3Extension(pi: any, summarySDK?: Record<string
 					strict: true,
 					loadMode: "essential",
 					async execute(toolCallId: string, params: unknown, signal?: AbortSignal, _onUpdate?: unknown, ctx?: unknown) {
-						const result = await requestHandoff(own.name, toolCallId, params, signal, TOOL_RESULT_TIMEOUT_MS, ctx);
+						const limit = own.name === "stop_command" ? STOP_RESULT_TIMEOUT_MS : TOOL_RESULT_TIMEOUT_MS;
+						const result = await requestHandoff(own.name, toolCallId, params, signal, limit, ctx);
 						return { content: [{ type: "text", text: JSON.stringify(result) }], details: result };
 					},
 				});

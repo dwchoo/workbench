@@ -15,3 +15,17 @@ Run every shell command (tests, scripts, git, builds) with the `terminal` tool; 
 - `host_terminal_busy`: nothing ran; the user or an experiment uses the host terminal. Do not work around it; try later or report `blocked`.
 - `command` null returns the current state at once (never waits): the result if it ended, else `running` with its new output.
 - `terminal_command_running`: one command at a time; wait for its `terminal_done`. `paused`: the user paused Workbench; no new command runs (a running one continues); stop and wait.
+
+## Stopping a running command: `terminal` with `stop`
+- `stop` is the `command_id` of a command to stop. Call `terminal` with `command` null and `stop` set. A stop is not a new command: nothing is typed into the host terminal, and it works while that command occupies the host terminal (`terminal_command_running`, `host_terminal_busy` and `paused` do not block it). Give either `command` or `stop`, never both (`invalid_arguments`, nothing happens). A blank `stop` counts as not used.
+- Where `command_id` comes from: the `terminal` result of the command (`running` or `exited`), the `terminal_check` and `terminal_done` notices, and `commands_run` (in your `done` report and in a Task re-sent to you). Stop only a command that is no longer wanted: the manager asked you to, it hangs, or it runs far beyond what the Task needs. Do not stop to "check" it.
+- The call waits for the stop to finish, up to about 25 s (Workbench sends SIGINT, then SIGTERM, then SIGKILL, each after a grace period, only to the processes it verified as that command's). Do not retry while it waits. Results carry `command_id` and `requested_by`; `status` is one of:
+  - `exited`: ended; read `exit_code`, `signal`/`signal_name` and `residual` (what was checked; `residual.unchecked` always lists what was not, so it is never a promise that nothing is left).
+  - `unknown`: Workbench could not confirm the end; `reason` says why. Do not claim it stopped; report it to the manager and read the output or call `terminal` with `command` null later.
+  - `already_exited`: it had already ended (last `exit_code`/`signal`); nothing was sent.
+  - `not_found`, `stale`: the id is unknown or no longer the same process; nothing was sent. Re-check `commands_run`.
+  - `refused`: `reason` `not_owner` (the manager's command: ask the manager), `previous_backend_command` or `backend_shutdown`. Nothing was sent.
+  - `stopping`: the wait ran out while the stop is still in progress; it continues. End your turn; call `terminal` with `command` null later, or wait for the `terminal_done` notice, which still arrives once.
+- A repeated stop of the same command joins the same stop and returns the same final result with `repeat: true`; it sends no new signal. A corrected result has `corrected: true` and `history`.
+- A command ended by a stop reports `stopped_by` (`worker` or `manager`) and the last `signal` in the `terminal` result, `terminal_done` and `commands_run`. That is an interruption you or the manager chose, not a failure of the command: do not re-run it unless the manager or the Task asks, and say in your report that it was stopped and by whom.
+- The manager can stop your command too (`stop_command`). If your command ends with `stopped_by` `manager`, continue from there; do not start it again.

@@ -51,7 +51,7 @@ check `p27-cw16-compat-c18-r2`(exit 0)의 결과다. 같은 argv의 첫 실행 `
 
 각주
 1. plain PTY에는 outer 영속 계층이 없다. UI 자체의 detach와 재attach는 C5에서 확인했다.
-2. tmux 기본값 `set-clipboard external`에서는 tmux가 앱의 OSC 52를 버린다. 제품은 "복사됨: N자 (tmux: set -g allow-passthrough on / set -s set-clipboard on)" 안내를 띄운다. 시험 harness가 격리 server에 `tmux set-option -g set-clipboard on`을 적용한 뒤에는 바깥 터미널이 OSC 52를 받았다. 이 설정은 제품이 아니라 harness가 적용했다. 따라서 tmux 사용자는 직접 `set-clipboard on` 또는 `allow-passthrough on`을 설정해야 한다.
+2. tmux 기본값 `set-clipboard external`에서는 tmux가 앱의 OSC 52를 버린다. 제품은 "복사됨: N자 (tmux: set -g allow-passthrough on / set -s set-clipboard on)" 안내를 띄운다. 시험 harness가 격리 server에 `tmux set-option -g set-clipboard on`을 적용한 뒤에는 바깥 터미널이 OSC 52를 받았다. 이 설정은 제품이 아니라 harness가 적용했다. 따라서 tmux 사용자는 직접 `set-clipboard on` 또는 `allow-passthrough on`을 설정해야 한다. (`wb` 시작 시 tmux 안이면 `mouse`와 `allow-passthrough`를 자동 설정한다. 아래 §7 참고. `set-clipboard`는 건드리지 않는다.)
 3. Herdr 0.9.3은 약 1 MiB를 넘는 bracketed paste를 앱에 전달하지 않는다. B1 raw probe(C16 기록) 결과 1 MiB는 도착했고 1.9 MiB와 2 MiB+64는 도착하지 않았다. C18 compat 보고서도 같은 이유로 Herdr 경로의 2 MiB 거절을 "해당 없음"으로 기록했다. 대신 shell 줄이 깨끗하게 유지되는 것을 확인했다.
 
 **자식이 입력을 읽지 않을 때의 queue_full paste 거절**은 이 live matrix에서 실행하지 않았다. C18 regression-a의 live 테스트 `test_live_contract_independent.test_queue_full_on_a_stalled_real_pane_rejects_whole_frame_with_reason`가 실제 pane에서 통과로 관측했고(OMP 18.8.0, VERIFICATION §4.1), fixture 테스트(`test_product_paste_independent`, `test_product_pty_independent`)도 있다. 이 live 테스트는 outer 조합(tmux·Herdr)별로 돌린 것이 아니다.
@@ -130,5 +130,5 @@ C18에서 관측한 것(gap-c18 COLOR, pass, plain PTY의 pyte outer, TERM=xterm
 - C18에서 실제로 검증한 조합: Linux(Ubuntu 24.04.4) + OMP 18.8.0 + host Bash 5.2.21 또는 dash 0.5.12 + plain PTY / tmux 3.4 / Herdr 0.9.3. 6개 조합 모두 C1–C7을 통과했다(plain C6은 해당 없음). 단 첫 실행에서는 3개 조합이 C2의 Esc 닫힘으로 실패했고 r2에서 통과했다(§2).
 - Herdr 0.9.3에서는 약 1 MiB를 넘는 paste가 outer 단계에서 전달되지 않는다. tmux에서 OMP 복사를 바깥 터미널로 보내려면 사용자가 `set-clipboard on` 또는 `allow-passthrough on`을 설정해야 한다.
 - OMP pane 색은 256색 근사로 표시된다(§6, C-D73).
-- Workbench 내부에서는 tmux를 실행하거나 의존하지 않는다. tmux와 Herdr는 사용자 outer 환경의 조합으로만 썼다.
+- Workbench 내부에서는 tmux에 의존하지 않는다. tmux와 Herdr는 사용자 outer 환경의 조합으로만 썼다. 다만 `wb`(product UI)가 `TMUX` 환경 변수가 있는 tmux 안에서 시작하면 실행 중인 tmux server의 전역 `mouse`와 `allow-passthrough`를 확인하고(`tmux show -gv`, 시간 제한 약 2초), 이미 켜져 있으면(`allow-passthrough`는 `on`/`all`) 아무것도 하지 않는다. 없는 옵션이 있고 stdin/stdout이 TTY이면 UI가 뜨기 전에 한 번 `~/.tmux.conf 에 추가할까요? [y/N]`(기본 아니오)을 묻는다. `y`면 `~/.tmux.conf`(없으면 기존 `$XDG_CONFIG_HOME/tmux/tmux.conf`, 둘 다 없으면 새 `~/.tmux.conf`) 끝에 `# >>> workbench tmux >>>` 표식 블록으로 없는 줄만 덧붙이고(기존 내용은 고치지 않는다. 선택한 설정 파일에 이미 workbench 블록이 있으면 묻지도 쓰지도 않고 실행 중인 server에만 적용한다) 실행 중인 server에도 `tmux set -g <옵션> on`을 적용한다. 그 외 답, EOF, Ctrl-C, 비TTY는 실행 중인 server에만 적용한다. `allow-passthrough`를 모르는 tmux(3.3 미만)에서는 그 옵션을 건너뛴다. 적용한 경우 footer에 한 줄(`tmux 설정 적용: mouse on, allow-passthrough on`)을 띄운다. tmux 호출 실패·시간 초과, 설정 파일 쓰기 실패는 짧은 안내만 남기고 시작은 막지 않는다. 끄는 설정은 없다.
 - 위 목록 밖의 조합(§5)은 지원으로 판정하지 않는다.

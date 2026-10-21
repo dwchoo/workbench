@@ -324,9 +324,16 @@ class Session:
         back = self.term.until(lambda: not self.scrolled(), 5)
         return self.note(label, scrolled and back, scrolled=scrolled, back_to_live=back, title=title[:90])
 
-    def run(self, backend: Backend, extra=None) -> list[dict]:
+    def run(self, backend: Backend, extra=None, restore=None) -> list[dict]:
         term = self.term
         term.send(backend.attach_command().encode() + b"\r")
+        # inside tmux the product asks to set a missing mouse / allow-passthrough before the UI starts (tmux_setup):
+        # answer "no" (running server only), then ``restore`` puts the server back to the config this scenario means
+        if term.until(lambda: "[y/N]" in term.text(), 10):
+            term.send(b"n\r")
+            term.until(lambda: "HOST SHELL" in term.text(), 30)
+        if restore is not None:
+            restore()
         if not self.note("ui_attached", term.until(lambda: "HOST SHELL" in term.text() and "MANAGER OMP"
                                                    in term.text(), 30), screen_tail=term.text()[-400:]):
             return self.log
@@ -420,7 +427,11 @@ class LiveMuxScrollProbe(unittest.TestCase):
 
         session = Session(term, name)
         try:
-            session.run(self.backend, extra=flags)
+            def restore() -> None:  # the scenario's own config: allow-passthrough off, mouse as the conf says
+                subprocess.run(base + ["set", "-g", "allow-passthrough", "off"], env=env, capture_output=True)
+                subprocess.run(base + ["set", "-g", "mouse", "on" if mouse else "off"], env=env, capture_output=True)
+
+            session.run(self.backend, extra=flags, restore=restore)
         finally:
             term.close()
             subprocess.run(base + ["kill-server"], env=env, capture_output=True)

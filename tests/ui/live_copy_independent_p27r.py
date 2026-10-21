@@ -46,8 +46,8 @@ for extra in (HERE, HERE.parent / "backend"):
         sys.path.insert(0, str(extra))
 
 from independent_support_cw06 import ScriptedServer  # noqa: E402
-from live_mux_independent_p27n import (COLS, ROWS, OuterTerminal, clean_env, kill_identity, note,  # noqa: E402
-                                       owned_processes, ticks)
+from live_mux_independent_p27n import (COLS, ROWS, OuterTerminal, answer_tmux_setup_prompt, clean_env,  # noqa: E402
+                                       kill_identity, note, owned_processes, tmux_option_values, ticks)
 
 REPO = HERE.parents[1]
 SRC = str(REPO / "src")
@@ -182,9 +182,15 @@ class LiveCopyTmux(LiveBase):
             term = OuterTerminal(base + ["attach", "-t", "wb"], env, str(self.root))
             case.term = term
             term.pump(1.0)
+            scenario = tmux_option_values(base, env)  # this conf's own state (allow-passthrough off), before the UI starts
             attach = (f"clear; env PYTHONPATH={SRC} PYTHONDONTWRITEBYTECODE=1 {shlex.quote(sys.executable)} -c "
                       f"{shlex.quote(MAIN)} attach --data-dir {shlex.quote(str(live.data))}; echo UIDONE-$?")
+            mark = len(term.raw)
             case.shell(attach)
+            # tmux auto-setup prompt: the UI asks to turn on mouse / allow-passthrough first. Answer "n", then put the
+            # options back to this conf's values, so cases A/B/C below start from allow-passthrough off as intended.
+            case.ok("info_tmux_setup_prompt_answered_scenario_options_restored", True,
+                    prompt_seen=answer_tmux_setup_prompt(term, base, env, scenario, mark), scenario=scenario)
             if not case.ok("ui_attached", term.until(lambda: "HOST SHELL" in term.text() and "MANAGER OMP" in term.text(), 40),
                            tail=term.text()[-200:]):
                 return

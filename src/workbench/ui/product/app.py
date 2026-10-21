@@ -22,6 +22,7 @@ from workbench.contracts import ui_v1
 from workbench.contracts.ui_v1 import ClientType, ServerType
 from workbench.ui.product.layout import LAYOUT_FILE, load_layout, save_layout
 from workbench.ui.product.model import ProductModel
+from workbench.ui.tmux_setup import setup_tmux_for_ui
 from workbench.ui.product.view import draw
 from workbench.ui.terminal_g1.app import _ColorPairs
 
@@ -238,9 +239,11 @@ def run_product(path: Path, *, stdin_fd: int = 0, stdout_fd: int = 1,
         print("attach needs an interactive terminal (stdin/stdout must be a TTY); "
               "scripts can use `status --json`", file=sys.stderr)
         return 2
+    tmux_notice = setup_tmux_for_ui(stdin_fd, stdout_fd)  # may prompt: before connecting, so no backend frames queue up
     client = UiClient(path, name="workbench-ui", expected_process=expected_process)
     rows, cols = _terminal_size(stdout_fd)
     model = ProductModel(ClientSender(client), rows, cols)
+    model.notice = tmux_notice
     layout_path = path.parent / LAYOUT_FILE  # per data dir: next to the UI socket
     model.set_layout_state(*load_layout(layout_path))
     status, message = 0, ""

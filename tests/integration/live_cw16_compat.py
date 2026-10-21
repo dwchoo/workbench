@@ -208,6 +208,11 @@ class TmuxOuter(Outer):
             self.sb.own(int(server))
             self.facts["server_pid"] = int(server)
         self.facts["socket"] = str(self.sock)
+        # The product sets these when it starts inside tmux (ui/tmux_setup); set them here as that setup would, so the
+        # matrix runs in the state a Workbench user's tmux ends up in and never waits on the setup prompt.
+        for option in ("mouse", "allow-passthrough"):
+            self.tm("set-option", "-g", option, "on")
+            self.facts[f"{option.replace('-', '_')}_set_by_harness"] = self.tm("show-options", "-gv", option).stdout.strip()
         self.facts["default_terminal"] = self.tm("show-options", "-gv", "default-terminal").stdout.strip()
         self.facts["set_clipboard"] = self.tm("show-options", "-gv", "set-clipboard").stdout.strip()
         self.facts["escape_time"] = self.tm("show-options", "-sv", "escape-time").stdout.strip()

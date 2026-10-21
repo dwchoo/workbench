@@ -351,8 +351,9 @@ class OmpCopyTmuxPtyTests(unittest.TestCase):
         self.addCleanup(shutil.rmtree, self.root, True)
         self.sock = f"wbcd69-{secrets.token_hex(4)}"
         conf = self.root / "tmux.conf"
+        # mouse on as well: the UI asks to set a missing mouse / allow-passthrough before it starts (tmux_setup)
         conf.write_text("set -g status off\nset -s set-clipboard on\nset -g allow-passthrough on\n"
-                        "set -s escape-time 0\n")
+                        "set -g mouse on\nset -s escape-time 0\n")
         self.env = {"PATH": "/usr/bin:/bin", "TERM": "xterm-256color", "LANG": "C.UTF-8", "HOME": str(self.root),
                     "TMUX_TMPDIR": str(self.root)}
         self.base = ["tmux", "-L", self.sock, "-f", str(conf)]

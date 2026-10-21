@@ -15,6 +15,7 @@ Manager OMP·worker OMP·host persistent terminal을 연결하는 작업 환경.
 - 본체는 Python 중심으로 개발한다. Linux를 우선 지원하고 OS 의존 처리를 분리한다. Windows는 제외한다.
 - 1차 core와 Phase 2를 구분한다. Phase 2 구현은 core 완성·검증 이후다.
 - Workbench 내부에서 tmux 등 외부 terminal multiplexer를 실행·의존하지 않는다. 외부 tmux·herdr 안에서 실행할 수 있어야 한다.
+  - 예외(2026-10-21 사용자 결정): 이미 tmux 안에서 시작된 경우에 한해 `wb` 시작 시 실행 중인 tmux의 `mouse`·`allow-passthrough`를 확인·적용하는 `tmux show`/`tmux set -g` 호출과, 사용자가 승인한 경우의 tmux 설정 파일 블록 추가는 허용한다. 실패해도 시작을 막지 않는다.
 - 외부 요청 접수는 실행 승인이 아니다. Manager의 승인 명세와 worker의 실행·결과 보고를 구분한다.
 - 현재 요구사항은 [Core BRIEF](docs/features/core-workbench/BRIEF.md), 용어는 [CONTEXT.md](CONTEXT.md)를 확인한다. 참고 스펙과의 차이는 [대조표](docs/features/core-workbench/SOURCE-RECONCILIATION.md)를 따른다. 초안은 승인이 아니다.
 - 개발용 검증·로그 보관은 [r0.8 승인 기준과 r0.9 운영 합의를 반영한 BRIEF](docs/features/dev-validation-log-retention/BRIEF.md)를 함께 따른다. 정확한 SPEC·PLAN·ticket bundle 승인과 구현 권한은 별도다. 신규 raw 정책의 core C-AC-24·동작 규약 §6 대체는 Q-01 통과 후 사용자의 별도 rotation 활성화 결정부터 적용한다.

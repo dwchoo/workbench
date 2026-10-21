@@ -24,6 +24,7 @@ import fcntl
 import json
 import os
 from pathlib import Path
+import re
 import secrets
 import shlex
 import select
@@ -107,6 +108,43 @@ def note(record: dict) -> None:
     if REPORT:
         with open(REPORT, "a", encoding="utf-8") as handle:
             handle.write(json.dumps(record, ensure_ascii=False) + "\n")
+
+
+# --- tmux auto-setup prompt ---------------------------------------------------------------------------------------------
+# Inside tmux the product UI asks "... [y/N]" before it starts when the running server lacks global ``mouse on`` /
+# ``allow-passthrough on`` (ui/tmux_setup), and applies them to the running server. These harnesses build scenarios around the
+# server's own options, so each tmux client answers "n" (running server only, nothing written to any config) and then puts
+# the options back to what the scenario's conf says, before any check can depend on them.
+_CSI = re.compile(rb"\x1b\[[0-9;?]*[ -/]*[@-~]")
+TMUX_SETUP_OPTIONS = ("mouse", "allow-passthrough")
+
+
+def tmux_option_values(base: list[str], env: dict[str, str]) -> dict[str, str]:
+    """The server's current global value of each option the setup prompt looks at (options this tmux lacks are left out)."""
+    values = {}
+    for option in TMUX_SETUP_OPTIONS:
+        done = subprocess.run(base + ["show", "-gv", option], env=env, capture_output=True, text=True, timeout=20)
+        if done.returncode == 0:
+            values[option] = done.stdout.strip()
+    return values
+
+
+def answer_tmux_setup_prompt(term: "OuterTerminal", base: list[str], env: dict[str, str], scenario: dict[str, str],
+                             mark: int, timeout: float = 15.0) -> bool:
+    """Answer the setup prompt that appeared after output offset ``mark`` with "n", wait until the UI applied the options to the
+    running server, then restore ``scenario`` (``tmux_option_values`` taken before the UI was started). False: no prompt."""
+    def prompted() -> bool:  # output since ``mark`` only: a prompt left on screen by an earlier attach does not count
+        return b"[y/N]" in _CSI.sub(b"", bytes(term.raw[mark:]))
+
+    if not term.until(prompted, timeout):
+        return False
+    term.send(b"n\r")
+    on = {"on", "all"}
+    wanted = [option for option, value in scenario.items() if value not in on]
+    term.until(lambda: all(tmux_option_values(base, env).get(option) in on for option in wanted), 10)
+    for option, value in scenario.items():
+        subprocess.run(base + ["set", "-g", option, value], env=env, capture_output=True, timeout=20)
+    return True
 
 
 class _Screen(pyte.Screen):
@@ -219,6 +257,7 @@ class Driver:
     def __init__(self, term: OuterTerminal, mux: str, fixture: ScriptedServer, root: Path):
         self.term, self.mux, self.fixture, self.root = term, mux, fixture, root
         self.log: list[dict] = []
+        self.tmux_setup = None  # tmux only: callable(mark) answering the setup prompt, see ``answer_tmux_setup_prompt``
 
     def ok(self, check: str, ok: bool, **info) -> bool:
         record = {"mux": self.mux, "check": check, "ok": bool(ok), **info}
@@ -293,8 +332,11 @@ class Driver:
     def start_ui(self, command_prefix: bytes = b"") -> bool:
         boot = BOOT.format(src=str(SRC), sock=str(self.fixture.path))
         self.term.pump(0.5)
+        mark = len(self.term.raw)
         self.term.send(b"\x15" + command_prefix)  # Ctrl-U: drop any terminal-query echo the shell may have received
         self.term.send(f"clear; {sys.executable} -c {shlex.quote(boot)}; echo UIDONE-$?".encode() + b"\r")
+        if self.tmux_setup is not None:
+            self.ok("info_tmux_setup_prompt_answered_scenario_options_restored", True, prompt_seen=self.tmux_setup(mark))
         seen = self.term.until(lambda: self.fixture.attached.is_set() and "line 119" in self.term.text()
                                and self.title("WORKER OMP") is not None, 30)
         return self.ok("ui_attached", seen, screen_tail=self.term.text()[-300:])
@@ -385,6 +427,8 @@ class LiveMux(unittest.TestCase):
         start = ticks(pid)
         term = OuterTerminal(base + ["attach", "-t", "wb"], env, str(self.root))
         driver = Driver(term, f"tmux-mouse-{'on' if mouse else 'off'}", self.fixture(), self.root)
+        scenario = tmux_option_values(base, env)  # the conf's own state, before the UI's setup prompt can change it
+        driver.tmux_setup = lambda mark: answer_tmux_setup_prompt(term, base, env, scenario, mark)
 
         def flags(drv: Driver) -> None:
             out = subprocess.run(base + ["display", "-p", "-t", "wb", "#{mouse_any_flag} #{mouse_standard_flag} "

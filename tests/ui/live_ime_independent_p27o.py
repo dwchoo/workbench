@@ -41,8 +41,8 @@ import unittest
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
-from live_mux_independent_p27n import (OuterTerminal, clean_env, kill_identity, note, owned_processes,  # noqa: E402
-                                       ticks)
+from live_mux_independent_p27n import (OuterTerminal, answer_tmux_setup_prompt, clean_env, kill_identity,  # noqa: E402
+                                       note, owned_processes, ticks, tmux_option_values)
 
 REPO = HERE.parents[1]
 SRC = str(Path(os.environ.get("P27O_SRC") or REPO / "src"))
@@ -101,6 +101,7 @@ class Case:
         self.env = {"PATH": "/usr/bin:/bin", "PYTHONPATH": SRC, "PYTHONDONTWRITEBYTECODE": "1", "LANG": "C.UTF-8",
                     "TERM": "xterm-256color"}
         self.marker = 0
+        self.tmux_setup = None  # tmux only: callable(mark) answering the setup prompt, see ``answer_tmux_setup_prompt``
 
     def ok(self, check: str, ok: bool, **info) -> bool:
         record = {"mux": self.label, "check": check, "ok": bool(ok), **info}
@@ -152,6 +153,14 @@ class Case:
         return (f"clear; env PYTHONPATH={SRC} PYTHONDONTWRITEBYTECODE=1 {shlex.quote(sys.executable)} -c "
                 f"{shlex.quote(MAIN)} attach --data-dir {shlex.quote(str(self.data))}; echo UIDONE{self.marker}-$?")
 
+    def attach_ui(self) -> None:
+        """Start ``attach`` in the multiplexer shell. Inside tmux the UI first asks "... [y/N]" to set mouse / allow-passthrough
+        (tmux auto-setup): answer "n", then restore the options this scenario's conf has (the prompt returns on each attach)."""
+        mark = len(self.term.raw)
+        self.shell(self.attach_cmd())
+        if self.tmux_setup is not None:
+            self.tmux_setup(mark)
+
     def done(self, timeout: float = 15) -> bool:
         return self.term.until(lambda: f"UIDONE{self.marker}-0" in self.term.text(), timeout)
 
@@ -173,7 +182,7 @@ class Case:
         if not self.ok("backend_started", "starting backend" in started.stdout, out=(started.stdout + started.stderr)[-300:]):
             return
         term = self.term
-        self.shell(self.attach_cmd())
+        self.attach_ui()
         if not self.ok("ui_attached", term.until(lambda: "STUB-OMP manager ready" in term.text()
                                                  and "STUB-OMP worker ready" in term.text(), 40),
                        screen_tail=term.text()[-300:]):
@@ -259,7 +268,7 @@ class Case:
         self.ok("ctrl_bracket_ctrl_q_detaches_exit_0", self.done(), tail=term.text()[-200:])
         self.ok("backend_survives_detach", self.cli("status", "--data-dir", str(self.data), "--json").returncode == 0)
         # -- reattach; detach through the menu digit read from the screen
-        self.shell(self.attach_cmd())
+        self.attach_ui()
         if not self.ok("reattached", term.until(lambda: "STUB-OMP manager ready" in term.text(), 40)):
             return
         term.send(PREFIX + b" ")
@@ -269,7 +278,7 @@ class Case:
         term.send(found.group(1).encode() if found else b"?")
         self.ok("menu_digit_detaches_exit_0", self.done(), digit=found and found.group(1))
         # -- and the same with arrows + Enter (last item = detach): Up from the first item wraps
-        self.shell(self.attach_cmd())
+        self.attach_ui()
         if term.until(lambda: "STUB-OMP manager ready" in term.text(), 40):
             term.send(PREFIX + b" ")
             self.wait_text("명령 메뉴", 10)
@@ -277,7 +286,7 @@ class Case:
             term.send(b"\r")
             self.ok("menu_up_enter_detaches_exit_0", self.done(), tail=term.text()[-160:])
         # -- and with the jamo of q committed by Space (Ctrl-] ㅂ Space)
-        self.shell(self.attach_cmd())
+        self.attach_ui()
         if term.until(lambda: "STUB-OMP manager ready" in term.text(), 40):
             term.send(PREFIX)
             term.pump(0.3)
@@ -331,6 +340,8 @@ class LiveIme(unittest.TestCase):
         start = ticks(pid)
         term = OuterTerminal(base + ["attach", "-t", "wb"], env, str(self.root))
         case = Case(self.root, f"tmux-mouse-{'on' if mouse else 'off'}", term)
+        scenario = tmux_option_values(base, env)  # the conf's own state, before the UI's setup prompt can change it
+        case.tmux_setup = lambda mark: answer_tmux_setup_prompt(term, base, env, scenario, mark)
         try:
             if case.ok("shell_ready", case.typed_ready()):
                 case.tap()

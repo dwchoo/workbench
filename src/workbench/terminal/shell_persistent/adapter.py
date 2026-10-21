@@ -87,10 +87,15 @@ class _Transport(ManagedLifecycleProbe):
     def _proc(pid):
         return Path(f"/proc/{pid}/stat").read_text().rsplit(") ", 1)[1].split()
 
-    def _current_foreground_child_group(self):
+    def _current_foreground_child_group(self, *, any_owner=False):
+        """The verified managed child's group while it is the PTY foreground, else None.
+
+        ``any_owner`` skips only the input-owner requirement (CS-07 Ctrl+C); the confirmed-takeover
+        path keeps requiring a user-owned boundary.
+        """
         life = self.lifecycle
         if (not life.experiment_started or life.main_exit is not None or life.main_stopped
-                or life.unknown or self.boundary.owner != "user"
+                or life.unknown or (self.boundary.owner != "user" and not any_owner)
                 or self.boundary.uncertain or self.boundary.needs_review):
             return None
         try:
@@ -156,6 +161,28 @@ class _Transport(ManagedLifecycleProbe):
 
         _write_manual(self, data, current, self.boundary.observe_run_bytes,
                       "confirmed foreground target changed")
+
+    def _interrupt_target(self):
+        """Identity of the verified managed run that is the PTY foreground now, or None.
+
+        Re-read from the lifecycle and /proc on every call; never remembered.
+        """
+        life = self.lifecycle
+        if self._closed or self.boundary.control_lost or life.request_id is None or life.returned:
+            return None
+        group = self._current_foreground_child_group(any_owner=True)
+        if group is None or self._child_start is None or self._supervisor_start is None:
+            return None
+        return {"request_id": life.request_id, "pid": life.child_pid, "start_ticks": int(self._child_start),
+                "process_group": group}
+
+    def send_interrupt(self, target):
+        """Write one ``\\x03`` to the PTY if ``target`` is still the verified foreground run.
+
+        The byte is not input to a shell line, so no ``observe_*_bytes`` accounting happens.
+        """
+        _write_manual(self, b"\x03", lambda: self._interrupt_target() == target, lambda chunk: None,
+                      "interrupt target changed")
 
     def release_idle(self):
         if self.lifecycle.request_id is not None or not self.control_wait_seen:
@@ -347,6 +374,26 @@ class PersistentShell:
                     "child": ref(life.child_pid, t._child_start),
                     "child_group": life.child_group,
                     "session": t.pid, "uid": os.geteuid(), "boot_id": boot_id}
+
+    def interrupt_run(self):
+        """Deliver a user Ctrl+C (``\\x03``) to the verified foreground managed run.
+
+        Returns the verified identity (``request_id``, ``pid``, ``start_ticks``, ``process_group``,
+        plus ``session``/``uid``) once the byte is written, or None when no managed run
+        is a verified foreground right now (the caller then applies its ordinary input rules).
+        The target is re-verified immediately before the write; owner and takeover state are not
+        read or changed.
+        """
+        t = self._transport
+        with t.boundary.lock:
+            try:
+                target = t._interrupt_target()
+                if target is None:
+                    return None
+                t.send_interrupt(target)
+            except (UnsafeShellState, OSError, TimeoutError):
+                return None
+            return {**target, "session": t.pid, "uid": os.geteuid()}
 
     def snapshot(self):
         t, life = self._transport, self._transport.lifecycle

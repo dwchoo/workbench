@@ -539,7 +539,7 @@ class Backend:
         self._write_record()
         self._shell_env = shell_environment(self.environment)
         self._shell_cwd = os.getcwd()
-        self.shell = ShellPane(self.plan.shell, dict(self._shell_env))
+        self.shell = self._wire_shell(ShellPane(self.plan.shell, dict(self._shell_env)))
         self.panes[PaneId.HOST_SHELL] = self.shell
         home = Path(self.environment.get("HOME") or Path.home())
         home_env = omp_home.environment()
@@ -1260,8 +1260,31 @@ class Backend:
             raise Held(Reason.PANE_UNAVAILABLE, f"{pane_id.value} is not running")
         return pane
 
+    def _wire_shell(self, pane: ShellPane) -> ShellPane:
+        """Connect a host-shell pane to the audit of user Ctrl+C (CS-07)."""
+        pane.interrupt_listener = self._command_interrupted
+        return pane
+
+    def _command_interrupted(self, event: dict[str, Any]) -> None:
+        """Journal one lone user Ctrl+C written to a verified Workbench command (``requested_by: user``).
+
+        ``command_id`` is resolved from the shell's ``request_id`` (a terminal command's request id is its
+        command id); an id that cannot be resolved is journaled as ``None`` and never blocks the delivery.
+        """
+        request_id = event.get("request_id")
+        terminal = self.terminal
+        try:
+            command_id = request_id if terminal is not None and terminal.summary_command_active(request_id) else None
+        except Exception:  # an unresolvable id is journaled as null; the record is always written
+            command_id = None
+        self._journal({"type": "command_interrupt", "requested_by": "user", "command_id": command_id,
+                       "pid": event["pid"], "start_ticks": event["start_ticks"],
+                       "process_group": event["process_group"], "delivered": event["delivered"],
+                       "input_owner": event["input_owner"], "parent_mode": event["parent_mode"],
+                       "at": datetime.now(timezone.utc).isoformat(timespec="milliseconds")})
+
     def admit(self, pane_id: PaneId, data: bytes, kind: str) -> tuple[Reason, str] | None:
-        return self._pane(pane_id).admit(data)
+        return self._pane(pane_id).admit(data, kind)
 
     def resize(self, pane_id: PaneId | None, rows: int, cols: int) -> None:
         targets = self.panes.values() if pane_id is None else [self._pane(pane_id)]
@@ -1507,8 +1530,8 @@ class Backend:
                 previous["survivors"] = old.close()["survivors"]
                 if self._shell_cwd is not None and os.getcwd() != self._shell_cwd:
                     os.chdir(self._shell_cwd)  # the shell starts in the backend's start-up cwd
-                new = ShellPane(self.plan.shell, dict(self._shell_env), size=old.size,
-                                generation=old.generation + 1)
+                new = self._wire_shell(ShellPane(self.plan.shell, dict(self._shell_env), size=old.size,
+                                                 generation=old.generation + 1))
             except Exception as exc:  # the pane stays exited with the reason; the backend keeps running
                 detail = f"could not start a new host shell: {exc}"
                 old.restart = {"state": "failed", "count": count, "at": time.time(), "error": detail,

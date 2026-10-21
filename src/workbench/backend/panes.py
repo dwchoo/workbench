@@ -399,7 +399,7 @@ class Pane:
     def pump(self) -> list[DisplayChunk]:
         raise NotImplementedError
 
-    def admit(self, data: bytes) -> tuple[Reason, str] | None:
+    def admit(self, data: bytes, kind: str = "input") -> tuple[Reason, str] | None:
         raise NotImplementedError
 
     def resize(self, rows: int, cols: int) -> None:
@@ -564,7 +564,8 @@ class OmpPane(_OwnedSession, Pane):
     def wants_write(self) -> bool:
         return bool(self._pending)
 
-    def admit(self, data: bytes) -> tuple[Reason, str] | None:
+    def admit(self, data: bytes, kind: str = "input") -> tuple[Reason, str] | None:
+        # OMP panes take every input as typed; the kind (input / paste) only matters to the host shell.
         if self.poll() is not None or self.master_fd < 0:
             return Reason.PANE_UNAVAILABLE, "OMP process has exited"
         if len(data) > INPUT_QUEUE_BYTES:
@@ -695,6 +696,8 @@ class ShellPane(_OwnedSession, Pane):
         # The last force-kill of this shell and a manager request it closed (never a success).
         self.kill_result: dict[str, Any] | None = None
         self.closed_request: dict[str, Any] | None = None
+        # Set by the backend: told (under io_lock) each time a user Ctrl+C was written to a verified run.
+        self.interrupt_listener: Callable[[dict[str, Any]], None] | None = None
         self.resize(*size)
 
     @property
@@ -805,11 +808,11 @@ class ShellPane(_OwnedSession, Pane):
             return Reason.INPUT_TARGET_UNKNOWN, f"{held} (mode {state['parent_mode']})"
         return None
 
-    def admit(self, data: bytes) -> tuple[Reason, str] | None:
+    def admit(self, data: bytes, kind: str = "input") -> tuple[Reason, str] | None:
         with self.io_lock:
-            return self._admit_locked(data)
+            return self._admit_locked(data, kind)
 
-    def _admit_locked(self, data: bytes) -> tuple[Reason, str] | None:
+    def _admit_locked(self, data: bytes, kind: str = "input") -> tuple[Reason, str] | None:
         if self._released or self.exited():
             return Reason.PANE_UNAVAILABLE, "host shell has exited; restart it first"
         if len(data) > INPUT_QUEUE_BYTES:
@@ -818,6 +821,9 @@ class ShellPane(_OwnedSession, Pane):
             self.state = self.shell.poll(0)
         except (OSError, UnsafeShellState) as exc:
             self.error = f"{type(exc).__name__}: {exc}"
+        # An unknown shell boundary (self.error) holds input, so the Ctrl+C exception is not applied either.
+        if kind == "input" and data == b"\x03" and self.error is None and self._interrupt_run():
+            return None
         held = self._accepts_manual_input()
         if held is not None:
             return held
@@ -827,6 +833,24 @@ class ShellPane(_OwnedSession, Pane):
         self._pending.extend(data)
         self._flush()
         return None
+
+    def _interrupt_run(self) -> bool:
+        """CS-07: a lone user Ctrl+C goes to the verified foreground Workbench command, whoever owns input."""
+        try:
+            target = self.shell.interrupt_run()
+        except (OSError, UnsafeShellState):
+            return False
+        if target is None:
+            return False
+        listener = self.interrupt_listener
+        if listener is not None:
+            try:
+                state = self.shell.snapshot()
+                listener({**target, "delivered": True, "input_owner": state["input_owner"],
+                          "parent_mode": state["parent_mode"]})
+            except Exception:  # the byte is already written: an audit failure never turns it into an error
+                pass
+        return True
 
     def wants_write(self) -> bool:
         return bool(self._pending)

@@ -10,8 +10,12 @@ runs one ``StopEpisode`` thread per command: identify the run, then per stage (S
 read the tracked members again, pin them, signal them and wait for the *owner* to observe the end (never
 ``/proc``) up to the stage time. A stop request is not a waiter of the command: it neither consumes nor
 delays the owner's completion path. Descendants that left the session (setsid) are reported, never
-signalled. A command that outlives the last stage ends the episode as ``unknown`` (repeat requests and the
-``unknown`` correction are later tickets).
+signalled. A command that outlives the last stage ends the episode as ``unknown``.
+
+A command has one episode (CS-04): a repeat request joins it while it runs and, after it finished, gets its original
+result (``repeat: true``) without any new signal or timer. An ``unknown`` is never shown as exited: only when the
+owner later observes the command's end is the same episode corrected to ``exited`` (``corrected: true``, ``history``
+holding the earlier ``unknown`` and its reason; no signal is sent). An ``unknown`` the owner itself declared is final.
 """
 from __future__ import annotations
 
@@ -299,7 +303,9 @@ SCAN_INTERVAL = 0.25  # how often a waiting stage re-reads the tracked members
 STAGES = (("sigint", signal.SIGINT, "sigint_wait"),
           ("sigterm", signal.SIGTERM, "sigterm_wait"),
           ("sigkill", signal.SIGKILL, "sigkill_wait"))
-ENDED_KEPT = 256  # ended command ids remembered for ``already_exited``
+# ended command ids remembered (``already_exited``, and their episode for repeats and corrections); an id older
+# than the last ENDED_KEPT ended commands is ``not_found`` again, whatever happened to it
+ENDED_KEPT = 256
 _STALE_REASONS = frozenset({STALE, IDENTITY_CHANGED, DIFFERENT_UID, "identity_mismatch"})
 
 
@@ -348,6 +354,27 @@ class _Entry:
     repeats: int = 0
 
 
+@dataclass(eq=False)
+class _Ended:
+    """What is remembered of a command the owner saw end: its last state and the entry (so its episode)."""
+
+    info: dict[str, Any]
+    entry: _Entry | None
+    declared_unknown: str | None = None  # the reason when the owner declared the command unknown, not exited
+
+
+def _no_identity() -> None:
+    return None
+
+
+def _signal_name(number: Any) -> str | None:
+    """The name of a signal number as the owner reported it, or None for anything that is not one."""
+    try:
+        return signal.Signals(number).name if type(number) is int else None
+    except ValueError:
+        return None
+
+
 def _members(stats) -> list[dict[str, int]]:
     return [{"pid": stat.pid, "start_ticks": stat.start_ticks} for stat in stats]
 
@@ -382,8 +409,10 @@ class StopEpisode:
         self.signals: list[dict[str, Any]] = []
         self.result: dict[str, Any] | None = None
         self.done = threading.Event()
+        self._settle = threading.Lock()  # the final result and the late correction are decided one at a time
         self._started = service.env.monotonic()
         self._identity: Mapping[str, Any] | None = None
+        self._unknown_at = ""  # when the stop ended unknown (for the history of a later correction)
         self._mismatched: set[int] = set()  # pids whose identity failed verification: never signalled in this episode
         self._thread = threading.Thread(target=self._run, daemon=True, name=f"command-stop-{self.command_id[:8]}")
 
@@ -391,7 +420,9 @@ class StopEpisode:
         self._thread.start()
 
     def summary(self) -> dict[str, Any]:
-        return {"state": "stopping" if not self.done.is_set() else (self.result or {}).get("status"),
+        done = self.done.is_set()
+        return {"state": "stopping" if not done else (self.result or {}).get("status"),
+                "reason": (self.result or {}).get("reason") if done else None,
                 "stage": self.stage, "requested_by": self.requested_by, "requested_at": self.requested_at,
                 "signals": [dict(item) for item in self.signals]}
 
@@ -443,7 +474,7 @@ class StopEpisode:
             self._refresh_identity()
             scan = self._scan()
         if not scan.tracked and scan.left_session:
-            return self._unknown("left_session_descendants")  # nothing left that may be signalled
+            return self._left_session_unknown()  # nothing left that may be signalled
         identity = self._identity
         self.stage = name
         failed: list[dict[str, Any]] = []
@@ -471,6 +502,9 @@ class StopEpisode:
                 if stopped:
                     self._send(stopped, signal.SIGCONT, name, [], auxiliary=True)
             hard = [item for item in failed if item["reason"] != ENDED]
+            unsent_stale = first and hard and all(item["reason"] in _STALE_REASONS for item in hard)
+            if not live and failed and not unsent_stale:  # nothing to signal: the failures are still the stage's record
+                self._send([], signum, name, failed, auxiliary=False)
             if not sent and hard and not entry.ended.is_set():
                 if all(item["reason"] == PERMISSION_DENIED for item in hard):
                     return self._unknown(PERMISSION_DENIED)
@@ -486,7 +520,7 @@ class StopEpisode:
         if outcome == "closed":
             return self._unknown("backend_shutdown")
         if outcome == "left_session":
-            return self._unknown("left_session_descendants")
+            return self._left_session_unknown()
         return None
 
     def _send(self, pins: list[ProcessPin], signum: int, stage: str, failed: list[dict[str, Any]], *,
@@ -593,15 +627,14 @@ class StopEpisode:
 
     def _after_end(self) -> dict[str, Any]:
         final = self._entry.final or {}
-        if not self.signals:  # the command ended by itself before any signal left
+        if not self.signals and final.get("status") != "unknown":  # it ended by itself before any signal left
             return self._base("already_exited", exit_code=final.get("exit_code"), signal=final.get("signal"),
                               ended_at=_now(), signals=[])
         extra = {"signals": [dict(item) for item in self.signals], "residual": self._residual()}
         if final.get("status") == "exited":
             number = final.get("signal")
             return self._base("exited", exit_code=final.get("exit_code"), signal=number,
-                              signal_name=signal.Signals(number).name if type(number) is int and number in
-                              signal.Signals._value2member_map_ else None, **extra)
+                              signal_name=_signal_name(number), **extra)
         return self._base("unknown", reason=final.get("reason") or "owner_unknown", **extra)
 
     def _main_exit(self) -> dict[str, Any]:
@@ -616,8 +649,23 @@ class StopEpisode:
         return {"exit_code": observed.get("exit_code"), "signal": observed.get("signal")}
 
     def _unknown(self, reason: str) -> dict[str, Any]:
+        self._unknown_at = _now()
         return self._base("unknown", reason=reason, **self._main_exit(),
                           signals=[dict(item) for item in self.signals], residual=self._residual())
+
+    def _left_session_unknown(self) -> dict[str, Any]:
+        """``unknown`` for descendants that left the session; the main command's end may be about to be observed.
+
+        The owner learns of the main exit a poll after the process is gone, and this decision is made as soon as the
+        scan shows only escaped descendants, so the exit is read once more after one poll interval. If the owner has
+        then seen the whole run end, that end is the result.
+        """
+        entry = self._entry
+        if not self._main_exit():
+            entry.ended.wait(self._service.policy.poll_interval)
+            if entry.ended.is_set():
+                return self._after_end()
+        return self._unknown("left_session_descendants")
 
     def _stale(self) -> dict[str, Any]:
         self._service.record({"type": "command_stop_refused", "command_id": self.command_id,
@@ -625,15 +673,54 @@ class StopEpisode:
         return self._base("stale", reason="identity_mismatch", signals=[])
 
     def _finish(self, result: dict[str, Any]) -> None:
-        elapsed = round(self._service.env.monotonic() - self._started, 3)
-        self._service.record({"type": "command_stop_finished", "command_id": self.command_id,
-                              "status": result["status"], "exit_code": result.get("exit_code"),
-                              "signal": result.get("signal"), "reason": result.get("reason"),
-                              "residual": result.get("residual"), "elapsed_seconds": elapsed,
-                              "repeat_requests": self._entry.repeats})
-        self.stage = "done"
-        self.result = result
-        self.done.set()
+        service = self._service
+        if result["status"] == "already_exited":  # it ended before any signal: the record of a refused stop
+            service.record_refusal(self.command_id, self.requested_by, "already_exited", "command_ended")
+        else:
+            elapsed = round(service.env.monotonic() - self._started, 3)
+            service.record({"type": "command_stop_finished", "command_id": self.command_id,
+                            "status": result["status"], "exit_code": result.get("exit_code"),
+                            "signal": result.get("signal"), "reason": result.get("reason"),
+                            "residual": result.get("residual"), "elapsed_seconds": elapsed,
+                            "repeat_requests": self._entry.repeats})
+        with self._settle:
+            self.stage = "done"
+            self.result = result
+            corrected = self._correct()  # the owner may have observed the end while this was being decided
+            self.done.set()
+        self._entry.target.identity = _no_identity  # nothing reads it again: do not keep the owner's command alive
+        if corrected is not None:
+            service.record(corrected)
+
+    def owner_ended(self) -> None:
+        """The owner observed the command's end after this episode was created.
+
+        An episode that already ended ``unknown`` is corrected to ``exited`` (no signal is sent); one that is
+        still running sees the end itself, and ``_finish`` corrects if it had already decided ``unknown``.
+        """
+        with self._settle:
+            corrected = self._correct() if self.done.is_set() else None
+        if corrected is not None:
+            self._service.record(corrected)
+
+    def _correct(self) -> dict[str, Any] | None:
+        """Under ``_settle``: turn a final ``unknown`` into ``exited`` once the owner reports the command exited.
+
+        Returns the ``command_stop_corrected`` record, or None when there is nothing to correct (an unknown the
+        owner declared itself is final: it is not an exited end).
+        """
+        before, final = self.result, self._entry.final
+        if before is None or before.get("status") != "unknown" or not final or final.get("status") != "exited":
+            return None
+        number = final.get("signal")
+        history = [{"status": "unknown", "reason": before.get("reason"), "at": self._unknown_at,
+                    "exit_code": before.get("exit_code"), "signal": before.get("signal")}]
+        self.result = self._base("exited", exit_code=final.get("exit_code"), signal=number,
+                                 signal_name=_signal_name(number), signals=[dict(item) for item in self.signals],
+                                 residual=self._residual(), corrected=True, history=history)
+        return {"type": "command_stop_corrected", "command_id": self.command_id, "from": "unknown",
+                "previous_reason": before.get("reason"), "to": "exited", "exit_code": final.get("exit_code"),
+                "signal": number, "repeat_requests": self._entry.repeats}
 
 
 class CommandStopService:
@@ -645,7 +732,7 @@ class CommandStopService:
         self.env = env or LinuxStopEnvironment()
         self._lock = threading.Lock()
         self._live: dict[str, _Entry] = {}
-        self._ended: dict[str, dict[str, Any]] = {}
+        self._ended: dict[str, _Ended] = {}
         self.closed = threading.Event()
 
     def record(self, record: dict[str, Any]) -> None:
@@ -667,13 +754,17 @@ class CommandStopService:
         """The owner observed the command's end (its final result)."""
         with self._lock:
             entry = self._live.pop(command_id, None)
-            self._ended[command_id] = {"exit_code": result.get("exit_code"), "signal": result.get("signal"),
-                                       "ended_at": _now()}
+            self._ended[command_id] = _Ended(
+                {"exit_code": result.get("exit_code"), "signal": result.get("signal"), "ended_at": _now()}, entry,
+                (result.get("reason") or "owner_unknown") if result.get("status") == "unknown" else None)
             while len(self._ended) > ENDED_KEPT:
                 del self._ended[next(iter(self._ended))]
         if entry is not None:
             entry.final = dict(result)
+            entry.target.identity = _no_identity  # the owner's command is not kept alive by what is remembered
             entry.ended.set()
+            if entry.episode is not None:
+                entry.episode.owner_ended()  # an episode that already ended unknown is corrected
 
     def surface(self, command_id: str) -> dict[str, Any] | None:
         """``{"state": "stopping"|"unknown", "stop": summary}`` while a stop is under way or unconfirmed, else None."""
@@ -691,38 +782,69 @@ class CommandStopService:
 
     # -- a stop request ------------------------------------------------------------------------
     def stop(self, requested_by: str, command_id: str, *, reason: str | None = None) -> dict[str, Any]:
-        """Stop one command and wait for the final state (at most ``policy.call_wait``); never raises."""
+        """Stop one command and wait for the final state (at most ``policy.call_wait``); never raises.
+
+        A command has one episode: a request while it runs joins it, a request after it finished gets its original
+        final result. Both carry ``repeat: true`` and start no signal and no timer.
+
+        Limit: a joiner arriving in the instant between the episode's ``command_stop_finished`` record and ``done``
+        gets the result, but is in neither ``repeat_requests`` of that record nor a ``command_stop_repeat`` record.
+        """
         base = {"command_id": command_id, "requested_by": requested_by}
         if self.closed.is_set():
             return self._refused(base, "refused", "backend_shutdown")
         with self._lock:
             entry = self._live.get(command_id)
-            ended = dict(self._ended[command_id]) if entry is None and command_id in self._ended else None
-            joined = entry is not None and entry.episode is not None
-            if entry is not None and not joined:
-                entry.episode = StopEpisode(self, entry, requested_by)
+            gone = self._ended.get(command_id) if entry is None else None
+            owner = entry if entry is not None else (gone.entry if gone is not None else None)
+            joined = owner is not None and owner.episode is not None
+            if owner is not None and not joined:
+                owner.episode = StopEpisode(self, owner, requested_by)
             elif joined:
-                entry.repeats += 1
-            episode = entry.episode if entry is not None else None
-        if entry is None:
-            if ended is None:
+                owner.repeats += 1
+            episode = owner.episode if owner is not None else None
+            repeats = owner.repeats if owner is not None else 0
+        if episode is None:
+            if gone is None:
                 return self._refused(base, "not_found", "unknown_command")
-            result = {"status": "already_exited", **base, **ended}
-            return self._refused(result, "already_exited", "command_ended")
+            # the command ended without a stop episode: its last state, with the same record pair for every id the
+            # service remembers (the request, then its refusal; for a declared unknown the request, then a finish).
+            # An id the owner reported without registering has no target: the request record has no kind/owner/task.
+            self._record_requested(gone.entry.target if gone.entry is not None else None, requested_by, reason,
+                                   command_id)
+            if gone.declared_unknown is not None:  # never an exit: the owner does not know how it ended
+                result = {"status": "unknown", **base, "reason": gone.declared_unknown, "exit_code": gone.info["exit_code"],
+                          "signal": gone.info["signal"], "signals": [],
+                          "residual": {"checked": False, "alive": [], "left_session": [], "unchecked": UNCHECKED}}
+                self.record({"type": "command_stop_finished", "command_id": command_id, "status": "unknown",
+                             "exit_code": result["exit_code"], "signal": result["signal"], "reason": result["reason"],
+                             "residual": result["residual"], "elapsed_seconds": 0.0, "repeat_requests": 0})
+                return result
+            return self._refused({"status": "already_exited", **base, **gone.info}, "already_exited", "command_ended")
         if not joined:
-            target = entry.target
-            self.record({"type": "command_stop_requested", "command_id": command_id, "requested_by": requested_by,
-                         "kind": target.kind, "owner": target.owner, "task_id": target.task_id,
-                         "task_status": None, "reason": reason})
+            self._record_requested(owner.target, requested_by, reason)
             episode.start()
+        elif episode.done.is_set():  # after the episode: no new work, only the count
+            self.record({"type": "command_stop_repeat", "command_id": command_id, "requested_by": requested_by,
+                         "repeat_requests": repeats})
         if not episode.done.wait(self.policy.call_wait):
-            return {"status": "stopping", **base, "stop": episode.summary()}
+            return {"status": "stopping", **base, "stop": episode.summary(), **({"repeat": True} if joined else {})}
         return {**(episode.result or {}), **({"repeat": True} if joined else {})}
+
+    def _record_requested(self, target: StopTarget | None, requested_by: str, reason: str | None,
+                          command_id: str | None = None) -> None:
+        self.record({"type": "command_stop_requested", "command_id": target.command_id if target else command_id,
+                     "requested_by": requested_by, "kind": target.kind if target else None,
+                     "owner": target.owner if target else None, "task_id": target.task_id if target else None,
+                     "task_status": None, "reason": reason})
 
     def _refused(self, result: dict[str, Any], status: str, reason: str) -> dict[str, Any]:
         result = {**result, "status": status}
         if status != "already_exited":
             result["reason"] = reason
-        self.record({"type": "command_stop_refused", "command_id": result["command_id"],
-                     "requested_by": result["requested_by"], "status": status, "reason": reason})
+        self.record_refusal(result["command_id"], result["requested_by"], status, reason)
         return result
+
+    def record_refusal(self, command_id: str, requested_by: str, status: str, reason: str) -> None:
+        self.record({"type": "command_stop_refused", "command_id": command_id, "requested_by": requested_by,
+                     "status": status, "reason": reason})

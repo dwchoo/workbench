@@ -38,6 +38,21 @@ POLICY = StopPolicy(identity_wait=2.0, sigint_wait=1.0, sigterm_wait=1.0, sigkil
 TOLERANCE = 1.5  # how late a stage may be in real time on a loaded machine
 
 
+def kill_same_process(pid: int, start_ticks: int) -> None:
+    """SIGKILL ``pid`` only while it is still the live process that had ``start_ticks`` (pidfd, re-checked)."""
+    try:
+        fd = os.pidfd_open(pid)
+    except OSError:
+        return
+    try:
+        if proc_exists(pid, start_ticks):
+            signal.pidfd_send_signal(fd, signal.SIGKILL)
+    except OSError:
+        pass
+    finally:
+        os.close(fd)
+
+
 class EscalationFixture(RealStopFixture):
     """``RealStopFixture`` with this ticket's reduced policy."""
 
@@ -53,8 +68,18 @@ class EscalationFixture(RealStopFixture):
                                poll_interval=0.02, command_stop=self.command_stop, **extra)
 
     def kill_at_cleanup(self, *pids):
-        """The test's own processes: whatever of them is still alive is killed when the test ends."""
-        self.addCleanup(lambda: [os.kill(pid, signal.SIGKILL) for pid in pids if proc_exists(pid)])
+        """The test's own processes: whatever of them is still alive is killed when the test ends.
+
+        Each pid is remembered with its start ticks now, and only the process that still has those ticks is signalled
+        (through a pidfd that is re-checked), so a pid the kernel reused for another process is never killed.
+        """
+        started = {}
+        for pid in pids:
+            try:
+                started[pid] = int(proc_fields(pid)[19])
+            except (OSError, IndexError, ValueError):
+                pass  # already gone: nothing to kill later
+        self.addCleanup(lambda: [kill_same_process(pid, ticks) for pid, ticks in started.items()])
 
     def signal_names(self, result):
         return [item["signal"] for item in result["signals"]]

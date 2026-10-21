@@ -628,7 +628,9 @@ class StopRunningCommandTests(RealRig):
         self.assertEqual((result["status"], result["exit_code"]), ("exited", 130), result)
         self.assertTrue(wait_until(lambda: any(n["type"] == "terminal_done" for n in delivered), 5), delivered)
         again = self.stop(command_id)  # a repeated stop after the end must not recreate or consume a notice
-        self.assertEqual(again["status"], "already_exited", again)
+        # CS-04 (SPEC "결과 계약"): a repeat after a finished stop returns the ORIGINAL result, marked repeat:true
+        self.assertIs(again["repeat"], True, again)
+        self.assertEqual({key: value for key, value in again.items() if key != "repeat"}, result)
         time.sleep(0.6)
         done = [n for n in delivered if n["type"] == "terminal_done"]
         self.assertEqual(len(done), 1, done)
@@ -951,14 +953,19 @@ class SurvivalTests(RealRig):
 
     def test_the_host_terminal_runs_a_new_command_after_a_stop_and_that_one_can_be_stopped_too(self):
         first = self.run_command("sleep 626.2")
-        self.assertEqual(self.stop(first["command_id"])["status"], "exited")
+        first_result = self.stop(first["command_id"])
+        self.assertEqual(first_result["status"], "exited")
         self.assert_user_owns_the_shell_again()
         second = self.run_command("echo second-command; sleep 626.3")
         self.assertEqual(second["status"], "running", second)
         self.assertNotEqual(second["command_id"], first["command_id"])
         result = self.stop(second["command_id"])
         self.assertEqual((result["status"], result["exit_code"]), ("exited", 130), result)
-        self.assertEqual(self.stop(first["command_id"])["status"], "already_exited")
+        # CS-04 (SPEC "결과 계약"): the first command had a stop episode, so a later stop of it returns that original
+        # result marked repeat:true (``already_exited`` is only for a command that ended with no stop episode)
+        repeat = self.stop(first["command_id"])
+        self.assertIs(repeat["repeat"], True, repeat)
+        self.assertEqual({key: value for key, value in repeat.items() if key != "repeat"}, first_result)
         self.assert_user_owns_the_shell_again()
         self.assertEqual(self.env.violations, [])
 

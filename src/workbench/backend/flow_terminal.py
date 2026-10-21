@@ -1517,6 +1517,12 @@ class TerminalService:
 
     # -- following a command ----------------------------------------------------------------
     def _follow(self, port: Any, command: _Command) -> None:
+        try:
+            self._follow_to_end(port, command)
+        finally:
+            self._report_stop_end(command)  # also when following failed: the stop registry never keeps a dead entry
+
+    def _follow_to_end(self, port: Any, command: _Command) -> None:
         result: dict[str, Any]
         try:
             result = self._collect(port, command)
@@ -1558,7 +1564,6 @@ class TerminalService:
                     wakeup.set()
             self._drop_check(command, "superseded")  # the completion notice replaces it
             self._refresh_notice(command)
-        self._report_stop_end(command)
 
     def _register_stop_target(self, command: _Command, port: Any) -> None:
         """Offer the command to the stop service: its run identity is read through the port that runs it."""
@@ -1573,7 +1578,8 @@ class TerminalService:
         if self._command_stop is None:
             return
         try:
-            self._command_stop.command_ended(command.command_id, command.result or {})
+            self._command_stop.command_ended(command.command_id, command.result
+                                             or {"status": "unknown", "reason": "owner_follow_failed"})
         except Exception:
             pass  # a stop service fault never changes how a command ends
 

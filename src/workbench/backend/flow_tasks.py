@@ -2041,7 +2041,7 @@ class TaskFlow:
             self._finish_cancel(task, run.run_id)
 
     def _follow(self, task: FlowTask, run: Any, port: Any) -> None:
-        # The host command is never interrupted (also not on cancel): collect until it exits.
+        # A cancel never interrupts the host command; only the manager's stop_command can (CS-09). Collect until it exits.
         while True:
             record = run.collect(timeout=self._collect_slice, paused=self._paused_now())
             if record.get("shell_state") == "exited" and record.get("exit_confirmed"):

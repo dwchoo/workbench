@@ -8,8 +8,9 @@ was opened. argv, command strings and ``comm`` never decide a target.
 ``TerminalService``, registers a ``StopTarget`` and reports its end with ``command_ended``) and
 runs one ``StopEpisode`` thread per command: identify the run, then per stage (SIGINT, SIGTERM, SIGKILL)
 read the tracked members again, pin them, signal them and wait for the *owner* to observe the end (never
-``/proc``) up to the stage time. A stop request is not a waiter of the command: it neither consumes nor
-delays the owner's completion path. Descendants that left the session (setsid) are reported, never
+``/proc``) up to the stage time. A stop request is not a waiter of the command: it neither consumes the owner's
+completion nor waits for it on the owner's thread. (One short exception: a late correction of an ``unknown`` runs
+a ``/proc`` residual scan on the owner thread that reports the end, see ``owner_ended``.) Descendants that left the session (setsid) are reported, never
 signalled. A command that outlives the last stage ends the episode as ``unknown``.
 
 A command has one episode (CS-04): a repeat request joins it while it runs and, after it finished, gets its original
@@ -23,6 +24,10 @@ before anything else. The Manager stops the Worker's and its own commands, the W
 paused automation, a boot-confirmation hold or a closed Task change nothing. An id the service does not hold but the
 journal remembers as started and not ended is ``refused: previous_backend_command`` (``stop_survivor``); every
 refusal signals nothing and is recorded as ``command_stop_refused``.
+
+Locks never nest: the service's ``_lock`` (registry), an episode's ``_send_lock`` (a stage signalling) and its
+``_settle`` (final result / late correction) are each taken alone, and no owner or journal callback runs under
+``_lock``. ``record`` (the journal) is called outside all three.
 """
 from __future__ import annotations
 
@@ -49,6 +54,7 @@ DIFFERENT_UID = "different_uid"
 IDENTITY_CHANGED = "identity_changed"  # changed between verification and the signal
 PERMISSION_DENIED = "permission_denied"
 CLOSED = "closed"  # the pin released its pidfd; it can no longer signal
+PIDFD_UNAVAILABLE = "pidfd_unavailable"  # the kernel refused a pidfd (EMFILE, ENOMEM...): the identity is not in doubt
 
 
 @dataclass(frozen=True, slots=True)
@@ -146,7 +152,7 @@ class ProcessPin:
     ``open`` reads ``/proc``, opens the pidfd and reads ``/proc`` again, so the pidfd
     provably names the recorded process (the ``panes._pin_member`` precedent).
     ``status`` is ``pinned`` or the reason it is not (``stale``, ``ended``,
-    ``different_uid``); a pin that is not ``pinned`` holds no pidfd and never signals.
+    ``different_uid``, ``pidfd_unavailable:<errno name>``); a pin that is not ``pinned`` holds no pidfd and never signals.
     """
 
     def __init__(self, env: StopEnvironment, pid: int, start_ticks: int, uid: int, status: str, fd: int | None):
@@ -167,8 +173,8 @@ class ProcessPin:
             fd = env.pidfd_open(pid)
         except ProcessLookupError:
             return refuse(ENDED)
-        except OSError:
-            return refuse(STALE)
+        except OSError as exc:  # no pidfd means no proof either way: neither stale nor signalled
+            return refuse(f"{PIDFD_UNAVAILABLE}:{errno.errorcode.get(exc.errno, exc.errno)}")
         reason = cls._mismatch(env.read_stat(pid), start_ticks, uid)
         if reason is None and env.pidfd_exited(fd):
             reason = ENDED
@@ -363,6 +369,12 @@ class StopTarget:
     forbidden: Callable[[], frozenset[int]] = lambda: frozenset()
     task_status: Callable[[], str | None] = lambda: None
 
+    def release(self) -> None:
+        """Drop what the owner's providers captured (its command, port, run): nothing reads them once the command is
+        over, and the service remembers an ended command for a long while. ``task_status`` is kept: an owner passes
+        one that captures only plain values, so a stop of an ended command can still name its Task's status."""
+        self.identity, self.forbidden = _no_identity, _no_forbidden
+
 
 @dataclass(eq=False)
 class _Entry:
@@ -384,6 +396,10 @@ class _Ended:
 
 def _no_identity() -> None:
     return None
+
+
+def _no_forbidden() -> frozenset[int]:
+    return frozenset()
 
 
 def _signal_name(number: Any) -> str | None:
@@ -439,6 +455,7 @@ class StopEpisode:
         self._started = service.env.monotonic()
         self._identity: Mapping[str, Any] | None = None
         self._unknown_at = ""  # when the stop ended unknown (for the history of a later correction)
+        self._forbidden: frozenset[int] | None = None  # the owner's forbidden pids, fixed when the episode finishes
         self._mismatched: set[int] = set()  # pids whose identity failed verification: never signalled in this episode
         self._thread = threading.Thread(target=self._run, daemon=True, name=f"command-stop-{self.command_id[:8]}")
 
@@ -537,7 +554,8 @@ class StopEpisode:
                 if first:  # nothing could be signalled, and nothing was before
                     if all(item["reason"] in _STALE_REASONS for item in hard):
                         return self._stale()
-                    return self._unknown(hard[0]["reason"])
+                    reason = hard[0]["reason"]
+                    return self._unknown(PIDFD_UNAVAILABLE if reason.startswith(PIDFD_UNAVAILABLE) else reason)
         # the owner decides when the command is over: ``/proc`` never does
         self.stage = f"{name}_wait"
         outcome = self._wait_stage(seconds)
@@ -612,7 +630,8 @@ class StopEpisode:
             self._identity = identity
 
     def _scan(self) -> TrackScan:
-        return scan_tracked(self._identity, self._service.env, forbidden=frozenset(self._entry.target.forbidden()))
+        forbidden = self._forbidden if self._forbidden is not None else frozenset(self._entry.target.forbidden())
+        return scan_tracked(self._identity, self._service.env, forbidden=forbidden)
 
     def _await_identity(self):
         """The scan once the run's identity is complete and names a member, or None (ended, closed or ``identity_wait`` over)."""
@@ -734,12 +753,16 @@ class StopEpisode:
                             "signal": result.get("signal"), "reason": result.get("reason"),
                             "residual": result.get("residual"), "elapsed_seconds": elapsed,
                             "repeat_requests": self._entry.repeats})
+        try:
+            self._forbidden = frozenset(self._entry.target.forbidden())  # before ``release`` drops the provider
+        except Exception:
+            self._forbidden = frozenset()
         with self._settle:
             self.stage = "done"
             self.result = result
             corrected = self._correct()  # the owner may have observed the end while this was being decided
             self.done.set()
-        self._entry.target.identity = _no_identity  # nothing reads it again: do not keep the owner's command alive
+        self._entry.target.release()  # a late correction scans with the identity and forbidden pids this episode kept
         if corrected is not None:
             service.record(corrected)
 
@@ -786,6 +809,9 @@ class CommandStopService:
         self._lock = threading.Lock()
         self._live: dict[str, _Entry] = {}
         self._ended: dict[str, _Ended] = {}
+        # every id ever registered here: never a previous backend's, also once ``_ended`` forgot it (and the journal
+        # may still show it started and not ended, e.g. its end record was lost). One id string per command run.
+        self._registered: set[str] = set()
         self.closed = threading.Event()
 
     def record(self, record: dict[str, Any]) -> None:
@@ -802,6 +828,7 @@ class CommandStopService:
     def register(self, target: StopTarget) -> None:
         with self._lock:
             self._live[target.command_id] = _Entry(target)
+            self._registered.add(target.command_id)
 
     def command_ended(self, command_id: str, result: Mapping[str, Any]) -> None:
         """The owner observed the command's end (its final result)."""
@@ -812,12 +839,17 @@ class CommandStopService:
                 (result.get("reason") or "owner_unknown") if result.get("status") == "unknown" else None)
             while len(self._ended) > ENDED_KEPT:
                 del self._ended[next(iter(self._ended))]
+            episode = entry.episode if entry is not None else None
+            if entry is not None and episode is None:
+                # under the lock: a stop that creates the episode after this sees the released providers (no identity,
+                # nothing to signal), never a live identity with the forbidden pids already gone. An episode that
+                # exists keeps scanning with the owner's providers; its ``_finish`` releases them.
+                entry.target.release()  # the owner's command is not kept alive by what is remembered
         if entry is not None:
             entry.final = dict(result)
-            entry.target.identity = _no_identity  # the owner's command is not kept alive by what is remembered
             entry.ended.set()
-            if entry.episode is not None:
-                entry.episode.owner_ended()  # an episode that already ended unknown is corrected
+            if episode is not None:
+                episode.owner_ended()  # an episode that already ended unknown is corrected
 
     def stop_marker(self, command_id: str) -> dict[str, str]:
         """``{"stopped_by", "stop_signal"}`` once a stop of this command has delivered a signal, else ``{}``.
@@ -925,6 +957,9 @@ class CommandStopService:
     def _from_previous_backend(self, command_id: str) -> bool:
         """The terminal journal shows a start of this id that no end followed and this backend does not hold: a
         previous backend's. Workbench cannot prove who that process is now, so it is not stopped from here."""
+        with self._lock:
+            if command_id in self._registered:
+                return False  # this backend's own command: an id its owner reported, whatever the journal kept
         try:
             return bool(self._previous_backend is not None and self._previous_backend(command_id))
         except Exception:

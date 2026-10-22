@@ -19,6 +19,7 @@ from pathlib import Path
 import signal
 import subprocess
 import threading
+from types import SimpleNamespace
 import time
 import unittest
 from uuid import uuid4
@@ -529,6 +530,44 @@ class StopAndDoneNoticeTests(RealStopFixture):
         self.assertEqual(len(done), 1, done)
         self.assertEqual((done[0]["command_id"], done[0]["status"], done[0]["exit_code"], done[0]["signal"]),
                          (command_id, "exited", 130, 2))
+
+
+class CommandsRunCarryTheCommandIdTests(RealStopFixture):
+    """SPEC "기술 보완": a ``commands_run`` entry carries ``command_id`` (the id a Worker that lost its context after a
+    restart needs to stop a command); the live record and the entry rebuilt from the journal both have it."""
+
+    def run_for_task(self, task_id, command):
+        self.terminal._active_task = lambda: SimpleNamespace(task_id=task_id)
+        return self.run_command(command, wait=30)
+
+    def test_a_task_command_entry_has_the_command_id_of_the_command_that_ran(self):
+        # Behavior 6
+        first = self.run_for_task("task-ids", "echo one-id")
+        second = self.run_for_task("task-ids", "echo two-id")
+        self.assertEqual((first["status"], second["status"]), ("exited", "exited"))
+        self.assertNotEqual(first["command_id"], second["command_id"])
+        runs = self.terminal.runs_for_task("task-ids")
+        self.assertEqual([r["command_id"] for r in runs], [first["command_id"], second["command_id"]])
+        self.assertEqual([r["command"] for r in runs], ["echo one-id", "echo two-id"], "the other fields stay")
+
+    def test_a_running_command_is_listed_with_its_command_id_too(self):
+        started = self.run_for_task("task-run", "sleep 601.6")
+        self.assertEqual(started["status"], "running", started)
+        (entry,) = self.terminal.runs_for_task("task-run")
+        self.assertEqual((entry["command_id"], entry["status"]), (started["command_id"], "running"))
+        self.assertEqual(self.stop(started["command_id"])["status"], "exited")
+
+    def test_entries_rebuilt_from_the_journal_after_a_restart_have_the_command_id(self):
+        first = self.run_for_task("task-restart", "echo before-restart")
+        stopped = self.run_for_task("task-restart", "sleep 601.7")
+        self.assertEqual(self.stop(stopped["command_id"])["status"], "exited")
+        self.terminal.close()
+        self.terminal = self.make_terminal(lambda: HostShellPort(self.pane, lambda: self.pane),
+                                           **self.terminal_extras())  # a service that never saw these runs
+        runs = self.terminal.runs_for_task("task-restart")
+        self.assertTrue(any("rebuilt from the terminal journal" in note for note in runs.notes), runs.notes)
+        self.assertEqual([r["command_id"] for r in runs], [first["command_id"], stopped["command_id"]])
+        self.assertEqual(runs[1]["stopped_by"], "worker", "the stop marks stay on the rebuilt entry")
 
 
 if __name__ == "__main__":

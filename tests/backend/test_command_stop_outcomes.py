@@ -408,7 +408,7 @@ class PinFailureWithoutLiveTargetTests(OutcomeFixture):
         self.assertEqual([r["signal"] for r in records], ["SIGINT", "SIGTERM", "SIGKILL"])
         for later in records[1:]:
             self.assertEqual(later["targets"], [], later)
-            self.assertEqual(later["failed"], [{"pid": pid, "reason": "identity_mismatch"}], later)
+            self.assertEqual(later["failed"], [{"pid": pid, "reason": "pidfd_unavailable:EINVAL"}], later)
         self.end_own(pid, ticks)
 
 

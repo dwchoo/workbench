@@ -23,7 +23,11 @@ The result returns at once. The worker's outcome arrives later as a `to_manager`
 - `already_exited`, `not_found`, `stale`: nothing was sent (finished, unknown id, or the process changed).
 - `refused`: `reason` `previous_backend_command` (use `stop_survivor` with the `survivor_id` from `workbench_status`) or `backend_shutdown`.
 - `stopping`: still in progress after the wait; check `workbench_status` later. Do not repeat the call in a loop.
-- A stopped experiment closes as `outcome` `stopped` (with `stopped_by`) without analysis or retry; a stopped worker command ends with `stopped_by` and the worker should not re-run it. If cancel and stop both happened, the cancel wins and the Task closes `cancelled`.
+- A stopped worker command ends with `stopped_by` and `stop_signal` (the last signal sent) and the worker should not re-run it.
+- Stopping a running experiment (`command_id` = its `run_id`) without a cancel: once Workbench sees the command end, the run closes with `outcome` `stopped` and no analysis, judgment or automatic retry. The Task becomes `finished`, the worker is free, and the Task's `last_result` (in `workbench_status.task`) is `{run_id, outcome: "stopped", stopped_by, exit_code, signal, run_closed: true}`; it is not judged. A `stopped` run is neither success nor failure: tell the user, and re-run (`run: true`) or start a new Task only if they want it.
+- If the stop ended `unknown`, the outcome is not set yet; `host_commands` shows the `reason`. When the command is later seen to end, the rules above apply.
+- If the command ended on its own before any signal was sent (`already_exited`, no `stopped_by`), nothing was stopped and the run is judged as usual.
+- If you cancelled the Task first and then stopped the command, the cancel wins: the Task closes `cancelled` (no `stopped` outcome, no judgment).
 
 ## Notices
 A `to_worker` result may carry `notices[]`: things that ended a Task while you were not looking. Read them every time and update your picture of the Task; each is shown once.

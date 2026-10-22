@@ -122,6 +122,13 @@ CHECK_INTERVAL = 60  # C-D68 (8): 1 minute
 NOTICE_RETRY = 2.0  # a busy or unreachable worker: the next delivery attempt
 NOTIFIER_TICK = 0.5
 CALLS_KEPT = 256  # terminal calls remembered for a late abandon signal
+# Call-key results kept to replay a resent call (``terminal_duplicate``). The oldest key is evicted first (insertion
+# order); an interim ``stopping`` result is never kept, so a resend of it asks the stop service again. 256 matches
+# CALLS_KEPT and the stop service's ENDED_KEPT: a bridge resends a call right after its own timeout, long before 256
+# other calls, so a live resend always finds its key. A resend of an evicted key is handled as a new call: a command
+# key starts the command again, a stop key stops again, and the stop service still answers a stop it remembers with
+# ``repeat: true`` (its own idempotency); only a stop older than ENDED_KEPT ended commands then reads ``not_found``.
+RESULTS_KEPT = 256
 _KEYS = frozenset({"command", "stop"})
 STOP_MARKS = ("stopped_by", "stop_signal")  # on a command a stop signalled: who stopped it, the last signal sent
 _COMMAND_ID = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}")  # the bridge's pattern
@@ -332,12 +339,15 @@ class _TaskRuns:
     omitted: int = 0  # older runs dropped past ``RUNS_KEPT``
 
 
-def _run_entry(command: str, log_path: str, script_path: str | None, result: Mapping[str, Any] | None) -> dict[str, Any]:
-    """One entry of a done/blocked report's ``commands_run``."""
+def _run_entry(command: str, log_path: str, script_path: str | None, result: Mapping[str, Any] | None,
+               command_id: str | None = None) -> dict[str, Any]:
+    """One entry of a done/blocked report's ``commands_run`` (``command_id``: the id ``terminal`` ``stop`` takes)."""
     result = result or {}
     entry: dict[str, Any] = {"command": shown_command(command), "status": result.get("status") or "running",
                              "exit_code": result.get("exit_code"), "signal": result.get("signal"),
                              "duration_seconds": result.get("duration_seconds"), "log_path": log_path}
+    if command_id is not None:
+        entry["command_id"] = command_id
     if script_path is not None:
         entry["script_path"] = script_path
     for key in ("log_format", "raw_log_ref", "read_command", "raw_source_status", "raw_source_error", *STOP_MARKS):
@@ -751,7 +761,12 @@ class TerminalService:
             result = {"status": "outcome_unknown", "reason": f"backend_error:{type(exc).__name__}"}
         with self._lock:
             self._inflight.discard(key)
-            self._results[key] = result
+            interim = (isinstance(parsed.args, dict) and stop_target(parsed.args) is not None
+                       and result.get("status") == "stopping")
+            if not interim:
+                self._results[key] = result  # an interim "stopping" is asked again, not replayed
+            while len(self._results) > RESULTS_KEPT:
+                del self._results[next(iter(self._results))]
         self._journal({"type": "terminal_result", "key": key_dict, "result": _journal_result(result)})
         return dict(result)
 
@@ -1374,7 +1389,7 @@ class TerminalService:
             return
         entry = _run_entry(command.command, str(command.log_path),
                            None if command.script_path is None else str(command.script_path),
-                           command.raw_fields())
+                           command.raw_fields(), command.command_id)
         with self._runs_lock:
             held = self._task_runs.pop(command.task_id, None) or _TaskRuns()
             held.runs.append((command.command_id, entry))
@@ -1434,7 +1449,8 @@ class TerminalService:
                     result[key] = started[key]
             script = started.get("script_path")
             listed.append((command_id, _run_entry(started["command"], str(started.get("log_path") or ""),
-                                                  script if isinstance(script, str) else None, result)))
+                                                  script if isinstance(script, str) else None, result,
+                                                  command_id)))
         return listed
 
     def runs_for_task(self, task_id: str) -> CommandRuns:
@@ -1588,9 +1604,10 @@ class TerminalService:
         command.port = port
         if self._command_stop is None:
             return
-        self._command_stop.register(StopTarget(command.command_id, "worker", "terminal", command.task_id,
+        task_id = command.task_id  # a plain value: what an ended command's target keeps must not hold the command
+        self._command_stop.register(StopTarget(command.command_id, "worker", "terminal", task_id,
                                                identity=lambda: command.port.run_identity(),
-                                               task_status=lambda: self._status_of(command.task_id)))
+                                               task_status=lambda: self._status_of(task_id)))
 
     def _status_of(self, task_id: str | None) -> str | None:
         if task_id is None or self._task_status is None:

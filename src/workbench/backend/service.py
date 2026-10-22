@@ -264,6 +264,8 @@ class Backend:
         self._recovery_results: dict[tuple, dict[str, Any]] = {}
         self._recovery_inflight: set[tuple] = set()
         self._causes_reported: set[int] = set()
+        self._previous_commands_lock = threading.Lock()
+        self._previous_commands: frozenset[str] | None = None  # started-not-ended ids of the journal, built on first need
 
     # -- lifecycle -------------------------------------------------------
     def run(self) -> int:
@@ -1975,17 +1977,25 @@ class Backend:
         return self.flow.task_status(task_id) if self.flow is not None else None
 
     def _journaled_unfinished_command(self, command_id: str) -> bool:
-        """The terminal journal holds a start of ``command_id`` and no end of it. The stop service asks only for ids
-        it does not hold itself, so this is a command a previous backend started and may have left running.
+        """The terminal journal held a start of ``command_id`` and no end of it when it was first asked. The stop service
+        asks only for ids it never registered itself, so this is a command a previous backend started and may have
+        left running.
 
-        Limit: every unknown id reads the whole terminal journal once (a rare, manager-initiated call)."""
-        started = False
-        for record in self.handoffs.read_records(("terminal_started", "terminal_ended")):
-            if record.get("command_id") == command_id:
-                if record["type"] == "terminal_ended":
-                    return False
-                started = True
-        return started
+        The journal is read once, on the first such question, into an immutable index of the started-not-ended ids;
+        later questions (a Worker or Manager may send any number of unknown ids) are answered from it and never touch
+        the journal. A command started after the index was built is never in it. A command of this backend that is in
+        it (running when it was built, or its end record lost) is never asked: the stop service answers every id it
+        registered itself (``CommandStopService._registered``)."""
+        with self._previous_commands_lock:
+            if self._previous_commands is None:
+                started: set[str] = set()
+                for record in self.handoffs.read_records(("terminal_started", "terminal_ended")):
+                    if record["type"] == "terminal_started":
+                        started.add(record.get("command_id"))
+                    else:
+                        started.discard(record.get("command_id"))
+                self._previous_commands = frozenset(started)
+            return command_id in self._previous_commands
 
     def _stop_command(self, parsed: Any, key_dict: dict[str, Any]) -> dict[str, Any]:
         """CS-05: the manager stops one command Workbench tracks (a Worker ``terminal`` command, later an experiment

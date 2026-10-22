@@ -118,6 +118,14 @@ REPORT_WAIT_REASON_TEXT = {"manager_editor_not_empty": REPORT_WAIT_TEXT,
 MANAGER_RESTART_SHOWN_SECONDS = 120
 REASON_MAX_COLS = 40
 TASK_KIND_TEXT = {"experiment": "실험", "work": "작업"}
+# command-stop: who asked for the stop that ended an experiment run (``last_result.stopped_by``)
+STOPPED_BY_TEXT = {"user": "사용자", "manager": "Manager", "worker": "Worker"}
+STOPPED_BY_MAX_COLS = 20
+# command-stop: Task line notes for the Task's host commands (never the command id or log path)
+HOST_COMMAND_RUNNING_STATES = ("running", "stopping")  # "unknown" (a stop not confirmed ended) has its own note
+HOST_COMMAND_RUNNING_NOTE = "명령 실행 중"
+HOST_COMMAND_UNAVAILABLE_NOTE = "명령 확인 불가"
+HOST_COMMAND_UNCONFIRMED_NOTE = "명령 종료 미확인"
 # "finished" with a run that failed to start is shown as 시작 실패 (smoke-02 E4; see task_text)
 TASK_STATUS_TEXT = {"dispatched": "전달됨", "starting": "시작 중", "running": "실행 중", "waiting_report": "보고 대기",
                     "held": "보류", "cancelling": "취소 중", "finished": "보고 완료", "blocked": "막힘", "closed": "종료"}
@@ -2050,12 +2058,26 @@ class ProductModel:
             # CW-18 smoke-02 E4: the run never started, so nothing was reported.
             status_text = "시작 실패"
             held = held.removeprefix("start_failed:") or _plain(last.get("error")) or _plain(last.get("reason"))
+        elif status == "finished" and _plain(last.get("outcome")) == "stopped":
+            # command-stop: the run was ended by a stop, not by a report.
+            stopped_by = last.get("stopped_by")
+            who = _plain(stopped_by) if isinstance(stopped_by, str) else ""
+            who = STOPPED_BY_TEXT.get(who) or _clip(who, STOPPED_BY_MAX_COLS)
+            status_text = f"중지됨({who})" if who else "중지됨"
         if held:
             notes.append(TASK_HELD_TEXT.get(held) or held)
             if held == "host_terminal_busy" and any(r in JOB_HELD_REASONS for r in self._held_reasons({})):
                 notes.append(JOB_HELD_TASK_NOTE)
         if task.get("cancel_requested") is True and status != "cancelling":
             notes.append("취소 요청됨")
+        commands = task.get("host_commands") if isinstance(task.get("host_commands"), list) else ()
+        states = {item["state"] for item in commands if isinstance(item, dict) and isinstance(item.get("state"), str)}
+        if task.get("host_commands_unavailable") is True:
+            notes.append(HOST_COMMAND_UNAVAILABLE_NOTE)  # "cannot be read" must not look like "nothing runs"
+        elif states & set(HOST_COMMAND_RUNNING_STATES):
+            notes.append(HOST_COMMAND_RUNNING_NOTE)
+        elif "unknown" in states:
+            notes.append(HOST_COMMAND_UNCONFIRMED_NOTE)  # a stop was sent but the end is not confirmed
         tail = f" [{' · '.join([status_text] + notes)}]"
         head = f"작업: {TASK_KIND_TEXT.get(kind) or kind or '?'}"
         summary = _plain(task.get("summary"))

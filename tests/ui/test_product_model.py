@@ -3554,6 +3554,126 @@ class TaskWorkerStatusTests(unittest.TestCase):
                                             "last_result": {"outcome": "reported"}})).status_lines()[1]
         self.assertIn("[보고 완료]", done, "a run that reported keeps its label")
 
+    def test_stopped_experiment_shows_who_stopped_it(self):
+        # command-stop B1: a run a stop ended is "finished" with outcome "stopped", not "보고 완료".
+        for stopped_by, expected in (("user", "[중지됨(사용자)]"), ("manager", "[중지됨(Manager)]"),
+                                     ("worker", "[중지됨(Worker)]"), ("ops", "[중지됨(ops)]"),
+                                     ("a\x1b[31mb\nc", "[중지됨(a [31mb c)]"), (None, "[중지됨]"), ("", "[중지됨]"),
+                                     (7, "[중지됨]")):
+            with self.subTest(stopped_by=stopped_by):
+                task = {"kind": "experiment", "status": "finished", "summary": "run exp",
+                        "last_result": {"run_id": "run-1", "outcome": "stopped", "stopped_by": stopped_by,
+                                        "exit_code": None, "signal": "SIGTERM", "run_closed": True}}
+                line = self.render(task_state(task=task)).status_lines()[1]
+                self.assertIn(expected, line)
+                self.assertNotIn("보고 완료", line)
+        long = self.render(task_state(task={"kind": "experiment", "status": "finished", "summary": "x",
+                                            "last_result": {"outcome": "stopped", "stopped_by": "z" * 200}}))
+        self.assertNotIn("z" * 100, long.status_lines()[1], "a long requester is capped")
+        self.assertIn("중지됨(z", long.status_lines()[1])
+        # a stopped result on a Task that is not finished keeps the Task's own status
+        running = self.render(task_state(task={"status": "running", "last_result": {"outcome": "stopped"}}))
+        self.assertNotIn("중지됨", running.status_lines()[1])
+
+    def test_running_host_command_is_noted_on_the_task_line(self):
+        # command-stop B2: a command that still runs is shown whatever the Task status (a cancel never stops it).
+        def command(state):
+            return {"command_id": "cmd-secret-1", "kind": "terminal", "owner": "worker", "state": state,
+                    "started_at": 1.0, "log_path": "/tmp/secret/log-path.txt", "stop": None}
+
+        for status, extra in (("running", {}), ("cancelling", {"cancel_requested": True}),
+                              ("closed", {"closed_reason": "cancelled", "active": False})):
+            for state in ("running", "stopping"):
+                with self.subTest(status=status, state=state):
+                    line = self.render(task_state(task={"status": status, "host_commands": [command(state)], **extra}
+                                                 )).status_lines()[1]
+                    self.assertIn("명령 실행 중", line)
+                    self.assertNotIn("cmd-secret-1", line)
+                    self.assertNotIn("log-path", line)
+        closed = self.render(task_state(task={"status": "closed", "closed_reason": "cancelled", "active": False,
+                                              "host_commands": [command("running")]})).status_lines()[1]
+        self.assertIn("[종료(취소됨) · 명령 실행 중]", closed)
+        with_held = self.render(task_state(task={"status": "dispatched", "held_reason": "host_terminal_busy",
+                                                 "host_commands": [command("running")]})).status_lines()[1]
+        self.assertIn("host terminal 사용 중 · 명령 실행 중", with_held)
+        for none in ({"host_commands": []}, {}):
+            with self.subTest(none=none):
+                self.assertNotIn("명령", self.render(task_state(task={"status": "running", **none})).status_lines()[1])
+
+    def test_unavailable_host_commands_are_noted_instead(self):
+        # command-stop B3: "cannot be read" must not look like "nothing runs", nor claim a command runs.
+        line = self.render(task_state(task={"status": "closed", "closed_reason": "cancelled", "active": False,
+                                            "host_commands": [], "host_commands_unavailable": True})).status_lines()[1]
+        self.assertIn("[종료(취소됨) · 명령 확인 불가]", line)
+        self.assertNotIn("명령 실행 중", line)
+        both = self.render(task_state(task={"status": "running", "host_commands_unavailable": True,
+                                            "host_commands": [{"state": "running"}]})).status_lines()[1]
+        self.assertIn("명령 확인 불가", both)
+        self.assertNotIn("명령 실행 중", both)
+        falsy = self.render(task_state(task={"status": "running", "host_commands_unavailable": False})
+                            ).status_lines()[1]
+        self.assertNotIn("명령", falsy)
+
+    def test_unconfirmed_host_command_is_noted_with_precedence(self):
+        # command-stop B5: state "unknown" (a stop not confirmed ended); unavailable > running > unconfirmed.
+        def line(status, commands, **extra):
+            return self.render(task_state(task={"status": status, "host_commands": commands, **extra})
+                               ).status_lines()[1]
+
+        closed = {"closed_reason": "cancelled", "active": False}
+        self.assertIn("[종료(취소됨) · 명령 종료 미확인]", line("closed", [{"state": "unknown"}], **closed))
+        self.assertIn("명령 종료 미확인", line("running", [None, {"state": "unknown"}]))
+        both = line("running", [{"state": "unknown"}, {"state": "stopping"}])
+        self.assertIn("명령 실행 중", both)
+        self.assertNotIn("미확인", both)
+        unavailable = line("running", [{"state": "unknown"}, {"state": "running"}], host_commands_unavailable=True)
+        self.assertIn("명령 확인 불가", unavailable)
+        self.assertNotIn("명령 실행 중", unavailable)
+        self.assertNotIn("미확인", unavailable)
+        self.assertNotIn("미확인", line("running", [{"state": "ended"}, {"state": 5}]))
+        from wcwidth import wcswidth
+        text = self.render(task_state(task={"kind": "experiment", "status": "closed", "summary": "lr sweep 3 runs",
+                                            "host_commands": [{"state": "unknown"}], **closed},
+                                     worker={"state": "idle", "task_id": None}), cols=80).status_lines()[1]
+        used, seen = 0, []
+        for ch in text:
+            used += max(wcswidth(ch), 0)
+            if used > 80:
+                break
+            seen.append(ch)
+        self.assertIn("[종료(취소됨) · 명령 종료 미확인]", "".join(seen), f"cut at 80 columns: {text!r}")
+
+    def test_malformed_host_command_and_last_result_fields_never_raise(self):
+        bad_commands = ("running", 7, {"state": "running"}, [None, "running", 3, ["running"]],
+                        [{"state": 5}, {"state": None}, {}, {"state": ["running"]}], [{"state": "ended"}])
+        for value in bad_commands:
+            with self.subTest(host_commands=value):
+                line = self.render(task_state(task={"status": "running", "host_commands": value})).status_lines()[1]
+                self.assertNotIn("명령", line)
+                self.assertTrue(all(ch.isprintable() for ch in line), repr(line))
+        mixed = self.render(task_state(task={"status": "running", "host_commands": [None, 3, {"state": "stopping"}]})
+                            ).status_lines()[1]
+        self.assertIn("명령 실행 중", mixed)
+        for last in ("stopped", 3, ["stopped"], {"outcome": ["stopped"]}, {"outcome": "stopped", "stopped_by": {"a": 1}}):
+            with self.subTest(last_result=last):
+                line = self.render(task_state(task={"status": "finished", "last_result": last,
+                                                    "host_commands_unavailable": "yes"})).status_lines()[1]
+                self.assertTrue(all(ch.isprintable() for ch in line), repr(line))
+                self.assertNotIn("명령 확인 불가", line, "only the boolean true marks it")
+
+    def test_stopped_and_command_notes_fit_an_80_column_line(self):
+        from wcwidth import wcswidth
+        task = {"kind": "experiment", "status": "closed", "closed_reason": "cancelled", "active": False,
+                "summary": "lr sweep 3 runs", "host_commands": [{"state": "running"}]}
+        line = self.render(task_state(task=task, worker={"state": "idle", "task_id": None}), cols=80).status_lines()[1]
+        used, seen = 0, []
+        for ch in line:  # what an 80-column terminal shows of the line
+            used += max(wcswidth(ch), 0)
+            if used > 80:
+                break
+            seen.append(ch)
+        self.assertIn("[종료(취소됨) · 명령 실행 중]", "".join(seen), f"cut at 80 columns: {line!r}")
+
     def test_closed_task_shows_its_reason(self):
         for reason, text in (("done", "완료"), ("cancelled", "취소됨"), ("superseded_by_new_task", "새 작업으로 대체"),
                              ("mystery", "mystery")):

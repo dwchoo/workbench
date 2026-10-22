@@ -256,7 +256,7 @@ CS-G12 재확인: `omp/18.11.1`, `OmpSchemaAcceptanceTests` 5개 통과. `omp_br
 
 | 항목 | 출처 |
 |---|---|
-| Q3: stopped로 끝난 실험 Task를 UI가 "보고 완료"로 표시(`ui/product/model.py`). 사용자 TUI가 `host_commands`를 표시하지 않아 취소 뒤 계속 도는 명령이 `종료(취소)`로만 보임. 추천은 후속 quick-change로 `stopped` 별도 표시와 `[명령 실행 중]` 한 줄 | `open-questions.md` Q3, Spec 리뷰 P2-1. 승인 범위가 `ui/product/*` 변경을 막아 이번 기능에 넣지 않음 |
+| Q3(처리됨, 후속 커밋): 사용자 TUI Task 줄이 stopped 실험을 `중지됨(사용자/Manager/Worker)`로, 남은 host 명령을 `명령 확인 불가` > `명령 실행 중` > `명령 종료 미확인` 중 하나로 표시. 계약·backend 변경 없이 `ui/product/model.py`만 수정. worker TDD(B1~B5), 독립 검증 pass(`test_product_task_stop_labels_independent` 24), 리뷰 approve | `open-questions.md` Q3 답변 a |
 | 중복 adapter 통합 | Standards P2-2 |
 | 긴 함수 분해 | Standards P2-3 |
 | pin 시점의 session 재확인 | P3-1 |

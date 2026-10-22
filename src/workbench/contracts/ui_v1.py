@@ -127,6 +127,10 @@ removed before any release; a client sending ``approval_decide`` gets
   carries the same ``host_commands``. A run a stop ended closes with
   ``last_result.outcome: "stopped"`` (``stopped_by``, ``exit_code``, ``signal``),
   the Task ``finished``; no new status. :data:`TASK_STATUSES` is unchanged.
+  The product UI shows such a Task as ``중지됨(<requester>)`` and adds the note
+  ``명령 실행 중`` (a ``running`` or ``stopping`` command), ``명령 종료 미확인``
+  (only ``unknown`` commands) or ``명령 확인 불가`` (``host_commands_unavailable``;
+  wins over the others) to the Task line; never the id or log path.
 - ``worker``: ``{state, task_id}``; ``state`` is one of :data:`WORKER_STATES`
   (``busy`` while a Task is active, then ``task_id`` names it).
 - ``usage`` (CW-16, C-AC-21; additive): ``{task_id, runs_started,

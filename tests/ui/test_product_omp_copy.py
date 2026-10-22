@@ -347,7 +347,7 @@ class OmpCopyTmuxPtyTests(unittest.TestCase):
     """
 
     def setUp(self):
-        self.root = Path(tempfile.mkdtemp(prefix="wbcd69-", dir="/tmp"))
+        self.root = Path(tempfile.mkdtemp(prefix="wbcd69-", dir=tempfile.gettempdir()))
         self.addCleanup(shutil.rmtree, self.root, True)
         self.sock = f"wbcd69-{secrets.token_hex(4)}"
         conf = self.root / "tmux.conf"

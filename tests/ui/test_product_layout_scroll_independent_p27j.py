@@ -315,7 +315,7 @@ class PtyBase(unittest.TestCase):
 
     def setUp(self):
         self.server = ScriptedServer()
-        self.work = Path(tempfile.mkdtemp(prefix="cw06-p27j-", dir="/tmp"))
+        self.work = Path(tempfile.mkdtemp(prefix="cw06-p27j-", dir=tempfile.gettempdir()))
         self.ui = UiPty(self.server.path, self.work, rows=self.ROWS, cols=self.COLS)
         self.addCleanup(shutil.rmtree, self.work, True)
         self.addCleanup(self.server.close)
@@ -476,7 +476,7 @@ class RealEntrypointRuntime(unittest.TestCase):
     ROWS, COLS = 40, 140
 
     def setUp(self):
-        self.root = Path(tempfile.mkdtemp(prefix="cw06-p27j-rt-", dir="/tmp"))
+        self.root = Path(tempfile.mkdtemp(prefix="cw06-p27j-rt-", dir=tempfile.gettempdir()))
         self.addCleanup(shutil.rmtree, self.root, True)
         self.omp = self.root / "omp"
         self.omp.write_text(STUB)

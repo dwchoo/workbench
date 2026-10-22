@@ -289,16 +289,20 @@ class DefaultPipeXfszTests(Case):
 
     @staticmethod
     def probe(d: Path, tag: str) -> str:
-        """Status of this process, `yes | head -1` writer status + duration, and an XFSZ write."""
+        """Status of this process, `yes | head -1` writer status + duration, and an XFSZ write.
+
+        The probe writes relative file names: the caller does `cd <d>` once first. Absolute temp paths in every
+        redirection would push the whole submitted script past the product's RUN_REQUEST_MAX (PIPE_BUF) on a long
+        TMPDIR (e.g. /dev/shm/wb-tests.XXXXXXXX)."""
         # p27-cd70-test-02: the status is read by the shell itself (builtin read, no fork) three times. A `cat`
         # sample raced the shell's own fork, during which bash/dash block every signal for a moment (SigBlk).
         sample = "".join(f"{{ while IFS= read -r l; do printf '%s\\n' \"$l\"; done < /proc/$$/status; }} "
-                         f"> {q(d / f'{tag}.status.{n}')}; " for n in range(STATUS_SAMPLES))
+                         f"> {tag}.status.{n}; " for n in range(STATUS_SAMPLES))
         return (sample +
-                f"s=$(date +%s%N); (yes; echo $? > {q(d / (tag + '.pipe'))}) | head -1 > /dev/null; "
-                f"e=$(date +%s%N); echo $(( (e - s) / 1000000 )) > {q(d / (tag + '.ms'))}; "
-                f"(ulimit -f 1; head -c 65536 /dev/zero > {q(d / (tag + '.big'))}; "
-                f"echo $? > {q(d / (tag + '.xfsz'))}) 2>/dev/null")
+                f"s=$(date +%s%N); (yes; echo $? > {tag}.pipe) | head -1 > /dev/null; "
+                f"e=$(date +%s%N); echo $(( (e - s) / 1000000 )) > {tag}.ms; "
+                f"(ulimit -f 1; head -c 65536 /dev/zero > {tag}.big; "
+                f"echo $? > {tag}.xfsz) 2>/dev/null")
 
     def wait_files(self, shell, paths: list[Path], what: str, seconds: float = 15) -> None:
         self.until(shell, lambda _: all(p.exists() and p.stat().st_size > 0 for p in paths), seconds, what)
@@ -322,7 +326,7 @@ class DefaultPipeXfszTests(Case):
                 shell, d = self.open(choice)
                 # Host shell itself, its interactive pipeline, and a user-launched child.
                 child = shlex.quote(self.probe(d, "user_child"))
-                shell.send_user(f"{self.probe(d, 'shell')}; sh -c {child}\r".encode())
+                shell.send_user(f"cd {q(d)}; {self.probe(d, 'shell')}; sh -c {child}\r".encode())
                 self.wait_files(shell, [d / "shell.xfsz", d / "user_child.xfsz"], "manual probes")
                 self.until(shell, lambda s: s["parent_mode"] == "manual_prompt", what="prompt")
                 status_shell = masks(Path(f"/proc/{shell.parent_pid}/status").read_text())
@@ -330,11 +334,13 @@ class DefaultPipeXfszTests(Case):
                 # Experiment plus background, double-forked and setsid descendants.
                 self.handoff(shell)
                 descendant = {k: shlex.quote(self.probe(d, k)) for k in ("bg", "dfork", "setsid")}
-                script = (f"{self.probe(d, 'experiment')}; "
+                script = (f"cd {q(d)}; {self.probe(d, 'experiment')}; "
                           f"sh -c {descendant['bg']} & "
                           f"( sh -c {descendant['dfork']} & ); "
                           f"( setsid sh -c {descendant['setsid']} & ); "
                           "wait; sleep 1; exit 0")
+                # the submitted request (base64 JSON) must stay well under RUN_REQUEST_MAX whatever the temp root is
+                self.assertLess(len(script.encode()) * 4 // 3, 3300, f"{len(script)}-byte probe script too long")
                 began = time.monotonic()
                 control, automation = ports(shell)
                 shell.submit(control, script, automation)

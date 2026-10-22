@@ -192,7 +192,7 @@ class SkillTextTests(unittest.TestCase):
 # ------------------------------------------------------------------------------------------------- (3) agents
 class AgentTests(unittest.TestCase):
     def setUp(self):
-        self.root = Path(tempfile.mkdtemp(prefix="p27cd69-role-", dir="/tmp"))
+        self.root = Path(tempfile.mkdtemp(prefix="p27cd69-role-", dir=tempfile.gettempdir()))
         self.addCleanup(shutil.rmtree, self.root, True)
 
     def test_the_source_has_only_the_explorer(self):

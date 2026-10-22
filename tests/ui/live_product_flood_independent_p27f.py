@@ -141,7 +141,7 @@ def proc_by_cmdline(needle: bytes) -> list[tuple[int, int]]:
 
 class FloodRuntime(unittest.TestCase):
     def setUp(self):
-        self.root = Path(tempfile.mkdtemp(prefix="cw06-flood-", dir="/tmp"))
+        self.root = Path(tempfile.mkdtemp(prefix="cw06-flood-", dir=tempfile.gettempdir()))
         os.chmod(self.root, 0o700)
         self.data, self.project, self.home = self.root / "d", self.root / "project", self.root / "home"
         self.project.mkdir()

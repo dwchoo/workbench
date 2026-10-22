@@ -16,7 +16,7 @@ import test_package_assets_independent as assets
 
 class CommandIdentityTests(unittest.TestCase):
     def setUp(self):
-        self.directory = tempfile.TemporaryDirectory(prefix='wb-command-identity-', dir='/tmp')
+        self.directory = tempfile.TemporaryDirectory(prefix='wb-command-identity-', dir=tempfile.gettempdir())
         self.root = Path(self.directory.name)
         self.env = {'PATH': os.environ.get('PATH', ''), 'PYTHONDONTWRITEBYTECODE': '1'}
         for key in ('HOME', 'XDG_CONFIG_HOME', 'XDG_DATA_HOME', 'XDG_CACHE_HOME',

@@ -269,7 +269,7 @@ def run(omp: str) -> dict[str, Any]:
     version = subprocess.run([omp, "--version"], capture_output=True, text=True, timeout=30,
                              env={"PATH": os.environ.get("PATH", ""), "HOME": "/nonexistent"})
     result["omp"] = (version.stdout or version.stderr).strip().splitlines()[0]
-    root = Path(tempfile.mkdtemp(prefix="wb-p27-cw18-u1-live-", dir="/tmp"))
+    root = Path(tempfile.mkdtemp(prefix="wb-p27-cw18-u1-live-", dir=tempfile.gettempdir()))
     models = {role: ScriptedModel(role) for role in ROLES}
     servers = {role: _server(models[role]) for role in ROLES}
     for server in servers.values():

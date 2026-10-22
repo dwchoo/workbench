@@ -60,7 +60,7 @@ def pending_snapshot(boot_id=BOOT_B):
 
 class Cli(unittest.TestCase):
     def setUp(self):
-        self.root = Path(tempfile.mkdtemp(prefix="cw19-indep-cli-", dir="/tmp"))
+        self.root = Path(tempfile.mkdtemp(prefix="cw19-indep-cli-", dir=tempfile.gettempdir()))
         self.addCleanup(shutil.rmtree, self.root, True)
 
     def args(self, **kw):

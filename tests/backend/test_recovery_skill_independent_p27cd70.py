@@ -31,7 +31,7 @@ class RecoverySkillTests(unittest.TestCase):
     def setUp(self):
         self.text = (SKILLS / NAME / "SKILL.md").read_text(encoding="utf-8")
         self.front = front_matter(self.text)
-        self.tmp = tempfile.TemporaryDirectory(prefix="p27cd70-skill-", dir="/tmp")
+        self.tmp = tempfile.TemporaryDirectory(prefix="p27cd70-skill-", dir=tempfile.gettempdir())
         self.addCleanup(self.tmp.cleanup)
 
     def test_front_matter_names_the_directory_and_says_it_is_for_the_agent(self):

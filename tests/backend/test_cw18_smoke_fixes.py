@@ -291,7 +291,7 @@ class HandoffServiceNormalisationTests(unittest.TestCase):
                 seen.append(dict(req.args))
                 return flow.HandoffDecision({"status": "noted"})
 
-        with tempfile.TemporaryDirectory(prefix="cw18-smoke-norm-", dir="/tmp") as tmp:
+        with tempfile.TemporaryDirectory(prefix="cw18-smoke-norm-", dir=tempfile.gettempdir()) as tmp:
             svc = HandoffService(Path(tmp) / "handoffs.jsonl", policy=Policy())
             try:
                 result = svc.handle(ActorRole.MANAGER, request("to_worker", strict_work(), "n-1"))

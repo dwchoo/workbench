@@ -35,7 +35,7 @@ MAIN = "import sys; from workbench.backend.cli import main; raise SystemExit(mai
 
 class EntrypointSmoke(unittest.TestCase):
     def setUp(self):
-        self.root = Path(tempfile.mkdtemp(prefix="cw06-entry-", dir="/tmp"))
+        self.root = Path(tempfile.mkdtemp(prefix="cw06-entry-", dir=tempfile.gettempdir()))
         self.addCleanup(shutil.rmtree, self.root, True)
         self.omp = self.root / "omp"
         self.omp.write_text(STUB)

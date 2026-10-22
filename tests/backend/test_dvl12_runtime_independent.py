@@ -67,6 +67,18 @@ class DisabledRawActualShell(fixture.ServiceFixture):
         finally:
             super().tearDown()
 
+    def wait_for_idle_shell(self):
+        # A finished command's result returns before the shell is back at its prompt (~20 ms);
+        # the next run_tool is rightly refused host_terminal_busy until then.
+        def idle():
+            port = HostShellPort(self.pane, lambda: self.pane)
+            try:
+                return self.pane.state["parent_mode"] == "manual_prompt" and port.busy() is None
+            finally:
+                port.detach()
+
+        self.assertTrue(fixture.wait_until(idle, 5), self.pane.state)
+
     def test_eviction_does_not_stop_the_host_or_present_a_complete_first_source(self):
         first = self.run_tool({"command": "printf '%04000d' 0; printf '\\nDVL12-FIRST\\n'", "wait": 20})
         self.assertEqual((first["status"], first["exit_code"]), ("exited", 0), first)
@@ -75,6 +87,7 @@ class DisabledRawActualShell(fixture.ServiceFixture):
         self.assertEqual(first["log_format"], "segmented-v1")
         self.assertNotIn(b"DVL12-FIRST", Path(first["log_path"]).read_bytes())
 
+        self.wait_for_idle_shell()
         second = self.run_tool({"command": "printf 'DVL12-SECOND\\n'", "wait": 20})
         self.assertEqual((second["status"], second["exit_code"]), ("exited", 0), second)
         self.assertTrue(fixture.wait_until(lambda: b"DVL12-SECOND" in self.screen, 5))
@@ -166,6 +179,7 @@ class DisabledRawActualShell(fixture.ServiceFixture):
         self.assertIn("storage_gap", {gap["reason"] for gap in page["read"]["missing"]})
         self.assertNotEqual(page["read"]["status"], "available")
 
+        self.wait_for_idle_shell()
         later = self.run_tool({"command": "printf 'DVL12-AFTER\\n'", "wait": 20})
         self.assertEqual((later["status"], later["exit_code"]), ("exited", 0), later)
         self.assertTrue(fixture.wait_until(lambda: b"DVL12-AFTER" in self.screen, 5))
@@ -201,6 +215,7 @@ class DisabledRawActualShell(fixture.ServiceFixture):
         self.assertEqual(linked["read_command"], page["read_command"])
 
         current = None
+        self.wait_for_idle_shell()
         unlinked = self.run_tool({"command": "printf 'DVL12-UNLINKED\\n'", "wait": 20})
         self.assertEqual((unlinked["status"], unlinked["exit_code"]), ("exited", 0), unlinked)
         unlinked_source = json.loads(Path(unlinked["log_path"]).read_text())["source"]
@@ -223,6 +238,7 @@ class DisabledRawActualShell(fixture.ServiceFixture):
             automation=lambda: fixture.AUTOMATION, poll_interval=0.02,
             segmented_raw_port=self.source_port, active_task=changed_task)
         prior = {path.name for path in (self.root / "workflow" / "terminal").glob("*.json")}
+        self.wait_for_idle_shell()
         refused = self.run_tool({"command": "printf 'DVL12-NEVER-TYPE\\n'", "wait": 20})
         self.assertEqual((refused["status"], refused["reason"]),
                          ("rejected", "source_identity_unavailable"), refused)

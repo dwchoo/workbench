@@ -604,7 +604,7 @@ class PtyTests(unittest.TestCase):
     """The real product loop on an owned PTY: kernel line discipline included."""
 
     def setUp(self):
-        self.work = Path(tempfile.mkdtemp(prefix="wbp27o-", dir="/tmp"))
+        self.work = Path(tempfile.mkdtemp(prefix="wbp27o-", dir=tempfile.gettempdir()))
         self.addCleanup(shutil.rmtree, self.work, True)
 
     def start(self, **kwargs):

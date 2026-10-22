@@ -259,7 +259,7 @@ def termios_flags(stty_g: str) -> dict[str, bool]:
 @unittest.skipIf(SKIP, f"real OMP unavailable: {SKIP}")
 class LiveProductOmpProbe(unittest.TestCase):
     def setUp(self):
-        self.root = Path(tempfile.mkdtemp(prefix="cw06-live-", dir="/tmp"))
+        self.root = Path(tempfile.mkdtemp(prefix="cw06-live-", dir=tempfile.gettempdir()))
         os.chmod(self.root, 0o700)
         self.data = self.root / "d"
         self.project = self.root / "project"

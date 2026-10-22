@@ -25,7 +25,7 @@ def git(directory, *args):
 
 class StartRawStoreFailure(unittest.TestCase):
     def setUp(self):
-        temp = tempfile.TemporaryDirectory(prefix="cw19-fix01-wf-", dir="/tmp")
+        temp = tempfile.TemporaryDirectory(prefix="cw19-fix01-wf-", dir=tempfile.gettempdir())
         self.addCleanup(temp.cleanup)
         self.root = Path(temp.name)
         source = self.root / "source"

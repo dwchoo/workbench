@@ -61,7 +61,7 @@ def frontmatter(path: Path) -> dict:
 
 class ModelTableTests(unittest.TestCase):
     def setUp(self):
-        self.root = Path(tempfile.mkdtemp(prefix="p27cd68-models-", dir="/tmp"))
+        self.root = Path(tempfile.mkdtemp(prefix="p27cd68-models-", dir=tempfile.gettempdir()))
         self.addCleanup(shutil.rmtree, self.root, True)
 
     def overlay(self, role, **kwargs):
@@ -121,7 +121,7 @@ class CodeModeTests(unittest.TestCase):
         # C-D68 (5): providers.openai-codex.codeMode: off in the overlay both OMPs load with --config
         data = p27m.parse_yaml_subset(p27m.STATIC_OVERLAY.read_text())
         self.assertEqual(data["providers"]["openai-codex"]["codeMode"], "off")
-        root = Path(tempfile.mkdtemp(prefix="p27cd68-cm-", dir="/tmp"))
+        root = Path(tempfile.mkdtemp(prefix="p27cd68-cm-", dir=tempfile.gettempdir()))
         self.addCleanup(shutil.rmtree, root, True)
         for role in ("manager", "worker"):
             overlay = launcher.role_overlay(role, project_dir=root, home=root)
@@ -133,7 +133,7 @@ class CodeModeTests(unittest.TestCase):
 
 class WorkerRestrictionTests(unittest.TestCase):
     def setUp(self):
-        self.root = Path(tempfile.mkdtemp(prefix="p27cd68-wr-", dir="/tmp"))
+        self.root = Path(tempfile.mkdtemp(prefix="p27cd68-wr-", dir=tempfile.gettempdir()))
         self.addCleanup(shutil.rmtree, self.root, True)
 
     def command(self, role, *args):

@@ -39,7 +39,7 @@ class FixtureServer:
 
     def __init__(self, *, replay: dict[str, bytes] | None = None, reject: dict[str, tuple[str, str]] | None = None,
                  snap=None):
-        self.root = Path(tempfile.mkdtemp(prefix="cw06-ui-", dir="/tmp"))
+        self.root = Path(tempfile.mkdtemp(prefix="cw06-ui-", dir=tempfile.gettempdir()))
         self.path = self.root / "ui.sock"
         self.listener = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         self.listener.bind(str(self.path))

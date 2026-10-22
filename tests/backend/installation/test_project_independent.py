@@ -13,20 +13,23 @@ import subprocess
 import tempfile
 import unittest
 
-from workbench.backend.paths import DataDirError, DataLayout
+from workbench.backend.paths import MAX_SOCKET_PATH_BYTES, DataDirError, DataLayout
 from workbench.backend.project import initialize_project, resolve_project_context
 from workbench.backend.runtime_paths import ensure_runtime_root, resolve_runtime_root
 
 
 class IndependentProjectTests(unittest.TestCase):
     def setUp(self):
-        self.scratch = tempfile.TemporaryDirectory(prefix='wi-independent-')
+        self.scratch = tempfile.TemporaryDirectory(prefix='wpi-')
         self.addCleanup(self.scratch.cleanup)
         self.base = Path(self.scratch.name)
         self.project = self.base / 'study'
         self.project.mkdir()
-        self.runtime = self.base / 'run'
+        self.runtime = self.base / 'r'  # short: a long XDG_RUNTIME_DIR would fall back to the real /tmp dir
         self.runtime.mkdir(mode=0o700)
+        self.assertLessEqual(
+            len(os.fsencode(self.runtime / 'omp-workbench' / ('x' * 32) / 'bridge.sock')), MAX_SOCKET_PATH_BYTES,
+            f'temp root too long for an isolated runtime dir: {self.runtime}')
         self.env = {'HOME': str(self.base), 'XDG_RUNTIME_DIR': str(self.runtime)}
 
     def git_result(self, *args, root=None, check=True):

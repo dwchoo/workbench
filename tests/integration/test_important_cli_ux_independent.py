@@ -33,7 +33,7 @@ def manifest(root):
 
 class IndependentImportantCliRuntimeTests(unittest.TestCase):
     def setUp(self):
-        self.private = Path(tempfile.mkdtemp(prefix="iux-", dir="/tmp"))
+        self.private = Path(tempfile.mkdtemp(prefix="iux-", dir=tempfile.gettempdir()))
         self.assertEqual(stat.S_IMODE(self.private.stat().st_mode), 0o700)
         self.identity = (self.private.stat().st_dev, self.private.stat().st_ino)
         self.root = self.private / "d"

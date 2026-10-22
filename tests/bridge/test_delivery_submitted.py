@@ -74,7 +74,7 @@ class AckBridge:
 
 class SubmittedHookTests(unittest.TestCase):
     def setUp(self):
-        self.tmp = tempfile.TemporaryDirectory(prefix="cw18-r1-submitted-", dir="/tmp")
+        self.tmp = tempfile.TemporaryDirectory(prefix="cw18-r1-submitted-", dir=tempfile.gettempdir())
         self.addCleanup(self.tmp.cleanup)
         self.repository = TaskRepository(Path(self.tmp.name) / "tasks.sqlite3")
         self.addCleanup(self.repository.close)

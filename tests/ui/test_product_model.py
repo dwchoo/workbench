@@ -1351,7 +1351,7 @@ class SplitGeometryTests(unittest.TestCase):
 
 class LayoutFileTests(unittest.TestCase):
     def setUp(self):
-        self.dir = Path(tempfile.mkdtemp(prefix="cwl-", dir="/tmp"))
+        self.dir = Path(tempfile.mkdtemp(prefix="cwl-", dir=tempfile.gettempdir()))
         self.addCleanup(shutil.rmtree, self.dir, True)
         self.path = self.dir / LAYOUT_FILE
 

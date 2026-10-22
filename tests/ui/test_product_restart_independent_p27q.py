@@ -261,7 +261,7 @@ class RestartProductPtyTests(unittest.TestCase):
         from workbench.backend.service import Backend
         from workbench.terminal.shell_g2.prototype import ShellChoice
 
-        self._dir = tempfile.TemporaryDirectory(prefix="p27qu-", dir="/tmp")
+        self._dir = tempfile.TemporaryDirectory(prefix="p27qu-", dir=tempfile.gettempdir())
         self.addCleanup(self._dir.cleanup)
         root = Path(self._dir.name)
         project, home = root / "p", root / "h"

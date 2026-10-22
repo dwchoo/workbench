@@ -83,7 +83,7 @@ class MuxBase(unittest.TestCase):
     def setUp(self):
         self.server = ScriptedServer(replay={"manager_omp": LINES, "worker_omp": LINES.replace(b"line", b"work"),
                                              "host_shell": LINES.replace(b"line", b"host")})
-        self.work = Path(tempfile.mkdtemp(prefix="cw06-p27n-", dir="/tmp"))
+        self.work = Path(tempfile.mkdtemp(prefix="cw06-p27n-", dir=tempfile.gettempdir()))
         self.addCleanup(shutil.rmtree, self.work, True)
         self.addCleanup(self.server.close)
 
@@ -378,7 +378,7 @@ class IsolationWarningHeaderTests(unittest.TestCase):
         if isolation is not None:
             snapshot["omp_isolation"] = isolation
         server = ScriptedServer(snapshot=snapshot)
-        work = Path(tempfile.mkdtemp(prefix="cw06-p27n-", dir="/tmp"))
+        work = Path(tempfile.mkdtemp(prefix="cw06-p27n-", dir=tempfile.gettempdir()))
         self.addCleanup(shutil.rmtree, work, True)
         self.addCleanup(server.close)
         ui = UiPty(server.path, work, rows=30, cols=140)

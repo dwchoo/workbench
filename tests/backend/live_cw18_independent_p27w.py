@@ -339,7 +339,7 @@ class LiveCw18EndToEnd(unittest.TestCase):
     def setUp(self):
         self.omp = shutil.which("omp") or os.path.expanduser("~/.local/bin/omp")
         self.assertTrue(os.access(self.omp, os.X_OK), "omp is not installed")
-        self.root = Path(tempfile.mkdtemp(prefix="wb-p27w-live-", dir="/tmp"))
+        self.root = Path(tempfile.mkdtemp(prefix="wb-p27w-live-", dir=tempfile.gettempdir()))
         self.addCleanup(self.cleanup)
         self.home = self.root / "home"
         (self.home / ".omp" / "agent").mkdir(parents=True)

@@ -193,7 +193,7 @@ class _BackendCase(unittest.TestCase):
     ticker_wanted = False
 
     def setUp(self):
-        self._dir = tempfile.TemporaryDirectory(prefix="p27q-", dir="/tmp")
+        self._dir = tempfile.TemporaryDirectory(prefix="p27q-", dir=tempfile.gettempdir())
         self.addCleanup(self._dir.cleanup)
         root = Path(self._dir.name)
         self.root = root

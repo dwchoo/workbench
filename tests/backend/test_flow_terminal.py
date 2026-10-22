@@ -104,7 +104,7 @@ class FakeHostPort:
 
 class ServiceFixture(unittest.TestCase):
     def setUp(self):
-        self.tmp = tempfile.TemporaryDirectory(prefix="cd68-terminal-", dir="/tmp")
+        self.tmp = tempfile.TemporaryDirectory(prefix="cd68-terminal-", dir=tempfile.gettempdir())
         self.root = Path(self.tmp.name)
         (self.root / "workflow").mkdir(mode=0o700)
         self.project = self.root / "project"
@@ -457,6 +457,7 @@ class RealHostShellTerminalTests(ServiceFixture):
         self.assertNotIn(b"not-listed", bytes(self.ui)[before:])
         first = self.run_tool({"command": "echo allowed-one\n", "wait": 30})  # trailing whitespace only
         self.assertEqual((first["status"], first["exit_code"]), ("exited", 0), first)
+        self.assertTrue(wait_until(self.idle, 5))  # the result returns before the shell is back at its prompt
         second = self.run_tool({"command": long_command, "wait": 30})
         self.assertEqual((second["status"], second["exit_code"]), ("exited", 0), second)
         self.assertIn("long-ok", second["output_tail"])

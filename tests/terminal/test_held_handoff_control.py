@@ -69,7 +69,7 @@ def acks(shell):
 
 class HeldHandoffUserControlTests(unittest.TestCase):
     def open(self, choice):
-        directory = tempfile.mkdtemp(prefix="cw18-u4-", dir="/tmp")
+        directory = tempfile.mkdtemp(prefix="cw18-u4-", dir=tempfile.gettempdir())
         self.addCleanup(lambda: __import__("shutil").rmtree(directory, ignore_errors=True))
         shell = PersistentShell(user_environment={"PATH": "/usr/bin:/bin", "TERM": "xterm", "HOME": directory},
                                 choice=choice)

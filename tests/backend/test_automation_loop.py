@@ -186,7 +186,7 @@ class AutomationFixture(unittest.TestCase):
     def setUp(self):
         self.stack = ExitStack()
         self.addCleanup(self.stack.close)
-        self.root = Path(self.stack.enter_context(tempfile.TemporaryDirectory(prefix="cw18-u3-", dir="/tmp")))
+        self.root = Path(self.stack.enter_context(tempfile.TemporaryDirectory(prefix="cw18-u3-", dir=tempfile.gettempdir())))
         self.project = self.root / "project"
         git_repo(self.project, "README")
         self.source = self.root / "source"
@@ -424,7 +424,7 @@ class FreeWorkLoopTests(AutomationFixture):
 
 class PauseWithoutRunTests(unittest.TestCase):
     def test_pause_without_a_run_holds_new_work_and_resume_clears_it(self):
-        with tempfile.TemporaryDirectory(prefix="cw18-u3-norun-", dir="/tmp") as tmp:
+        with tempfile.TemporaryDirectory(prefix="cw18-u3-norun-", dir=tempfile.gettempdir()) as tmp:
             root = Path(tmp)
             tokens = {"manager": "m", "worker": "w"}
             with G3BridgeServer(root / "bridge.sock", tokens) as bridge:
@@ -496,7 +496,7 @@ class TaskFlowHookTests(unittest.TestCase):
     """TaskFlow tells the automation controller about run starts and closes (outside its lock)."""
 
     def setUp(self):
-        self.tmp = tempfile.TemporaryDirectory(prefix="cw18-u3-hooks-", dir="/tmp")
+        self.tmp = tempfile.TemporaryDirectory(prefix="cw18-u3-hooks-", dir=tempfile.gettempdir())
         self.addCleanup(self.tmp.cleanup)
         self.root = Path(self.tmp.name)
         (self.root / "workflow").mkdir(mode=0o700)

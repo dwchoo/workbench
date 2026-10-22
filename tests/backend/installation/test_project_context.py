@@ -7,16 +7,21 @@ import sys
 import tempfile
 import unittest
 
+from workbench.backend.paths import MAX_SOCKET_PATH_BYTES
+
 
 class ProjectContextTests(unittest.TestCase):
     def setUp(self):
-        self.temp = tempfile.TemporaryDirectory(prefix='wi-project-')
+        self.temp = tempfile.TemporaryDirectory(prefix='wp-')
         self.addCleanup(self.temp.cleanup)
         self.base = Path(self.temp.name)
         self.project = self.base / 'research'
         self.project.mkdir()
-        self.runtime = self.base / 'runtime'
+        self.runtime = self.base / 'r'  # short: a long XDG_RUNTIME_DIR would fall back to the real /tmp dir
         self.runtime.mkdir(mode=0o700)
+        self.assertLessEqual(
+            len(os.fsencode(self.runtime / 'omp-workbench' / ('x' * 32) / 'bridge.sock')), MAX_SOCKET_PATH_BYTES,
+            f'temp root too long for an isolated runtime dir: {self.runtime}')
         self.env = {'HOME': str(self.base), 'XDG_RUNTIME_DIR': str(self.runtime)}
 
     def test_discovery_and_refused_initialization_never_write(self):

@@ -34,7 +34,7 @@ def octal(data: bytes) -> str:
 
 class PtyPassthroughTests(unittest.TestCase):
     def test_a_pane_printing_the_wrapped_notification_shows_no_control_text(self):
-        with tempfile.TemporaryDirectory(prefix="cd68-o1-", dir="/tmp") as tmp:
+        with tempfile.TemporaryDirectory(prefix="cd68-o1-", dir=tempfile.gettempdir()) as tmp:
             pane = ShellPane(ShellChoice("bash", "/usr/bin/bash"),
                              {"PATH": "/usr/bin:/bin", "HOME": tmp, "LANG": "C.UTF-8", "TMUX": "/tmp/fake,1,0"})
             model = ProductModel(FakeSender(), 30, 160, clock=lambda: 1000.0)

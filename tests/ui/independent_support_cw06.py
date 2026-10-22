@@ -75,7 +75,7 @@ class ScriptedServer:
 
     def __init__(self, *, snapshot: dict[str, Any] | None = None, replay: dict[str, bytes] | None = None,
                  answers: dict[str, Answer] | None = None):
-        self.root = Path(tempfile.mkdtemp(prefix="cw06-indep-", dir="/tmp"))
+        self.root = Path(tempfile.mkdtemp(prefix="cw06-indep-", dir=tempfile.gettempdir()))
         os.chmod(self.root, 0o700)
         self.path = self.root / "ui.sock"
         self.listener = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)

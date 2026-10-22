@@ -538,7 +538,12 @@ class CommandsRunCarryTheCommandIdTests(RealStopFixture):
 
     def run_for_task(self, task_id, command):
         self.terminal._active_task = lambda: SimpleNamespace(task_id=task_id)
-        return self.run_command(command, wait=30)
+        result = self.run_command(command, wait=30)
+        if result.get("status") != "running":
+            # the result returns as the command ends; the shell is back at its prompt a moment later (on a fast
+            # tmpfs TMPDIR the next command would race that and be refused host_terminal_busy)
+            self.assertTrue(wait_until(self.idle, 10), "the host shell is back before the next command")
+        return result
 
     def test_a_task_command_entry_has_the_command_id_of_the_command_that_ran(self):
         # Behavior 6

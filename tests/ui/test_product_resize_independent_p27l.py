@@ -823,7 +823,7 @@ class PtyBase(unittest.TestCase):
 
     def setUp(self):
         self.server = ScriptedServer()
-        self.work = Path(tempfile.mkdtemp(prefix="cw06-p27l-", dir="/tmp"))
+        self.work = Path(tempfile.mkdtemp(prefix="cw06-p27l-", dir=tempfile.gettempdir()))
         self.layout_file = self.server.root / "ui-layout.json"
         self.addCleanup(shutil.rmtree, self.work, True)
         self.addCleanup(self.server.close)
@@ -1224,7 +1224,7 @@ class RealEntrypointBase(unittest.TestCase):
     ROWS, COLS = 40, 140
 
     def setUp(self):
-        self.root = Path(tempfile.mkdtemp(prefix="cw06-p27l-rt-", dir="/tmp"))
+        self.root = Path(tempfile.mkdtemp(prefix="cw06-p27l-rt-", dir=tempfile.gettempdir()))
         self.addCleanup(shutil.rmtree, self.root, True)
         self.omp = self.root / "omp"
         self.omp.write_text(STUB)

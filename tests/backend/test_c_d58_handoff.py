@@ -42,7 +42,7 @@ def ports(state):
 
 class HeldHandoffBackendTests(unittest.TestCase):
     def setUp(self):
-        self._dir = tempfile.TemporaryDirectory(prefix="cw18-u4-be-", dir="/tmp")
+        self._dir = tempfile.TemporaryDirectory(prefix="cw18-u4-be-", dir=tempfile.gettempdir())
         self.addCleanup(self._dir.cleanup)
         self.root = root = Path(self._dir.name)
         project, home = root / "p", root / "h"

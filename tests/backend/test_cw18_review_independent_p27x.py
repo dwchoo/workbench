@@ -155,7 +155,7 @@ class TurnHarness(Harness):
     DELIVER_TIMEOUT = 20.0
 
     def setUp(self):
-        self.tmp = tempfile.TemporaryDirectory(prefix="p27x-flow-", dir="/tmp")
+        self.tmp = tempfile.TemporaryDirectory(prefix="p27x-flow-", dir=tempfile.gettempdir())
         self.root = Path(self.tmp.name)
         (self.root / "workflow").mkdir(mode=0o700)
         self.db = self.root / "tasks.sqlite3"

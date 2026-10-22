@@ -457,7 +457,7 @@ class TurnBridge:
 
 class RealMailboxTests(unittest.TestCase):
     def setUp(self):
-        self.tmp = tempfile.TemporaryDirectory(prefix="cw18-r1-real-", dir="/tmp")
+        self.tmp = tempfile.TemporaryDirectory(prefix="cw18-r1-real-", dir=tempfile.gettempdir())
         self.addCleanup(self.tmp.cleanup)
         self.root = Path(self.tmp.name)
         (self.root / "workflow").mkdir(mode=0o700)
@@ -532,7 +532,7 @@ class HoldStateMailbox(PublicMailboxFixture):
 
 class HostInputHoldTests(unittest.TestCase):
     def setUp(self):
-        self.tmp = tempfile.TemporaryDirectory(prefix="cw18-r5-host-", dir="/tmp")
+        self.tmp = tempfile.TemporaryDirectory(prefix="cw18-r5-host-", dir=tempfile.gettempdir())
         self.addCleanup(self.tmp.cleanup)
         self.root = Path(self.tmp.name)
         self.source = self.root / "source"

@@ -237,7 +237,7 @@ def run(omp: str) -> dict[str, Any]:
     version = subprocess.run([omp, "--version"], capture_output=True, text=True, timeout=30,
                              env={"PATH": U1.os.environ.get("PATH", ""), "HOME": "/nonexistent"})
     result["omp"] = (version.stdout or version.stderr).strip().splitlines()[0]
-    root = Path(tempfile.mkdtemp(prefix="wb-p27-cw18-u2-live-", dir="/tmp"))
+    root = Path(tempfile.mkdtemp(prefix="wb-p27-cw18-u2-live-", dir=tempfile.gettempdir()))
     source = root / "source"
     source.mkdir()
     git(source, "init", "-q")

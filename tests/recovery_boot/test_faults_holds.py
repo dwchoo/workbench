@@ -31,7 +31,7 @@ from workbench.workflow.run import WorkflowRun
 
 class TempRoot(unittest.TestCase):
     def setUp(self):
-        self.root = Path(tempfile.mkdtemp(prefix="cw19-f-", dir="/tmp"))
+        self.root = Path(tempfile.mkdtemp(prefix="cw19-f-", dir=tempfile.gettempdir()))
         os.chmod(self.root, 0o700)
         self.addCleanup(shutil.rmtree, self.root, True)
 
@@ -193,7 +193,7 @@ class ConfirmBootCliTests(unittest.TestCase):
                             "survivors": []}, "holds": [{"reason": "boot_confirmation_required"}]}
 
     def setUp(self):
-        self.data_dir = tempfile.mkdtemp(prefix="cw19-cli-", dir="/tmp")
+        self.data_dir = tempfile.mkdtemp(prefix="cw19-cli-", dir=tempfile.gettempdir())
         self.addCleanup(shutil.rmtree, self.data_dir, True)
 
     def run_cli(self, *args, snapshot=None, answer=None, tty=False):

@@ -71,7 +71,7 @@ def geometry(lines: list[str]) -> list[tuple[int, int, int, int]]:
 class Harness:
     def __init__(self, replay: dict[str, bytes]):
         self.server = ScriptedServer(replay=replay)
-        self.work = Path(tempfile.mkdtemp(prefix="cw06-p27h-", dir="/tmp"))
+        self.work = Path(tempfile.mkdtemp(prefix="cw06-p27h-", dir=tempfile.gettempdir()))
         self.ui = UiPty(self.server.path, self.work, rows=ROWS, cols=COLS)
 
     def start(self):

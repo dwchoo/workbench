@@ -235,7 +235,7 @@ class StaticOverlayContractTests(unittest.TestCase):
 
 class ArgvEnvContractTests(unittest.TestCase):
     def role_files(self):
-        root = Path(tempfile.mkdtemp(prefix="p27m-", dir="/tmp"))
+        root = Path(tempfile.mkdtemp(prefix="p27m-", dir=tempfile.gettempdir()))
         self.addCleanup(shutil.rmtree, root, True)
         return root
 
@@ -307,7 +307,7 @@ class ArgvEnvContractTests(unittest.TestCase):
 # --------------------------------------------------------------------------------------- role overlay contract
 class RoleOverlayContractTests(unittest.TestCase):
     def setUp(self):
-        self.root = Path(tempfile.mkdtemp(prefix="p27m-", dir="/tmp"))
+        self.root = Path(tempfile.mkdtemp(prefix="p27m-", dir=tempfile.gettempdir()))
         self.addCleanup(shutil.rmtree, self.root, True)
         self.home = self.root / "home"
         self.parent = self.root / "parent"
@@ -448,7 +448,7 @@ class RoleOverlayContractTests(unittest.TestCase):
 
 class UserDisabledProvidersContractTests(unittest.TestCase):
     def fake(self, body: str) -> tuple[Path, Path]:
-        root = Path(tempfile.mkdtemp(prefix="p27m-", dir="/tmp"))
+        root = Path(tempfile.mkdtemp(prefix="p27m-", dir=tempfile.gettempdir()))
         self.addCleanup(shutil.rmtree, root, True)
         omp = root / "omp"
         omp.write_text("#!/usr/bin/env python3\nimport sys, json, time\n" + body)
@@ -580,7 +580,7 @@ class Harness:
     """A fake OMP script plus its mode/log files in an owned temp dir."""
 
     def __init__(self, test: unittest.TestCase):
-        self.root = Path(tempfile.mkdtemp(prefix="p27m-", dir="/tmp"))
+        self.root = Path(tempfile.mkdtemp(prefix="p27m-", dir=tempfile.gettempdir()))
         test.addCleanup(shutil.rmtree, self.root, True)
         self.script = self.root / "omp"
         self.script.write_text(FAKE_RPC)
@@ -945,7 +945,7 @@ def procs_naming(root: Path) -> dict[int, str]:
 
 class RealEntrypointBase(unittest.TestCase):
     def setUp(self):
-        self.root = Path(tempfile.mkdtemp(prefix="p27m-e-", dir="/tmp"))
+        self.root = Path(tempfile.mkdtemp(prefix="p27m-e-", dir=tempfile.gettempdir()))
         self.addCleanup(shutil.rmtree, self.root, True)
         self.home = self.root / "home"
         self.project = self.root / "proj"

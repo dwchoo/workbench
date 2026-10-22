@@ -8,14 +8,22 @@ import sys
 import tempfile
 import unittest
 
+from workbench.backend.paths import MAX_SOCKET_PATH_BYTES
+
 
 class RuntimePathTests(unittest.TestCase):
     def setUp(self):
-        self.temp = tempfile.TemporaryDirectory(prefix='wi-runtime-')
+        # Short names on purpose: under a long temp root (e.g. /dev/shm/wb-tests.XXXXXXXX) a longer
+        # XDG_RUNTIME_DIR would exceed the socket limit and the product would fall back to the REAL
+        # /tmp/omp-workbench-<uid>, which these tests must never touch.
+        self.temp = tempfile.TemporaryDirectory(prefix='wr-')
         self.addCleanup(self.temp.cleanup)
         self.base = Path(self.temp.name)
-        self.runtime = self.base / 'run'
+        self.runtime = self.base / 'r'
         self.runtime.mkdir(mode=0o700)
+        self.assertLessEqual(
+            len(os.fsencode(self.runtime / 'omp-workbench' / ('x' * 32) / 'bridge.sock')), MAX_SOCKET_PATH_BYTES,
+            f'temp root too long for an isolated runtime dir: {self.runtime}')
         self.env = {'XDG_RUNTIME_DIR': str(self.runtime), 'HOME': str(self.base)}
 
     def test_project_runtime_is_private_short_and_durable_layout_remains_compatible(self):

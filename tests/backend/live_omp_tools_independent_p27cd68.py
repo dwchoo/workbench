@@ -205,7 +205,7 @@ class LiveRoleRequests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.version = launcher.omp_version(OMP)
-        cls.base = Path(tempfile.mkdtemp(prefix="wb-cd68-test-tools-", dir="/tmp"))
+        cls.base = Path(tempfile.mkdtemp(prefix="wb-cd68-test-tools-", dir=tempfile.gettempdir()))
         cls.started: list[int] = []
 
     @classmethod

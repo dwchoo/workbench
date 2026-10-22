@@ -49,7 +49,7 @@ def read_yaml(path: Path) -> dict:
 # ------------------------------------------------------------------------------------------ argv / env / overlay
 class RequiredArgsAndEnvTests(unittest.TestCase):
     def setUp(self):
-        self.root = Path(tempfile.mkdtemp(prefix="p27n-", dir="/tmp"))
+        self.root = Path(tempfile.mkdtemp(prefix="p27n-", dir=tempfile.gettempdir()))
         self.addCleanup(shutil.rmtree, self.root, True)
 
     def command(self, role="manager", args=(), append=None):
@@ -122,7 +122,7 @@ class RequiredArgsAndEnvTests(unittest.TestCase):
 
 class DisabledAgentsRulesTests(unittest.TestCase):
     def setUp(self):
-        self.root = Path(tempfile.mkdtemp(prefix="p27n-", dir="/tmp"))
+        self.root = Path(tempfile.mkdtemp(prefix="p27n-", dir=tempfile.gettempdir()))
         self.addCleanup(shutil.rmtree, self.root, True)
         self.home = self.root / "home"
         self.parent = self.root / "parent"

@@ -154,7 +154,7 @@ def eventually(predicate, timeout=8.0):
 
 class BridgeFlowTests(unittest.TestCase):
     def setUp(self):
-        self.tmp = tempfile.TemporaryDirectory(prefix="p27w-bridge-", dir="/tmp")
+        self.tmp = tempfile.TemporaryDirectory(prefix="p27w-bridge-", dir=tempfile.gettempdir())
         self.root = Path(self.tmp.name)
         self.socket = self.root / "bridge.sock"
         self.tokens = {"manager": str(uuid4()), "worker": str(uuid4())}

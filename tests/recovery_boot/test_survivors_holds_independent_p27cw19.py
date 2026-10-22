@@ -276,7 +276,7 @@ class BackendStub(unittest.TestCase):
     """A real Backend object (not opened): only the CW-19 methods under test are used."""
 
     def setUp(self):
-        self.root = Path(tempfile.mkdtemp(prefix="cw19-indep-be-", dir="/tmp"))
+        self.root = Path(tempfile.mkdtemp(prefix="cw19-indep-be-", dir=tempfile.gettempdir()))
         self.addCleanup(shutil.rmtree, self.root, True)
         layout = DataLayout(ensure_private_dir(self.root / "data"))
         ensure_private_dir(layout.workflow)

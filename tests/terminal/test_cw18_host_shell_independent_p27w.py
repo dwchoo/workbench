@@ -68,7 +68,7 @@ class NullHandoffMailbox:
 
 class HostShellHarness(unittest.TestCase):
     def setUp(self):
-        self.tmp = tempfile.TemporaryDirectory(prefix="p27w-host-", dir="/tmp")
+        self.tmp = tempfile.TemporaryDirectory(prefix="p27w-host-", dir=tempfile.gettempdir())
         self.root = Path(self.tmp.name)
         self.source = self.root / "source"
         self.source.mkdir()

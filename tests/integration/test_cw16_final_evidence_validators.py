@@ -147,7 +147,7 @@ def write_json(path: Path, value) -> Path:
 
 
 def make_workdir(label: str) -> Path:
-    return Path(tempfile.mkdtemp(prefix=f"wb-cw16-g4-{label}-", dir="/tmp"))
+    return Path(tempfile.mkdtemp(prefix=f"wb-cw16-g4-{label}-", dir=tempfile.gettempdir()))
 
 
 def _load_module(name: str, path: Path):

@@ -135,7 +135,7 @@ class LiveRealStore(unittest.TestCase):
         if not omp_home.auth_store_state(store).ok:
             self.skipTest("no usable user OMP auth store")
         self.store = store
-        self.root = Path(tempfile.mkdtemp(prefix="p27u-live-", dir="/tmp"))
+        self.root = Path(tempfile.mkdtemp(prefix="p27u-live-", dir=tempfile.gettempdir()))
         self.data, self.project = self.root / "d", self.root / "proj"
         self.project.mkdir()
         env = {k: v for k, v in os.environ.items()
@@ -350,7 +350,7 @@ class LiveFakeHomeXdg(unittest.TestCase):
         self.version_text = launcher.omp_version(self.omp)
         self.version = (__import__("re").search(r"(\d+\.\d+\.\d+)", self.version_text or "") or [None, None])[1]
         self.assertTrue(self.version, f"cannot determine the installed omp version: {self.version_text!r}")
-        self.root = Path(tempfile.mkdtemp(prefix="p27u-xdg-", dir="/tmp"))
+        self.root = Path(tempfile.mkdtemp(prefix="p27u-xdg-", dir=tempfile.gettempdir()))
         self.addCleanup(shutil.rmtree, self.root, True)
         self.home = self.root / "home"
         self.home.mkdir()

@@ -82,7 +82,7 @@ def plan_for(omp: str = "/usr/bin/omp-fake", args=()) -> LaunchPlan:
 
 class _Tmp(unittest.TestCase):
     def setUp(self):
-        self.root = Path(tempfile.mkdtemp(prefix="p27u-", dir="/tmp"))
+        self.root = Path(tempfile.mkdtemp(prefix="p27u-", dir=tempfile.gettempdir()))
         self.addCleanup(shutil.rmtree, self.root, True)
         self.home = self.root / "home"
         self.home.mkdir()
@@ -593,7 +593,7 @@ for line in sys.stdin:
 
 class _HomeRpc:
     def __init__(self, test: unittest.TestCase, home, env: dict):
-        self.dir = Path(tempfile.mkdtemp(prefix="p27u-rpc-", dir="/tmp"))
+        self.dir = Path(tempfile.mkdtemp(prefix="p27u-rpc-", dir=tempfile.gettempdir()))
         test.addCleanup(shutil.rmtree, self.dir, True)
         self.script = self.dir / "omp"
         self.script.write_text(HOME_RPC)

@@ -42,7 +42,7 @@ MIB = 1024 * 1024
 
 class Temp(unittest.TestCase):
     def setUp(self):
-        self.root = Path(tempfile.mkdtemp(prefix="cw19-indep-f-", dir="/tmp"))
+        self.root = Path(tempfile.mkdtemp(prefix="cw19-indep-f-", dir=tempfile.gettempdir()))
         self.addCleanup(self._rm)
         self.layout = DataLayout(ensure_private_dir(self.root / "data"))
         ensure_private_dir(self.layout.workflow)

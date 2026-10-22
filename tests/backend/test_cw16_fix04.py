@@ -93,7 +93,7 @@ class OmpUmask(unittest.TestCase):
     """fix-05 (C17 P2-1): OMP's own tools write into the user's project, so OMP keeps the user's umask."""
 
     def setUp(self):
-        self.directory = Path(tempfile.mkdtemp(prefix="cw16-fix04-", dir="/tmp"))
+        self.directory = Path(tempfile.mkdtemp(prefix="cw16-fix04-", dir=tempfile.gettempdir()))
         self.addCleanup(lambda: __import__("shutil").rmtree(self.directory, True))
         self.previous = os.umask(0o002)  # a permissive user umask, as in the gap run
         self.addCleanup(os.umask, self.previous)

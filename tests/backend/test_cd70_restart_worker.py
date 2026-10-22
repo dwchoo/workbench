@@ -83,7 +83,7 @@ def alive(pid: int) -> bool:
 
 class RestartWorkerFixture(unittest.TestCase):
     def setUp(self):
-        self._dir = tempfile.TemporaryDirectory(prefix="cd70-rw-", dir="/tmp")
+        self._dir = tempfile.TemporaryDirectory(prefix="cd70-rw-", dir=tempfile.gettempdir())
         self.addCleanup(self._dir.cleanup)
         root = Path(self._dir.name)
         project, home = root / "p", root / "h"

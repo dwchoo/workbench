@@ -111,7 +111,7 @@ class RealShellFixture(unittest.TestCase):
     clock_driven = False  # True: no notifier thread; the test drives tick() with a fake clock
 
     def setUp(self):
-        self.tmp = tempfile.TemporaryDirectory(prefix="p27cd68-term-", dir="/tmp")
+        self.tmp = tempfile.TemporaryDirectory(prefix="p27cd68-term-", dir=tempfile.gettempdir())
         self.addCleanup(self.tmp.cleanup)
         self.root = Path(self.tmp.name)
         (self.root / "workflow").mkdir(mode=0o700)

@@ -77,7 +77,7 @@ def ended_ref():
 
 class ShutdownWait(unittest.TestCase):
     def setUp(self):
-        self.root = Path(tempfile.mkdtemp(prefix="cw16-o4-cli-", dir="/tmp"))
+        self.root = Path(tempfile.mkdtemp(prefix="cw16-o4-cli-", dir=tempfile.gettempdir()))
         self.addCleanup(shutil.rmtree, self.root, True)
 
     def run_cli(self, client, *, json_form=False, yes=True, **patches):

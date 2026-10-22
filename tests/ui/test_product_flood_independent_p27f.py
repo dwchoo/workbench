@@ -51,7 +51,7 @@ class Harness:
     def __init__(self, *, focus="host_shell", replay=None, answers=None):
         self.server = ScriptedServer(snapshot=snap(focus=focus), replay=replay or {"host_shell": ENABLE_2004 + b"$ "},
                                      answers=answers)
-        self.work = Path(tempfile.mkdtemp(prefix="cw06-p27f-", dir="/tmp"))
+        self.work = Path(tempfile.mkdtemp(prefix="cw06-p27f-", dir=tempfile.gettempdir()))
         self.ui = UiPty(self.server.path, self.work, rows=30, cols=120)
 
     def start(self):

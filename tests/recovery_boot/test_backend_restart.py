@@ -47,7 +47,7 @@ def alive(pid: int) -> bool:
 
 class BackendFixture(unittest.TestCase):
     def setUp(self):
-        self._dir = tempfile.TemporaryDirectory(prefix="cw19-be-", dir="/tmp")
+        self._dir = tempfile.TemporaryDirectory(prefix="cw19-be-", dir=tempfile.gettempdir())
         self.addCleanup(self._dir.cleanup)
         self.root = Path(self._dir.name)
         project, home = self.root / "p", self.root / "h"

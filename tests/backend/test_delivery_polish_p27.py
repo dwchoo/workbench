@@ -35,7 +35,7 @@ class RealMailboxReceiptWindowTests(unittest.TestCase):
     WINDOW = 0.3
 
     def setUp(self):
-        self.tmp = tempfile.TemporaryDirectory(prefix="p27-polish-recv-", dir="/tmp")
+        self.tmp = tempfile.TemporaryDirectory(prefix="p27-polish-recv-", dir=tempfile.gettempdir())
         self.addCleanup(self.tmp.cleanup)
         self.root = Path(self.tmp.name)
         (self.root / "workflow").mkdir(mode=0o700)
@@ -141,7 +141,7 @@ class ScriptedMailbox(FakeMailbox):
 
 class OutcomeMappingTests(unittest.TestCase):
     def run_one(self, mailbox):
-        tmp = tempfile.TemporaryDirectory(prefix="p27-polish-map-", dir="/tmp")
+        tmp = tempfile.TemporaryDirectory(prefix="p27-polish-map-", dir=tempfile.gettempdir())
         self.addCleanup(tmp.cleanup)
         service = HandoffService(Path(tmp.name) / "handoffs.jsonl", mailbox=mailbox, retry_interval=0.01)
         self.addCleanup(service.close)

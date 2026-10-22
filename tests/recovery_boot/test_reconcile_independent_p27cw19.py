@@ -104,7 +104,7 @@ def ref(pid: int, ticks: int, role: str = "x") -> dict:
 
 class Base(unittest.TestCase):
     def setUp(self):
-        self.root = Path(tempfile.mkdtemp(prefix="cw19-indep-", dir="/tmp"))
+        self.root = Path(tempfile.mkdtemp(prefix="cw19-indep-", dir=tempfile.gettempdir()))
         self.addCleanup(shutil.rmtree, self.root, True)
         self.layout = DataLayout(ensure_private_dir(self.root / "data"))
         ensure_private_dir(self.layout.workflow)
@@ -162,7 +162,7 @@ class ClassifyMatrix(unittest.TestCase):
             self.assertEqual(classify(BOOT_A, record, history=True), "same_boot_unverified_stop", value)
 
     def test_read_boot_id_unreadable_or_oversized_is_none(self):
-        root = Path(tempfile.mkdtemp(prefix="cw19-bootid-", dir="/tmp"))
+        root = Path(tempfile.mkdtemp(prefix="cw19-bootid-", dir=tempfile.gettempdir()))
         self.addCleanup(shutil.rmtree, root, True)
         self.assertIsNone(boot_module.read_boot_id(root / "missing"))
         (root / "empty").write_text("\n")

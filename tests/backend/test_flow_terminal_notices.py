@@ -159,7 +159,7 @@ class Notices:
 
 class NoticeFixture(unittest.TestCase):
     def setUp(self):
-        self.tmp = tempfile.TemporaryDirectory(prefix="cd68-notice-", dir="/tmp")
+        self.tmp = tempfile.TemporaryDirectory(prefix="cd68-notice-", dir=tempfile.gettempdir())
         self.root = Path(self.tmp.name)
         (self.root / "workflow").mkdir(mode=0o700)
         self.paused = False

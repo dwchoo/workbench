@@ -111,7 +111,7 @@ def find_omp() -> str | None:
     candidate = os.environ.get("WB_LIVE_OMP") or shutil.which("omp") or os.path.join(user_home, ".local/bin/omp")
     found = None
     if os.access(candidate, os.X_OK):
-        probe_root = Path(tempfile.mkdtemp(prefix="cw17-ver-", dir="/tmp"))
+        probe_root = Path(tempfile.mkdtemp(prefix="cw17-ver-", dir=tempfile.gettempdir()))
         try:
             result = subprocess.run([candidate, "--version"], capture_output=True, text=True, timeout=30,
                                     env=sandbox_env(probe_root), cwd=probe_root, stdin=subprocess.DEVNULL)
@@ -251,7 +251,7 @@ class LiveBackend:
     def __init__(self, omp: str, *, path: str | None = None, seed_provider: bool = True):
         self.omp = omp
         self.seed_provider = seed_provider  # False: the test needs the data dir untouched before start
-        self.root = Path(tempfile.mkdtemp(prefix="cw17-", dir="/tmp"))
+        self.root = Path(tempfile.mkdtemp(prefix="cw17-", dir=tempfile.gettempdir()))
         self.data = self.root / "d"
         self.project = self.root / "project"
         self.profile = self.root / "profile"

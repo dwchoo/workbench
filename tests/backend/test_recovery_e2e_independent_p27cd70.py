@@ -228,7 +228,7 @@ def status_line(snapshot) -> str:
 
 class _Fixture(unittest.TestCase):
     def setUp(self):
-        self._dir = tempfile.TemporaryDirectory(prefix="p27cd70-e2e-", dir="/tmp")
+        self._dir = tempfile.TemporaryDirectory(prefix="p27cd70-e2e-", dir=tempfile.gettempdir())
         self.addCleanup(self._dir.cleanup)
         root = Path(self._dir.name)
         self.project, home, self.ctl = root / "p", root / "h", root / "c"

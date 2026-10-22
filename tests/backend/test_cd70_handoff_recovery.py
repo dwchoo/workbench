@@ -222,7 +222,7 @@ class MailboxBlockerTests(unittest.TestCase):
 
 class EventsSinceTests(unittest.TestCase):
     def test_counts_only_new_events_of_the_role_without_waiting(self):
-        with tempfile.TemporaryDirectory(prefix="cd70-ev-", dir="/tmp") as directory:
+        with tempfile.TemporaryDirectory(prefix="cd70-ev-", dir=tempfile.gettempdir()) as directory:
             bridge = G3BridgeServer(Path(directory) / "b.sock", {"manager": "m" * 8, "worker": "w" * 8})
             try:
                 for index, (role, name) in enumerate([("worker", "agent_start"), ("manager", "agent_start"),

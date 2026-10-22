@@ -25,7 +25,7 @@ AUTOMATION = {"portVersion": 2, "kind": "AutomationState", "payload": {
 
 class PortFixture(unittest.TestCase):
     def setUp(self):
-        self.root = Path(tempfile.mkdtemp(prefix="cw19-port-", dir="/tmp"))
+        self.root = Path(tempfile.mkdtemp(prefix="cw19-port-", dir=tempfile.gettempdir()))
         self.addCleanup(shutil.rmtree, self.root, True)
         self.db = self.root / "tasks.sqlite3"
         self.repository = TaskRepository(self.db)

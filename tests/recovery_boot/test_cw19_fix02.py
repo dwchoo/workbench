@@ -32,7 +32,7 @@ TO_MANAGER = Path(__file__).resolve().parents[2] / "omp_bridge" / "skills" / "to
 
 class Temp(unittest.TestCase):
     def setUp(self):
-        self.root = Path(tempfile.mkdtemp(prefix="cw19-fix02-", dir="/tmp"))
+        self.root = Path(tempfile.mkdtemp(prefix="cw19-fix02-", dir=tempfile.gettempdir()))
         os.chmod(self.root, 0o700)
         self.addCleanup(shutil.rmtree, self.root, True)
 

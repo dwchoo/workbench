@@ -12,8 +12,10 @@
 from __future__ import annotations
 
 from pathlib import Path
+import shutil
 import sys
 import os
+import tempfile
 import time
 import unittest
 
@@ -134,8 +136,9 @@ class PromptHookEnvironmentTests(unittest.TestCase):
             self.skipTest(f"{executable} missing")
         previous = os.umask(0o002)  # a typical user umask (0664 files) must not widen the names file
         self.addCleanup(os.umask, previous)
-        home = Path("/tmp/cw16fix02-home")
-        home.mkdir(exist_ok=True)
+        home = Path(tempfile.mkdtemp(prefix="cw16fix02-home-"))
+        self.addCleanup(shutil.rmtree, home, ignore_errors=True)
+        self.home = home
         pane = ShellPane(ShellChoice(kind, executable), {"PATH": "/usr/bin:/bin", "HOME": str(home),
                                                          "LANG": "C.UTF-8", "WB_START": "1"})
         self.addCleanup(pane.close)
@@ -177,7 +180,7 @@ class PromptHookEnvironmentTests(unittest.TestCase):
         self.assertEqual(oct(path.parent.stat().st_mode & 0o777), "0o700")
         self.assertEqual(oct(path.stat().st_mode & 0o777), "0o600", "review-02 P3: never widened by the umask")
         self.assertEqual(pane.exported_names(["PATH", "WB_START", "WB_LATE"]), {"PATH", "WB_START"})
-        self.assertNotIn(b"/tmp/cw16fix02-home", path.read_bytes(), "names only, never values")
+        self.assertNotIn(str(self.home).encode(), path.read_bytes(), "names only, never values")
         self.type("false")
         events = len(pane.shell._transport.events)
         for _ in range(5):  # asked repeatedly while held: nothing is typed or emitted

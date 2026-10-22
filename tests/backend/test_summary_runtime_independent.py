@@ -7,7 +7,7 @@ from pathlib import Path
 import select
 import socket
 import sys
-from tempfile import TemporaryDirectory
+from tempfile import TemporaryDirectory, gettempdir
 from threading import Thread
 from types import SimpleNamespace
 import unittest
@@ -26,7 +26,7 @@ from tests.backend import test_summary_scheduler as scheduler_fixtures
 
 class RuntimePortTests(unittest.TestCase):
     def setUp(self):
-        self.temp = TemporaryDirectory(prefix="dvl14-runtime-", dir="/tmp")
+        self.temp = TemporaryDirectory(prefix="dvl14-runtime-", dir=gettempdir())
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
         token, session = str(uuid4()), str(uuid4())

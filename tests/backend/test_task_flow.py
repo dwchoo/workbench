@@ -196,7 +196,7 @@ class FlowController:
 
 class FlowFixture(unittest.TestCase):
     def setUp(self):
-        self.tmp = tempfile.TemporaryDirectory(prefix="cw18-u2b-flow-", dir="/tmp")
+        self.tmp = tempfile.TemporaryDirectory(prefix="cw18-u2b-flow-", dir=tempfile.gettempdir())
         self.root = Path(self.tmp.name)
         (self.root / "workflow").mkdir(mode=0o700)
         self.db = self.root / "tasks.sqlite3"
@@ -949,7 +949,7 @@ class RealHostShellTests(unittest.TestCase):
     """The real TaskWorkflow on a real backend ShellPane through HostShellPort."""
 
     def setUp(self):
-        self.tmp = tempfile.TemporaryDirectory(prefix="cw18-u2b-host-", dir="/tmp")
+        self.tmp = tempfile.TemporaryDirectory(prefix="cw18-u2b-host-", dir=tempfile.gettempdir())
         self.root = Path(self.tmp.name)
         self.source = self.root / "source"
         self.source.mkdir()

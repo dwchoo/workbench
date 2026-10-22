@@ -20,7 +20,7 @@ PROJECT_ID = '3610630d-86a3-4d4c-b65d-f5105e9a6dc9'
 
 class PublicProjectCliIndependentTests(unittest.TestCase):
     def setUp(self):
-        self.directory = tempfile.TemporaryDirectory(prefix='wi27-', dir='/tmp')
+        self.directory = tempfile.TemporaryDirectory(prefix='wi27-', dir=tempfile.gettempdir())
         self.addCleanup(self.directory.cleanup)
         self.root = Path(self.directory.name)
         self.project = self.root / 'research'

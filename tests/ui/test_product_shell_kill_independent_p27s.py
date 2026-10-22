@@ -347,7 +347,7 @@ class ProductPtyKillTests(unittest.TestCase):
     """The real product UI on a PTY: the modal is drawn, cancels, confirms, and Enter restarts the host shell."""
 
     def setUp(self):
-        self.work = Path(tempfile.mkdtemp(prefix="p27s-ui-", dir="/tmp"))
+        self.work = Path(tempfile.mkdtemp(prefix="p27s-ui-", dir=tempfile.gettempdir()))
         self.addCleanup(shutil.rmtree, self.work, True)
         self.server = ScriptedServer(snapshot=snap(owner="manager"))
         self.addCleanup(self.server.close)

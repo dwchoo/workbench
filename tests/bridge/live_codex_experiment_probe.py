@@ -455,7 +455,7 @@ def run(omp: str, interval: int, websocket: bool, visible_reasoning: bool = Fals
     version = subprocess.run([omp, "--version"], capture_output=True, text=True, timeout=30,
                              env={"PATH": os.environ.get("PATH", ""), "HOME": "/nonexistent"})
     result["omp"] = (version.stdout or version.stderr).strip().splitlines()[0]
-    root = Path(tempfile.mkdtemp(prefix="wb-p27-cw18-codex-live-", dir="/tmp"))
+    root = Path(tempfile.mkdtemp(prefix="wb-p27-cw18-codex-live-", dir=tempfile.gettempdir()))
     source = root / "source"
     source.mkdir()
     U2.git(source, "init", "-q")

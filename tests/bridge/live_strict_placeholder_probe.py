@@ -137,7 +137,7 @@ def run(omp: str) -> dict[str, Any]:
     version = subprocess.run([omp, "--version"], capture_output=True, text=True, timeout=30,
                              env={"PATH": U1.os.environ.get("PATH", ""), "HOME": "/nonexistent"})
     result["omp"] = (version.stdout or version.stderr).strip().splitlines()[0]
-    root = Path(tempfile.mkdtemp(prefix="wb-p27-cw18-smoke-fix-live-", dir="/tmp"))
+    root = Path(tempfile.mkdtemp(prefix="wb-p27-cw18-smoke-fix-live-", dir=tempfile.gettempdir()))
     project = root / "project"
     project.mkdir()
     models = {role: Model(role, project) for role in U1.ROLES}

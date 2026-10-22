@@ -333,7 +333,7 @@ print(json.dumps([len(p.feed(b"\\x1b", now=20)),
     def test_original_cell_success_without_manager_trace_is_diagnostic_insufficient(self) -> None:
         # Supply only the unittest/provider boundary. probe.main still executes
         # its real preflight, hook setup, trace assessment, report and exit path.
-        with tempfile.TemporaryDirectory(prefix="dvc2test-", dir="/tmp") as namespace_tmp, \
+        with tempfile.TemporaryDirectory(prefix="dvc2test-", dir=tempfile.gettempdir()) as namespace_tmp, \
                 tempfile.TemporaryDirectory(dir=OUTPUT) as output_tmp:
             namespace = Path(namespace_tmp)
             report_dir = Path(output_tmp)

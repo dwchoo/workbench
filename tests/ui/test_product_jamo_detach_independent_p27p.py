@@ -652,7 +652,7 @@ class RealLoopTests(unittest.TestCase):
     """The real product loop (``python -m workbench attach``) against the real backend running a stub OMP."""
 
     def setUp(self):
-        self.root = Path(tempfile.mkdtemp(prefix="wbp27p-", dir="/tmp"))
+        self.root = Path(tempfile.mkdtemp(prefix="wbp27p-", dir=tempfile.gettempdir()))
         self.addCleanup(shutil.rmtree, self.root, True)
         (self.root / "bin").mkdir()
         self.omp = self.root / "bin" / "omp"
@@ -775,7 +775,7 @@ class ScriptedPtyTests(unittest.TestCase):
     """The real product loop on an owned PTY against the scripted ui_v1 server (host shell, jamo detach timing)."""
 
     def setUp(self):
-        self.work = Path(tempfile.mkdtemp(prefix="wbp27p-pty-", dir="/tmp"))
+        self.work = Path(tempfile.mkdtemp(prefix="wbp27p-pty-", dir=tempfile.gettempdir()))
         self.addCleanup(shutil.rmtree, self.work, True)
 
     def start(self, **kwargs):

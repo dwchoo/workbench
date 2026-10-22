@@ -46,7 +46,7 @@ def kill_exact(pid: int, start: int) -> None:
 
 class LiveShutdownSlowTurnTests(unittest.TestCase):
     def setUp(self):
-        self.root = Path(tempfile.mkdtemp(prefix="cw16-o4-", dir="/tmp"))
+        self.root = Path(tempfile.mkdtemp(prefix="cw16-o4-", dir=tempfile.gettempdir()))
         self.addCleanup(self.cleanup)
         home = self.root / "home"
         (home / ".omp" / "agent").mkdir(parents=True)

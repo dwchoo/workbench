@@ -16,7 +16,7 @@ FAKE_OMP = Path(__file__).with_name("fake_omp.py")
 
 class FakeOmpReaderTests(unittest.TestCase):
     def test_reader_survives_a_string_envelope(self):
-        with tempfile.TemporaryDirectory(prefix="fake-omp-", dir="/tmp") as raw:
+        with tempfile.TemporaryDirectory(prefix="fake-omp-", dir=tempfile.gettempdir()) as raw:
             root = Path(raw)
             path = str(root / "bridge.sock")
             server = socket.socket(socket.AF_UNIX)

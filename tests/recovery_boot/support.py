@@ -101,7 +101,7 @@ def wait_for(predicate, timeout: float = 5.0, interval: float = 0.02):
 
 class TempData:
     def __init__(self) -> None:
-        self.root = Path(tempfile.mkdtemp(prefix="cw19-unit-", dir="/tmp"))
+        self.root = Path(tempfile.mkdtemp(prefix="cw19-unit-", dir=tempfile.gettempdir()))
         self.layout = DataLayout(ensure_private_dir(self.root / "d"))
         ensure_private_dir(self.layout.workflow)
 

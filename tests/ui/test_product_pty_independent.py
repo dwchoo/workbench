@@ -30,7 +30,7 @@ START, END = b"\x1b[200~", b"\x1b[201~"
 
 class ProductPtyTests(unittest.TestCase):
     def setUp(self):
-        self.work = Path(tempfile.mkdtemp(prefix="cw06-indep-pty-", dir="/tmp"))
+        self.work = Path(tempfile.mkdtemp(prefix="cw06-indep-pty-", dir=tempfile.gettempdir()))
         self.addCleanup(shutil.rmtree, self.work, True)
 
     def run_ui(self, server, rows=30, cols=120):

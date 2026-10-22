@@ -212,7 +212,7 @@ def experiment_spec(**execution):
 
 class Harness(unittest.TestCase):
     def setUp(self):
-        self.tmp = tempfile.TemporaryDirectory(prefix="p27w-flow-", dir="/tmp")
+        self.tmp = tempfile.TemporaryDirectory(prefix="p27w-flow-", dir=tempfile.gettempdir())
         self.root = Path(self.tmp.name)
         (self.root / "workflow").mkdir(mode=0o700)
         self.db = self.root / "tasks.sqlite3"

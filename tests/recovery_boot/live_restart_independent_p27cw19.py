@@ -206,7 +206,7 @@ class Ui:
 class Probe:
     def __init__(self):
         self.omp = shutil.which("omp") or os.path.expanduser("~/.local/bin/omp")
-        self.root = Path(tempfile.mkdtemp(prefix="wb-cw19-live-", dir="/tmp"))
+        self.root = Path(tempfile.mkdtemp(prefix="wb-cw19-live-", dir=tempfile.gettempdir()))
         self.home = self.root / "home"
         (self.home / ".omp" / "agent").mkdir(parents=True)
         (self.home / ".omp" / "agent" / "agent.db").write_bytes(b"")  # fake empty store, no credential

@@ -22,7 +22,7 @@ from workbench.backend.setup import SetupError, resolve_selection, run_setup, se
 
 class IndependentSetupTests(unittest.TestCase):
     def setUp(self):
-        self.temporary = tempfile.TemporaryDirectory(prefix="wb-independent-setup-", dir="/tmp")
+        self.temporary = tempfile.TemporaryDirectory(prefix="wb-independent-setup-", dir=tempfile.gettempdir())
         self.addCleanup(self.temporary.cleanup)
         self.root = Path(self.temporary.name)
         for name in ("home", "bin", "tmp", "research"):

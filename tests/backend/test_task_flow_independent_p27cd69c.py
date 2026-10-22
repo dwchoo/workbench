@@ -39,7 +39,7 @@ class _ExperimentShell(unittest.TestCase):
     CHOICE: ShellChoice
 
     def setUp(self):
-        self.tmp = tempfile.TemporaryDirectory(prefix="p27cd69c-exp-", dir="/tmp")
+        self.tmp = tempfile.TemporaryDirectory(prefix="p27cd69c-exp-", dir=tempfile.gettempdir())
         self.root = Path(self.tmp.name)
         self.source = self.root / "source"
         self.source.mkdir()

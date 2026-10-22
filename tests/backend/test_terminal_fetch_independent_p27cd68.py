@@ -148,7 +148,7 @@ class WorkerHasNoWaitTool(unittest.TestCase):
         import shutil
         import tempfile
         import test_omp_isolation_independent_p27m as p27m
-        root = Path(tempfile.mkdtemp(prefix="p27cd68-nowait-", dir="/tmp"))
+        root = Path(tempfile.mkdtemp(prefix="p27cd68-nowait-", dir=tempfile.gettempdir()))
         self.addCleanup(shutil.rmtree, root, True)
         argv = {}
         for role in ("worker", "manager"):

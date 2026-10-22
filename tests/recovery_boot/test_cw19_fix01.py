@@ -53,7 +53,7 @@ SKILL = Path(__file__).resolve().parents[2] / "omp_bridge/skills/to-worker/refer
 
 class Temp(unittest.TestCase):
     def setUp(self):
-        self.root = Path(tempfile.mkdtemp(prefix="cw19-fix01-", dir="/tmp"))
+        self.root = Path(tempfile.mkdtemp(prefix="cw19-fix01-", dir=tempfile.gettempdir()))
         os.chmod(self.root, 0o700)
         self.addCleanup(shutil.rmtree, self.root, True)
 
@@ -396,7 +396,7 @@ class RestartNoticeBuiltWhenSent(unittest.TestCase):
                          (notice_id, "backend_restarted", "running"))
 
     def test_the_backend_builder_follows_the_task(self):
-        layout = DataLayout(ensure_private_dir(Path(tempfile.mkdtemp(prefix="cw19-fix01-n-", dir="/tmp"))))
+        layout = DataLayout(ensure_private_dir(Path(tempfile.mkdtemp(prefix="cw19-fix01-n-", dir=tempfile.gettempdir()))))
         self.addCleanup(shutil.rmtree, layout.root, True)
         plan = LaunchPlan(ShellChoice("bash", "/usr/bin/bash"), "/nonexistent/omp", "omp/0", "/x/bridge.ts", ())
         backend = Backend(layout, plan, project_dir=str(layout.root), environment={"PATH": "/usr/bin:/bin"},

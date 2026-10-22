@@ -55,6 +55,21 @@ SLEEPING = "printf 'started\\n'; sleep 120; printf PASS > outcome.txt"
 CALL_LONG = 60  # seconds a test waits for a Task state change
 
 
+def identity_with_child(shell, timeout=10.0):
+    """The run identity once the command child is known: its `child` is None while the run is starting."""
+    found = []
+
+    def has_child():
+        identity = shell.run_identity()
+        if identity and identity.get("child"):
+            found.append(identity)
+        return bool(found)
+
+    if not wait_until(has_child, timeout):
+        raise AssertionError(f"the command child was not identified within {timeout}s: {shell.run_identity()}")
+    return found[-1]
+
+
 class Lifecycle:
     """The automation lifecycle hook as a recorder (the real controller is not part of this seam)."""
 
@@ -143,7 +158,7 @@ class Fx(unittest.TestCase):
     ENV = CountingEnvironment
 
     def setUp(self):
-        self.tmp = tempfile.TemporaryDirectory(prefix="cs09-ind-", dir="/tmp")
+        self.tmp = tempfile.TemporaryDirectory(prefix="cs09-ind-", dir=tempfile.gettempdir())
         self.addCleanup(self.tmp.cleanup)  # registered first, so it runs last: after the flow thread is closed
         self.root = Path(self.tmp.name)
         self.source = self.root / "source"
@@ -290,7 +305,7 @@ class Fx(unittest.TestCase):
         return [json.loads(line) for line in path.read_text().splitlines() if line.strip()]
 
     def child_pid(self):
-        return self.pane.shell.run_identity()["child"]["pid"]
+        return identity_with_child(self.pane.shell)["child"]["pid"]
 
     def await_status(self, status, timeout=CALL_LONG):
         self.assertTrue(wait_until(lambda: self.view()["status"] == status, timeout), self.view())
@@ -942,7 +957,7 @@ class BackendFixture(RestartWorkerFixture):
         return [json.loads(line) for line in path.read_text().splitlines() if line.strip()]
 
     def child(self):
-        return self.backend.shell.shell.run_identity()["child"]["pid"]
+        return identity_with_child(self.backend.shell.shell)["child"]["pid"]
 
 
 class BackendStopTests(BackendFixture):
@@ -996,7 +1011,7 @@ class BackendCtrlCTests(BackendFixture):
 
     def test_a_user_ctrl_c_on_an_experiment_is_journaled_with_the_run_id_not_the_shell_request_id(self):
         task_id, run_id = self.start_experiment()
-        identity = self.backend.shell.shell.run_identity()
+        identity = identity_with_child(self.backend.shell.shell)
         child = identity["child"]["pid"]
         self.assertNotEqual(identity["request_id"], run_id)
         self.assertIsNone(self.backend.admit(PaneId.HOST_SHELL, b"\x03", "input"))

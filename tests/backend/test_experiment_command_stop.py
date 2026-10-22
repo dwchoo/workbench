@@ -64,7 +64,7 @@ SLEEPING = "printf 'started\\n'; sleep 120; printf PASS > outcome.txt"
 
 class ExperimentStopFixture(unittest.TestCase):
     def setUp(self):
-        self.tmp = tempfile.TemporaryDirectory(prefix="cs09-exp-stop-", dir="/tmp")
+        self.tmp = tempfile.TemporaryDirectory(prefix="cs09-exp-stop-", dir=tempfile.gettempdir())
         self.root = Path(self.tmp.name)
         self.source = self.root / "source"
         self.source.mkdir()

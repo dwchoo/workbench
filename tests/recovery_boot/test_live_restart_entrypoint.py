@@ -63,7 +63,7 @@ def kill_exact(pid: int, start: int, signum: int = signal.SIGKILL) -> bool:
 
 class LiveRestartEntrypointTests(unittest.TestCase):
     def setUp(self):
-        self.root = Path(tempfile.mkdtemp(prefix="cw19-live-", dir="/tmp"))
+        self.root = Path(tempfile.mkdtemp(prefix="cw19-live-", dir=tempfile.gettempdir()))
         self.addCleanup(self.cleanup)
         home = self.root / "home"
         (home / ".omp" / "agent").mkdir(parents=True)

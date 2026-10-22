@@ -30,7 +30,7 @@ from workbench.backend import launcher  # noqa: E402
 
 wait_until = base.wait_until
 REPO = HERE.parents[1]
-SHORT_LINE = re.compile(r"one short text line", re.I)
+SHORT_LINE = re.compile(r"one short (local )?text line", re.I)
 NO_EMPTY = re.compile(r"never an empty reply", re.I)
 
 

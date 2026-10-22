@@ -244,7 +244,7 @@ class LeakRuleTests(unittest.TestCase):
                         task_agents=["explorer"])
         self.assertEqual(launcher.isolation_leaks(seen, allowed_skills=(), role="worker"),
                          ["tool:computer", "tool:notebook", "tool:python", "tool:ssh"])
-        self.assertEqual(launcher.WORKER_BRIDGE_TOOLS, frozenset({"to_manager", "terminal", "workbench_logs"}))
+        self.assertEqual(launcher.WORKER_BRIDGE_TOOLS, frozenset({"to_manager", "terminal", "workbench_logs", "workbench_records"}))
         manager = observed(tools=["bash", "eval", "python", "to_worker"])
         self.assertEqual(launcher.isolation_leaks(manager, allowed_skills=(), role="manager"), [])
 

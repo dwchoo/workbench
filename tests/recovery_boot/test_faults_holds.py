@@ -22,6 +22,7 @@ from workbench.app.recovery import BOOT_HOLD, PauseStore
 from workbench.backend import cli
 from workbench.backend.automation import AutomationController
 from workbench.backend.flow import HandoffService, OutboundMessage
+from workbench.backend.paths import DataLayout
 from workbench.contracts.v1 import ActorRole, MessageKind
 from workbench.ipc.bridge_g3.mailbox import DeliveryReceipt, G3BridgeServer, MailboxStatus
 from workbench.storage.log_raw.store import RawLogStore
@@ -191,18 +192,23 @@ class ConfirmBootCliTests(unittest.TestCase):
                 "startup": {"classification": "reboot", "run": {"run_id": "r", "state": "interrupted_by_reboot"},
                             "survivors": []}, "holds": [{"reason": "boot_confirmation_required"}]}
 
+    def setUp(self):
+        self.data_dir = tempfile.mkdtemp(prefix="cw19-cli-", dir="/tmp")
+        self.addCleanup(shutil.rmtree, self.data_dir, True)
+
     def run_cli(self, *args, snapshot=None, answer=None, tty=False):
         client = mock.MagicMock()
         client.__enter__.return_value = client
         client.request.return_value = answer or {"ok": True, "boot": {"confirmed": True}}
         out, err = io.StringIO(), io.StringIO()
-        with mock.patch.object(cli, "_running_snapshot", return_value=snapshot), \
-                mock.patch.object(cli, "UiClient", return_value=client), \
+        with mock.patch.object(cli, "_layout", lambda _a, **_k: DataLayout(Path(self.data_dir))), \
+                mock.patch.object(cli, "_running_snapshot", return_value=snapshot), \
+                mock.patch.object(cli, "_verified_client", return_value=client), \
                 mock.patch.object(cli.os.path, "lexists", return_value=True), \
                 mock.patch.object(cli, "ensure_private_dir"), \
                 mock.patch.object(sys, "stdin", SimpleNamespace(isatty=lambda: tty)), \
                 mock.patch.object(sys, "stdout", out), mock.patch.object(sys, "stderr", err):
-            code = cli.main(["confirm-boot", "--data-dir", "/tmp/cw19-cli-none", *args])
+            code = cli.main(["confirm-boot", "--data-dir", self.data_dir, *args])
         return code, out.getvalue(), err.getvalue(), client
 
     def test_shows_the_conditions_and_needs_explicit_confirmation(self):

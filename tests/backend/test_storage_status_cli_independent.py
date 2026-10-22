@@ -44,7 +44,7 @@ class IndependentStorageStatusCliTests(unittest.TestCase):
                 client.__enter__ = Mock(return_value=client)
                 client.__exit__ = Mock(return_value=False)
                 client.request.return_value = {"ok": True, "result": response}
-                stack.enter_context(patch("workbench.backend.cli.UiClient", return_value=client))
+                stack.enter_context(patch("workbench.backend.cli._verified_client", return_value=client))
                 args = ["logs", command]
             else:
                 reader = stack.enter_context(patch("workbench.storage.important_log.ImportantLogReader"))
@@ -100,7 +100,7 @@ class IndependentStorageStatusCliTests(unittest.TestCase):
                 client.__enter__ = Mock(return_value=client)
                 client.__exit__ = Mock(return_value=False)
                 client.request.return_value = {"ok": False, "reason": "internal_error"}
-                stack.enter_context(patch("workbench.backend.cli.UiClient", return_value=client))
+                stack.enter_context(patch("workbench.backend.cli._verified_client", return_value=client))
                 stdout, stderr = StringIO(), StringIO()
                 args = ["logs", "raw-status", "--data-dir", str(self.root)]
                 if as_json:

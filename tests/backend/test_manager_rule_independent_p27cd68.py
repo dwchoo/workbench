@@ -26,8 +26,10 @@ WAIT = re.compile(r"wait for the worker'?s `?to_manager`? report", re.I)
 
 
 def body(name: str) -> str:
-    text = (SKILLS / name / "SKILL.md").read_text()
-    return text.split("\n---\n", 1)[1]
+    # The rules live in SKILL.md and in the references/*.md it points to (omp_bridge/skills/README.md): read as one text.
+    text = (SKILLS / name / "SKILL.md").read_text().split("\n---\n", 1)[1]
+    references = sorted((SKILLS / name / "references").glob("*.md"))
+    return "\n".join([text, *(path.read_text() for path in references)])
 
 
 class SkillTextTests(unittest.TestCase):
@@ -36,7 +38,7 @@ class SkillTextTests(unittest.TestCase):
         self.assertRegex(text, RULE)
         self.assertRegex(text, WAIT)
         # C-D68 (3): only the delegated work is off-limits; everything else for the user stays the manager's.
-        self.assertRegex(text, re.compile(r"other work for the user stays yours", re.I))
+        self.assertRegex(text, re.compile(r"other (work for the user|user work) stays yours", re.I))
         self.assertNotRegex(text, re.compile(r"never use (bash|eval)|you have no (bash|eval)", re.I),
                             "the manager keeps OMP's tools")
 

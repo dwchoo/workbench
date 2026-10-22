@@ -15,8 +15,9 @@ from workbench.tasks.repository import TaskRepository
 class SlowBridge:
     """A bridge whose deliver frame takes ``hold`` seconds; records overlap per target."""
 
-    def __init__(self, hold=0.15):
+    def __init__(self, hold=0.15, rendezvous=None):
         self.hold = hold
+        self.rendezvous = rendezvous  # a Barrier every request waits at, once inside it is inside the OMP turn
         self.peers = {ActorRole.MANAGER: BridgePeer(ActorRole.MANAGER, str(uuid4()), 1, 101),
                       ActorRole.WORKER: BridgePeer(ActorRole.WORKER, str(uuid4()), 1, 102)}
         self.events = []
@@ -47,6 +48,8 @@ class SlowBridge:
             self.max_in_flight[role] = max(self.max_in_flight[role], self.in_flight[role])
             self.max_total = max(self.max_total, sum(self.in_flight.values()))
             self.order.append(("start", role.value, envelope.message_id))
+        if self.rendezvous is not None:
+            self.rendezvous.wait()  # raises BrokenBarrierError unless the other role is inside a request too
         time.sleep(self.hold)  # the OMP turn
         peer = self.peers[role]
         with self.lock:
@@ -113,7 +116,9 @@ class DeliverySerializationTests(unittest.TestCase):
         self.assertEqual(kinds, ["start", "end"] * 4)
 
     def test_different_targets_are_independent_lanes(self):
-        bridge = SlowBridge(hold=0.3)
+        # Overlap is proved by a rendezvous, not by wall-clock time (a slow fsync stretches the latter): both roles must
+        # be inside a request at the same moment, or the barrier breaks and the deliveries fail.
+        bridge = SlowBridge(hold=0.05, rendezvous=threading.Barrier(2, timeout=3))
         with TaskRepository(self.db) as repository:
             task = TaskMailbox(repository, bridge).create_message(
                 self.task_id, 1, self.run_id, "manager", "worker", MessageKind.TASK, {})
@@ -129,14 +134,12 @@ class DeliverySerializationTests(unittest.TestCase):
         threads = [threading.Thread(target=self.deliver_from_own_mailbox,
                                     args=(bridge, "manager", "worker", MessageKind.TASK, 1, results)),
                    threading.Thread(target=to_manager)]
-        started = time.monotonic()
         for thread in threads:
             thread.start()
         for thread in threads:
             thread.join(10)
         self.assertEqual(results, [MailboxStatus.OMP_PROCESSED] * 2)
         self.assertEqual(bridge.max_total, 2, "manager and worker deliveries may overlap")
-        self.assertLess(time.monotonic() - started, 0.55)
 
     def test_g3_bridge_exposes_one_delivery_lock_per_target(self):
         socket = Path(self.tmp.name) / "b.sock"

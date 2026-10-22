@@ -434,7 +434,7 @@ class HoldMatrix(BackendStub):
         hold.set(BOOT_HOLD)
         typed: list = []
         port = SimpleNamespace(type_text=typed.append)
-        service = TerminalService(handoffs=SimpleNamespace(record=lambda *_a, **_k: None),
+        service = TerminalService(handoffs=SimpleNamespace(record=lambda record, *_a, **_k: dict(record)),
                                   host_shell=lambda: port, gate=SimpleNamespace(acquire=lambda *a: None),
                                   log_root=self.root / "term", automation=lambda: {}, paused=lambda: False,
                                   hold=lambda: hold.reason_for(ActorRole.WORKER))

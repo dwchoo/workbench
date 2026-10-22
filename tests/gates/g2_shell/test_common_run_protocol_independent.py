@@ -27,8 +27,8 @@ def supervisor_mutation(code):
                f"exec({code!r}); sys.exit(p.run_supervisor(sys.argv[-2], sys.argv[-1]))")
 
     def source(shell):
-        command = f"{shlex.quote(sys.executable)} {shlex.quote(str(Path(lifecycle.__file__).resolve()))} --supervisor "
-        replacement = f"{shlex.quote(sys.executable)} -c {shlex.quote(wrapper)} --supervisor "
+        command = f"{shlex.quote(sys.executable)} -I {shlex.quote(str(Path(lifecycle.__file__).resolve()))} --supervisor "
+        replacement = f"{shlex.quote(sys.executable)} -I -c {shlex.quote(wrapper)} --supervisor "
         value = original(shell)
         if command not in value:
             raise AssertionError("fixed supervisor launch changed")

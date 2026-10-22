@@ -448,11 +448,33 @@ class ShellKillRestartTests(unittest.TestCase):
 
         cycle(0)  # warm-up: lazy imports and first-use descriptors
         self.wait(lambda: self.backend.phase == "ready", "ready")
-        fds, kids = len(os.listdir("/proc/self/fd")), len(children())
+
+        def counts():
+            return len(os.listdir("/proc/self/fd")), len(children())
+
+        def steady(deadline=40.0, window=2.2):
+            """Settled (fd, child) floor: a monitor thread opens short-lived descriptors about once a second and
+            the warm-up's own cleanup finishes asynchronously (slow on a slow-fsync host), so a single sample
+            can land on a transient. Take the per-window minimum; a real leak raises the floor for good."""
+            end = time.monotonic() + deadline
+            previous = None
+            while time.monotonic() < end:
+                samples, stop = [], time.monotonic() + window
+                while time.monotonic() < stop:
+                    samples.append(counts())
+                    time.sleep(0.05)
+                floor = (min(f for f, _ in samples), min(k for _, k in samples))
+                if floor == previous:
+                    return floor
+                previous = floor
+            self.fail(f"fd/child counts never settled: {previous}")
+
+        fds, kids = steady()
         olds = [cycle(index) for index in range(1, 6)]
         self.wait(lambda: self.backend.phase == "ready", "ready")
-        self.assertEqual(len(os.listdir("/proc/self/fd")), fds, "descriptor leak across kill/restart cycles")
-        self.assertEqual(len(children()), kids, "child process leak across kill/restart cycles")
+        after_fds, after_kids = steady()
+        self.assertEqual(after_fds, fds, "descriptor leak across kill/restart cycles")
+        self.assertEqual(after_kids, kids, "child process leak across kill/restart cycles")
         self.assertEqual(self.backend.shell.generation, olds[0].generation + 5)
         self.assertTrue(all(not alive(old.pid) for old in olds))
         self.assertEqual(len(json.loads(self.backend.layout.record.read_text())["restarts"]), 6)

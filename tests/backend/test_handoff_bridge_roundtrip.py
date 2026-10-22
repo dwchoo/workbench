@@ -186,7 +186,14 @@ class HandoffBridgeRoundTripTests(unittest.TestCase):
         self.assertEqual(self.manager.call("to_worker", {"kind": "work", "message": "again"}, "m-2"), queued)
         time.sleep(0.3)
         self.assertEqual(len(self.worker.injected), 1)
-        self.assertTrue(all(entry["state"] == "delivered" for entry in self.handoffs.outbox_snapshot()))
+        # The outbox settles asynchronously (a slow fsync can delay it): poll to a deadline instead of one fixed check.
+        deadline = time.monotonic() + 15.0
+        while time.monotonic() < deadline:
+            states = [entry["state"] for entry in self.handoffs.outbox_snapshot()]
+            if all(state == "delivered" for state in states):
+                break
+            time.sleep(0.05)
+        self.assertTrue(all(state == "delivered" for state in states), states)
 
 
 if __name__ == "__main__":

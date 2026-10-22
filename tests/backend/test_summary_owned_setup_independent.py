@@ -116,9 +116,16 @@ class OwnedSetupIndependentTests(unittest.TestCase):
         self.assertEqual(facts["producer"]["bytes"], 12288)
         self.assertEqual(facts["producer"]["collector_pieces"], 3)
         self.assertEqual(facts["producer"]["capture_failures"], [])
-        self.assertEqual([(r["start"], r["end"]) for r in originals], [(0, 4096), (4096, 8192), (8192, 12288)])
+        # Three separate Task spec deliveries, each its own 4096-byte message starting at offset 0.
+        self.assertEqual([(r["start"], r["end"]) for r in originals], [(0, 4096)] * 3)
+        self.assertEqual(len({r["source"]["messageId"] for r in originals}), 3)
         self.assertEqual([len(p.text.encode()) for p in pieces], [4096, 4096, 4096])
-        self.assertEqual(len(facts["raw_queries"]), 3)
+        # Each original is a Task task_spec delivery span (not a terminal capture) of one Task, revision 1.
+        # The producer makes no raw-log query since ca315ff, so facts["raw_queries"] is not asserted.
+        self.assertEqual([r["source"]["sourceKind"] for r in originals], ["task_spec"] * 3)
+        self.assertEqual({r["source"]["revision"] for r in originals}, {1})
+        self.assertEqual(len({r["source"]["taskId"] for r in originals}), 1)
+        self.assertTrue(all("terminalId" not in r["source"] and "commandId" not in r["source"] for r in originals))
         model = {"provider": "ownedverify", "id": "scripted", "api": "openai-completions",
                  "baseUrl": "http://127.0.0.1:19423/v1", "contextWindow": 131072,
                  "maxTokens": 8192, "tokenizer": "claude-v3"}

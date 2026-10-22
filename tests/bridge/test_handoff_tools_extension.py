@@ -16,7 +16,7 @@ ROOT = Path(__file__).resolve().parents[2]
 class HandoffToolsExtensionTests(unittest.TestCase):
     def test_bridge_extension_handoff_tools(self):
         result = subprocess.run(
-            ["node", "--experimental-strip-types", "--no-warnings", "--test",
+            ["node", "--experimental-strip-types", "--no-warnings", "--test-reporter=tap", "--test",
              str(ROOT / "tests/bridge/handoff_tools.test.ts")],
             cwd=ROOT, capture_output=True, text=True, timeout=120, check=False,
         )
@@ -25,7 +25,7 @@ class HandoffToolsExtensionTests(unittest.TestCase):
 
     def test_bridge_extension_provider_payload_identity(self):
         result = subprocess.run(
-            ["node", "--experimental-strip-types", "--no-warnings", "--test",
+            ["node", "--experimental-strip-types", "--no-warnings", "--test-reporter=tap", "--test",
              str(ROOT / "tests/bridge/provider_identity.test.ts")],
             cwd=ROOT, capture_output=True, text=True, timeout=120, check=False,
         )

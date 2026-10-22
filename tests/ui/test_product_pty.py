@@ -1109,6 +1109,10 @@ class KillRestartHostShellPtyTests(RealBackendCase):
         self.assertTrue(ui.until(lambda: "Enter로 새 shell" in ui.text()), ui.text())
         ui.send(b"\r")  # Enter: a fresh shell
         self.assertTrue(ui.until(lambda: "host terminal 종료됨" not in ui.text() and "HOST SHELL" in ui.text()), ui.text())
+        # the restart is complete only when "다시 시작 중…" is gone and the new shell has drawn its own bare prompt
+        # (input sent while it is still starting is not delivered to the new shell)
+        self.assertTrue(ui.until(lambda: "다시 시작 중" not in ui.text() and re.search(r"^x\$ +x$", ui.text(), re.M)),
+                        ui.text())
         ui.send(b"echo NEWPID=$$ FRESH$((20+22))\r")
         self.assertTrue(ui.until(lambda: re.search(r"NEWPID=\d+ FRESH42", ui.text())), ui.text())
         fresh = int(re.search(r"NEWPID=(\d+) FRESH42", ui.text()).group(1))

@@ -49,6 +49,28 @@ OTHER_FACTS = {
 ALL_FACTS = {"Q01-tools": TOOLS_FACTS, **OTHER_FACTS}
 
 
+def measurement_fixture() -> dict:
+    """Two independently attributable deliveries during one held child turn."""
+    sessions = {"manager": "session-manager", "worker": "session-worker", "child": "session-child"}
+    windows = []
+    for role, kind, offset in (("manager", "worker_terminal_done", 0), ("worker", "terminal_check", 10000000)):
+        enqueue = 1010000000 + offset
+        notice = "notice-" + role
+        windows.append({"role": role, "kind": kind, "session_id": sessions[role],
+                        "notice_id": notice, "ack_notice_id": notice, "provider_notice_id": notice,
+                        "ack_request_id": "request-" + role, "ack_status": "api_accepted",
+                        "provider_stage": "parent", "scheduler_notice_id": notice if role == "worker" else None,
+                        "enqueue_ns": enqueue, "frame_request_ns": enqueue + 1000000,
+                        "ack_observed_ns": enqueue + 2000000, "agent_start_ns": enqueue + 3000000,
+                        "provider_post_ns": enqueue + 4000000, "agent_end_ns": enqueue + 5000000,
+                        "enqueue_to_ack_ms": 2.0, "enqueue_to_start_ms": 3.0,
+                        "enqueue_to_post_ms": 4.0, "turn_hold_overlap_ms": 2.0})
+    return {"kind": "delivery_turn_overlap", "clock": "time.monotonic_ns", "session_ids": sessions,
+            "child_hold_interval_ns": [1000000000, 1100000000], "notice_windows": windows,
+            "due_scheduler_status": "dispatched", "internal_lock_wait": "unavailable",
+            "max_enqueue_to_start_ms": 3.0, "max_enqueue_to_post_ms": 4.0}
+
+
 def fixture_rows(*, adapter: str = "probe-local") -> list[dict]:
     source = "product_adapter" if adapter == "product" else "omp_event"
     rows = [{"id": item, "adapter": adapter, "source": source,
@@ -56,8 +78,9 @@ def fixture_rows(*, adapter: str = "probe-local") -> list[dict]:
              "facts": {fact: True for fact in facts}, "unknowns": []}
             for item, facts in ALL_FACTS.items()]
     priority = next(row for row in rows if row["id"] == "Q01-priority")
-    priority["facts"].update(shared_session_or_lock=False, measured_block_ms=0,
-                             independent_delivery_observed=True)
+    priority["facts"].update(shared_session_or_lock=False, measured_block_ms=None,
+                             max_block_recorded=None, independent_delivery_observed=True,
+                             nonshared_priority_measurement=measurement_fixture())
     return rows
 
 
@@ -147,7 +170,8 @@ class StartupJudgeContractTests(unittest.TestCase):
         self.assertNotEqual(verdict(rows, "Q01-tools", adapter="product")["result"], "passed")
         rows = fixture_rows(adapter="product")
         priority = next(r for r in rows if r["id"] == "Q01-priority")
-        priority["facts"]["shared_session_or_lock"] = True
+        priority["facts"].update(shared_session_or_lock=True, measured_block_ms=0,
+                                 max_block_recorded=True)
         self.assertEqual(verdict(rows, "Q01-priority", adapter="product")["result"],
                          "blocked_adoption")
 

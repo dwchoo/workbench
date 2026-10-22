@@ -6,6 +6,7 @@ import signal
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
@@ -46,6 +47,18 @@ class EntrypointSmoke(unittest.TestCase):
         return subprocess.run([sys.executable, "-c", MAIN, *args], env=ENV, cwd=self.root, capture_output=True,
                               text=True, timeout=timeout, stdin=subprocess.DEVNULL)
 
+    def wait_backend_reachable(self, deadline=30.0):
+        """`start` against the stub OMP returns while the backend may not yet answer on its ui socket (slow
+        fsync hosts); poll `status --json` until it does, so the attach that follows finds a running backend."""
+        end = time.monotonic() + deadline
+        while True:
+            result = self.cli("status", "--data-dir", str(self.data), "--json")
+            if result.returncode == 0:
+                return
+            if time.monotonic() >= end:
+                self.fail(f"backend not reachable within {deadline}s: {result.stdout}{result.stderr}")
+            time.sleep(0.2)
+
     def stop_backend(self):
         result = self.cli("shutdown", "--data-dir", str(self.data), "--yes")
         for entry in Path("/proc").iterdir():  # exact-identity fallback: only processes naming our temp root
@@ -78,6 +91,7 @@ class EntrypointSmoke(unittest.TestCase):
         started = self.cli("start", "--data-dir", str(self.data), "--omp", str(self.omp), "--no-attach",
                            "--timeout", "3")
         self.assertIn("starting backend", started.stdout)
+        self.wait_backend_reachable()
         first = self.attach()
         self.assertTrue(first.until(lambda: "STUB-OMP manager ready" in first.text()
                                     and "STUB-OMP worker ready" in first.text()), first.text())

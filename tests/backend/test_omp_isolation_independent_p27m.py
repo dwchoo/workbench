@@ -69,6 +69,9 @@ BUNDLED_AGENTS = frozenset({"scout", "reviewer", "security-reviewer", "task", "s
 # C-D69 (3): the worker's Workbench subagent ``analyst`` is removed; only ``explorer`` remains.
 WORKBENCH_AGENTS = frozenset({"explorer"})
 CD68_ROLE_DISABLED = {"manager": WORKBENCH_AGENTS, "worker": BUNDLED_AGENTS}
+# d7c1080 (launcher.role_overlay): OMP 18.12's bundled ``seance`` agent has no approved Workbench role, so both role
+# overlays always disable it, in addition to the user's/ambient names and the fixed C-D68 set.
+SEANCE_AGENT = "seance"
 
 
 def ambient_disabled(overlay: dict, role: str) -> list[str]:
@@ -147,12 +150,22 @@ def sha(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def assert_required_isolation_args(test: unittest.TestCase, argv) -> None:
-    """``--append-system-prompt ""`` and ``--no-title`` exactly once each, after ``--no-extensions``."""
+def expected_append_prompt(role: str, extra: str = "") -> str:
+    """The ``--append-system-prompt`` value of a role (a6d877f): worker reporting prompt (worker only), then the
+    shared records prompt, then any caller text, joined by a blank line. Built from the launcher's constants so the
+    composition and its order stay pinned without copying the prose."""
+    parts = (launcher.WORKER_REPORTING_PROMPT if role == "worker" else "", launcher.RECORDS_PROMPT, extra)
+    return "\n\n".join(part for part in parts if part)
+
+
+def assert_required_isolation_args(test: unittest.TestCase, argv, role: str) -> None:
+    """``--append-system-prompt`` (the role's records/reporting prompt) and ``--no-title`` exactly once each, after
+    ``--no-extensions``."""
     argv = list(argv)
     test.assertEqual(argv.count("--append-system-prompt"), 1, argv)
     at = argv.index("--append-system-prompt")
-    test.assertEqual(argv[at + 1], "", f"--append-system-prompt must carry an empty value: {argv}")
+    test.assertEqual(argv[at + 1], expected_append_prompt(role),
+                     f"--append-system-prompt must carry the {role} prompt: {argv}")
     test.assertIn("--no-title", argv)
     test.assertGreater(at, argv.index("--no-extensions"))
 
@@ -200,17 +213,19 @@ class StaticOverlayContractTests(unittest.TestCase):
         self.assertNotIn(str(Path.home()), self.text)
         self.assertNotIn("/home/", self.text)
 
-    def test_workbench_skills_inventory_has_two_role_recovery_and_host_summary_assets(self):
-        # CW-18 role skills + C-D70 recovery + LG-D22 host-only summary asset.
+    def test_workbench_skills_inventory_has_two_role_recovery_report_and_host_summary_assets(self):
+        # CW-18 role skills + C-D70 recovery + 810cf72 manager workbench-report + LG-D22 host-only summary asset.
         # The summary asset is supplied to restricted task@Manager, not a normal role skill.
         self.assertTrue(SKILLS_DIR.is_dir())
         self.assertEqual(launcher.default_skills_dir(), SKILLS_DIR)
         self.assertEqual(launcher.default_isolation_overlay(), STATIC_OVERLAY)
         self.assertEqual(sorted(p.name for p in SKILLS_DIR.iterdir() if (p / "SKILL.md").exists()),
-                         ["important-log-summary", "to-manager", "to-worker", "workbench-recovery"],
-                         "exactly two role assets, recovery, and the LG-D22 host summary asset")
+                         ["important-log-summary", "to-manager", "to-worker", "workbench-recovery",
+                          "workbench-report"],
+                         "exactly two role assets, recovery, the manager report skill, and the LG-D22 host summary asset")
         self.assertEqual(launcher.workbench_skill_names(SKILLS_DIR),
-                         ("important-log-summary", "to-manager", "to-worker", "workbench-recovery"),
+                         ("important-log-summary", "to-manager", "to-worker", "workbench-recovery",
+                          "workbench-report"),
                          "front matter names must equal the directory names")
         self.assertTrue((SKILLS_DIR / "README.md").is_file())
 
@@ -240,7 +255,7 @@ class ArgvEnvContractTests(unittest.TestCase):
                 for forbidden in FORBIDDEN_ARGS:
                     self.assertFalse([a for a in command if a == forbidden or a.startswith(forbidden + "=")],
                                      f"{forbidden} in {command}")
-                assert_required_isolation_args(self, command)
+                assert_required_isolation_args(self, command, role)
                 self.assertEqual(command.count("--no-title"), 1, command)
 
     def test_user_arguments_are_appended_after_the_isolation_arguments(self):
@@ -317,7 +332,7 @@ class RoleOverlayContractTests(unittest.TestCase):
         (self.project / ".omp" / "agents" / "notes.txt").write_text("not an agent")
         overlay = launcher.role_overlay("worker", project_dir=self.project, home=self.home)
         names = set(ambient_disabled(overlay, "worker"))  # C-D68: plus the worker's fixed set (bundled agents)
-        self.assertEqual(names, {"project-agent", "home-agent"}, names)
+        self.assertEqual(names, {SEANCE_AGENT, "project-agent", "home-agent"}, names)
         self.assertNotIn("notes", names)
         blob = json.dumps(overlay)
         self.assertNotIn("BODY-SECRET-p27m", blob)
@@ -329,7 +344,7 @@ class RoleOverlayContractTests(unittest.TestCase):
         (self.project / ".omp" / "agents").rmdir()
         (self.project / ".omp").rmdir()
         again = set(ambient_disabled(launcher.role_overlay("worker", project_dir=self.project, home=self.home), "worker"))
-        self.assertEqual(again, {"ancestor-agent", "home-agent"}, again)
+        self.assertEqual(again, {SEANCE_AGENT, "ancestor-agent", "home-agent"}, again)
 
     def test_agent_definition_reading_is_bounded_and_robust(self):
         directory = self.project / ".omp" / "agents"
@@ -352,8 +367,8 @@ class RoleOverlayContractTests(unittest.TestCase):
     def test_missing_directories_yield_an_empty_agent_list_not_an_error(self):
         for role in ("manager", "worker"):  # C-D68: only the role's fixed set remains
             overlay = launcher.role_overlay(role, project_dir=self.root / "nowhere", home=self.root / "nohome")
-            self.assertEqual(ambient_disabled(overlay, role), [])
-            self.assertEqual(set(overlay["task"]["disabledAgents"]), CD68_ROLE_DISABLED[role])
+            self.assertEqual(ambient_disabled(overlay, role), [SEANCE_AGENT])
+            self.assertEqual(set(overlay["task"]["disabledAgents"]), CD68_ROLE_DISABLED[role] | {SEANCE_AGENT})
 
     def test_disabled_providers_keep_the_users_entries_after_the_workbench_ids(self):
         overlay = launcher.role_overlay("manager", project_dir=self.project, home=self.home,
@@ -368,8 +383,9 @@ class RoleOverlayContractTests(unittest.TestCase):
         self.assertEqual(default["skills"]["customDirectories"], [str(SKILLS_DIR)])
         self.assertTrue(os.path.isabs(default["skills"]["customDirectories"][0]))
         # CW-18: the default role filter is exact (manager only to-worker, worker only to-manager); C-D70 (5): the
-        # manager also gets workbench-recovery, the worker never (p27-cd70-test-01 edit).
-        self.assertEqual(default["skills"]["includeSkills"], ["to-worker", "workbench-recovery"])
+        # manager also gets workbench-recovery, the worker never (p27-cd70-test-01 edit); 810cf72: the manager also
+        # gets workbench-report.
+        self.assertEqual(default["skills"]["includeSkills"], ["to-worker", "workbench-recovery", "workbench-report"])
         self.assertEqual(launcher.role_overlay("worker", project_dir=self.project, home=self.home)["skills"]
                          ["includeSkills"], ["to-manager"])
         filters = {"manager": ("order-manager", "wb-*"), "worker": ("order-worker",)}
@@ -393,8 +409,9 @@ class RoleOverlayContractTests(unittest.TestCase):
         self.assertEqual(launcher.workbench_skill_names(skills), ("nofront", "order-one", "wb-two"))
         self.assertEqual(launcher.workbench_skill_names(skills, ("order-*",)), ("order-one",))
         self.assertEqual(launcher.workbench_skill_names(self.root / "absent"), ())
-        # C-D70 (5): the manager also loads workbench-recovery (p27-cd70-test-01 edit)
-        self.assertEqual(launcher.role_skill_allowlist("manager", SKILLS_DIR), ("to-worker", "workbench-recovery"))
+        # C-D70 (5): the manager also loads workbench-recovery (p27-cd70-test-01 edit); 810cf72: and workbench-report
+        self.assertEqual(launcher.role_skill_allowlist("manager", SKILLS_DIR),
+                         ("to-worker", "workbench-recovery", "workbench-report"))
         self.assertEqual(launcher.role_skill_allowlist("worker", SKILLS_DIR), ("to-manager",))
         # The role filter is exact: look-alike or other skills in the directory are never allowed.
         crowded = self.root / "crowded"
@@ -674,14 +691,16 @@ class CheckIsolationContractTests(unittest.TestCase):
 
     def test_the_real_role_allowlists_accept_only_the_roles_own_workbench_skill(self):
         # CW-18: manager ('to-worker',), worker ('to-manager',); the other role's skill or any other skill is a leak.
-        # C-D70 (5): the manager also has workbench-recovery, which is a leak for the worker (p27-cd70-test-01 edit).
-        owned = {"manager": ("to-worker", "workbench-recovery"), "worker": ("to-manager",)}
+        # C-D70 (5): the manager also has workbench-recovery, which is a leak for the worker (p27-cd70-test-01 edit);
+        # 810cf72: the same for workbench-report.
+        owned = {"manager": ("to-worker", "workbench-recovery", "workbench-report"), "worker": ("to-manager",)}
         def shapes(*names):
             return {"prompt_extra": "<skills>\n" + "".join(f"- {n}: d\n" for n in names) + "</skills>\n",
                     "commands": [{"name": "init", "source": "builtin"}]
                     + [{"name": f"skill:{n}", "source": "skill"} for n in names]}
         for role, own, other in (("manager", "to-worker", "to-manager"), ("worker", "to-manager", "to-worker"),
-                                 ("worker", "to-manager", "workbench-recovery")):
+                                 ("worker", "to-manager", "workbench-recovery"),
+                                 ("worker", "to-manager", "workbench-report")):
             allowed = launcher.role_skill_allowlist(role)
             self.assertEqual(allowed, owned[role])
             with self.subTest(role=role, case="own"):
@@ -1040,9 +1059,10 @@ class RealEntrypointIsolationTests(RealEntrypointBase):
             self.assertEqual(argv[argv.index("--extension") + 1], str(REPO / "omp_bridge" / "g3" / "entry.ts"))
             for forbidden in FORBIDDEN_ARGS:
                 self.assertFalse([a for a in argv if a == forbidden or a.startswith(forbidden + "=")], argv)
-            assert_required_isolation_args(self, argv)
+            assert_required_isolation_args(self, argv, role)
             self.assertEqual(argv.count("--no-title"), 1, argv)
-            self.assertEqual(check["argv"][check["argv"].index("--append-system-prompt") + 1], "")
+            self.assertEqual(check["argv"][check["argv"].index("--append-system-prompt") + 1],
+                             expected_append_prompt(role))
             for key in FORBIDDEN_ENV:
                 self.assertIsNone(pane["env"][key], f"{role}: {key} set for the pane")
                 self.assertIsNone(check["env"][key])
@@ -1186,10 +1206,20 @@ class HungCheckStaysOffTheStartPathTests(RealEntrypointBase):
     def test_a_check_that_never_answers_does_not_block_the_backend_and_ends_as_a_visible_failure(self):
         self.set_mode("silent")
         self.start()
-        started = time.monotonic()
-        first = self.status_json()
-        self.assertLess(time.monotonic() - started, 4.0, "the backend did not answer while the check hung")
-        self.assertIsNotNone(first)
+        # Backend start-up time depends on the host (slow fsync took ~11s, longer than ``start --timeout 8``), so wait
+        # for the first answer with a bounded poll; what matters is that the answering call itself is prompt while the
+        # check is still hung.
+        first, answer_seconds = None, None
+        deadline = time.monotonic() + 60.0
+        while time.monotonic() < deadline:
+            started = time.monotonic()
+            first = self.status_json()
+            if first:
+                answer_seconds = time.monotonic() - started
+                break
+            time.sleep(0.3)
+        self.assertIsNotNone(first, "the backend never answered status within the bounded wait")
+        self.assertLess(answer_seconds, 4.0, "the backend did not answer while the check hung")
         self.assertFalse(first["omp_isolation"]["checked"], "the hung check cannot have reported already")
         self.assertIn(first["omp_isolation"]["state"], ("pending", "running", "checking"))
         for pane in ("manager_omp", "worker_omp", "host_shell"):

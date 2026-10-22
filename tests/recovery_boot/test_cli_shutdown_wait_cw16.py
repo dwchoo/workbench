@@ -85,7 +85,7 @@ class ShutdownWait(unittest.TestCase):
         args = argparse.Namespace(data_dir=str(self.root), yes=yes, json=json_form)
         with contextlib.ExitStack() as stack:
             stack.enter_context(mock.patch.object(cli, "_layout", lambda _a, **_k: Layout(self.root)))
-            stack.enter_context(mock.patch.object(cli, "UiClient", lambda *a, **k: client))
+            stack.enter_context(mock.patch.object(cli, "_verified_client", lambda _layout, **_k: client))
             for name, value in patches.items():
                 stack.enter_context(mock.patch.object(cli, name, value))
             stack.enter_context(contextlib.redirect_stdout(out))

@@ -114,7 +114,11 @@ class DisabledRawActualShell(fixture.ServiceFixture):
                 status = client.request(ClientType.RAW_STATUS)
                 self.assertEqual(status["result"]["activation"], "disabled")
             output = StringIO()
-            with redirect_stdout(output):
+            # The CLI now requires a verified backend identity; this test serves a bare UiServer, so
+            # point the verified-client seam at the test's own socket and keep the read-only path real.
+            with redirect_stdout(output), patch.object(
+                    cli, "_verified_client",
+                    lambda _layout, **kwargs: UiClient(layout.ui_socket, **kwargs)):
                 code = cli.main(["logs", "raw", "--command", second["command_id"],
                                  "--limit", "512", "--json", "--data-dir", str(self.root)])
             self.assertEqual(code, 0)

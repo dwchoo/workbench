@@ -671,8 +671,12 @@ class ManagerRecoveryTests(_Fixture):
         self.wait(lambda: any("RACED-REPORT-0b7d" in json.dumps(f) for f in self.frames("manager", "deliver",
                                                                                        new_manager)),
                   "the report re-sent to the new manager session", timeout=25)
-        dog.tick()
-        self.wait(lambda: self.notices("manager", "manager_recovery", new_manager), "manager_recovery")
+
+        def ticked_notice():
+            dog.tick()  # a busy delivery defers the notice; tick again until it is sent (the wait is deadline-bounded)
+            return self.notices("manager", "manager_recovery", new_manager)
+
+        self.wait(ticked_notice, "manager_recovery")
         recovery = self.notices("manager", "manager_recovery", new_manager)[0]
         self.assertEqual(recovery.get("reports_resent"), 1,
                          "the notice says how many never-submitted reports went to the new session")

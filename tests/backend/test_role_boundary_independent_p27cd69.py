@@ -47,7 +47,10 @@ def errors(args):
 
 
 def skill(name: str) -> str:
-    return (SKILLS / name / "SKILL.md").read_text()
+    # The rules live in SKILL.md and in the references/*.md it points to (omp_bridge/skills/README.md): one text.
+    texts = [(SKILLS / name / "SKILL.md").read_text()]
+    texts += [path.read_text() for path in sorted((SKILLS / name / "references").glob("*.md"))]
+    return "\n".join(texts)
 
 
 # ------------------------------------------------------------------------------------------- (2) the analysis field

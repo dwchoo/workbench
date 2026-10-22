@@ -82,7 +82,8 @@ class RuntimeOnlyCompatibilityIndependentTests(unittest.TestCase):
         environment = {"PATH": os.environ.get("PATH", ""), "PYTHONPATH": str(self.root / "src"),
                        "PYTHONDONTWRITEBYTECODE": "1", "HOME": str(home)}
         # Actual CLI runs with Python audit checks. No foreign record, runtime
-        # supplier, login path or OMP SDK is injected into the product.
+        # supplier, login path or OMP SDK is injected into the product; only the
+        # real-OMP provider is replaced by an unavailable observation.
         script = '''
 import contextlib, io, json, pathlib, sys
 events = []
@@ -93,7 +94,21 @@ def audit(name, args):
         raise AssertionError("development import")
     if name == "open": events.append(str(args[0]))
 sys.addaudithook(audit)
+from workbench.backend import summary_compatibility
 from workbench.backend.cli import main
+
+class UnavailableProvider:
+    """verify --scripted would launch the real owned OMP provider; this runtime-only
+    copy has none, so the provider seam reports the unavailable observation instead."""
+    def observe(self):
+        return {"level": "unavailable", "observations": [],
+                "model_metadata": {"status": "inconclusive", "unknowns": [
+                    "operating_session_unavailable", "output_budget_unavailable"]},
+                "unknowns": ["isolated_product_verifier_unavailable"],
+                "io": {"omp_children": 0, "model_calls": 0, "network_requests": 0,
+                       "auth_store_open": 0, "settings_writes": 0}}
+
+summary_compatibility.ScriptedCompatibilityProvider = UnavailableProvider
 output = io.StringIO()
 with contextlib.redirect_stdout(output):
     code = main(json.loads(sys.argv[1]))

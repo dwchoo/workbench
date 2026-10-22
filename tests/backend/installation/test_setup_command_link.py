@@ -59,6 +59,10 @@ class CommandLinkTests(unittest.TestCase):
         binary, command = self.managed()
         command.parent.mkdir(mode=0o700, exist_ok=True)
         other = self.executable('other')
+        def immutable(info):
+            # atime moves on any read of the entry; the conflict must leave the entry itself untouched
+            return tuple(getattr(info, name) for name in
+                         ('st_mode', 'st_ino', 'st_dev', 'st_size', 'st_mtime_ns'))
         for kind in ('file', 'symlink', 'dangling', 'directory'):
             with self.subTest(kind=kind):
                 if kind == 'file':
@@ -67,18 +71,21 @@ class CommandLinkTests(unittest.TestCase):
                     command.symlink_to(other if kind == 'symlink' else self.root / 'absent')
                 else:
                     command.mkdir(mode=0o700)
-                identity = command.lstat()
-                code, output, error = self.cli('--omp', str(binary))
-                self.assertEqual(code, 0, output + error)
-                result = json.loads(output)
-                self.assertEqual((result['state'], result['path']), ('ready', str(binary)))
-                self.assertEqual(result['command_link']['status'], 'warning')
-                self.assertEqual(result['command_link']['reason'], 'command_link_conflict')
-                self.assertIn(str(command), result['command_link']['warning'])
-                self.assertEqual(command.lstat(), identity)
-                if kind == 'file': self.assertEqual(command.read_bytes(), b'user executable')
-                if kind == 'directory': command.rmdir()
-                else: command.unlink()
+                try:
+                    identity = immutable(command.lstat())
+                    code, output, error = self.cli('--omp', str(binary))
+                    self.assertEqual(code, 0, output + error)
+                    result = json.loads(output)
+                    self.assertEqual((result['state'], result['path']), ('ready', str(binary)))
+                    self.assertEqual(result['command_link']['status'], 'warning')
+                    self.assertEqual(result['command_link']['reason'], 'command_link_conflict')
+                    self.assertIn(str(command), result['command_link']['warning'])
+                    self.assertEqual(immutable(command.lstat()), identity)
+                    if kind == 'file': self.assertEqual(command.read_bytes(), b'user executable')
+                finally:
+                    # a failing kind must not leave its entry behind to cascade into the next kind
+                    if kind == 'directory': command.rmdir()
+                    else: command.unlink(missing_ok=True)
 
     def test_path_missing_and_shadowed_command_give_export_and_absolute_login_guidance(self):
         binary, command = self.managed()

@@ -55,7 +55,7 @@ class DownAliasTests(unittest.TestCase):
         out, err = io.StringIO(), io.StringIO()
         with patch.object(cli, "_layout", return_value=SimpleNamespace(root=Path("/fixture/data"),
                                                                        ui_socket=Path("/fixture/ui.sock"))), \
-                patch.object(cli, "UiClient", return_value=client), \
+                patch.object(cli, "_verified_client", return_value=client), \
                 patch.object(cli, "_backend_state", return_value="unknown"), \
                 patch.object(cli.sys, "stdin", stdin), patch("builtins.input", return_value=answer) as prompt, \
                 redirect_stdout(out), redirect_stderr(err):

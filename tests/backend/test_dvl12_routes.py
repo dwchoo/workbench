@@ -9,6 +9,7 @@ import tempfile
 import threading
 from types import SimpleNamespace
 import unittest
+from unittest import mock
 from uuid import uuid4
 
 from workbench.backend import cli
@@ -92,7 +93,11 @@ class Dvl12Routes(unittest.TestCase):
                 self.assertTrue(response["ok"])
                 self.assertEqual(response["result"]["status"], "available")
             output = StringIO()
-            with redirect_stdout(output):
+            # The CLI now requires a verified backend identity; this test serves a bare UiServer, so
+            # point the verified-client seam at the test's own socket and keep the read-only path real.
+            with redirect_stdout(output), mock.patch.object(
+                    cli, "_verified_client",
+                    lambda _layout, **kwargs: UiClient(self.layout.ui_socket, **kwargs)):
                 code = cli.main(["logs", "raw", "--run", self.run_id, "--limit", "10",
                                  "--json", "--data-dir", str(self.root)])
             self.assertEqual(code, 0)

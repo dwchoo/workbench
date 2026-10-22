@@ -129,11 +129,15 @@ class NegotiationAndValidationTests(unittest.TestCase):
         self.assertEqual((paste.fields["pane"], paste.payload), (PaneId.WORKER_OMP, b"hi"))
 
     def test_every_client_type_has_a_documented_request_shape(self):
+        uid = "12345678-1234-4234-8234-123456789abc"
         extras = {"input": {"pane": "host_shell"}, "paste": {"pane": "host_shell"},
                   "resize": {"rows": 1, "cols": 1}, "focus": {"pane": "manager_omp"},
                   "restart_pane": {"pane": "worker_omp"}, "kill_pane": {"pane": "host_shell"},
                   "shutdown_confirm": {"token": "t"}, "confirm_boot": {"boot_id": "b"},
-                  "resume": {"reconciled": True}}
+                  "resume": {"reconciled": True},
+                  "important_archive_close": {"subject_kind": "task", "subject_id": uid, "confirmed": True},
+                  "important_delete_db": {"db_uuid": uid, "confirmed": True},
+                  "raw_query": {"source_kind": "run", "source_id": uid, "offset": 0, "limit": 10}}
         for kind in ClientType:
             if kind is ClientType.HELLO:
                 continue

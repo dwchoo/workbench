@@ -670,6 +670,18 @@ class RealLoopTests(unittest.TestCase):
         return subprocess.run([sys.executable, "-c", MAIN, *args], env=self.env, cwd=self.root, capture_output=True,
                               text=True, timeout=timeout, stdin=subprocess.DEVNULL)
 
+    def wait_backend_reachable(self, deadline=30.0):
+        """`start` against the stub OMP returns while the backend may not yet answer on its ui socket (slow
+        fsync hosts); poll `status --json` until it does, so the attach that follows finds a running backend."""
+        end = time.monotonic() + deadline
+        while True:
+            result = self.cli("status", "--data-dir", str(self.data), "--json")
+            if result.returncode == 0:
+                return
+            if time.monotonic() >= end:
+                self.fail(f"backend not reachable within {deadline}s: {result.stdout}{result.stderr}")
+            time.sleep(0.2)
+
     def owned(self) -> dict[int, int]:
         found = {}
         for entry in Path("/proc").iterdir():
@@ -706,6 +718,7 @@ class RealLoopTests(unittest.TestCase):
     def test_first_ctrl_d_never_reaches_the_omp_second_does(self):
         started = self.cli("start", "--data-dir", str(self.data), "--omp", str(self.omp), "--no-attach", "--timeout", "3")
         self.assertIn("starting backend", started.stdout, started.stdout + started.stderr)
+        self.wait_backend_reachable()
         ui = UiPty.__new__(UiPty)  # the UiPty helpers over a real `attach` process (not the scripted boot)
         ui.rows, ui.cols = 30, 120
         master, slave = os.openpty()

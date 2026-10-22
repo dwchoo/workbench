@@ -20,6 +20,22 @@ COMMAND_ID = "00000000-0000-4000-8000-000000000005"
 
 
 class ImportantCliUxTests(unittest.TestCase):
+    def lstat_only_for_important_path(self, error):
+        """``Path.lstat`` patch that fires only for the important-logs target.
+
+        The CLI resolves the project context first (``resolve_project_context`` calls ``is_symlink`` on other
+        paths); only the important-logs target path observation is what these tests pin.
+        """
+        real = Path.lstat
+        target = self.important_path
+
+        def lstat(path, *args, **kwargs):
+            if path == target:
+                raise error
+            return real(path, *args, **kwargs)
+
+        return patch.object(Path, "lstat", lstat)
+
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(prefix="uxcli-")
         self.addCleanup(self.temp.cleanup)
@@ -86,7 +102,7 @@ class ImportantCliUxTests(unittest.TestCase):
                     "databaseCount": None, "physicalBytes": None,
                     "unavailable": [{"dbUuid": None, "reason": "unavailable"}],
                     "complete": False}
-        with patch.object(Path, "lstat", side_effect=PermissionError("fixture")):
+        with self.lstat_only_for_important_path(PermissionError("fixture")):
             code, output, _error, _reader = self.invoke("status", response)
 
         self.assertEqual(code, 1)
@@ -99,7 +115,7 @@ class ImportantCliUxTests(unittest.TestCase):
                     "unavailable": [{"dbUuid": None, "reason": "busy"}],
                     "complete": False, "compatibility": None}
 
-        with patch.object(Path, "lstat", side_effect=AssertionError("extra path observation")):
+        with self.lstat_only_for_important_path(AssertionError("extra path observation")):
             code, output, error, _reader = self.invoke("status", response, json_output=True)
 
         self.assertEqual(code, 1)
@@ -111,7 +127,7 @@ class ImportantCliUxTests(unittest.TestCase):
                     "physicalBytes": 12, "databases": [], "unavailable": [],
                     "complete": True}
 
-        with patch.object(Path, "lstat", side_effect=AssertionError("extra path observation")):
+        with self.lstat_only_for_important_path(AssertionError("extra path observation")):
             code, output, error, _reader = self.invoke("status", response)
 
         self.assertEqual((code, error), (0, ""))

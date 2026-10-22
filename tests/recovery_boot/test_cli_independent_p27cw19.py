@@ -71,7 +71,7 @@ class Cli(unittest.TestCase):
         patches = [mock.patch.object(cli, "_running_snapshot", lambda layout: snapshot),
                    mock.patch.object(cli.sys.stdin, "isatty", lambda: tty)]
         if client is not None:
-            patches.append(mock.patch.object(cli, "UiClient", lambda *a, **k: client))
+            patches.append(mock.patch.object(cli, "_verified_client", lambda _layout, **_k: client))
         with contextlib.ExitStack() as stack:
             for patch in patches:
                 stack.enter_context(patch)

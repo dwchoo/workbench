@@ -6,6 +6,7 @@ from copy import deepcopy
 from pathlib import Path
 import select
 import socket
+import sys
 from tempfile import TemporaryDirectory
 from threading import Thread
 from types import SimpleNamespace
@@ -43,6 +44,11 @@ class RuntimePortTests(unittest.TestCase):
         self.metadata = {"source": "parent_session_readback", "parentSessionId": session, "epoch": "controlled-epoch",
             "model": {"id": "owned", "provider": "fixture", "api": "openai-completions",
                       "baseUrl": "http://127.0.0.1:1/v1", "contextWindow": 131072, "maxTokens": 8192},
+            "childSelection": {"source": "configured_worker_default", "selector": "fixture/owned:low",
+                "modelTableDigest": "0" * 64, "descriptorSource": "manager_model_registry_getAll_all",
+                "thinkingLevel": "low", "serviceTierSource": "parent_session_readback",
+                "model": {"id": "owned", "provider": "fixture", "api": "openai-completions",
+                          "baseUrl": "http://127.0.0.1:1/v1", "contextWindow": 131072, "maxTokens": 8192}},
             "thinkingLevel": "off", "serviceTierByFamily": {}, "existingContextTokens": None, "outputCap": None,
             "reasoningTokens": None, "visibleResultTokens": None, "outputLimitEnforced": None,
             "outputMeaning": "unknown", "outputLimitSource": "unavailable", "estimator": "utf8_bytes_upper_bound",
@@ -90,7 +96,9 @@ class RuntimePortTests(unittest.TestCase):
         self.assertNotEqual(value["metadata"], self.metadata)
         case = scheduler_fixtures.SchedulerTests("runTest"); case.setUp()
         self.addCleanup(lambda: self.assertTrue(case.doCleanups()))
-        case.runtime = value
+        case.runtime = {**value, "writer": {"python": sys.executable,
+                                            "moduleRoot": str(Path(__file__).resolve().parents[2] / "src"),
+                                            "dataRoot": str(case.root)}}
         case.scheduler.tick(); case.settle(); case.now = 300
         case.scheduler.tick(); outcome = case.settle()
         self.assertEqual(outcome["state"], "deferred")

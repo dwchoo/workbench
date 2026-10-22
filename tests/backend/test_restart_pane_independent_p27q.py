@@ -30,7 +30,7 @@ import time
 import unittest
 from unittest import mock
 
-from workbench.backend.launcher import LaunchPlan
+from workbench.backend.launcher import RECORDS_PROMPT, WORKER_REPORTING_PROMPT, LaunchPlan
 from workbench.backend.panes import OmpPane
 from workbench.backend.paths import DataLayout, ensure_private_dir
 from workbench.backend.service import Backend
@@ -327,7 +327,10 @@ class RestartLaunchIdentityTests(_BackendCase):
                 self.assertFalse({"--resume", "-r", "--continue", "-c", "--session"} & set(argv), argv)
                 for flag in ("--no-extensions", "--no-title", "--plan-arg"):
                     self.assertIn(flag, argv)
-                self.assertEqual("", argv[argv.index("--append-system-prompt") + 1])
+                # launcher.omp_command always appends the records prompt (worker: reporting prompt first)
+                expected_prompt = (WORKER_REPORTING_PROMPT + "\n\n" + RECORDS_PROMPT if role == "worker"
+                                   else RECORDS_PROMPT)
+                self.assertEqual(expected_prompt, argv[argv.index("--append-system-prompt") + 1])
                 self.assertEqual("/x/bridge.ts", argv[argv.index("--extension") + 1])
                 overlays = [argv[i + 1] for i, a in enumerate(argv) if a == "--config"]
                 self.assertTrue(any(p.endswith(f"omp-isolation-{role}.yml") and Path(p).is_file() for p in overlays),

@@ -658,6 +658,15 @@ def boxes(screen_lines: list[str]) -> list[tuple[int, int, int, int]]:
     return out
 
 
+def layout_drawn(ui) -> bool:
+    """True once the UI's three pane borders are all on the screen (the pane text can arrive before the host
+    pane's bottom border is drawn)."""
+    try:
+        return len(boxes(ui.screen_text().split("\n"))) == 3
+    except StopIteration:
+        return False
+
+
 def contiguous(nums: list[int]) -> bool:
     return bool(nums) and nums == list(range(nums[0], nums[0] + len(nums)))
 
@@ -1005,6 +1014,18 @@ class RealEntrypointRuntime(unittest.TestCase):
         return subprocess.run([sys.executable, "-c", MAIN, *args], env=ENV, cwd=self.root, capture_output=True,
                               text=True, timeout=timeout, stdin=subprocess.DEVNULL)
 
+    def wait_backend_reachable(self, deadline=30.0):
+        """`start` against the stub OMP returns while the backend may not yet answer on its ui socket (slow
+        fsync hosts); poll `status --json` until it does, so the attach that follows finds a running backend."""
+        end = time.monotonic() + deadline
+        while True:
+            result = self.cli("status", "--data-dir", str(self.data), "--json")
+            if result.returncode == 0:
+                return
+            if time.monotonic() >= end:
+                self.fail(f"backend not reachable within {deadline}s: {result.stdout}{result.stderr}")
+            time.sleep(0.2)
+
     def stop_backend(self):
         self.seen.update(procs_naming(self.root))
         self.cli("shutdown", "--data-dir", str(self.data), "--yes")
@@ -1049,11 +1070,13 @@ class RealEntrypointRuntime(unittest.TestCase):
     def test_direct_scroll_in_the_real_entrypoint(self):
         started = self.cli("start", "--data-dir", str(self.data), "--omp", str(self.omp), "--no-attach", "--timeout", "3")
         self.assertIn("starting backend", started.stdout)
+        self.wait_backend_reachable()
         ui = self.attach_ui()
         self.assertTrue(ui.wait_for(lambda: "STUB-OMP manager ready" in ui.screen_text()
                                     and "STUB-OMP worker ready" in ui.screen_text(), 30), ui.screen_text())
         self.seen.update(procs_naming(self.root))
         ui.drain(0.3)
+        self.assertTrue(ui.wait_for(lambda: layout_drawn(ui), 10), ui.screen_text())
         out = bytes(ui.output)
         self.assertGreater(out.rfind(b"\x1b[?1000h"), out.rfind(b"\x1b[?1000l"), "mouse tracking not enabled")
         self.assertGreater(out.rfind(b"\x1b[?1006h"), out.rfind(b"\x1b[?1006l"))

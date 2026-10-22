@@ -69,7 +69,8 @@ class RequiredArgsAndEnvTests(unittest.TestCase):
                     self.assertIn("Do not send routine progress", prompt)
                     self.assertIn("response_contract", prompt)
                 else:
-                    self.assertEqual(prompt, "", command)
+                    self.assertNotIn("Workbench worker", prompt)
+                self.assertEqual(prompt, base.expected_append_prompt(role), command)
                 self.assertEqual(command.count("--no-title"), 1, command)
                 self.assertGreater(command.index("--append-system-prompt"), command.index("--no-extensions"))
                 self.assertEqual(command.count("--extension"), 1)
@@ -157,12 +158,12 @@ class DisabledAgentsRulesTests(unittest.TestCase):
         self.write(self.user_agents, "u.md", good.format(n="user-agent"))
         self.write(self.home / ".omp" / "agent", "agents-file-not-dir.md", good.format(n="stray-agent"))
         for role in ("manager", "worker"):
-            self.assertEqual(set(self.agents(role=role)), {"near-agent", "user-agent"}, role)
+            self.assertEqual(set(self.agents(role=role)), {base.SEANCE_AGENT, "near-agent", "user-agent"}, role)
 
     def test_without_a_project_dir_the_nearest_ancestor_dir_is_read(self):
         shutil.rmtree(self.nearest)
         self.write(self.parent / ".omp" / "agents", "far.md", "---\nname: far-agent\ndescription: d\n---\n")
-        self.assertEqual(set(self.agents()), {"far-agent"})
+        self.assertEqual(set(self.agents()), {base.SEANCE_AGENT, "far-agent"})
 
     def test_frontmatter_is_read_like_yaml_not_by_a_naive_prefix_match(self):
         cases = {
@@ -179,7 +180,7 @@ class DisabledAgentsRulesTests(unittest.TestCase):
         self.write(self.nearest, "empty-description.md", "---\nname: empty-desc-agent\ndescription:\n---\n")
         self.write(self.nearest, "commented-out.md", "---\n# name: hidden-agent\nname: shown-agent\ndescription: d\n---\n")
         names = set(self.agents())
-        self.assertEqual(names, {n for _t, n in cases.values()} | {"shown-agent"}, names)
+        self.assertEqual(names, {n for _t, n in cases.values()} | {"shown-agent", base.SEANCE_AGENT}, names)
         self.assertNotIn("hidden-agent", names)
         self.assertNotIn("empty-desc-agent", names)
 
@@ -189,13 +190,14 @@ class DisabledAgentsRulesTests(unittest.TestCase):
         agents = self.agents(user_disabled_agents=["sonic", "near-agent", "user-mute", "sonic"])
         self.assertLessEqual({"sonic", "user-mute", "near-agent", "user-agent"}, set(agents))
         self.assertEqual(len(agents), len(set(agents)), "duplicates in task.disabledAgents")
-        self.assertEqual(set(agents), {"sonic", "user-mute", "near-agent", "user-agent"})
-        self.assertEqual(self.agents(), ["near-agent", "user-agent"], "no user value: only what OMP loads")
+        self.assertEqual(set(agents), {"sonic", "user-mute", "near-agent", "user-agent", base.SEANCE_AGENT})
+        self.assertEqual(self.agents(), [base.SEANCE_AGENT, "near-agent", "user-agent"],
+                         "no user value: seance (d7c1080) plus only what OMP loads")
 
     def test_a_user_value_survives_even_when_no_definition_exists(self):
         shutil.rmtree(self.nearest)
         shutil.rmtree(self.user_agents)
-        self.assertEqual(self.agents(user_disabled_agents=["sonic"]), ["sonic"])
+        self.assertEqual(self.agents(user_disabled_agents=["sonic"]), ["sonic", base.SEANCE_AGENT])
 
     def test_the_overlay_pins_the_workbench_skill_filters_against_the_users_lists(self):
         for role, patterns in (("manager", ("order-manager",)), ("worker", ("order-worker",))):
@@ -204,8 +206,9 @@ class DisabledAgentsRulesTests(unittest.TestCase):
             self.assertEqual(overlay["skills"]["includeSkills"], list(patterns))
             self.assertEqual(overlay["skills"]["ignoredSkills"], [], "the user's ignoredSkills must not hide Workbench skills")
         # CW-18: without an explicit filter each role gets exactly its own Workbench skills (C-D70 (5): the manager
-        # also workbench-recovery; p27-cd70-test-01 edit).
-        for role, own in (("manager", ["to-worker", "workbench-recovery"]), ("worker", ["to-manager"])):
+        # also workbench-recovery; p27-cd70-test-01 edit; 810cf72: and workbench-report).
+        for role, own in (("manager", ["to-worker", "workbench-recovery", "workbench-report"]),
+                          ("worker", ["to-manager"])):
             default = launcher.role_overlay(role, project_dir=self.project, home=self.home)
             self.assertEqual(default["skills"]["includeSkills"], own)
             self.assertEqual(default["skills"]["ignoredSkills"], [])
@@ -317,7 +320,7 @@ class PromptFileCheckTests(unittest.TestCase):
         self.check()
         start = next(e for e in self.h.records() if e["event"] == "start")
         argv = start["argv"]
-        self.assertEqual(argv[argv.index("--append-system-prompt") + 1], "")
+        self.assertEqual(argv[argv.index("--append-system-prompt") + 1], base.expected_append_prompt("worker"))
         self.assertEqual(argv.count("--append-system-prompt"), 1)
         self.assertIn("--no-title", argv)
 
@@ -404,7 +407,7 @@ class RealEntrypointSummaryTests(base.RealEntrypointBase):
         for role in ("manager", "worker"):
             for call in self.by_kind("pane", role) + self.by_kind("rpc", role):
                 argv = call["argv"]
-                self.assertEqual(argv[argv.index("--append-system-prompt") + 1], "", argv)
+                self.assertEqual(argv[argv.index("--append-system-prompt") + 1], base.expected_append_prompt(role), argv)
                 self.assertIn("--no-title", argv)
                 self.assertGreater(argv.index("--flag-from-cli"), argv.index("--no-title"))
         # the stub records selected env keys only; PI_AUTO_QA is not recorded, so use the process environment of a live

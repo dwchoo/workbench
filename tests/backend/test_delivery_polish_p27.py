@@ -151,7 +151,10 @@ class OutcomeMappingTests(unittest.TestCase):
                                    MessageKind.REPORT, {"kind": "done", "message": "x"})
         service.enqueue(outbound, origin="worker", listener=lambda event, _snapshot: events.append(event))
         self.assertTrue(wait_until(lambda: service.outbox_snapshot()[0]["state"] not in ("pending", "delivering")))
-        time.sleep(0.05)
+        # the listener is told the terminal state just after the snapshot changes: wait for it (bounded)
+        # instead of a fixed sleep, which is too short on a slow-fsync host
+        state = service.outbox_snapshot()[0]["state"]
+        wait_until(lambda: bool(events) and events[-1] == state, 5)
         return service.outbox_snapshot()[0], events
 
     def test_submitted_then_the_window_ended_is_delivered_with_the_outcome_pending(self):

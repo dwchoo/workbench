@@ -36,7 +36,7 @@ class StorageStatusCliTests(unittest.TestCase):
         args = ["logs", "raw-status", "--data-dir", str(self.data_dir)]
         if json_output:
             args.append("--json")
-        with patch("workbench.backend.cli.UiClient",
+        with patch("workbench.backend.cli._verified_client",
                    return_value=_FakeUiClient({"ok": True, "result": result})), \
                 redirect_stdout(output):
             code = main(args)

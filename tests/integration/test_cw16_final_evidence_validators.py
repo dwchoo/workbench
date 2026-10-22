@@ -276,7 +276,7 @@ class GateBattery:
         })
         env = {"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "PYTHONDONTWRITEBYTECODE": "1",
                "LANG": "C.UTF-8", "HOME": str(self.workdir)}
-        proc = subprocess.run([sys.executable, str(self.gate_script), "gate", "--input", str(request)],
+        proc = subprocess.run([sys.executable, str(self.gate_script), "gate", "--full", "--input", str(request)],
                               cwd=case, env=env, capture_output=True, text=True, timeout=120)
         _expect(proc.returncode in (0, 1), f"{label}: gate exit {proc.returncode}: {proc.stderr.strip()[:500]}")
         try:

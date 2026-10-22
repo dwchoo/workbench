@@ -107,6 +107,13 @@ Delta 리뷰는 changes_required였다. P2-1: lazy 색인이 이 backend의 명�
 
 Delta 재리뷰 결과: approve(P0~P2 없음). P2-1·P2-2·P3-3 해소. 새 테스트 `test_an_own_command_whose_end_record_was_lost_is_never_a_survivor`(RED `('refused', 'previous_backend_command') != ('not_found', 'unknown_command')`)와 `StopArrivingAsTheOwnerEndsTests`(RED forbidden pid 923 pin)로 고정했다. 남은 P3: `_registered` 무제한(명령당 약 100 B, 다른 명령별 상태와 같은 수명이고 상한을 두면 오분류가 되살아나므로 수용), SPEC에 `pidfd_unavailable` 미열거(7절), journal 읽기 실패 시 색인을 기억하지 않아 다음 조회에서 다시 읽음(결과는 안전), P2-2 테스트가 "신호 없음"만 단언함. 재리뷰 시 hardening 14 OK.
 
+최종 커밋(`b9742f6`) 기준 새 리뷰(이전 findings 없는 reviewer):
+
+| 리뷰 | 결과 | 요약 |
+|---|---|---|
+| Standards | approve, P1 없음 | P2: `already_exited`의 `ended_at`이 실제 종료 시각이 아닌 요청 시각, `_stage` 길이, 테스트 `/proc` helper 중복. P3 10건(대부분 9절 항목과 같음) |
+| Spec | approve, P0~P2 없음 | CS-AC-01~23 전부 구현·테스트 확인. 7절 이탈은 모두 SPEC 위임 범위 안이고 BRIEF 밖으로 사용자 동작을 넓히거나 줄이지 않음. P3: 명시적 금지 집합 미연결(7절), 이 문서의 `stop_signal` 위치 표기(수정함), 재취소 `task_closed`에 `host_commands` 없음 |
+
 ## 4. 넓은 회귀
 
 실행: `final-regression.log`(디렉터리별 `tests/<dir>` unittest, node bridge). 기준선 `53023c8`은 `backend-split/baseline`(b0·b1, 38 파일)로 비교했다.
@@ -216,11 +223,12 @@ CS-G12 재확인: `omp/18.11.1`, `OmpSchemaAcceptanceTests` 5개 통과. `omp_br
 
 | 항목 | SPEC | 구현 | 위치 |
 |---|---|---|---|
-| 마지막 신호 필드 이름 | "마지막 `signal`"(60행) | `stop_signal`. `signal`은 이미 종료 신호(`already_exited`·`exited`)를 뜻하므로 겹치지 않게 분리 | `flow_terminal.py` `STOP_MARKS = ("stopped_by", "stop_signal")`, `command_stop.py` `stop_marker`, `flow_tasks.py`의 stopped `last_result` |
+| 마지막 신호 필드 이름 | "마지막 `signal`"(60행) | `stop_signal`. `signal`은 이미 종료 신호(`already_exited`·`exited`)를 뜻하므로 겹치지 않게 분리 | `flow_terminal.py` `STOP_MARKS = ("stopped_by", "stop_signal")`, `command_stop.py` `stop_marker`, `flow_tasks.py` 실험 `complete_run` details(stopped `last_result`에는 없음. SPEC의 `last_result` 필드 목록과 일치) |
 | `pidfd_unavailable` | unknown 이유로 열거하지 않음(50행: `still_alive_after_sigkill`, `permission_denied`, `left_session_descendants`, `identity_unavailable`) | `pidfd_open` 실패(`EMFILE`·`ENOMEM`)는 신원 불일치가 아니므로 `stale`이 아닌 `unknown` + `pidfd_unavailable`, 신호 없음. 불변식 2의 "검증 실패 시 stale/unknown"과 "대상이 불명확하면 신호 없음"(C-D45) 범위 안에서 이유 코드만 추가 | `command_stop.py` `PIDFD_UNAVAILABLE`, `pin` 거절 `pidfd_unavailable:<errno 이름>` |
 | 감사 type `command_stop_repeat` | 감사 목록(`command_stop_requested` … `command_interrupt`)에 없음 | episode가 끝난 뒤 들어온 반복 요청의 횟수(`repeat_requests`)를 남기는 추가 레코드. 새 신호·타이머는 만들지 않음 | `command_stop.py`(반복 요청 처리부) |
 | 감사 type `stop_command_request` | 목록에 없음 | Manager `stop_command` 호출 자체의 기록(`stop_survivor`의 요청 기록 선례). 검열 사유(`invalid_arguments`, `environment_value`)도 같은 type에 `redacted`로 남김 | `service.py` `_stop_command` |
 | `host_commands_unavailable` | `host_commands`만 정의 | provider가 없거나 실패하면 `host_commands: []`에 `host_commands_unavailable: true`를 더해 "읽을 수 없음"이 "명령 없음"으로 보이지 않게 함(CS-08 리뷰 P2) | `flow_tasks.py` `_host_command_fields` |
+| 명시적 금지 집합 | 구조적 제외 + 명시적 금지 집합 | 구조적 제외(session, uid, 자손 조건, parent·supervisor·backend pid)는 적용된다. owner(`flow_terminal.py`, `flow_tasks.py`)가 `StopTarget.forbidden`을 연결하지 않아 명시 집합은 비어 있다. 구조적 제외만으로 OMP pane은 대상이 되지 않는다. 9절 후속 과제 | `flow_terminal.py` `_register_stop_target`, `flow_tasks.py` `_register_stop_target` |
 
 `pidfd_unavailable` 행의 코드 근거는 delta 리뷰 이후 수정을 반영한 worktree 후보에 있다(커밋 `edf38fa`에는 없음). 위 행 중 SPEC 본문을 고치지 않은 것은 계획 문서 수정 금지 때문이다.
 
@@ -261,4 +269,7 @@ CS-G12 재확인: `omp/18.11.1`, `OmpSchemaAcceptanceTests` 5개 통과. `omp_br
 | `live_command_stop`의 `_pids_running`이 `/proc` 전체에서 argv로 찾아 동시 실행 테스트의 프로세스를 셈. 테스트가 띄운 명령의 session·pid로 범위를 좁혀야 함 | 5절 |
 | journal 읽기 실패 시 이전 backend 색인을 기억하지 않음 | delta 재리뷰 P3 |
 | `_finish`에서 `forbidden()` 예외 시 빈 집합 대체(residual 보고에만 영향) | 보안 delta 리뷰 P3 |
+| `already_exited`의 `ended_at`을 실제 종료 시각으로 | 최종 Standards P2 |
+| `_stage` 분해, 테스트 `/proc` helper 공용 모듈화 | 최종 Standards P2 |
+| 재취소 `task_closed` 응답에 `host_commands` 추가 검토 | 최종 Spec P3 |
 | 0.5 s·10 s 같은 고정 시간 상한을 쓰는 테스트가 부하에서 흔들림 | 5절 |

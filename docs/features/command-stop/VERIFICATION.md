@@ -180,6 +180,34 @@ CS-G10 최종 후보 실측(단독 실행):
 
 CS-G12 재확인: `omp/18.11.1`, `OmpSchemaAcceptanceTests` 5개 통과. `omp_bridge/g3/bridge.ts` sha256 `ecde4130…0a51`, HEAD와 차이 없음.
 
+### 최종 커밋 기준 재확인 (`3f64eca`)
+
+리뷰 수정 뒤 커밋한 후보로 넓은 회귀와 보안 delta 리뷰를 다시 했다. 로그는 `runs/impl-20261021/final-head/`.
+
+| 대상 | 결과 | 시간 |
+|---|---|---|
+| `tests/terminal` | 305 OK | 733 s |
+| `tests/workflow` | 78 OK | 492 s |
+| `tests/tasks` | 43 OK | 169 s |
+| `tests/contracts` | 70, error 1 | 2 s |
+| `tests/recovery_boot` | 188, failures 4 / errors 29 | 196 s |
+| `tests/bridge` | 54, failures 3 / skipped 1 | 174 s |
+| `tests/integration` | 99, failures 2 / errors 17 / skipped 17 (`tests.gates` 별도 failures 18) | 410 s |
+| `tests/ui` | 891, failures 7 | 395 s |
+| node bridge | 217, pass 197 / fail 20 | — |
+| `tests/backend` | 216 파일(하위 디렉터리와 command-stop 파일 전부 포함), 2246 tests, 4묶음 동시 실행 | — |
+
+- backend 외 디렉터리와 node bridge의 실패 집합은 4절의 넓은 회귀와 같다. 모두 기존 실패다.
+- backend: 이전 실패 집합에서 `test_workbench_skills`(수정 확인)와 부하성 2 파일이 빠졌다.
+- 새로 보인 4건은 단독 재실행에서 모두 통과해 부하성으로 판정했다.
+  - `test_command_stop_outcomes_independent`의 0.5 s 상한 2 ms 초과
+  - `test_experiment_command_stop_independent`의 `started` 10 s 대기 초과
+  - `installation/test_setup_command_link` 3건
+  - `test_shell_kill_restart`의 fd 개수
+- 보안 delta 리뷰(마지막 리뷰 수정분만 대상): approve, P0~P2 없음. 수정이 pidfd 검증 신호 경로를 우회하지 않고, `_registered`에는 Workbench가 만든 uuid만 들어가며, 어느 쪽으로 오분류해도 신호로 이어지지 않는다. hardening 14 OK(152 s).
+  - P3: `_finish`에서 `forbidden()`이 예외를 내면 빈 집합으로 대체돼 읽기 전용 residual 보고에 host 쪽 pid가 섞일 수 있음.
+  - P3: journal 색인 빌드가 실패하면 기억하지 않음(delta 재리뷰와 같은 지적).
+
 ## 6. not_run
 
 없음. 필수 runtime인 OMP가 설치되어 있어 CS-G12를 실행했다. 단, 기대 버전 18.6.1이 아닌 실제 설치본 18.11.1로 실행했다는 점은 2절에 명시했다.
@@ -232,3 +260,5 @@ CS-G12 재확인: `omp/18.11.1`, `OmpSchemaAcceptanceTests` 5개 통과. `omp_br
 | DoS(partially): 위 id 집합, 결과 보관(`RESULTS_KEPT` 256으로 일부 완화) | Security |
 | `live_command_stop`의 `_pids_running`이 `/proc` 전체에서 argv로 찾아 동시 실행 테스트의 프로세스를 셈. 테스트가 띄운 명령의 session·pid로 범위를 좁혀야 함 | 5절 |
 | journal 읽기 실패 시 이전 backend 색인을 기억하지 않음 | delta 재리뷰 P3 |
+| `_finish`에서 `forbidden()` 예외 시 빈 집합 대체(residual 보고에만 영향) | 보안 delta 리뷰 P3 |
+| 0.5 s·10 s 같은 고정 시간 상한을 쓰는 테스트가 부하에서 흔들림 | 5절 |

@@ -381,6 +381,7 @@ class _Entry:
     target: StopTarget
     ended: threading.Event = field(default_factory=threading.Event)
     final: Mapping[str, Any] | None = None  # the owner's final result, once it observed the end
+    ended_at: str | None = None  # when the owner reported that end (the same time ``_Ended.info`` keeps)
     episode: StopEpisode | None = None
     repeats: int = 0
 
@@ -698,8 +699,10 @@ class StopEpisode:
     def _after_end(self) -> dict[str, Any]:
         final = self._entry.final or {}
         if not self.signals and final.get("status") != "unknown":  # it ended by itself before any signal left
+            # the time the owner reported the end, never the time of this request. ``_now()`` is only the fallback
+            # for an entry whose end time was not recorded (``command_ended`` always records it).
             return self._base("already_exited", exit_code=final.get("exit_code"), signal=final.get("signal"),
-                              ended_at=_now(), signals=[])
+                              ended_at=self._entry.ended_at or _now(), signals=[])
         extra = {"signals": [dict(item) for item in self.signals], "residual": self._residual()}
         if final.get("status") == "exited":
             number = final.get("signal")
@@ -832,10 +835,13 @@ class CommandStopService:
 
     def command_ended(self, command_id: str, result: Mapping[str, Any]) -> None:
         """The owner observed the command's end (its final result)."""
+        ended_at = _now()
         with self._lock:
             entry = self._live.pop(command_id, None)
+            if entry is not None:
+                entry.ended_at = ended_at
             self._ended[command_id] = _Ended(
-                {"exit_code": result.get("exit_code"), "signal": result.get("signal"), "ended_at": _now()}, entry,
+                {"exit_code": result.get("exit_code"), "signal": result.get("signal"), "ended_at": ended_at}, entry,
                 (result.get("reason") or "owner_unknown") if result.get("status") == "unknown" else None)
             while len(self._ended) > ENDED_KEPT:
                 del self._ended[next(iter(self._ended))]

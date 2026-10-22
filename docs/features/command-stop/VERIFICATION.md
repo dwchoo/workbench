@@ -112,7 +112,7 @@ Delta 재리뷰 결과: approve(P0~P2 없음). P2-1·P2-2·P3-3 해소. 새 테�
 | 리뷰 | 결과 | 요약 |
 |---|---|---|
 | Standards | approve, P1 없음 | P2: `already_exited`의 `ended_at`이 실제 종료 시각이 아닌 요청 시각, `_stage` 길이, 테스트 `/proc` helper 중복. P3 10건(대부분 9절 항목과 같음) |
-| Spec | approve, P0~P2 없음 | CS-AC-01~23 전부 구현·테스트 확인. 7절 이탈은 모두 SPEC 위임 범위 안이고 BRIEF 밖으로 사용자 동작을 넓히거나 줄이지 않음. P3: 명시적 금지 집합 미연결(7절), 이 문서의 `stop_signal` 위치 표기(수정함), 재취소 `task_closed`에 `host_commands` 없음 |
+| Spec | approve, P0~P2 없음 | CS-AC-01~23 전부 구현·테스트 확인. 7절 이탈은 모두 SPEC 위임 범위 안이고 BRIEF 밖으로 사용자 동작을 넓히거나 줄이지 않음. P3: 명시적 금지 집합 미연결(7절), 이 문서의 `stop_signal` 위치 표기(수정함), 재취소 `task_closed`에 `host_commands` 없음(이후 추가됨, 8절 8번) |
 
 ## 4. 넓은 회귀
 
@@ -243,7 +243,7 @@ CS-G12 재확인: `omp/18.11.1`, `OmpSchemaAcceptanceTests` 5개 통과. `omp_br
 5. 신원 uid 불일치는 `identity_unavailable`로 끝난다(CS-05 리뷰 P3-4).
 6. `stop`은 canonical lowercase uuid만 받는다. 빈 `command`는 쓰지 않은 것으로 본다.
 7. `command_interrupt.delivered`는 PTY에 바이트를 썼다는 뜻이다. 프로세스가 실제로 SIGINT를 받았다는 뜻이 아니다. 명령이 tty를 ISIG 끈 raw 모드로 바꿨다면 SIGINT가 되지 않는다.
-8. `task_closed` 응답에는 `host_commands`가 없다.
+8. 이미 닫힌 Task를 다시 취소한 응답(`rejected`, `task_closed`)에도 `host_commands`가 있다(provider 실패 시 `host_commands_unavailable: true`, 첫 취소와 같은 조건으로 `host_command_note`). 처음에는 "`task_closed` 응답에는 `host_commands`가 없다"로 기록했으나 2026-10-22 사용자 승인으로 바꿨다. 추가 필드만이고 `status`·`reason` 값은 그대로다. 취소가 아닌 `to_worker`의 `task_closed`는 그대로 `host_commands`가 없다.
 9. `stopped_by`는 첫 신호 시도 직전에 부착한다. `reason` 길이는 strip 전 500자로 센다. call-key가 진행 중일 때 재전송은 `duplicate_in_flight`로 수용한다(CS-05).
 10. 취소가 없는 stopped 실험은 `last_result.outcome = "stopped"`, Task `finished`다. `held_reason`은 view에 남는다(CS-09).
 11. `left_session` unknown의 main `exit_code`는 CS-03에서 고쳤다(CS-02 판정 철회 항목).
@@ -269,7 +269,7 @@ CS-G12 재확인: `omp/18.11.1`, `OmpSchemaAcceptanceTests` 5개 통과. `omp_br
 | `live_command_stop`의 `_pids_running`이 `/proc` 전체에서 argv로 찾아 동시 실행 테스트의 프로세스를 셈. 테스트가 띄운 명령의 session·pid로 범위를 좁혀야 함 | 5절 |
 | journal 읽기 실패 시 이전 backend 색인을 기억하지 않음 | delta 재리뷰 P3 |
 | `_finish`에서 `forbidden()` 예외 시 빈 집합 대체(residual 보고에만 영향) | 보안 delta 리뷰 P3 |
-| `already_exited`의 `ended_at`을 실제 종료 시각으로 | 최종 Standards P2 |
+| 처리됨(2026-10-22): `already_exited`의 `ended_at`이 실제 종료 시각(소유자가 종료를 보고한 시각). `_Entry.ended_at`에 기록 | 최종 Standards P2 |
 | `_stage` 분해, 테스트 `/proc` helper 공용 모듈화 | 최종 Standards P2 |
-| 재취소 `task_closed` 응답에 `host_commands` 추가 검토 | 최종 Spec P3 |
+| 처리됨(2026-10-22, 사용자 승인): 재취소 `task_closed` 응답에 `host_commands` 추가(8절 8번) | 최종 Spec P3 |
 | 0.5 s·10 s 같은 고정 시간 상한을 쓰는 테스트가 부하에서 흔들림 | 5절 |

@@ -137,6 +137,54 @@ class CancelShowsRunningCommandTests(CancelHostCommandFixture):
         self.assertNotIn("host_command_note", result)
 
 
+class RepeatedCancelShowsRunningCommandTests(CancelHostCommandFixture):
+    """A cancel of an already closed Task is still ``rejected: task_closed``, and now also lists the commands that
+    still run (user-approved change of 2026-10-22; additive fields only)."""
+
+    def test_a_repeated_cancel_lists_the_command_that_is_still_running(self):
+        work = self.running_work()
+        started = self.run_command("sleep 701.2")
+        self.assertEqual(started["status"], "running", started)
+        first = self.cancel(work["task_id"])
+        self.assertEqual(first["status"], "cancelled", first)
+
+        again = self.cancel(work["task_id"])
+
+        self.assertEqual((again["status"], again["reason"], again["closed_reason"]),
+                         ("rejected", "task_closed", "cancelled"), again)
+        self.assertEqual(again["host_commands"], first["host_commands"])
+        self.assertEqual([item["command_id"] for item in again["host_commands"]], [started["command_id"]])
+        self.assertNotIn("host_commands_unavailable", again)
+        self.assertEqual(again["host_command_note"], first["host_command_note"])
+        self.assertTrue(self.terminal.current()["running"], "the repeated cancel did not touch the command")
+        self.assertEqual(self.stop(started["command_id"])["status"], "exited")
+
+    def test_a_repeated_cancel_after_the_command_ended_lists_none_and_adds_no_note(self):
+        work = self.running_work()
+        started = self.run_command("sleep 701.3")
+        self.assertEqual(self.cancel(work["task_id"])["status"], "cancelled")
+        self.assertEqual(self.stop(started["command_id"])["status"], "exited")
+        again = self.cancel(work["task_id"])
+        self.assertEqual((again["status"], again["reason"]), ("rejected", "task_closed"), again)
+        self.assertEqual(again["host_commands"], [])
+        self.assertNotIn("host_command_note", again)
+
+    def test_a_repeated_cancel_of_a_task_that_never_ran_a_command_lists_none(self):
+        work = self.running_work()
+        self.assertEqual(self.cancel(work["task_id"])["status"], "cancelled")
+        again = self.cancel(work["task_id"])
+        self.assertEqual((again["status"], again["reason"]), ("rejected", "task_closed"), again)
+        self.assertEqual(again["host_commands"], [])
+        self.assertNotIn("host_command_note", again)
+
+    def test_a_follow_up_to_a_closed_task_stays_a_plain_rejection(self):
+        work = self.running_work()
+        self.assertEqual(self.cancel(work["task_id"])["status"], "cancelled")
+        follow_up = self.to_worker({"kind": "work", "message": "more", "task_id": work["task_id"]})
+        self.assertEqual((follow_up["status"], follow_up["reason"]), ("rejected", "task_closed"), follow_up)
+        self.assertNotIn("host_commands", follow_up)
+
+
 class TaskViewShowsCommandAfterCancelTests(CancelHostCommandFixture):
     def view_commands(self):
         return self.flow.task_view()["host_commands"]
@@ -242,6 +290,15 @@ class HostCommandsUnavailableTests(FlowFixture):
             raise RuntimeError("terminal gone")
         self.flow.host_commands = failing
         self.assert_unavailable(self.cancel_work())
+
+    def test_a_repeated_cancel_of_the_closed_task_says_the_list_is_unavailable_too(self):
+        task_id = self.cancel_work()
+        self.flow.host_commands = lambda task_id: 1 / 0
+        again = self.to_worker({"kind": "work", "message": "again", "cancel": True, "task_id": task_id})
+        self.assertEqual((again["status"], again["reason"]), ("rejected", "task_closed"), again)
+        self.assertEqual(again["host_commands"], [])
+        self.assertIs(again["host_commands_unavailable"], True, again)
+        self.assertNotIn("host_command_note", again)
 
     def test_a_readable_empty_list_has_no_marker(self):
         self.flow.host_commands = lambda task_id: []

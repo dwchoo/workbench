@@ -28,6 +28,7 @@ import threading
 import time
 import unittest
 import weakref
+from unittest import mock
 from uuid import uuid4
 
 from workbench.backend.command_stop import CommandStopService, StopPolicy, StopTarget
@@ -309,6 +310,44 @@ class EndedBeforeSignalAuditTests(RegistryRig):
         again = self.service.stop("worker", racing)
         self.assertIs(again["repeat"], True)
         self.assertEqual(self.without_repeat(again), original)
+
+
+class AlreadyExitedEndTimeTests(RegistryRig):
+    """``already_exited`` reports when the command ended (the owner's report), never when the stop was asked."""
+
+    END, LATER = "2026-10-01T10:00:00Z", "2026-10-01T10:05:00Z"
+
+    def setUp(self):
+        super().setUp()
+        self.clock = self.END
+        patcher = mock.patch("workbench.backend.command_stop._now", lambda: self.clock)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def end_then_let_time_pass(self, command_id):
+        self.clock = self.END
+        self.service.command_ended(command_id, self.EXITED)
+        self.clock = self.LATER
+
+    def test_a_command_that_ended_before_the_stop_reports_its_own_end_time(self):
+        command_id = self.register()
+        self.end_then_let_time_pass(command_id)
+        result = self.service.stop("worker", command_id)
+        self.assertEqual((result["status"], result["ended_at"]), ("already_exited", self.END), result)
+
+    def test_a_command_that_ends_after_the_stop_started_reports_its_own_end_time(self):
+        command_id = self.register()
+        threading.Timer(0.15, self.end_then_let_time_pass, (command_id,)).start()
+        result = self.service.stop("worker", command_id)
+        self.assertEqual((result["status"], result["ended_at"]), ("already_exited", self.END), result)
+        again = self.service.stop("worker", command_id)
+        self.assertEqual(again["ended_at"], self.END, "a repeat returns the same end time")
+
+    def test_an_id_the_service_never_registered_reports_the_time_its_owner_reported(self):
+        command_id = str(uuid4())
+        self.end_then_let_time_pass(command_id)
+        result = self.service.stop("worker", command_id)
+        self.assertEqual((result["status"], result["ended_at"]), ("already_exited", self.END), result)
 
 
 class EndedCommandIsNotKeptAliveTests(RegistryRig):

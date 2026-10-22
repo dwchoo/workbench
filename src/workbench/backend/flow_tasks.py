@@ -753,13 +753,16 @@ class TaskFlow:
     def decide(self, request: HandoffRequest, _active: ActiveTask | None) -> HandoffDecision:
         decision = self._decide(request)
         result = decision.result
-        if (request.tool == "to_worker" and request.args.get("cancel") is True
-                and isinstance(result, dict) and result.get("status") in ("cancelled", "cancel_requested")):
+        repeated = (isinstance(result, dict) and result.get("status") == "rejected"
+                    and result.get("reason") == "task_closed" and isinstance(request.args.get("task_id"), str))
+        if (request.tool == "to_worker" and request.args.get("cancel") is True and isinstance(result, dict)
+                and (result.get("status") in ("cancelled", "cancel_requested") or repeated)):
             # CS-08: asked after the flow lock is released (the terminal service never waits on it); a cancel does
             # not stop a command, so the response lists the Task's commands that still run. An experiment's
-            # ``cancel_requested`` always has its running command (its detail says how to stop it).
-            extra = self._host_command_fields(result["task_id"])
-            if extra["host_commands"] and result["status"] == "cancelled":
+            # ``cancel_requested`` always has its running command (its detail says how to stop it). A repeated
+            # cancel of an already closed Task (``rejected: task_closed``) lists them the same way (additive).
+            extra = self._host_command_fields(result.get("task_id") or request.args["task_id"])
+            if extra["host_commands"] and result["status"] != "cancel_requested":
                 extra["host_command_note"] = HOST_COMMAND_NOTE
             decision = replace(decision, result={**result, **extra})
         return decision

@@ -314,15 +314,22 @@ def _live(pid: int, ticks: int | None = None) -> bool:
     return fields is not None and fields[0] not in ("Z", "X") and (ticks is None or int(fields[19]) == ticks)
 
 
-def _pids_running(*argv: str) -> list[int]:
+def _pids_running(session: int, *argv: str) -> list[int]:
+    """Live processes of the host shell's session ``session`` whose whole cmdline is ``argv`` (read from /proc).
+
+    Scoped to the session of the shell this test's backend started (that shell is the session leader, so its pid is the
+    session id), never the whole machine: a concurrent suite's identical ``sleep 0.2`` must not be counted here.
+    """
     wanted = b"\0".join(item.encode() for item in argv) + b"\0"
     found = []
     for name in os.listdir("/proc"):
         if name.isdecimal():
             try:
                 if Path(f"/proc/{name}/cmdline").read_bytes() == wanted and _live(int(name)):
-                    found.append(int(name))
-            except OSError:
+                    fields = _stat(int(name))
+                    if fields is not None and int(fields[3]) == session:
+                        found.append(int(name))
+            except (OSError, ValueError):
                 continue
     return found
 
@@ -416,6 +423,10 @@ class StopBackendFixture(RestartWorkerFixture):
         self.wait(lambda: call.done, f"the {what} result", timeout=timeout)
         call.thread.join(1)
         return call.result
+
+    def session_pids(self, *argv: str) -> list[int]:
+        """Live processes with exactly this argv in THIS test's host shell session (foreign look-alikes never match)."""
+        return _pids_running(self.pane.pid, *argv)
 
     def settle(self, seconds: float) -> None:
         deadline = time.monotonic() + seconds
@@ -568,7 +579,7 @@ class RealTimeStopTests(StopBackendFixture):
         self.assertTrue(result["residual"]["unchecked"], "`unchecked` is always reported (never a clean claim)")
         for pid, start in ticks.items():
             self.assertFalse(_live(pid, start), f"pid {pid} is gone (read from /proc)")
-        self.assertEqual(_pids_running("sleep", "0.2"), [], "no sleeper of this command is left")
+        self.assertEqual(self.session_pids("sleep", "0.2"), [], "no sleeper of this command is left")
 
     def test_the_host_terminal_stays_occupied_and_nothing_is_typed_into_it_during_the_stop(self):
         command, log = self.script("occupied.sh", IGNORE_SIGINT_SCRIPT)
@@ -749,7 +760,7 @@ class BridgeBackendCrossCheckTests(StopBackendFixture):
 
     def frame_stop_with_null_command(self):
         started = self.begin("sleep 7401.1")
-        (pid,) = _pids_running("sleep", "7401.1")
+        (pid,) = self.session_pids("sleep", "7401.1")
         frame = self.allowed("worker", "terminal", {"command": None, "stop": started["command_id"]})
         began = time.monotonic()
         result = self.terminal(**frame)
@@ -772,7 +783,7 @@ class BridgeBackendCrossCheckTests(StopBackendFixture):
                     exit_code=result.get("exit_code"))
         self.assertEqual((result["status"], result["exit_code"], result["requested_by"]), ("exited", 130, "worker"),
                          result)
-        self.assertFalse(_pids_running("sleep", "7401.2"))
+        self.assertFalse(self.session_pids("sleep", "7401.2"))
 
     def frame_unknown_ids(self):
         from uuid import uuid4
@@ -786,7 +797,7 @@ class BridgeBackendCrossCheckTests(StopBackendFixture):
         self.assertEqual((manager["status"], manager["reason"], manager["requested_by"]),
                          ("not_found", "unknown_command", "manager"), manager)
         self.report("cross-check unknown id", worker=worker["status"], manager=manager["status"])
-        self.assertTrue(_pids_running("sleep", "7401.3"), "nothing was signalled")
+        self.assertTrue(self.session_pids("sleep", "7401.3"), "nothing was signalled")
         self.assertEqual(self.terminal(command=None)["status"], "running")
         self.assertEqual(self.terminal(command=None, stop=sleeper["command_id"])["status"], "exited")
 
@@ -799,14 +810,14 @@ class BridgeBackendCrossCheckTests(StopBackendFixture):
         self.assertTrue(any(error.startswith(("stop", "command")) for error in result["errors"]), result)
         self.assertNotIn(started["command_id"], json.dumps(result), "the value sent is not echoed")
         self.assertNotIn(b"cross-check-never-run", self.pane_bytes())
-        self.assertTrue(_pids_running("sleep", "7401.4"), "nothing was signalled")
+        self.assertTrue(self.session_pids("sleep", "7401.4"), "nothing was signalled")
         self.report("cross-check {command:'x', stop} (schema-allowed, SPEC-refused)", status=result["status"],
                     reason=result["reason"])
         self.assertEqual(self.terminal(command=None, stop=started["command_id"])["status"], "exited")
 
     def frame_manager_stop_command(self):
         started = self.begin("sleep 7401.5")
-        (pid,) = _pids_running("sleep", "7401.5")
+        (pid,) = self.session_pids("sleep", "7401.5")
         frame = self.allowed("manager", "stop_command", {"command_id": started["command_id"],
                                                          "reason": "cross-check of the committed schema"})
         result = self.manager("stop_command", frame)
@@ -830,7 +841,7 @@ class InputFrameCtrlCTests(StopBackendFixture):
 
     def running(self, sleeper: str):
         started = self.begin(f"sleep {sleeper}")
-        (pid,) = _pids_running("sleep", sleeper)
+        (pid,) = self.session_pids("sleep", sleeper)
         fields = _stat(pid)
         self.assertEqual(self.pane.state["input_owner"], "manager", "a Workbench command owns the host terminal input")
         return started, pid, int(fields[19]), int(fields[2])
@@ -937,7 +948,7 @@ class AuditCompletenessTests(StopBackendFixture):
 
     def process(self, sleeper: str) -> tuple[int, int, int, int]:
         """pid, start ticks, process group, session of the one live ``sleep <sleeper>`` (read from /proc)."""
-        (pid,) = _pids_running("sleep", sleeper)
+        (pid,) = self.session_pids("sleep", sleeper)
         self.reap_later(pid)
         fields = _stat(pid)
         return pid, int(fields[19]), int(fields[2]), int(fields[3])
@@ -959,7 +970,7 @@ class AuditCompletenessTests(StopBackendFixture):
         created = self.manager("to_worker", {"kind": "experiment", "message": "run the audit fixture", "spec": spec})
         self.assertEqual(created["status"], "dispatched", created)
         self.wait(lambda: (self.backend.flow.task_view().get("run_id") is not None
-                           and _pids_running("sleep", "7601.7")),
+                           and self.session_pids("sleep", "7601.7")),
                   "the experiment command to run (view=%s)" % json.dumps(self.backend.flow.task_view(), default=str),
                   timeout=60)
         view = self.backend.flow.task_view()

@@ -77,6 +77,7 @@ CTRL_D_CONFIRM_SECONDS = 2.0  # a second Ctrl-d to the same OMP pane within this
 SELECTION_EVICTED_NOTICE = "선택한 내용이 스크롤 기록에서 밀려나 복사하지 않았습니다"
 RESTARTABLE = PANES  # panes that Enter restarts once exited: both OMP panes (C-D62) and the host shell (C-D63)
 RESTARTING_NOTICE = "다시 시작 중…"
+RESTARTING_SHELL_MODE = "재시작 중 · 입력 받지 않음"  # status line while the host shell restarts (keys are dropped)
 EXITED_KEYS_NOTICE = "OMP 종료됨 — Enter로 새 세션을 시작합니다 (다른 입력은 전달되지 않음)"
 HOST_EXITED_KEYS_NOTICE = "host terminal 종료됨 — Enter로 새 shell을 시작합니다 (다른 입력은 전달되지 않음)"
 # host terminal force kill (C-D63): prefix k / Ctrl-k / jamo ㅏ opens a confirmation; only the k forms confirm
@@ -1960,7 +1961,7 @@ class ProductModel:
 
     def status_lines(self) -> tuple[str, str]:
         shell = self.host_info().get("shell") or {}
-        mode = shell.get("parent_mode", "unknown")
+        mode = RESTARTING_SHELL_MODE if PaneId.HOST_SHELL in self._restarting else shell.get("parent_mode", "unknown")
         automation = _plain(self._automation().get("state")) or "unknown"
         bridge = self.state.get("bridge")
         bridge = bridge if isinstance(bridge, dict) else {}

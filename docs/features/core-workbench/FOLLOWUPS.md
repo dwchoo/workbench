@@ -13,33 +13,52 @@
 2026-10-09 후속 요구사항 구체화: 개발용 fast·정밀 검증, 테스트 시간 단축, raw rotation·중요 로그는
 [BRIEF r0.8](../dev-validation-log-retention/BRIEF.md) 전체를 계획 기준으로 승인받았다. Q-01은 선행 기술 검증으로 유지하며 구현 전이다. Raw rotation 활성화는 Q-01 통과 후 별도 사용자 결정이다.
 
-## 2. 관찰 중인 간헐 실패(원인 미확정)
+## 2. 간헐 실패 조사 결과
 
-| 항목 | 관측 | 기록 |
-|---|---|---|
-| manager OMP slash menu가 Esc로 닫히지 않음 | C18 compat 첫 실행에서 6셀 중 3셀(plain/bash, plain/dash, tmux/dash)이 실패했다. 같은 argv의 r2는 6/6 통과했다. | `run/result-p27-cw16-c18-formal-01.md`, `run/check-p27-cw16-compat-c18.log` |
-| `test_product_pty` RestartExitedOmp 순서 race | 전체 실행에서 가끔 실패하고, 모듈만 다시 돌리면 통과한다. | `run/result-p27-cw16-fix-05.md`, `run/result-p27-cw16-b4b-01.md` |
-| backend `connection_cap` BlockingIOError | 단독 실행 9회 중 2회 실패했다. listen backlog와 테스트의 비차단 connect 20개가 겹치는 테스트 쪽 타이밍으로 추정한다. | `run/result-p27-cw16-rerun-01.md` |
-| `test_concurrent_kill_and_restart` | 전체 실행에서 1회 실패했고 단독 3/3 통과했다. | `run/result-p27-cw16-rerun-01.md` |
+2026-10-23 네 건 모두 조사·수정을 마쳤다. 제품 결함은 없고 전부 시험 쪽 결함이다.
+조사 로그는 세션 scratch에 있어 보존되지 않았다. 아래 수치가 기록이다.
+
+| 항목 | 관측(9월) | 기록 | 결과 |
+|---|---|---|---|
+| manager OMP slash menu가 Esc로 닫히지 않음 | C18 compat 첫 실행에서 6셀 중 3셀(plain/bash, plain/dash, tmux/dash)이 실패했다. 같은 argv의 r2는 6/6 통과했다. | `run/result-p27-cw16-c18-formal-01.md`, `run/check-p27-cw16-compat-c18.log` | 시험 판정 결함. 7e67fe2 + 97bdd24 |
+| `test_product_pty` RestartExitedOmp 순서 race | 전체 실행에서 가끔 실패하고, 모듈만 다시 돌리면 통과한다. | `run/result-p27-cw16-fix-05.md`, `run/result-p27-cw16-b4b-01.md` | 시험 결함(assertion race). 1086334 |
+| backend `connection_cap` BlockingIOError | 단독 실행 9회 중 2회 실패했다. listen backlog와 테스트의 비차단 connect 20개가 겹치는 테스트 쪽 타이밍으로 추정한다. | `run/result-p27-cw16-rerun-01.md` | 시험 결함(9월 추정이 맞음). 8307a73 |
+| `test_concurrent_kill_and_restart` | 전체 실행에서 1회 실패했고 단독 3/3 통과했다. | `run/result-p27-cw16-rerun-01.md` | 시험 결함(결과 순서 가정). 5c2f43b |
 
 (`run/` = `.workflow/core-workbench/runs/implement-p2.6-20260927/`)
 
-### 추적 TODO (계획만 기록, 미착수)
+### 조사 결과 (2026-10-23)
 
-각 조사에서는 현재 host·OMP·입력 후보와 재현 횟수/실패 수·소요시간을 남긴다.
-모듈 단독과 관련 suite 실행을 구분하고, 성공할 때까지 재실행한 결과로 최초 실패를 지우지 않는다.
-
-- [ ] FL-01 Esc/slash menu: 입력 전달 시점·메뉴 표시/닫힘 관측·다음 frame을 연결해
-  전달 누락, 실제 OMP 동작, 화면 관측 timing을 구분한다. 실패 전후 PTY/화면 근거로 원인을 좁힌다.
-- [ ] FL-02 RestartExitedOmp 순서: spawn·role·session identity와 test의 순서 가정을 비교한다.
-  role별 identity를 기준으로 기대 동작을 확인하고 실제 중복/잘못된 재시작과 assertion race를 구분한다.
-- [ ] FL-03 connection_cap: 비차단 connect의 errno·완료 여부·accept 수·backlog 상황을 기록한다.
-  OS connect 진행 상태와 제품의 연결 상한 위반을 구분한다. sleep 증가로만 덮지 않는다.
-- [ ] FL-04 concurrent kill/restart: pid/start-ticks·lock·종료/재시작 순서를 기록한다.
-  소유한 process만 대상으로 재현하고 이중 backend·남은 process·잘못된 종료 여부를 확인한다.
-
-완료 기준: 원인과 제품/시험/환경 분류, 최소 재현 또는 재현되지 않은 조건·한계,
-필요 시 회귀 시험 방향을 제시한다. 수정이 수행되면 독립 검증 근거를 별도로 남긴다.
+- [x] FL-01 Esc/slash menu — **시험 판정 결함**, 수정 7e67fe2(2026-10-16) + 회귀 시험 97bdd24.
+  - 원인: OMP 시작 화면의 무작위 Tip(`... see /hotkeys for your exit key`)을 옛 판정식
+    (`"/hot" not in text or "hotkeys" not in text`)이 열린 메뉴로 오인했다. 메뉴는 실제로 닫혔고 Esc도 전달됐다.
+    DVL13 2026-10-15 plain/dash OMP 18.8.6 실패 화면의 raw tail을 pyte로 재생해 확인했다.
+  - 수정: 판정을 메뉴 행 기준으로 바꿨다(7e67fe2). 97bdd24는 실제 Tip 문구와 캡처한 raw tail로
+    옛 판정은 속고 현재 판정은 닫힘으로 보는 것을 고정한다.
+  - 검증: 현재 코드 재현 alone 35회(plain/bash 10, plain/dash 10, tmux/dash 10, tmux/bash 5)
+    + CPU hog 24개 10회 → 0 실패. Esc 후 메뉴가 사라지기까지 plain 144~408ms, tmux 629~769ms(escape-time 500ms).
+  - 한계: 1코어 고정+hog 6에서는 8회 중 6회 실패했으나 Esc 단계 전 timeout(과부하 환경)이라 별개다.
+    9월 3/6 실패는 화면 미보존·OMP 18.8.0이라 같은 원인이라는 것은 정황 추정이다.
+- [x] FL-02 RestartExitedOmp 순서 — **시험 결함(assertion race)**, 수정 1086334.
+  - 원인: fake OMP 기록은 프로세스 시작 순서인데 시험은 첫 줄이 manager라고 가정했다.
+    제품은 항상 manager를 먼저 fork한다(`service.py:563`). tmpfs(10-21 efeb755 도입)에서 fork 간격이
+    약 3ms로 줄어 기동 편차에 순서가 뒤집혔다. `/tmp` 디스크에서는 fsync로 45~116ms라 가려졌다.
+  - 수정: manager 기록을 role로 고른다. manager 기록 지연 변형 시험을 추가했고 수정 전 결정적 RED였다.
+  - 검증: 수정 전 재현 tmpfs 단독 4/100, hog 24에서 26/100, 디스크 0/40.
+    수정 후 tmpfs 단독 0/100, 부하 0/50.
+- [x] FL-03 connection_cap — **시험 결함**, 수정 8307a73. 제품 상한(16) 위반 없음.
+  - 원인: 시험이 연결 20개를 accept를 기다리지 않고 연달아 열었다. CPU 경합으로 backend 루프가
+    몇 ms accept하지 못하면 AF_UNIX listen backlog(`listen(8)`, 대기열 9)가 차서 10번째 connect가 EAGAIN이 났다.
+  - 수정: 연결마다 hello 응답을 읽고 다음 연결을 연다. 정확히 14 welcome 후 6 reject를 단언한다.
+  - 검증: 수정 전 tmpfs 단독 3/40(load 3 이상일 때), stressor 8개 20/30.
+    수정 후 단독 40/40, 부하 30/30. 상한 15/17·reject 비활성 변형은 모두 검출한다.
+- [x] FL-04 concurrent kill/restart — **시험 결함**, 수정 5c2f43b. 제품은 계약대로 동작.
+  - 원인: 제품은 `_shell_lock`을 비차단으로 잡고 다른 쪽이 잡고 있으면 Held(재시도)로 답한다.
+    시험은 kill이 항상 이긴다고 가정했다. 부하에서 restart가 먼저 잡으면(거절 경로가 lock 안에서 /proc을 읽음)
+    둘 다 Held가 된다. 이중 backend·잘못된 종료·잔여 process는 없었다.
+  - 수정: 합법적 결과 3가지(kill ok+restart held / kill held+restart PANE_ALIVE / kill 후 restart 직렬 ok)를
+    허용하고, lock을 잡은 결정적 시험을 추가했다.
+  - 검증: 수정 전 단독 0/40, stressor 8개 1/100. 수정 후 단독 40/40, 부하 100/100, 순서 강제 러너 통과.
 
 ## 3. 실제 모델로 다시 볼 것(확신용)
 

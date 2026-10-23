@@ -154,6 +154,8 @@ REPORT_SETTLE_WAIT = 2.0
 # smoke-04 G2: after the host command exited, the staged analysis waits for an idle worker at most this long
 # (a periodic review turn whose outcome is unknown must not keep the Task waiting forever; a pause does not count).
 ANALYSIS_IDLE_LIMIT = 180.0
+# the follow's judging helpers return this when the follow is over (their caller just returns)
+_FOLLOW_ENDED = object()
 # C-D68 (3): every accepted to_worker result says who does the work.
 def _analysis_fields(level: object) -> dict[str, str]:
     """The TASK message lines for the analysis level (C-D69 (2)); null is ``summary``."""
@@ -1704,14 +1706,8 @@ class TaskFlow:
                 self._set_held(task.task_id, "host_terminal_busy")  # changed since the idle check
                 self._wait(self._poll_interval)
                 return
-            with self._lock:
-                if task.pending_start != job or task.status == "closed":  # cancelled meanwhile
-                    return
-                task.pending_start, task.held_reason = None, None
-                task.set_status("starting")
-                task.runs_started += 1
-                self._following = task.task_id
-                self._save_task(task)
+            if not self._begin_start(task, job):  # cancelled meanwhile
+                return
             refused: list[str] = []
             # stuck-review-02 P3-2: set right before the start types wb-handoff (like the terminal's handoff_typed)
             watch = _HandoffWatch(port)
@@ -1732,42 +1728,11 @@ class TaskFlow:
                                      artifacts_root=ports.artifacts_root, automation=ports.automation(), shell=port,
                                      **options)
             except Exception as exc:
-                watch.close()
-                if watch.handoff_typed:  # its wb-handoff may reach the control wait late (input still held)
-                    self._await_settled(port)
-                # stuck-review-02 P3-1: the start's hold stays until the shell is given back (as in terminal)
-                self._give_back(port, ports, after_failure=watch.handoff_typed, hold_reason=HOLD_REASON)
-                port.release_hold()
-                # F2: a rejected worker response keeps the bridge's machine reason, not just "ValueError".
-                error = (refused[0] if refused else exc.reason if isinstance(exc, WorkerResponseRejected)
-                         else type(exc).__name__)
-                tell_manager = False
-                with self._lock:
-                    task.last_result = {"outcome": "start_failed", "error": error,
-                                        "detail": str(exc)[:SUMMARY_MAX]}
-                    self._record({"type": "run_start_failed", "task_id": task.task_id, "revision": revision,
-                                  "error": error})
-                    if task.cancel_requested is not None:
-                        self._finish_cancel(task, None)
-                    else:
-                        task.held_reason = f"start_failed:{error}"
-                        task.set_status("finished")  # the worker is free; the manager may re-run or move on
-                        self._save_task(task)
-                        self._notice(kind="run_start_failed", task_id=task.task_id, error=error)
-                        tell_manager = True
-                if tell_manager:
-                    self._tell_manager_start_failed(task.task_id, revision, error, str(exc),
-                                                    getattr(exc, "workbench_start_failure", None))
+                self._fail_run_start(task, port, ports, watch, refused, exc, revision)
                 return
             watch.close()
             port.release_hold()
-            with self._lock:
-                task.run_id, task.run_revision, task.task_message_id = run.run_id, revision, run.task_message_id
-                if task.status != "cancelling":
-                    task.set_status("running")
-                self._save_task(task)
-                self._record({"type": "run_started", "task_id": task.task_id, "run_id": run.run_id,
-                              "revision": revision})
+            self._record_run_started(task, run, revision)
             try:
                 self._register_stop_target(task, run, port)
                 self._notify_lifecycle("experiment_started", run)
@@ -1779,6 +1744,55 @@ class TaskFlow:
             if run is not None:
                 run.close()
             repository.close()
+
+    def _begin_start(self, task: FlowTask, job: Mapping[str, Any]) -> bool:
+        with self._lock:
+            if task.pending_start != job or task.status == "closed":  # cancelled meanwhile
+                return False
+            task.pending_start, task.held_reason = None, None
+            task.set_status("starting")
+            task.runs_started += 1
+            self._following = task.task_id
+            self._save_task(task)
+        return True
+
+    def _fail_run_start(self, task: FlowTask, port: Any, ports: ExperimentPorts, watch: Any,
+                        refused: list[str], exc: Exception, revision: int) -> None:
+        watch.close()
+        if watch.handoff_typed:  # its wb-handoff may reach the control wait late (input still held)
+            self._await_settled(port)
+        # stuck-review-02 P3-1: the start's hold stays until the shell is given back (as in terminal)
+        self._give_back(port, ports, after_failure=watch.handoff_typed, hold_reason=HOLD_REASON)
+        port.release_hold()
+        # F2: a rejected worker response keeps the bridge's machine reason, not just "ValueError".
+        error = (refused[0] if refused else exc.reason if isinstance(exc, WorkerResponseRejected)
+                 else type(exc).__name__)
+        tell_manager = False
+        with self._lock:
+            task.last_result = {"outcome": "start_failed", "error": error,
+                                "detail": str(exc)[:SUMMARY_MAX]}
+            self._record({"type": "run_start_failed", "task_id": task.task_id, "revision": revision,
+                          "error": error})
+            if task.cancel_requested is not None:
+                self._finish_cancel(task, None)
+            else:
+                task.held_reason = f"start_failed:{error}"
+                task.set_status("finished")  # the worker is free; the manager may re-run or move on
+                self._save_task(task)
+                self._notice(kind="run_start_failed", task_id=task.task_id, error=error)
+                tell_manager = True
+        if tell_manager:
+            self._tell_manager_start_failed(task.task_id, revision, error, str(exc),
+                                            getattr(exc, "workbench_start_failure", None))
+
+    def _record_run_started(self, task: FlowTask, run: Any, revision: int) -> None:
+        with self._lock:
+            task.run_id, task.run_revision, task.task_message_id = run.run_id, revision, run.task_message_id
+            if task.status != "cancelling":
+                task.set_status("running")
+            self._save_task(task)
+            self._record({"type": "run_started", "task_id": task.task_id, "run_id": run.run_id,
+                          "revision": revision})
 
     def _tell_manager_start_failed(self, task_id: str, revision: int, error: str, detail: str,
                                    failure: Any) -> None:
@@ -2042,21 +2056,9 @@ class TaskFlow:
 
     def _follow(self, task: FlowTask, run: Any, port: Any) -> None:
         # A cancel never interrupts the host command; only the manager's stop_command can (CS-09). Collect until it exits.
-        while True:
-            record = run.collect(timeout=self._collect_slice, paused=self._paused_now())
-            if record.get("shell_state") == "exited" and record.get("exit_confirmed"):
-                self._report_stop_end(run.run_id, self._exit_result(record))  # before the give-back and any judgment
-                break
-            if record.get("shell_state") == "unknown":
-                self._set_held(task.task_id, "shell_unknown")  # CW-10: no judgment, no replay
-                self._report_stop_end(run.run_id, {"status": "unknown", "reason": "host shell state unknown"})
-                with self._lock:
-                    if task.status != "cancelling":
-                        task.set_status("held")
-                        self._save_task(task)
-                return
-            if not self._wait(0):
-                return
+        record = self._collect_until_exit(task, run)
+        if record is None:
+            return
         self._give_back(port, self._experiment)
         if self._cancelled(task):
             self._end_cancelled_run(task, run)
@@ -2070,83 +2072,118 @@ class TaskFlow:
             self._save_task(task)
         accepted: list[bool] = []
         on_report = self._report_hook(task, run, accepted)
+        try:
+            record = self._judge_when_ready(task, run, accepted, on_report)
+            if record is _FOLLOW_ENDED:
+                return
+            record = self._retry_deferred_report(task, run, record, accepted, on_report)
+            if record is _FOLLOW_ENDED:
+                return
+        finally:
+            with self._lock:
+                self._report_inflight.discard(task.task_id)
+                self._wake.notify_all()
+        self._finish_reported_run(task, run, record, accepted)
+
+    def _collect_until_exit(self, task: FlowTask, run: Any) -> dict[str, Any] | None:
+        """Collect until the host command exited; ``None`` when the follow ends before that."""
+        while True:
+            record = run.collect(timeout=self._collect_slice, paused=self._paused_now())
+            if record.get("shell_state") == "exited" and record.get("exit_confirmed"):
+                self._report_stop_end(run.run_id, self._exit_result(record))  # before the give-back and any judgment
+                return record
+            if record.get("shell_state") == "unknown":
+                self._set_held(task.task_id, "shell_unknown")  # CW-10: no judgment, no replay
+                self._report_stop_end(run.run_id, {"status": "unknown", "reason": "host shell state unknown"})
+                with self._lock:
+                    if task.status != "cancelling":
+                        task.set_status("held")
+                        self._save_task(task)
+                return
+            if not self._wait(0):
+                return
+
+    def _judge_when_ready(self, task: FlowTask, run: Any, accepted: list[bool],
+                          on_report: Callable) -> Any:
+        """Judge when not paused and the worker can take the staged analysis; ``_FOLLOW_ENDED`` ends the follow."""
         # G2: the worker has been busy (not idle for the analysis) since then; fix-05 P3a: one continuous busy
         # period, so an idle observation starts a new one. ``deferred_since``: analysis deliveries deferred
         # while the worker looked idle in between (no busy observation), which must not wait forever either.
         busy_since: float | None = None
         deferred_since: float | None = None
-        try:
-            while True:  # judge only when not paused and the worker can take the staged analysis
-                if not self._wait(0):
-                    return
-                if self._cancelled(task):
-                    self._end_cancelled_run(task, run)
-                    return
-                if self._paused_now():
-                    busy_since = deferred_since = None
-                    self._set_held(task.task_id, "paused")
-                    self._wait(self._poll_interval)
-                    continue
-                hold = self._held_now(ActorRole.WORKER)
-                if hold is not None:  # CW-19: the staged analysis is automatic model work for the worker
-                    busy_since = deferred_since = None
-                    self._set_held(task.task_id, hold)
-                    self._wait(self._poll_interval)
-                    continue
-                if self._omp_idle(ActorRole.WORKER) is not True:
-                    deferred_since = None
-                    busy_since = time.monotonic() if busy_since is None else busy_since
-                    if time.monotonic() - busy_since >= self._analysis_idle_limit:
+        while True:  # judge only when not paused and the worker can take the staged analysis
+            if not self._wait(0):
+                return _FOLLOW_ENDED
+            if self._cancelled(task):
+                self._end_cancelled_run(task, run)
+                return _FOLLOW_ENDED
+            if self._paused_now():
+                busy_since = deferred_since = None
+                self._set_held(task.task_id, "paused")
+                self._wait(self._poll_interval)
+                continue
+            hold = self._held_now(ActorRole.WORKER)
+            if hold is not None:  # CW-19: the staged analysis is automatic model work for the worker
+                busy_since = deferred_since = None
+                self._set_held(task.task_id, hold)
+                self._wait(self._poll_interval)
+                continue
+            if self._omp_idle(ActorRole.WORKER) is not True:
+                deferred_since = None
+                busy_since = time.monotonic() if busy_since is None else busy_since
+                if time.monotonic() - busy_since >= self._analysis_idle_limit:
+                    self._judgment_unavailable(task, run, self._worker_not_idle_reason(), None)
+                    return _FOLLOW_ENDED
+                self._set_held(task.task_id, "worker_busy")
+                self._wait(self._poll_interval)
+                continue
+            busy_since = None  # P3a: the worker is idle; a later busy observation starts a new period
+            self._set_held(task.task_id, None)
+            try:
+                judge = run.judge
+                if accepts_keyword(judge, "report_hold"):  # P3-2: the report waits out a manager hold
+                    judge = functools.partial(judge, report_hold=lambda: self._held_now(ActorRole.MANAGER))
+                return self._call_with_report_hook(judge, on_report)
+            except WorkerJudgmentUnavailable as exc:  # G2: rejected or unknown worker analysis
+                self._judgment_unavailable(task, run, exc.reason, exc.host_evidence or None)
+                return _FOLLOW_ENDED
+            except WorkflowHeld as exc:
+                request = run._record.get("worker_analysis_request") or {}
+                if request.get("status") == MailboxStatus.DEFERRED.value:
+                    now = time.monotonic()
+                    busy_since = now if busy_since is None else busy_since
+                    deferred_since = now if deferred_since is None else deferred_since
+                    if now - min(busy_since, deferred_since) >= self._analysis_idle_limit:
                         self._judgment_unavailable(task, run, self._worker_not_idle_reason(), None)
-                        return
-                    self._set_held(task.task_id, "worker_busy")
+                        return _FOLLOW_ENDED
+                    self._set_held(task.task_id, "worker_busy")  # nothing was sent: ask again
                     self._wait(self._poll_interval)
                     continue
-                busy_since = None  # P3a: the worker is idle; a later busy observation starts a new period
-                self._set_held(task.task_id, None)
-                try:
-                    judge = run.judge
-                    if accepts_keyword(judge, "report_hold"):  # P3-2: the report waits out a manager hold
-                        judge = functools.partial(judge, report_hold=lambda: self._held_now(ActorRole.MANAGER))
-                    record = self._call_with_report_hook(judge, on_report)
-                    break
-                except WorkerJudgmentUnavailable as exc:  # G2: rejected or unknown worker analysis
-                    self._judgment_unavailable(task, run, exc.reason, exc.host_evidence or None)
-                    return
-                except WorkflowHeld as exc:
-                    request = run._record.get("worker_analysis_request") or {}
-                    if request.get("status") == MailboxStatus.DEFERRED.value:
-                        now = time.monotonic()
-                        busy_since = now if busy_since is None else busy_since
-                        deferred_since = now if deferred_since is None else deferred_since
-                        if now - min(busy_since, deferred_since) >= self._analysis_idle_limit:
-                            self._judgment_unavailable(task, run, self._worker_not_idle_reason(), None)
-                            return
-                        self._set_held(task.task_id, "worker_busy")  # nothing was sent: ask again
-                        self._wait(self._poll_interval)
-                        continue
-                    self._finish_run(task, run, "held", {"reason": str(exc)[:SUMMARY_MAX]})
-                    return
-                except Exception as exc:  # fix-05 P2: any other failure of the analysis stage or the report
-                    self._run_error(task, run, accepted, on_report, exc)
-                    return
-            while not accepted and (record.get("report") or {}).get("status") == MailboxStatus.DEFERRED.value:
-                manager_hold = self._held_now(ActorRole.MANAGER)
-                self._set_held(task.task_id, manager_hold or "manager_busy")
-                if not self._wait(self._poll_interval):
-                    return
-                if (self._paused_now() or self._held_now(ActorRole.MANAGER) is not None
-                        or self._omp_idle(ActorRole.MANAGER) is not True):
-                    continue
-                try:
-                    record = self._call_with_report_hook(run.retry_report, on_report)
-                except Exception as exc:  # fix-05: the report may have reached the manager; never resent
-                    self._run_error(task, run, accepted, on_report, exc)
-                    return
-        finally:
-            with self._lock:
-                self._report_inflight.discard(task.task_id)
-                self._wake.notify_all()
+                self._finish_run(task, run, "held", {"reason": str(exc)[:SUMMARY_MAX]})
+                return _FOLLOW_ENDED
+            except Exception as exc:  # fix-05 P2: any other failure of the analysis stage or the report
+                self._run_error(task, run, accepted, on_report, exc)
+                return _FOLLOW_ENDED
+
+    def _retry_deferred_report(self, task: FlowTask, run: Any, record: Any, accepted: list[bool],
+                               on_report: Callable) -> Any:
+        """Resend a manager-deferred report once the manager can take it; ``_FOLLOW_ENDED`` ends the follow."""
+        while not accepted and (record.get("report") or {}).get("status") == MailboxStatus.DEFERRED.value:
+            manager_hold = self._held_now(ActorRole.MANAGER)
+            self._set_held(task.task_id, manager_hold or "manager_busy")
+            if not self._wait(self._poll_interval):
+                return _FOLLOW_ENDED
+            if (self._paused_now() or self._held_now(ActorRole.MANAGER) is not None
+                    or self._omp_idle(ActorRole.MANAGER) is not True):
+                continue
+            try:
+                record = self._call_with_report_hook(run.retry_report, on_report)
+            except Exception as exc:  # fix-05: the report may have reached the manager; never resent
+                self._run_error(task, run, accepted, on_report, exc)
+                return _FOLLOW_ENDED
+        return record
+
+    def _finish_reported_run(self, task: FlowTask, run: Any, record: Any, accepted: list[bool]) -> None:
         report = (record.get("report") or {}).get("status")
         if accepted:  # the worker was freed at the acceptance (R1); only the final receipt is recorded
             with self._lock:

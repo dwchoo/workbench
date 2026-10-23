@@ -1259,13 +1259,9 @@ class TerminalService:
                 reason = f"host shell state unknown ({type(exc).__name__})"
             if reason is not None:
                 return self._refuse(key_dict, "host_terminal_busy", str(reason), BUSY_DETAIL)
-            if self._paused_now():  # a pause between the first check and the hold: nothing typed
-                port.release_hold(HOLD_REASON)
-                return self._refuse(key_dict, "paused", "paused", PAUSED_DETAIL)
-            hold = self._held_now()
-            if hold is not None:
-                port.release_hold(HOLD_REASON)
-                return self._refuse(key_dict, "held", hold, HELD_DETAIL)
+            refusal = self._recheck_after_hold(port, key_dict)
+            if refusal is not None:
+                return refusal
             command = self._new_command(text, key_dict, task, spill=spill)
             if isinstance(command, dict):
                 port.release_hold(HOLD_REASON)
@@ -1273,48 +1269,13 @@ class TerminalService:
             try:
                 self._dispatch(port, command, key)
             except _CallAbandoned:
-                # the hold stays until the shell is back: the user cannot type a handoff of their own meanwhile
-                requested = self._give_back(port, after_failure=True)
-                returned = self._returned_state(port, retake=command.handoff_typed and not requested)
-                port.release_hold(HOLD_REASON)
-                _drop_unrun_files(command)  # nothing ran: no empty log (review-02 P3 (2)) or unused script is left
-                self._journal({"type": "terminal_aborted", "key": key_dict, "stage": "before_submit",
-                               "command_id": command.command_id, "returned_to_user": _is_returned(returned)})
-                return {"status": "aborted", "reason": "call_abandoned", "command_id": command.command_id,
-                        "detail": ABORTED_DETAIL}
+                return self._abort_before_submit(port, command, key_dict)
             except Exception as exc:
-                error = f"{type(exc).__name__}: {exc}"[:300]
-                requested = self._give_back(port, after_failure=True)
-                # C-D69 (5)(a): the result says what the shell really is now (never a claimed return); a control
-                # wait that comes late (wb-handoff typed, claim failed) is still given back, under the hold
-                returned = self._returned_state(port, retake=command.handoff_typed and not requested)
-                port.release_hold(HOLD_REASON)
-                # p27-polish-01: no output is ever collected for it, so its log stays empty and unreferenced; a
-                # script the shell may already have been handed (the submit itself failed) stays
-                _drop_unrun_files(command, keep_script=command.submitting)
-                self._journal({"type": "terminal_start_failed", "command_id": command.command_id,
-                               "key": key_dict, "reason": error, "cwd": command.cwd or None,
-                               "returned_to_user": _is_returned(returned), "host_terminal": returned})
-                detail = (START_FAILED_DETAIL if _is_returned(returned) else START_FAILED_UNCONFIRMED.format(
-                    owner=returned["input_owner"] or "unknown", mode=returned["parent_mode"] or "unknown"))
-                return {"status": "start_failed", "reason": error, "command_id": command.command_id,
-                        "detail": detail, "host_terminal": returned}
+                return self._fail_start(port, command, key_dict, exc)
             port.release_hold(HOLD_REASON)
             with self._lock:
                 self._current = command
-            # registered before the start is journaled: a stop asked for an id the journal already shows started
-            # must find it here, or it would read as a previous backend's command
-            self._register_stop_target(command, port)
-            started = {"type": "terminal_started", "command_id": command.command_id, "key": key_dict,
-                       "task_id": task, "command": command.command, "cwd": command.cwd,
-                       "started_at": command.started_at, "log_path": str(command.log_path),
-                       **command.raw_fields()}
-            if command.script_path is not None:
-                started["script_path"] = str(command.script_path)
-            confirmed = self._journal(started, bound_revision=command.summary_revision)
-            command.summary_started = confirmed is not None
-            self._configure_summary_capture(command)
-            self._remember_run(command)
+            self._record_started(port, command, key_dict, task)
             thread = threading.Thread(target=self._follow, args=(port, command), daemon=True,
                                       name=f"terminal-{command.command_id[:8]}")
             self._threads = [item for item in self._threads if item.is_alive()] + [thread]
@@ -1329,6 +1290,61 @@ class TerminalService:
                     except Exception:
                         pass
                 self._gate.release("terminal")
+
+    def _recheck_after_hold(self, port: Any, key_dict: dict[str, Any]) -> dict[str, Any] | None:
+        if self._paused_now():  # a pause between the first check and the hold: nothing typed
+            port.release_hold(HOLD_REASON)
+            return self._refuse(key_dict, "paused", "paused", PAUSED_DETAIL)
+        hold = self._held_now()
+        if hold is not None:
+            port.release_hold(HOLD_REASON)
+            return self._refuse(key_dict, "held", hold, HELD_DETAIL)
+        return None
+
+    def _abort_before_submit(self, port: Any, command: _Command, key_dict: dict[str, Any]) -> dict[str, Any]:
+        # the hold stays until the shell is back: the user cannot type a handoff of their own meanwhile
+        requested = self._give_back(port, after_failure=True)
+        returned = self._returned_state(port, retake=command.handoff_typed and not requested)
+        port.release_hold(HOLD_REASON)
+        _drop_unrun_files(command)  # nothing ran: no empty log (review-02 P3 (2)) or unused script is left
+        self._journal({"type": "terminal_aborted", "key": key_dict, "stage": "before_submit",
+                       "command_id": command.command_id, "returned_to_user": _is_returned(returned)})
+        return {"status": "aborted", "reason": "call_abandoned", "command_id": command.command_id,
+                "detail": ABORTED_DETAIL}
+
+    def _fail_start(self, port: Any, command: _Command, key_dict: dict[str, Any],
+                    exc: Exception) -> dict[str, Any]:
+        error = f"{type(exc).__name__}: {exc}"[:300]
+        requested = self._give_back(port, after_failure=True)
+        # C-D69 (5)(a): the result says what the shell really is now (never a claimed return); a control
+        # wait that comes late (wb-handoff typed, claim failed) is still given back, under the hold
+        returned = self._returned_state(port, retake=command.handoff_typed and not requested)
+        port.release_hold(HOLD_REASON)
+        # p27-polish-01: no output is ever collected for it, so its log stays empty and unreferenced; a
+        # script the shell may already have been handed (the submit itself failed) stays
+        _drop_unrun_files(command, keep_script=command.submitting)
+        self._journal({"type": "terminal_start_failed", "command_id": command.command_id,
+                       "key": key_dict, "reason": error, "cwd": command.cwd or None,
+                       "returned_to_user": _is_returned(returned), "host_terminal": returned})
+        detail = (START_FAILED_DETAIL if _is_returned(returned) else START_FAILED_UNCONFIRMED.format(
+            owner=returned["input_owner"] or "unknown", mode=returned["parent_mode"] or "unknown"))
+        return {"status": "start_failed", "reason": error, "command_id": command.command_id,
+                "detail": detail, "host_terminal": returned}
+
+    def _record_started(self, port: Any, command: _Command, key_dict: dict[str, Any], task: str | None) -> None:
+        # registered before the start is journaled: a stop asked for an id the journal already shows started
+        # must find it here, or it would read as a previous backend's command
+        self._register_stop_target(command, port)
+        started = {"type": "terminal_started", "command_id": command.command_id, "key": key_dict,
+                   "task_id": task, "command": command.command, "cwd": command.cwd,
+                   "started_at": command.started_at, "log_path": str(command.log_path),
+                   **command.raw_fields()}
+        if command.script_path is not None:
+            started["script_path"] = str(command.script_path)
+        confirmed = self._journal(started, bound_revision=command.summary_revision)
+        command.summary_started = confirmed is not None
+        self._configure_summary_capture(command)
+        self._remember_run(command)
 
     def _new_command(self, text: str, key_dict: dict[str, Any], task: str | None, *,
                      spill: bool = False) -> _Command | dict[str, Any]:

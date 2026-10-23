@@ -109,11 +109,20 @@ class DrawnLineWidthTests(unittest.TestCase):
                 self.assertLessEqual(wcswidth(shown), limit)
                 self.assertTrue(all(ch.isprintable() for ch in shown), repr(shown))
 
-    def test_zero_width_format_characters_and_combining_marks_are_kept(self):
+    def test_zwj_and_combining_marks_are_kept_but_bidi_and_invisible_controls_are_blanked(self):
         win = FakeWindow(5, 80)
-        text = "👨\u200d👩 e\u0301 \ufe0f"
-        view._put(win, 0, 0, text, 20)
-        self.assertEqual(text, win.drawn[0][2])
+        kept = "👨\u200d👩 e\u0301 \ufe0f"  # ZWJ emoji, combining acute, variation selector
+        view._put(win, 0, 0, kept, 20)
+        self.assertEqual(kept, win.drawn[0][2])
+        for cp in (0x202A, 0x202B, 0x202C, 0x202D, 0x202E, 0x2066, 0x2067, 0x2068, 0x2069,
+                   0x200B, 0x200E, 0x200F, 0x061C, 0x2060, 0xFEFF):
+            with self.subTest(codepoint=f"U+{cp:04X}"):
+                win.drawn.clear()
+                view._put(win, 0, 0, f"a{chr(cp)}b", 10)
+                self.assertEqual("a b", win.drawn[0][2])
+        win.drawn.clear()
+        view._put(win, 0, 0, "ab\u202ecd", 3)
+        self.assertEqual("ab ", win.drawn[0][2])
 
     def test_a_status_line_with_control_characters_reaches_curses_as_spaces(self):
         model, _ = make()

@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import curses
-import unicodedata
 
 from wcwidth import wcswidth
 
@@ -20,10 +19,14 @@ def pane_rects(rows: int, cols: int, layout: Layout = DEFAULT_LAYOUT,
     return pane_boxes(rows, cols, layout, zoom)
 
 
+_KEPT_FORMAT = frozenset("\u200d")  # ZWJ: keeps emoji sequences in titles and notices intact
+
+
 def _drawable(ch: str) -> str:
-    """``ch`` itself, or a space for a control or other non-printable character (never raw to curses).
-    Format characters (ZWJ, variation selectors) and combining marks stay: zero-width, but part of the glyph."""
-    return ch if ch.isprintable() or unicodedata.category(ch) == "Cf" else " "
+    """``ch`` itself, or a space for anything non-printable: control characters and invisible or bidi format
+    characters (U+202E, U+2066, U+200B ...) that untrusted text could use to spoof what is shown. Printable
+    combining marks and variation selectors stay; of the format characters only ZWJ is kept."""
+    return ch if ch.isprintable() or ch in _KEPT_FORMAT else " "
 
 
 def _clip_cells(text: str, width: int) -> str:

@@ -17,14 +17,23 @@ from workbench.backend.command_stop import CommandStopService, StopTarget
 COMMAND_ID = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}")
 
 
-def register_target(stop: CommandStopService | None, target: StopTarget) -> None:
-    """Offer ``target`` to the stop service; on a fault the command simply stays unstoppable."""
+def register_target(stop: CommandStopService | None, target: StopTarget) -> bool:
+    """Offer ``target`` to the stop service; True when it is registered.
+
+    On a fault the command keeps running and stays unstoppable, and the service is told (one audit record, the
+    error's type name only) so that a later stop is answered, not guessed. No service: nothing is registered.
+    """
     if stop is None:
-        return
+        return False
     try:
         stop.register(target)
-    except Exception:
-        pass
+        return True
+    except Exception as exc:
+        try:
+            stop.registration_failed(target, type(exc).__name__)
+        except Exception:
+            pass
+        return False
 
 
 def report_ended(stop: CommandStopService | None, command_id: str, result: Mapping[str, Any]) -> None:

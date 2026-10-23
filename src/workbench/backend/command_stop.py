@@ -323,6 +323,8 @@ STAGES = (("sigint", signal.SIGINT, "sigint_wait"),
 # ended command ids remembered (``already_exited``, and their episode for repeats and corrections); an id older
 # than the last ENDED_KEPT ended commands is ``not_found`` again, whatever happened to it
 ENDED_KEPT = 256
+# commands whose registration failed remembered (for the ``registration_failed`` answer to a stop); older: ``not_found``
+FAILED_KEPT = 256
 _STALE_REASONS = frozenset({STALE, IDENTITY_CHANGED, DIFFERENT_UID, "identity_mismatch"})
 # who may stop a command of which owner (CS-D02): the Manager stops the Worker's and its own commands, the Worker
 # only its own. The owner is a role, never an OMP session, a Task or the requester's earlier calls.
@@ -333,6 +335,10 @@ PREVIOUS_BACKEND_DETAIL = (
     "This command was started by a previous Workbench backend, whose processes Workbench cannot verify as the "
     "command. It is not stopped from here: use workbench_status to see what that backend left running and "
     "stop_survivor for a proven survivor.")
+
+REGISTRATION_FAILED_DETAIL = (
+    "Workbench could not register this command for stopping, so it cannot be stopped from here. The command was not "
+    "signalled and is still followed to its end; it can be ended in the host terminal itself.")
 
 
 def _now() -> str:
@@ -819,6 +825,7 @@ class CommandStopService:
         # every id ever registered here: never a previous backend's, also once ``_ended`` forgot it (and the journal
         # may still show it started and not ended, e.g. its end record was lost). One id string per command run.
         self._registered: set[str] = set()
+        self._failed: dict[str, str] = {}  # command id -> owner role of a command whose registration failed
         self.closed = threading.Event()
 
     def record(self, record: dict[str, Any]) -> None:
@@ -836,6 +843,20 @@ class CommandStopService:
         with self._lock:
             self._live[target.command_id] = _Entry(target)
             self._registered.add(target.command_id)
+
+    def registration_failed(self, target: StopTarget, error: str) -> None:
+        """The owner could not register ``target``: one audit record (``error`` is an exception type name only).
+
+        The id is remembered (bounded) so that a stop of it is answered ``refused: registration_failed``; it is also
+        this backend's own id, never a previous backend's."""
+        with self._lock:
+            self._registered.add(target.command_id)
+            self._failed.pop(target.command_id, None)
+            self._failed[target.command_id] = target.owner
+            while len(self._failed) > FAILED_KEPT:
+                del self._failed[next(iter(self._failed))]
+        self.record({"type": "command_stop_register_failed", "command_id": target.command_id, "kind": target.kind,
+                     "owner": target.owner, "error": error})
 
     def command_ended(self, command_id: str, result: Mapping[str, Any]) -> None:
         """The owner observed the command's end (its final result)."""
@@ -920,6 +941,12 @@ class CommandStopService:
             return self._refused(base, "refused", "not_owner")
         if episode is None:
             if gone is None:
+                with self._lock:
+                    failed_owner = self._failed.get(command_id)
+                if failed_owner is not None:  # the owner could not register it: running, not stoppable, nothing sent
+                    if failed_owner not in STOPPABLE_BY.get(requested_by, ()):
+                        return self._refused(base, "refused", "not_owner")
+                    return self._refused(base, "refused", "registration_failed", detail=REGISTRATION_FAILED_DETAIL)
                 if self._from_previous_backend(command_id):
                     return self._refused(base, "refused", "previous_backend_command", detail=PREVIOUS_BACKEND_DETAIL)
                 return self._refused(base, "not_found", "unknown_command")

@@ -1952,15 +1952,19 @@ class TaskFlow:
         run_id`` (owner ``manager``)."""
         task_id, raw_log = task.task_id, getattr(run, "raw_log", None)
         with self._lock:
-            self._stop_registered.add(run.run_id)
+            # listed whatever the registration does: the command is really running and its Task's user must see it
             self._host_runs[task_id] = {"command_id": run.run_id, "kind": "experiment", "owner": "manager",
                                         "started_at": _now(), "log_path": None if raw_log is None else str(raw_log)}
+        registered = register_target(self.command_stop, StopTarget(
+            run.run_id, "manager", "experiment", task_id, identity=self._stop_identity(run, port),
+            forbidden=lambda: self.stop_forbidden(), task_status=lambda: self.task_status(task_id)))
+        if not registered:
+            return  # followed and judged as usual, not stoppable; its end is not reported to a service that lacks it
+        with self._lock:
+            self._stop_registered.add(run.run_id)
             request_id = getattr(run, "shell_request_id", None)  # a duck-typed run (tests inject fakes)
             if isinstance(request_id, str):
                 self._run_requests[request_id] = run.run_id
-        register_target(self.command_stop, StopTarget(
-            run.run_id, "manager", "experiment", task_id, identity=self._stop_identity(run, port),
-            forbidden=lambda: self.stop_forbidden(), task_status=lambda: self.task_status(task_id)))
 
     @staticmethod
     def _stop_identity(run: Any, port: Any) -> Callable[[], dict[str, Any] | None]:
@@ -1989,12 +1993,12 @@ class TaskFlow:
     def _report_stop_end(self, run_id: str, result: Mapping[str, Any]) -> None:
         """The runner observed the command's end (once per run); a stop service fault never changes the flow."""
         with self._lock:
-            if run_id not in self._stop_registered:
-                return
-            self._stop_registered.discard(run_id)
             for task_id, item in list(self._host_runs.items()):
                 if item["command_id"] == run_id:
                     del self._host_runs[task_id]
+            if run_id not in self._stop_registered:
+                return  # never registered (or already reported): the service is told nothing about this id
+            self._stop_registered.discard(run_id)
             for request_id, owner in list(self._run_requests.items()):
                 if owner == run_id:
                     del self._run_requests[request_id]

@@ -409,6 +409,7 @@ class _Command:
     notice_logged: set = field(default_factory=set)
 
     port: Any = None  # the HostShellPort that runs it: the stop service reads the run identity through it
+    stop_registered: bool = False  # the stop service holds it: only then is its end reported there
 
     summary_revision: int | None = None
     summary_started: bool = False
@@ -1600,7 +1601,7 @@ class TerminalService:
         """Offer the command to the stop service: its run identity is read through the port that runs it."""
         command.port = port
         task_id = command.task_id  # a plain value: what an ended command's target keeps must not hold the command
-        register_target(self._command_stop, StopTarget(
+        command.stop_registered = register_target(self._command_stop, StopTarget(
             command.command_id, "worker", "terminal", task_id, identity=lambda: command.port.run_identity(),
             forbidden=self._stop_forbidden, task_status=lambda: self._status_of(task_id)))
 
@@ -1610,7 +1611,12 @@ class TerminalService:
         return self._task_status(task_id)
 
     def _report_stop_end(self, command: _Command) -> None:
-        """The owner observed the end: the stop service learns the final result (after every completion step)."""
+        """The owner observed the end: the stop service learns the final result (after every completion step).
+
+        Only for a command it holds: one whose registration failed is answered ``registration_failed`` by the service,
+        and a report would make it read as ended."""
+        if not command.stop_registered:
+            return
         report_ended(self._command_stop, command.command_id,
                      command.result or {"status": "unknown", "reason": "owner_follow_failed"})
 

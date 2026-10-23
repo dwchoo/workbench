@@ -179,9 +179,10 @@ class _AnalysisWait:
 
 def _worker_analysis_request(run: Any) -> Any:
     """The staged analysis request of ``run``'s record (a duck-typed run in tests only has its ``_record``)."""
-    if hasattr(run, "worker_analysis_request"):
+    try:
         return run.worker_analysis_request
-    return run._record.get("worker_analysis_request")
+    except AttributeError:
+        return run._record.get("worker_analysis_request")
 # C-D68 (3): every accepted to_worker result says who does the work.
 def _analysis_fields(level: object) -> dict[str, str]:
     """The TASK message lines for the analysis level (C-D69 (2)); null is ``summary``."""

@@ -301,10 +301,9 @@ class WorkflowRun:
         return value if isinstance(value, str) else None
 
     @property
-    def worker_analysis_request(self) -> dict[str, Any] | None:
-        """The staged worker analysis request of this run (None until one was recorded)."""
-        value = self._record.get("worker_analysis_request")
-        return value if isinstance(value, dict) else None
+    def worker_analysis_request(self) -> Any:
+        """The raw stored worker analysis request (None until one was recorded; a dict when set by this class)."""
+        return self._record.get("worker_analysis_request")
 
     def record_snapshot(self) -> dict[str, Any]:
         """A copy of the run record as last written (what ``collect`` returns)."""

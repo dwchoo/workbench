@@ -13,7 +13,7 @@ network), real Bash host shell. Expectations derived from the contracts:
   bytes, nothing duplicated or reordered, anything withheld is accounted for
   with a visible reason).
 - P2-3 / C-AC-32: what the backend hands to OMP (observed at exec through a
-  transparent ``/bin/bash`` wrapper, since the OMP runtime itself ignores SIGPIPE
+  transparent ``bash`` wrapper, since the OMP runtime itself ignores SIGPIPE
   and SIGXFSZ after start), the host shell and its user-launched children have
   default SIGPIPE/SIGXFSZ; ``yes | head -1`` in the host shell ends promptly
   with the writer killed by SIGPIPE.
@@ -250,7 +250,7 @@ class LiveSignalDispositionAndShutdownTests(LiveCase):
         # handed over by the backend would stay invisible) and blocks every signal around vfork (a
         # `cat /proc/$$/status` child read SigBlk=0xfffffffe7ffbfeff under CPU load). bash keeps the
         # mask and `mapfile` reads /proc/$$/status in-process, so no fork window exists.
-        wrapper.write_text("#!/bin/bash\n"
+        wrapper.write_text("#!/usr/bin/env bash\n"
                            "mapfile -t _status < /proc/$$/status\n"
                            f"printf '%s\\n' \"${{_status[@]}}\" > {shlex.quote(str(probe_dir))}/status-$$ 2>/dev/null\n"
                            f"exec {shlex.quote(OMP)} \"$@\"\n")
@@ -286,12 +286,12 @@ class LiveSignalDispositionAndShutdownTests(LiveCase):
         self.assertEqual(shell_masks["SigBlk"] & PIPE_XFSZ, 0, shell_masks)
         d = live.project
         self.wait_mode(client, "manual_prompt")
-        # The child samples its OWN state (/proc/self, read by the exec'd cat). Sampling the
-        # sh parent via /proc/$$ races dash's vfork window: dash blocks every signal around
-        # vfork, so a loaded host can read SigBlk=0xfffffffe7ffbfeff from a healthy parent.
-        # cat is forked and exec'd directly by the host shell, with no `sh -c` wrapper: dash
-        # clears an inherited signal mask at startup, which would hide a SigBlk handed down by
-        # the host shell. SigIgn would survive a wrapper, but SigBlk would not.
+        # The child samples its OWN state: /proc/self is read by a directly exec'd cat. An earlier
+        # version read the parent through `sh -c '... /proc/$$ ...'`, which raced dash's vfork
+        # window (dash blocks every signal around vfork, so a loaded host could show
+        # SigBlk=0xfffffffe7ffbfeff for a healthy parent). A `sh -c` wrapper would also hide a
+        # SigBlk handed down by the host shell, because dash clears an inherited signal mask at
+        # startup (SigIgn would survive, SigBlk would not). So cat is forked and exec'd directly.
         self.run_line(client, f"cat /proc/self/status > {d}/child.status; "
                               f"s=$(date +%s%N); (yes; echo $? > {d}/pipe) | head -1 > /dev/null; "
                               f"e=$(date +%s%N); echo $(( (e - s) / 1000000 )) > {d}/ms; "

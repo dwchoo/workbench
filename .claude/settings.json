@@ -1,12 +1,28 @@
 {
+  "env": {
+    "CLAUDE_CODE_SUBAGENT_MODEL": "sonnet"
+  },
+  "permissions": {
+    "deny": [
+      "Bash(docker:*)",
+      "Bash(docker-compose:*)",
+      "Bash(git push:*)"
+    ]
+    
+  },
   "hooks": {
     "SessionStart": [
       {
         "hooks": [
           {
             "type": "command",
-            "command": "{ echo '# Project rules from AGENTS.md (auto-injected, Codex workflow section excluded)'; sed '/<!-- BEGIN CODEX_ORCHESTRATION_WORKFLOW -->/,$d' \"$CLAUDE_PROJECT_DIR/AGENTS.md\"; } 2>/dev/null || true",
+            "command": "{ echo '# Project rules from AGENTS.md (auto-injected; Codex workflow and graphify sections excluded, graphify rules live in CLAUDE.md)'; awk '/<!-- BEGIN CODEX_ORCHESTRATION_WORKFLOW -->/{skip=1} /<!-- END CODEX_ORCHESTRATION_WORKFLOW -->/{skip=0; next} /^## /{g=($0==\"## graphify\")} !skip && !g' \"$CLAUDE_PROJECT_DIR/AGENTS.md\"; } 2>/dev/null || true",
             "timeout": 10
+          },
+          {
+            "type": "command",
+            "command": "{ for p in .workflow graphify-out .worktrees; do d=\"$CLAUDE_PROJECT_DIR/$p\"; [ -d \"$d\" ] || continue; k=$(du -sk \"$d\" 2>/dev/null | cut -f1); [ \"${k:-0}\" -ge 8388608 ] && echo \"WARNING: $p is $((k/1048576))GiB (warn 8GiB, .workflow limit 10GiB). Follow CLAUDE.md '.workflow 용량 관리' before starting new isolated runs.\"; done; } 2>/dev/null || true",
+            "timeout": 20
           }
         ]
       }

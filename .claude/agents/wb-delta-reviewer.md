@@ -1,6 +1,6 @@
 ---
 name: wb-delta-reviewer
-description: Workbench read-only delta reviewer for small, bounded corrections after a full frozen review. Not for the final full review of a ticket (use the Opus reviewer path for that).
+description: Workbench read-only delta reviewer for small, bounded corrections after a full frozen review. For the final full review of a ticket, Root gives the whole frozen candidate instead of a delta.
 model: sonnet
 effort: high
 tools: Read, Glob, Grep, Bash

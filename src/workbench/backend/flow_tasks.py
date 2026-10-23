@@ -1955,7 +1955,7 @@ class TaskFlow:
             self._stop_registered.add(run.run_id)
             self._host_runs[task_id] = {"command_id": run.run_id, "kind": "experiment", "owner": "manager",
                                         "started_at": _now(), "log_path": None if raw_log is None else str(raw_log)}
-            request_id = run.shell_request_id
+            request_id = getattr(run, "shell_request_id", None)  # a duck-typed run (tests inject fakes)
             if isinstance(request_id, str):
                 self._run_requests[request_id] = run.run_id
         register_target(self.command_stop, StopTarget(
@@ -1970,7 +1970,7 @@ class TaskFlow:
         of any other request (a later run in the same shell) is never offered."""
         def identity() -> dict[str, Any] | None:
             found = port.run_identity()
-            wanted = run.shell_request_id
+            wanted = getattr(run, "shell_request_id", None)
             if not found or wanted is None or found.get("request_id") != wanted:
                 return None
             return {**found, "request_id": run.run_id}

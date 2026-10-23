@@ -27,18 +27,19 @@ BRIEF "범위와 비목표"를 따른다. 대상은 Workbench가 `command_id`로
 ### 식별자와 소유권
 
 - `command_id`: Worker `terminal` 명령은 기존 `command_id`(uuid4, `workflow/terminal/<id>.log`). Manager 실험의 host 명령은 `run_id`를 `command_id`로 쓴다(별도 id를 만들지 않는다). Manager는 `workbench_status`, 취소 응답, `/task`의 `host_commands`에서 id를 얻고, Worker는 `terminal` 결과·`terminal_check`/`terminal_done` 통지·`commands_run`(이번에 `command_id` 추가)에서 얻는다.
+- command_id 형식: Worker `terminal` stop과 Manager `stop_command`가 같은 엄격한 canonical 소문자 uuid 패턴 하나(`command_stop_owner.py`의 `COMMAND_ID`, 브리지 `UUID_PATTERN`과 같음: 버전 `[1-8]`, variant `[89ab]`)를 쓴다. 패턴 밖 값은 `invalid_arguments`로 거절하고 값은 응답에 싣지 않는다.
 - 소유자는 역할이다: `terminal` 명령 = `worker`, 실험 명령 = `manager`. OMP 인스턴스·session은 소유권에 쓰지 않는다(CS-D08).
 - 요청자: `worker`, `manager`, 그리고 Ctrl+C의 `user`. 그 밖의 요청자는 없다.
 
 ### Worker: `terminal` 도구의 `stop` 인자
 
-- 입력 형태 `{command: string|null, stop?: string|null}`. `stop`은 `command_id`다. 비어 있거나 null이면 쓰지 않은 것으로 본다(strict schema 관례: 빈 문자열도 "미사용"). `stop`과 문자열 `command`를 함께 주면 `invalid_arguments`(필드 이름만, 값은 싣지 않음), 아무 일도 하지 않는다. `command: null, stop: null`은 기존 상태 조회, 기존 `command`만 있는 호출은 그대로다.
+- 입력 형태 `{command: string|null, stop?: string|null}`. `stop`은 `command_id`다(아래 형식 규칙). 비어 있거나 null이면 쓰지 않은 것으로 본다(strict schema 관례: 빈 문자열도 "미사용"). `stop`과 문자열 `command`를 함께 주면 `invalid_arguments`(필드 이름만, 값은 싣지 않음), 아무 일도 하지 않는다. `command: null, stop: null`은 기존 상태 조회, 기존 `command`만 있는 호출은 그대로다.
 - stop 호출은 새 명령 실행이 아니다. `terminal_command_running`·`host_terminal_busy`·`paused`·`held`·`not_in_task_commands` 검사를 거치지 않고, host terminal에 아무것도 입력하지 않는다. stop 호출은 `_calls`/waiter에 등록되지 않아 명령의 `terminal_done` 통지를 소모하지 않는다(통지는 별도로 한 번 전달, CS-AC-03).
 - 대기: 호출은 episode(아래)가 끝날 때까지 기다리며 상한 `CALL_WAIT=25 s`(식별 최대 3 s + 단계 20 s + 여유 2 s). 상한이 지나면 `status: "stopping"`과 진행 상태를 반환하고 episode는 계속된다(정상 경로에서는 일어나지 않음). 브리지 쪽 결과 timeout은 `STOP_RESULT_TIMEOUT_MS=45_000`이다. 이는 C-D68 (9)의 120 s 대기 안에 든다.
 
 ### Manager: `stop_command` 도구
 
-- 입력 `{command_id: string(uuid), reason: string(1..500)}`, strict(둘 다 required). Manager 전용이며 Worker가 호출하면 `tool_not_allowed_for_role`. `reason`은 환경 변수 값 검사(`environment_value_findings`)를 거치고 감사 기록에 남는다(`stop_survivor` 선례). 수락 즉시가 아니라 `terminal` stop과 같은 최종 결과를 반환한다(`CALL_WAIT` 동일, 브리지 timeout 45 s). 같은 tool call key의 재전송은 캐시된 결과를 돌려준다.
+- 입력 `{command_id: string(uuid), reason: string(1..500)}`(`command_id` 형식은 아래 "command_id 형식"), strict(둘 다 required). Manager 전용이며 Worker가 호출하면 `tool_not_allowed_for_role`. `reason`은 환경 변수 값 검사(`environment_value_findings`)를 거치고 감사 기록에 남는다(`stop_survivor` 선례). 수락 즉시가 아니라 `terminal` stop과 같은 최종 결과를 반환한다(`CALL_WAIT` 동일, 브리지 timeout 45 s). 같은 tool call key의 재전송은 캐시된 결과를 돌려준다.
 - 사용자 건별 승인은 없다(CS-D06). 이 결정은 Workbench가 신원을 검증한 추적 명령에만 적용된다. 그 밖의 대상은 `stop_survivor`·C-AC-34를 따른다(CS-AC-13).
 
 ### 결과 계약(Worker·Manager 공통)
@@ -48,11 +49,11 @@ BRIEF "범위와 비목표"를 따른다. 대상은 Workbench가 `command_id`로
 | status | 의미 | 신호 |
 |---|---|---|
 | `exited` | 종료 확인됨. `exit_code`, `signal`(번호, 기존 필드 형식), `signal_name`(예 `SIGINT`), `signals`(보낸 신호와 시각·대상), `residual`(잔존 확인) | 보냄 |
-| `unknown` | 종료 미확인. `reason`(`still_alive_after_sigkill`, `permission_denied`, `left_session_descendants`, `identity_unavailable`, 또는 소유자가 선언한 unknown 이유). `signals`, `residual` 포함 | 보냈을 수 있음 |
+| `unknown` | 종료 미확인. `reason`(`still_alive_after_sigkill`, `permission_denied`, `left_session_descendants`, `identity_unavailable`, `pidfd_unavailable`(`pidfd_open` 실패: EMFILE·ENOMEM 등은 신원 불일치가 아니므로 `stale`이 아니며 신호 없음), 또는 소유자가 선언한 unknown 이유). `signals`, `residual` 포함 | 보냈을 수 있음 |
 | `already_exited` | 이미 끝난 command_id. 마지막 종료 상태(`exit_code`, `signal`, `ended_at`) | 안 보냄 |
 | `not_found` | 모르는 command_id(`reason: unknown_command`) | 안 보냄 |
 | `stale` | PID 재사용·시작 시각 불일치 등 신원 검증 실패(`reason: identity_mismatch` 등) | 안 보냄 |
-| `refused` | `reason`: `not_owner`(다른 owner의 명령), `previous_backend_command`(이전 backend 시작분, `stop_survivor`로 안내), `backend_shutdown` | 안 보냄 |
+| `refused` | `reason`: `not_owner`(다른 owner의 명령), `previous_backend_command`(이전 backend 시작분, `stop_survivor`로 안내), `backend_shutdown`, `registration_failed`(owner의 StopTarget 등록이 실패한 명령: 명령은 계속 실행되고 평소대로 추적·판정되지만 중지 대상이 아님. `not_owner` 판정이 먼저) | 안 보냄 |
 | `stopping` | 호출 대기 상한 초과 시에만. 진행 중 episode 요약 | — |
 
 - 같은 command_id의 반복 요청은 같은 episode에 합류하거나(진행 중) 원래의 최종 결과를 돌려준다(끝난 뒤). 결과에 `repeat: true`가 붙고 신호·타이머를 새로 만들지 않는다. 정정된 결과에는 `corrected: true`와 `history`(정정 전 `unknown`과 이유)가 있다.
@@ -80,7 +81,7 @@ BRIEF "범위와 비목표"를 따른다. 대상은 Workbench가 `command_id`로
 ### 추적 범위와 잔존 확인(CS-D15) — 기술 보완
 
 - 신원 기준(`RunIdentity`): control wait 중인 host shell parent, supervisor(subreaper), command child의 `pid`+`start_ticks`, `child_group`(= child pid), `session`(= parent pid), `uid`, `boot_id`. 출처는 `lifecycle` 관측(`SUPERVISOR`, `CHILD_PREPARED`, `EXEC_READY`)과 adapter가 기록한 start ticks이며 `PersistentShell.run_identity()`가 읽기 전용으로 제공한다.
-- `tracked`(신호 대상): supervisor의 모든 후손(`/proc/*/stat` ppid 전수 조사; 기존 `_descendant_pids`의 `task/<tid>/children`은 비-main thread가 fork한 자식을 놓치므로 쓰지 않는다) 중 `session == host shell pid`인 것, 그리고 `process group == child_group`이고 같은 session인 것(supervisor가 이미 사라진 뒤의 재부모화 포함). 같은 uid, 살아 있음(Z/X 아님)이어야 한다. supervisor·host shell parent·backend·OMP pane pid는 어떤 경우에도 대상이 아니다(구조적으로 제외 + 명시적 금지 집합).
+- `tracked`(신호 대상): supervisor의 모든 후손(`/proc/*/stat` ppid 전수 조사; 기존 `_descendant_pids`의 `task/<tid>/children`은 비-main thread가 fork한 자식을 놓치므로 쓰지 않는다) 중 `session == host shell pid`인 것, 그리고 `process group == child_group`이고 같은 session인 것(supervisor가 이미 사라진 뒤의 재부모화 포함). 같은 uid, 살아 있음(Z/X 아님)이어야 한다. supervisor·host shell parent·backend·OMP pane pid는 어떤 경우에도 대상이 아니다(구조적으로 제외 + 명시적 금지 집합). 금지 집합은 service가 주입한 provider가 돌려주는 OMP pane pid이며 두 owner 모두 호출 시점에 평가한다. 종료 시 provider가 실패하면 마지막으로 성공한 집합(없으면 빈 집합)을 잔존 점검에 쓴다.
 - `left_session`(보고만): supervisor 후손이지만 다른 session으로 옮긴(setsid) 프로세스. 신호를 보내지 않고 `residual.left_session`에 보고한다. C-D63의 host shell kill도 같은 선례로 setsid 프로세스를 대상에서 뺀다.
 - 그 밖은 확인하지 않는다(`unchecked`).
 - supervisor는 subreaper이고 후손이 남으면 lifetime이 `active`로 남아 소유자가 `exited`를 관측하지 못한다. 따라서 `exited`는 "main 종료 + tracked 후손 전부 종료 + 소유자의 lifetime ended 관측"일 때만 쓴다. tracked가 비었는데 `left_session` 후손만 남아 lifetime이 끝나지 않으면 신호를 더 보낼 수 없으므로 20 s를 채우지 않고 `unknown`(`left_session_descendants`, main의 `exit_code`/`signal`은 관측값으로 함께 보고)로 끝낸다. 후손이 나중에 끝나 소유자가 종료를 관측하면 CS-AC-23 정정으로 `exited`가 된다.
@@ -88,7 +89,7 @@ BRIEF "범위와 비목표"를 따른다. 대상은 Workbench가 `command_id`로
 ### 신원·신호 불변식
 
 1. 신호는 host terminal 입력을 거치지 않는다. 백엔드 프로세스가 `os.pidfd_open` + `signal.pidfd_send_signal`로 보낸다(`killpg`/`kill(pid)` 금지: PID 재사용에 안전하지 않음).
-2. 대상은 `pid`+`start_ticks`+`uid`+`boot_id`를 `/proc`에서 읽은 뒤 pidfd를 열고 다시 읽어 같음을 확인한(`panes._pin_member` 선례) 프로세스뿐이다. 매 단계 직전 tracked를 다시 조사하고, 신호 직전 각 pin의 start ticks·생존·uid를 다시 확인한다. 검증 중 바뀌면 그 대상은 건너뛰고 기록하며, 모든 대상이 검증 실패면 `stale`(시작 전) 또는 `unknown`(진행 중)이다.
+2. 대상은 `pid`+`start_ticks`+`uid`+`boot_id`(scan이 session을 기록했으면 session도: scan 시점 session이 pin·검증·신호 직전에 같아야 하며 달라지면 `stale`)를 `/proc`에서 읽은 뒤 pidfd를 열고 다시 읽어 같음을 확인한(`panes._pin_member` 선례) 프로세스뿐이다. 매 단계 직전 tracked를 다시 조사하고, 신호 직전 각 pin의 start ticks·생존·uid를 다시 확인한다. 검증 중 바뀌면 그 대상은 건너뛰고 기록하며, 모든 대상이 검증 실패면 `stale`(시작 전) 또는 `unknown`(진행 중)이다.
 3. argv·command 문자열·comm은 대상 판정이나 감사 기록에 쓰지 않는다.
 4. 같은 command_id에 episode는 하나다. `exited`·`stale`·`unknown`·미등록 id에는 새 신호를 보내지 않는다.
 5. 정지(T) 상태인 tracked 구성원에는 SIGINT/SIGTERM 뒤 SIGCONT를 보낸다(기록은 보조 신호로 표시).
@@ -123,6 +124,9 @@ BRIEF "범위와 비목표"를 따른다. 대상은 Workbench가 `command_id`로
 
 기존 handoff journal(`workflow/handoffs.jsonl`, `HandoffService.record`)에 additive 레코드 type을 쓴다(환경 변수 값·auth·argv·comm·/proc cmdline 없음):
 
+- `command_stop_register_failed`: `type, command_id, kind, owner, error(예외 type 이름만), at`. owner의 StopTarget 등록이 실패하면 조용히 넘기지 않고 남긴다. 명령은 계속 추적되나 중지는 불가(`refused: registration_failed`).
+- `command_stop_repeat`: `command_id, requested_by, repeat_requests`. episode가 끝난 뒤 들어온 반복 요청의 횟수만 남기며 새 신호·타이머는 없다.
+- `stop_command_request`: Manager `stop_command` 호출 자체의 기록(`stop_survivor` 요청 기록 선례). `key, command_id, reason`; 검열된 요청은 `redacted`(`invalid_arguments`, `environment_value`)로 남긴다.
 - `command_stop_requested`: `command_id, requested_by, kind, owner, task_id, task_status, reason(Manager 입력, 검열 후), at`
 - `command_stop_refused`: `command_id, requested_by, status, reason, at` (not_found/refused/stale 포함)
 - `command_stop_target`: `command_id, pid, start_ticks, process_group, session, uid, boot_id, supervisor{pid,start_ticks}, tracked[{pid,start_ticks}], left_session[...]`

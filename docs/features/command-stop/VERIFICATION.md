@@ -233,7 +233,7 @@ CS-G12 재확인: `omp/18.11.1`, `OmpSchemaAcceptanceTests` 5개 통과. `omp_br
 | 감사 type `command_stop_register_failed` | 감사 목록에 없음 | 등록 예외를 조용히 넘기지 않고 남기는 기록. 사용자 결정(2026-10-23): 추적은 계속하고 기록하며 중지는 불가(135ce17, cd42a92) | `command_stop_owner.py`, `flow_terminal.py`, `flow_tasks.py` |
 | command_id 패턴 | canonical lowercase uuid(8절 6번) | 엄격한 패턴(버전 `[1-8]`, variant `[89ab]`)을 `command_stop_owner.py`의 `COMMAND_ID` 하나로 모으고 owner·`flow_recovery.py`가 같이 쓴다. Manager `stop_command`에도 같은 패턴이 적용되어, 전에 임의의 nibble을 받던 `flow_recovery.py`가 이제 거절한다(96eca26) | `command_stop_owner.py`, `flow_recovery.py` |
 
-`pidfd_unavailable` 행의 코드 근거는 delta 리뷰 이후 수정을 반영한 worktree 후보에 있다(커밋 `edf38fa`에는 없음). 위 행 중 SPEC 본문을 고치지 않은 것은 계획 문서 수정 금지 때문이다. SPEC 본문 정정은 사용자 확인 대기 중이다(이 표가 정본).
+`pidfd_unavailable` 행의 코드 근거는 delta 리뷰 이후 수정을 반영한 worktree 후보에 있다(커밋 `edf38fa`에는 없음). 위 행 중 SPEC 본문을 고치지 않은 것은 계획 문서 수정 금지 때문이다. 이 행들은 2026-10-23 사용자 확인으로 SPEC 본문에 반영했다(행은 이력으로 남김).
 
 ## 8. 판정 목록
 

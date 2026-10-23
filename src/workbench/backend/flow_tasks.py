@@ -435,6 +435,8 @@ class TaskFlow:
         # CS-09: the stop registry (set by the backend). A running experiment's host command is registered in it as
         # ``command_id = run_id`` (owner ``manager``) and reported ended when the runner observed its exit.
         self.command_stop: CommandStopService | None = None
+        # pids a stop must never signal (the OMP panes'; set by the backend), offered with each registered target
+        self.stop_forbidden: Callable[[], frozenset[int]] = lambda: frozenset()
         self._stop_registered: set[str] = set()  # run ids registered and not yet reported ended
         self._host_runs: dict[str, dict[str, Any]] = {}  # task id -> its running experiment command (host_commands)
         self._run_requests: dict[str, str] = {}  # host shell request id -> the run id whose command it started
@@ -1956,9 +1958,13 @@ class TaskFlow:
             if isinstance(request_id, str):
                 self._run_requests[request_id] = run.run_id
         if self.command_stop is not None:
-            self.command_stop.register(StopTarget(run.run_id, "manager", "experiment", task_id,
-                                                  identity=self._stop_identity(run, port),
-                                                  task_status=lambda: self.task_status(task_id)))
+            try:
+                self.command_stop.register(StopTarget(run.run_id, "manager", "experiment", task_id,
+                                                      identity=self._stop_identity(run, port),
+                                                      forbidden=lambda: self.stop_forbidden(),
+                                                      task_status=lambda: self.task_status(task_id)))
+            except Exception:
+                pass  # a stop service fault never changes the flow: the run is followed and reported, unstoppable
 
     @staticmethod
     def _stop_identity(run: Any, port: Any) -> Callable[[], dict[str, Any] | None]:

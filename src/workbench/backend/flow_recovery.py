@@ -42,12 +42,12 @@ reads in-memory state, except one bridge ``probe`` of the worker at most every
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-import re
 import threading
 import time
 from typing import Any, Callable, Iterable, Mapping
 from uuid import uuid4
 
+from workbench.backend.command_stop_owner import COMMAND_ID
 from workbench.contracts.v1 import ActorRole
 
 IDLE_LIMIT = 60.0  # C-D70: the user's choice "60초"
@@ -66,7 +66,6 @@ STATUS_TOOL = "workbench_status"
 STOP_SURVIVOR_TOOL = "stop_survivor"  # C-D71 (1): end one proven process the previous backend left running
 STOP_COMMAND_TOOL = "stop_command"  # command-stop CS-05: end one command Workbench tracks (not a survivor)
 MANAGER_TOOLS = (RESTART_WORKER_TOOL, STATUS_TOOL, STOP_SURVIVOR_TOOL, STOP_COMMAND_TOOL)
-_COMMAND_ID = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")  # canonical lowercase uuid
 WORKER_NOTICE_TYPES = ("terminal_check", "terminal_done", "status_check")
 MANAGER_NOTICE_TYPES = ("worker_stalled", "report_delivery_unknown", "worker_restarted", "manager_recovery",
                         "worker_terminal_done",  # p27-cd70-02 Q3: a previous worker session's command ended
@@ -167,7 +166,7 @@ def validate_stop_command_arguments(args: object) -> list[str]:
         return ["arguments: an object {command_id, reason} is required"]
     errors = [f"{name}: not a stop_command field (allowed: command_id, reason)" for name in sorted(set(args) - {"command_id", "reason"})]
     command_id = args.get("command_id")
-    if not isinstance(command_id, str) or not _COMMAND_ID.fullmatch(command_id):
+    if not isinstance(command_id, str) or not COMMAND_ID.fullmatch(command_id):
         errors.append("command_id: required, the command_id (lowercase canonical uuid) of a command to stop")
     reason = args.get("reason")
     if not isinstance(reason, str) or not reason.strip() or len(reason) > REASON_MAX or "\x00" in reason:

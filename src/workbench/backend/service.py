@@ -507,6 +507,7 @@ class Backend:
         self.command_stop = CommandStopService(journal=self.handoffs.record,
                                                previous_backend=self._journaled_unfinished_command)
         self.flow.command_stop = self.command_stop  # CS-09: a running experiment's host command is stoppable
+        self.flow.stop_forbidden = self._omp_pane_pids  # a stop never signals an OMP pane (explicit forbidden set)
         self.terminal = TerminalService(
             handoffs=self.handoffs, host_shell=self._host_shell_port, gate=host_gate,
             log_root=ensure_private_dir(layout.workflow / TERMINAL_DIRECTORY), automation=self._automation_port,
@@ -523,7 +524,7 @@ class Backend:
             segmented_raw_port=self.segmented_raw_port,
             segmented_raw_port_factory=self._new_raw_port,
             repository_factory=lambda: TaskRepository(layout.tasks), command_stop=self.command_stop,
-            task_status=self._task_status)
+            task_status=self._task_status, forbidden=self._omp_pane_pids)
         self.flow.terminal_runs = self.terminal.runs_for_task  # C-D69 (6)(d): the done report's commands run
         self.flow.host_commands = self.terminal.commands_for_task  # CS-08: cancel response and Task views
         self.watchdog = self._make_watchdog()  # C-D70: status checks, stalled/restart/recovery notices
@@ -2009,6 +2010,11 @@ class Backend:
                     raise
                 self._previous_commands = frozenset(started)
             return command_id in self._previous_commands
+
+    def _omp_pane_pids(self) -> frozenset[int]:
+        """The pids of the OMP panes: the explicit ``forbidden`` set every stop target carries (a stop never
+        signals the Manager's or the Worker's OMP, whatever a scan of the command's session says)."""
+        return frozenset(pane.pid for pane in list(self.panes.values()) if isinstance(pane, OmpPane) and pane.pid > 0)
 
     def _stop_command(self, parsed: Any, key_dict: dict[str, Any]) -> dict[str, Any]:
         """CS-05: the manager stops one command Workbench tracks (a Worker ``terminal`` command, later an experiment

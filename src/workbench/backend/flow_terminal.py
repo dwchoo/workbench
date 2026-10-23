@@ -99,6 +99,7 @@ from typing import Any, Callable, Iterable, Mapping
 from uuid import uuid4
 
 from workbench.backend.command_stop import CommandStopService, StopTarget
+from workbench.backend.command_stop_owner import COMMAND_ID
 from workbench.backend.flow import (
     HandoffService, environment_value_findings, rejected,
 )
@@ -131,7 +132,6 @@ CALLS_KEPT = 256  # terminal calls remembered for a late abandon signal
 RESULTS_KEPT = 256
 _KEYS = frozenset({"command", "stop"})
 STOP_MARKS = ("stopped_by", "stop_signal")  # on a command a stop signalled: who stopped it, the last signal sent
-_COMMAND_ID = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}")  # the bridge's pattern
 # The child prints the command line for the user, then becomes ``<shell> -c <command>`` (same PID).
 ECHO_SCRIPT = 'printf \'[worker] $ %s\\n\' "$1"; exec "$0" -c "$1"'
 _ANSI = re.compile(rb"\x1b\[[0-?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b[P^_][^\x1b]*\x1b\\|\x1b[@-Z\\-_]")
@@ -244,7 +244,7 @@ def validate_terminal_arguments(args: object) -> list[str]:
         if not isinstance(stop, str):
             errors.append("stop: a command_id (uuid) string, or null")
         elif stop.strip():
-            if not _COMMAND_ID.fullmatch(stop):
+            if not COMMAND_ID.fullmatch(stop):
                 errors.append("stop: a command_id (lowercase canonical uuid), or null")
             if isinstance(command, str) and command.strip():  # a blank command is "not used" (strict schema)
                 errors.append("stop: cannot be combined with command; give command null to stop a command")
@@ -553,8 +553,10 @@ class TerminalService:
                  segmented_raw_port_factory: Callable[[], DisabledSegmentedRawPort | None] | None = None,
                  repository_factory: Callable[[], Any] | None = None,
                  command_stop: CommandStopService | None = None,
-                 task_status: Callable[[str], str | None] | None = None):
+                 task_status: Callable[[str], str | None] | None = None,
+                 forbidden: Callable[[], frozenset[int]] = lambda: frozenset()):
         self._repository_factory = repository_factory
+        self._stop_forbidden = forbidden  # pids a stop must never signal (the OMP panes'), offered with each target
         self._task_status = task_status  # a Task's status by id, for the stop audit record (CS-05)
         self._command_stop = command_stop  # the stop registry: this service is its StopTarget provider
         self._handoffs = handoffs
@@ -1605,9 +1607,13 @@ class TerminalService:
         if self._command_stop is None:
             return
         task_id = command.task_id  # a plain value: what an ended command's target keeps must not hold the command
-        self._command_stop.register(StopTarget(command.command_id, "worker", "terminal", task_id,
-                                               identity=lambda: command.port.run_identity(),
-                                               task_status=lambda: self._status_of(task_id)))
+        try:
+            self._command_stop.register(StopTarget(command.command_id, "worker", "terminal", task_id,
+                                                   identity=lambda: command.port.run_identity(),
+                                                   forbidden=self._stop_forbidden,
+                                                   task_status=lambda: self._status_of(task_id)))
+        except Exception:
+            pass  # a stop service fault never changes the flow: the command runs, is followed and reported, unstoppable
 
     def _status_of(self, task_id: str | None) -> str | None:
         if task_id is None or self._task_status is None:

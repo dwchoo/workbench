@@ -159,7 +159,12 @@ async function observedPromptOutcome(providerFailure: boolean) {
   return {outcome,counters,boundary:"Controlled SDK stream/prompt; actual product dispatchSummarySDK outcome, not installedSDK runtime"};
 }
 
-test("provider error shape for Python journal regression", async () => {
+// These three emit their outcome to a path the owned Python runner supplies via env.
+function skipWithout(name: string): string | false {
+  return process.env[name] === undefined ? `${name} required; skipped tests are not a gate pass` : false;
+}
+
+test("provider error shape for Python journal regression", { skip: skipWithout("DVL10_REVIEW_PROVIDER_OUTCOME") }, async () => {
   const observed=await observedPromptOutcome(true);
   assert.equal(observed.outcome.status,"unknown");
   assert.equal(observed.outcome.reason,"summary_outcome_unknown");
@@ -168,7 +173,7 @@ test("provider error shape for Python journal regression", async () => {
   writeFileSync(path,JSON.stringify(observed,null,2));
 });
 
-test("successful empty prompt shape for Python journal regression", async () => {
+test("successful empty prompt shape for Python journal regression", { skip: skipWithout("DVL10_REVIEW_PROVIDER_OUTCOME") }, async () => {
   const observed=await observedPromptOutcome(false);
   assert.deepEqual(observed.outcome,{status:"rejected",sent:true,protected:false,reason:"result_unavailable"});
   const path=process.env.DVL10_REVIEW_PROVIDER_OUTCOME;
@@ -176,7 +181,7 @@ test("successful empty prompt shape for Python journal regression", async () => 
   writeFileSync(path+"-empty.json",JSON.stringify(observed,null,2));
 });
 
-test("confirmed forbidden end with abort rejection shape for Python protection regression", async () => {
+test("confirmed forbidden end with abort rejection shape for Python protection regression", { skip: skipWithout("DVL10_PROTECTED_UNKNOWN_OUTCOME") }, async () => {
   const input=ownedRequest();
   const counters={dispatch:0,write:0,abort:0,dispose:0};
   const trace:any[]=[];

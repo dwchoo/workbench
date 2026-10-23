@@ -26,7 +26,15 @@ from workbench.backend.summary_compatibility import SummaryCompatibility
 
 
 ROOT = Path(__file__).resolve().parents[2]
-OUTPUT = Path(os.environ["DVL14_PRIORITY_INDEPENDENT_OUTPUT"])
+_OUTPUT_ENV = os.environ.get("DVL14_PRIORITY_INDEPENDENT_OUTPUT")
+# Absent: setUpModule skips before any test reads OUTPUT.
+OUTPUT = Path(_OUTPUT_ENV) if _OUTPUT_ENV is not None else None
+
+
+def setUpModule() -> None:
+    if _OUTPUT_ENV is None:
+        raise unittest.SkipTest("DVL14_PRIORITY_INDEPENDENT_OUTPUT required; skipped tests are not a gate pass")
+
 
 # Ordinary fixture waits for the product's identity record before reporting any
 # work. It imports no Workbench/Core/OMP runtime and emits no model request.

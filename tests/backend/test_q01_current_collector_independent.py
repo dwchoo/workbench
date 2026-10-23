@@ -48,9 +48,13 @@ class CurrentCollectorIndependentTests(unittest.TestCase):
     def setUpClass(cls) -> None:
         supplied = os.environ.get("Q01_CURRENT_BATCH")
         output = os.environ.get("Q01_CURRENT_TEST_DIR")
+        reread = os.environ.get("Q01_CURRENT_REJUDGE")
+        if not supplied and not output and not reread:
+            raise unittest.SkipTest(
+                "Q01_CURRENT_BATCH, Q01_CURRENT_TEST_DIR and Q01_CURRENT_REJUDGE required"
+                "; skipped tests are not a gate pass")
         if not supplied or not output:
             raise AssertionError("Q01_CURRENT_BATCH and Q01_CURRENT_TEST_DIR required")
-        reread = os.environ.get("Q01_CURRENT_REJUDGE")
         if not reread:
             raise AssertionError("Q01_CURRENT_REJUDGE required")
         cls.base = Path(supplied).resolve(strict=True)

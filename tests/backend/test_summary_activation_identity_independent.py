@@ -25,6 +25,11 @@ REAL_COMPATIBILITY = compatibility.SummaryCompatibility
 
 
 class ActivationIdentityIndependentTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        if os.environ.get("DVL10_INDEPENDENT_OUTPUT") is None:
+            raise unittest.SkipTest("DVL10_INDEPENDENT_OUTPUT required; skipped tests are not a gate pass")
+
     def setUp(self):
         output = Path(os.environ["DVL10_INDEPENDENT_OUTPUT"])
         self.assertTrue(output.is_absolute() and output.is_dir())

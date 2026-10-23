@@ -21,6 +21,11 @@ from workbench.backend.service import Backend
 
 
 class ActualPauseRestoreTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        if os.environ.get("DVL10_INDEPENDENT_OUTPUT") is None:
+            raise unittest.SkipTest("DVL10_INDEPENDENT_OUTPUT required; skipped tests are not a gate pass")
+
     def test_durable_and_malformed_pause_hold_same_range_until_explicit_resume(self):
         evidence = scheduler_fixture.EVIDENCE
         self.assertTrue(evidence.is_absolute(), "owned evidence must precede module import")

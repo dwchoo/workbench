@@ -30,6 +30,9 @@ class MeasurementIndependentTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
         names = ("Q01_CURRENT_BATCH", "Q01_CURRENT_REJUDGE", "Q01_CURRENT_TEST_DIR")
+        if all(not os.environ.get(name) for name in names):
+            raise unittest.SkipTest(
+                f"{', '.join(names)} required; skipped tests are not a gate pass")
         if any(not os.environ.get(name) for name in names):
             raise AssertionError(f"explicit {names} required")
         cls.base = Path(os.environ[names[0]]).resolve(strict=True)

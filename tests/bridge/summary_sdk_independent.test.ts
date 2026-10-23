@@ -7,6 +7,10 @@ import path from "node:path";
 import { test } from "node:test";
 import { dispatchSummarySDK } from "../../omp_bridge/g3/summary_sdk.ts";
 
+// Needs the owned runner's output root; without it these tests have nothing to bind to.
+const SKIP_WITHOUT_OUTPUT = process.env.DVL10_INDEPENDENT_OUTPUT === undefined
+  ? "DVL10_INDEPENDENT_OUTPUT required; skipped tests are not a gate pass" : false;
+
 const definition = "Existing task definition bytes from a controlled fixture.";
 const sha = (text: string) => createHash("sha256").update(text).digest("hex");
 const python = execFileSync("python3", ["-c", "import sys; print(sys.executable)"], { encoding: "utf8" }).trim();
@@ -109,7 +113,7 @@ function controlledSDK(control: Control = {}) {
   return { sdk, history, createdOptions, streamOptions, submitted };
 }
 
-test("sole bound result crosses TS/Python contract and commits only after prompt + disposal", async () => {
+test("sole bound result crosses TS/Python contract and commits only after prompt + disposal", { skip: SKIP_WITHOUT_OUTPUT }, async () => {
   const fixture = privateFixture();
   const mock = controlledSDK();
   const events: any[] = [];
@@ -144,7 +148,7 @@ test("sole bound result crosses TS/Python contract and commits only after prompt
   } finally { fixture.cleanup(); }
 });
 
-test("received result then refused forbidden tool and duplicate both leave real catalog and receipt empty", async () => {
+test("received result then refused forbidden tool and duplicate both leave real catalog and receipt empty", { skip: SKIP_WITHOUT_OUTPUT }, async () => {
   for (const violation of ["refused", "duplicate", "assistant_tool_call"] as const) {
     const fixture = privateFixture();
     const mock = controlledSDK({ run: async (tool, emit) => {
@@ -165,7 +169,7 @@ test("received result then refused forbidden tool and duplicate both leave real 
   }
 });
 
-test("abort is settled before disposal and result rejection; ordinary parent event is not a violation", async () => {
+test("abort is settled before disposal and result rejection; ordinary parent event is not a violation", { skip: SKIP_WITHOUT_OUTPUT }, async () => {
   const fixture = privateFixture();
   let abortFinished = false;
   const mock = controlledSDK({
@@ -186,7 +190,7 @@ test("abort is settled before disposal and result rejection; ordinary parent eve
   } finally { fixture.cleanup(); }
 });
 
-test("raw identity key and UTF8 envelope overflow cannot reach fixed writer", async () => {
+test("raw identity key and UTF8 envelope overflow cannot reach fixed writer", { skip: SKIP_WITHOUT_OUTPUT }, async () => {
   for (const params of [
     { facts: ["ok"], interpretations: [], unknowns: [], requestId: randomUUID() },
     { facts: ["한".repeat(2700)], interpretations: [], unknowns: [] },
@@ -203,7 +207,7 @@ test("raw identity key and UTF8 envelope overflow cannot reach fixed writer", as
   }
 });
 
-test("startup roster failure rebuilds once; repeated failure never prompts or writes", async () => {
+test("startup roster failure rebuilds once; repeated failure never prompts or writes", { skip: SKIP_WITHOUT_OUTPUT }, async () => {
   for (const repeated of [false, true]) {
     const fixture = privateFixture();
     const mock = controlledSDK(repeated ? { alwaysRoster: [] } : { firstRoster: [] });
@@ -219,7 +223,7 @@ test("startup roster failure rebuilds once; repeated failure never prompts or wr
   }
 });
 
-test("unknown metadata and authority prevent creation; runtime epoch change prevents original stream", async () => {
+test("unknown metadata and authority prevent creation; runtime epoch change prevents original stream", { skip: SKIP_WITHOUT_OUTPUT }, async () => {
   for (const situation of ["missing", "inactive", "epoch_change"] as const) {
     const fixture = privateFixture();
     let metadata = fixture.case.metadata;
@@ -238,7 +242,7 @@ test("unknown metadata and authority prevent creation; runtime epoch change prev
   }
 });
 
-test("provider cap shrink refuses while truthful unknown semantics permit a bound result", async () => {
+test("provider cap shrink refuses while truthful unknown semantics permit a bound result", { skip: SKIP_WITHOUT_OUTPUT }, async () => {
   for (const problem of ["fit_shrink", "semantics"] as const) {
     const fixture = privateFixture();
     const mock = controlledSDK({ fittedCapDelta: problem === "fit_shrink" ? -1 : 0 });
@@ -264,7 +268,7 @@ test("provider cap shrink refuses while truthful unknown semantics permit a boun
   }
 });
 
-test("ordinary user text mentioning tool names leaves normal result accepted", async () => {
+test("ordinary user text mentioning tool names leaves normal result accepted", { skip: SKIP_WITHOUT_OUTPUT }, async () => {
   const fixture = privateFixture();
   const mock = controlledSDK({ run: async (tool, emit) => {
     emit({ type: "message_end", message: { role: "user", content: [{ type: "toolCall", name: "bash" }] } });
@@ -279,7 +283,7 @@ test("ordinary user text mentioning tool names leaves normal result accepted", a
   } finally { fixture.cleanup(); }
 });
 
-test("startup missing SDK API returns a confirmed no-send refusal", async () => {
+test("startup missing SDK API returns a confirmed no-send refusal", { skip: SKIP_WITHOUT_OUTPUT }, async () => {
   const fixture = privateFixture();
   const mock = controlledSDK({ wireSchemaMissing: true });
   try {
@@ -296,7 +300,7 @@ test("startup missing SDK API returns a confirmed no-send refusal", async () => 
   }
 });
 
-test("confirmed nonDB execution is distinguished from a refused attempt", async () => {
+test("confirmed nonDB execution is distinguished from a refused attempt", { skip: SKIP_WITHOUT_OUTPUT }, async () => {
   const fixture = privateFixture();
   const events: any[] = [];
   const mock = controlledSDK({ run: async (tool, emit) => {
@@ -316,7 +320,7 @@ test("confirmed nonDB execution is distinguished from a refused attempt", async 
 });
 
 // SPEC8.1/8.2: the expected request/model epoch must not alias a live observer DTO.
-test("same observer object in-place epoch thinking tier and nested model changes send nothing", async () => {
+test("same observer object in-place epoch thinking tier and nested model changes send nothing", { skip: SKIP_WITHOUT_OUTPUT }, async () => {
   for (const field of ["epoch", "thinking", "tier", "nested_model"] as const) {
     const fixture = privateFixture();
     const observedMetadata = fixture.case.metadata;
@@ -343,7 +347,7 @@ test("same observer object in-place epoch thinking tier and nested model changes
   }
 });
 
-test("prepared metadata mutation is a request binding mismatch with no transport or durable result", async () => {
+test("prepared metadata mutation is a request binding mismatch with no transport or durable result", { skip: SKIP_WITHOUT_OUTPUT }, async () => {
   const fixture = privateFixture();
   const observedMetadata = structuredClone(fixture.case.metadata);
   const mock = controlledSDK({ beforeStream: () => {
@@ -361,7 +365,7 @@ test("prepared metadata mutation is a request binding mismatch with no transport
   } finally { fixture.cleanup(); }
 });
 
-test("SDK tier getter returns independent writable maps while normal result remains stored", async () => {
+test("SDK tier getter returns independent writable maps while normal result remains stored", { skip: SKIP_WITHOUT_OUTPUT }, async () => {
   const fixture = privateFixture();
   const expectedTier = structuredClone(fixture.case.metadata.serviceTierByFamily);
   const mock = controlledSDK();
@@ -390,7 +394,7 @@ test("SDK tier getter returns independent writable maps while normal result rema
 
 // P5: public assistant provider errors are transient; a safety violation still
 // wins, while an already received valid result survives a resolving prompt.
-test("resolving prompt with public assistant error and no result stays sent unknown without storage", async () => {
+test("resolving prompt with public assistant error and no result stays sent unknown without storage", { skip: SKIP_WITHOUT_OUTPUT }, async () => {
   const fixture = privateFixture();
   const events: any[] = [];
   const mock = controlledSDK({ run: async (_tool, emit) => {
@@ -420,7 +424,7 @@ test("resolving prompt with public assistant error and no result stays sent unkn
   } finally { fixture.cleanup(); }
 });
 
-test("resolving prompt without provider error or DB result remains a missing-result rejection", async () => {
+test("resolving prompt without provider error or DB result remains a missing-result rejection", { skip: SKIP_WITHOUT_OUTPUT }, async () => {
   const fixture = privateFixture();
   const mock = controlledSDK({ run: async (_tool, emit) => {
     emit({ type: "message_end", message: { role: "assistant",
@@ -440,7 +444,7 @@ test("resolving prompt without provider error or DB result remains a missing-res
   } finally { fixture.cleanup(); }
 });
 
-test("successful forbidden-tool event retains compatibility protection despite a provider error", async () => {
+test("successful forbidden-tool event retains compatibility protection despite a provider error", { skip: SKIP_WITHOUT_OUTPUT }, async () => {
   const fixture = privateFixture();
   const events: any[] = [];
   const mock = controlledSDK({ run: async (_tool, emit) => {
@@ -467,7 +471,7 @@ test("successful forbidden-tool event retains compatibility protection despite a
   } finally { fixture.cleanup(); }
 });
 
-test("valid sole DB result survives a later provider error when the prompt resolves", async () => {
+test("valid sole DB result survives a later provider error when the prompt resolves", { skip: SKIP_WITHOUT_OUTPUT }, async () => {
   const fixture = privateFixture();
   const events: any[] = [];
   const mock = controlledSDK({ run: async (tool, emit) => {

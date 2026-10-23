@@ -160,7 +160,8 @@ def collect_runtime_identity(root: Path | None = None) -> dict[str, Any]:
             try:
                 return checked_path(p).is_file()
             except ValueError:
-                # Unsafe (symlinked) input is never followed; keep it as a candidate so
+                # ValueError means checked_path rejected the path: a symlink, an absolute path or
+                # a ``..`` escape. Such unsafe input is never followed; keep it as a candidate so
                 # include() records it as an explicit unsafe_runtime_input unknown.
                 return True
 

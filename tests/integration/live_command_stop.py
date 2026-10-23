@@ -908,6 +908,7 @@ from uuid import uuid4  # noqa: E402
 from workbench.backend.command_stop import StopPolicy  # noqa: E402
 from workbench.tasks.repository import TaskRepository  # noqa: E402
 from test_command_stop_outcomes import OutcomeEnvironment  # noqa: E402  (S7: signals that have no effect)
+from test_experiment_command_stop_independent import identity_with_child  # noqa: E402  (waits for the command child)
 from test_task_flow import PublicMailboxFixture  # noqa: E402  (a mailbox whose worker instruction is processed)
 from workbench.workflow.run import TaskWorkflow  # noqa: E402
 
@@ -1039,7 +1040,7 @@ class AuditCompletenessTests(StopBackendFixture):
         # 5. the Manager's experiment run: a refusal (Worker, not_owner), an environment value in a reason, the stop
         task_id, run_id, execution = self.experiment()
         sleeper = self.process("7601.7")  # a member of the experiment command (its sleep)
-        main = self.pane.shell.run_identity()["child"]["pid"]  # the experiment command's own process, from the shell
+        main = identity_with_child(self.pane.shell)["child"]["pid"]  # the experiment command's own process, from the shell
         self.reap_later(main)
         main_fields = _stat(main)
         e_pid, e_ticks, e_group, e_session = main, int(main_fields[19]), int(main_fields[2]), int(main_fields[3])

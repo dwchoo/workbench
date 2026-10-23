@@ -38,6 +38,7 @@ from workbench.workflow.run import TaskWorkflow, WorkflowRun
 
 from test_cd70_restart_worker import RestartWorkerFixture
 from test_command_stop_outcomes import OutcomeFixture
+from test_experiment_command_stop_independent import identity_with_child
 from test_task_flow import AUTOMATION, FakeMailbox, PublicMailboxFixture, git, request, wait_until
 
 
@@ -236,7 +237,7 @@ class OwnerTests(ExperimentStopFixture):
 
     def test_a_worker_may_not_stop_the_managers_experiment_command(self):
         task_id, run_id = self.running_experiment()
-        child = self.pane.shell.run_identity()["child"]["pid"]  # the command's own process, read from the shell
+        child = identity_with_child(self.pane.shell)["child"]["pid"]  # the command's own process, read from the shell
         refused = self.stop_service.stop("worker", run_id)
         self.assertEqual((refused["status"], refused["reason"], refused["requested_by"], refused["command_id"]),
                          ("refused", "not_owner", "worker", run_id), refused)
@@ -477,7 +478,7 @@ class InterruptAuditTests(ExperimentStopFixture):
 
     def test_a_user_ctrl_c_on_an_experiment_command_is_journaled_with_the_run_id(self):
         task_id, run_id = self.running_experiment()
-        child = self.pane.shell.run_identity()["child"]
+        child = identity_with_child(self.pane.shell)["child"]
         backend = self.make_backend(self.flow)
         self.assertIsNone(backend.admit(PaneId.HOST_SHELL, b"\x03", "input"))
         (record,) = self.interrupts(backend)
@@ -487,7 +488,7 @@ class InterruptAuditTests(ExperimentStopFixture):
 
     def test_a_failing_experiment_lookup_is_journaled_as_null_and_the_ctrl_c_is_still_delivered(self):
         task_id, run_id = self.running_experiment()
-        child = self.pane.shell.run_identity()["child"]
+        child = identity_with_child(self.pane.shell)["child"]
         broken = Mock()
         broken.experiment_command_for.side_effect = RuntimeError("flow unreadable")
         backend = self.make_backend(broken)

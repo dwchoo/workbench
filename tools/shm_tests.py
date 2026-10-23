@@ -7,6 +7,10 @@ roots left behind by killed runs. Nothing outside ``wb-tests.*`` roots is touche
 
 Exit code is the command's (128+N when killed by signal N; SIGTERM/SIGHUP to this
 tool are forwarded to the command), or 125 if no root could be created.
+SIGTERM/SIGHUP are forwarded only to the direct child, not its process group
+or descendants. A SIGTERM/SIGHUP that arrives in the brief window right after
+the child is spawned (before the forwarding handlers are installed) is not
+forwarded and can leave the root behind; recover it with ``--clean-stale``.
 Caution: ``--ignore-unreadable`` can delete a stale root still used by a same-uid
 process whose /proc entries are unreadable (only roots older than --older-than-hours).
 """
@@ -233,9 +237,13 @@ def run(args: argparse.Namespace, *, shm_dir: str, tmp_dir: str,
 def paths_in_use(proc_dir: str = "/proc") -> tuple[set[str], list[str]]:
     """Return (cwd/open-fd targets of readable processes, unreadable pids).
 
-    Only our own processes are examined: other users cannot enter our 0700
-    roots. A same-user process whose links /proc denies (non-dumpable or
-    capability-bearing daemons) cannot be ruled out and is reported as unreadable.
+    Only processes owned by our uid are examined (judged by the owner of
+    ``/proc/<pid>``): other users cannot enter our 0700 roots. A pid is reported
+    as unreadable when listing its ``fd`` directory or reading one of its links
+    raises PermissionError. Known gap: a same-uid process that is non-dumpable
+    gets root-owned ``/proc/<pid>`` entries, so the owner check skips it
+    silently; it is neither examined nor counted as unreadable, and a root only
+    it uses can be treated as unused.
     """
     used: set[str] = set()
     unreadable: list[str] = []

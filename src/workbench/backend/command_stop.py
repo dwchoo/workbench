@@ -520,7 +520,7 @@ class StopEpisode:
         Returns the final result, or None when the command is still there and the next stage should follow.
         The pins live for this stage only: a later stage never reuses them.
         """
-        service, entry, env = self._service, self._entry, self._service.env
+        service, entry = self._service, self._entry
         if entry.ended.is_set():
             return self._after_end()
         if service.closed.is_set():
@@ -530,44 +530,15 @@ class StopEpisode:
             scan = self._scan()
         if not scan.tracked and scan.left_session:
             return self._left_session_unknown()  # nothing left that may be signalled
-        identity = self._identity
         self.stage = name
         failed: list[dict[str, Any]] = []
         first = not self.signals
         with ExitStack() as pins:
-            live = []
-            for stat in scan.tracked:
-                if stat.pid in self._mismatched:
-                    failed.append({"pid": stat.pid, "reason": "identity_mismatch"})
-                    continue
-                pin = pins.enter_context(ProcessPin.open(env, stat.pid, stat.start_ticks, uid=identity["uid"],
-                                                         boot_id=identity["boot_id"], session=stat.session))
-                if pin.status == PINNED:
-                    live.append(pin)
-                elif pin.status != ENDED:
-                    reason = "identity_mismatch" if pin.status == STALE else pin.status
-                    if reason in _STALE_REASONS:
-                        self._mismatched.add(stat.pid)
-                    failed.append({"pid": stat.pid, "reason": reason})
-            sent = self._send(live, signum, name, failed, auxiliary=False) if live else []
-            if sent and signum != signal.SIGKILL:
-                # a stopped member cannot act on SIGINT/SIGTERM until it is continued
-                reached = {item["pid"] for item in sent}
-                stopped = [pin for pin in live if pin.pid in reached and self._stopped(pin.pid)]
-                if stopped:
-                    self._send(stopped, signal.SIGCONT, name, [], auxiliary=True)
-            hard = [item for item in failed if item["reason"] != ENDED]
-            unsent_stale = first and hard and all(item["reason"] in _STALE_REASONS for item in hard)
-            if not live and failed and not unsent_stale:  # nothing to signal: the failures are still the stage's record
-                self._send([], signum, name, failed, auxiliary=False)
-            if not sent and hard and not entry.ended.is_set():
-                if all(item["reason"] == PERMISSION_DENIED for item in hard):
-                    return self._unknown(PERMISSION_DENIED)
-                if first:  # nothing could be signalled, and nothing was before
-                    if all(item["reason"] in _STALE_REASONS for item in hard):
-                        return self._stale()
-                    reason = hard[0]["reason"]
-                    return self._unknown(PIDFD_UNAVAILABLE if reason.startswith(PIDFD_UNAVAILABLE) else reason)
+            live = self._pin_members(pins, scan, failed)
+            sent = self._signal_members(live, signum, name, failed)
+            result = self._unsent_result(live, sent, failed, signum, name, first)
+            if result is not None:
+                return result
         # the owner decides when the command is over: ``/proc`` never does
         self.stage = f"{name}_wait"
         outcome = self._wait_stage(seconds)
@@ -577,6 +548,57 @@ class StopEpisode:
             return self._unknown("backend_shutdown")
         if outcome == "left_session":
             return self._left_session_unknown()
+        return None
+
+    def _pin_members(self, pins: ExitStack, scan: TrackScan, failed: list[dict[str, Any]]) -> list[ProcessPin]:
+        """Pin each tracked member (the pins close with ``pins``); the pinned ones, the others noted in ``failed``."""
+        identity = self._identity
+        live = []
+        for stat in scan.tracked:
+            if stat.pid in self._mismatched:
+                failed.append({"pid": stat.pid, "reason": "identity_mismatch"})
+                continue
+            pin = pins.enter_context(ProcessPin.open(self._service.env, stat.pid, stat.start_ticks,
+                                                     uid=identity["uid"], boot_id=identity["boot_id"],
+                                                     session=stat.session))
+            if pin.status == PINNED:
+                live.append(pin)
+            elif pin.status != ENDED:
+                reason = "identity_mismatch" if pin.status == STALE else pin.status
+                if reason in _STALE_REASONS:
+                    self._mismatched.add(stat.pid)
+                failed.append({"pid": stat.pid, "reason": reason})
+        return live
+
+    def _signal_members(self, live: list[ProcessPin], signum: int, name: str,
+                        failed: list[dict[str, Any]]) -> list[dict[str, int]]:
+        """Signal the pinned members (the stop marker is attached just before); the members reached.
+
+        A member that was stopped is continued afterwards, so that it can act on SIGINT/SIGTERM."""
+        sent = self._send(live, signum, name, failed, auxiliary=False) if live else []
+        if sent and signum != signal.SIGKILL:
+            # a stopped member cannot act on SIGINT/SIGTERM until it is continued
+            reached = {item["pid"] for item in sent}
+            stopped = [pin for pin in live if pin.pid in reached and self._stopped(pin.pid)]
+            if stopped:
+                self._send(stopped, signal.SIGCONT, name, [], auxiliary=True)
+        return sent
+
+    def _unsent_result(self, live: list[ProcessPin], sent: list[dict[str, int]], failed: list[dict[str, Any]],
+                       signum: int, name: str, first: bool) -> dict[str, Any] | None:
+        """Record the stage's failures when nothing was signalled; the final result when they end the stop, else None."""
+        hard = [item for item in failed if item["reason"] != ENDED]
+        unsent_stale = first and hard and all(item["reason"] in _STALE_REASONS for item in hard)
+        if not live and failed and not unsent_stale:  # nothing to signal: the failures are still the stage's record
+            self._send([], signum, name, failed, auxiliary=False)
+        if not sent and hard and not self._entry.ended.is_set():
+            if all(item["reason"] == PERMISSION_DENIED for item in hard):
+                return self._unknown(PERMISSION_DENIED)
+            if first:  # nothing could be signalled, and nothing was before
+                if all(item["reason"] in _STALE_REASONS for item in hard):
+                    return self._stale()
+                reason = hard[0]["reason"]
+                return self._unknown(PIDFD_UNAVAILABLE if reason.startswith(PIDFD_UNAVAILABLE) else reason)
         return None
 
     def _send(self, pins: list[ProcessPin], signum: int, stage: str, failed: list[dict[str, Any]], *,

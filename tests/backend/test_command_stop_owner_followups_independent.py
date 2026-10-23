@@ -46,6 +46,7 @@ from workbench.workflow.run import WorkflowRun
 
 import test_command_stop_authority as authority
 import test_experiment_command_stop_independent as experiment
+from command_stop_support import identity_with_child
 
 REPO = Path(__file__).resolve().parents[2]
 SECRET = "SECRET-registry-fault-text-7731"  # the message of the injected fault: it must appear nowhere
@@ -337,7 +338,7 @@ class ExperimentRegistrationFailureTests(ExperimentFixture):
     def test_a_user_ctrl_c_records_the_run_id_and_the_run_ends(self):
         self.fail_registration(RuntimeError(SECRET))
         task_id, run_id = self.start_experiment()
-        identity = experiment.identity_with_child(self.backend.shell.shell)
+        identity = identity_with_child(self.backend.shell.shell)
         child = identity["child"]["pid"]
         self.assertNotEqual(identity["request_id"], run_id)
         self.assertIsNone(self.backend.admit(PaneId.HOST_SHELL, b"\x03", "input"))

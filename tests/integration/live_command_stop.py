@@ -301,17 +301,8 @@ RECEIPT_JITTER = 0.25
 LATE = 3.0
 
 
-def _stat(pid: int) -> list[str] | None:
-    """Fields 3.. of /proc/<pid>/stat (read by the test itself): [0] state, [1] ppid, [2] pgrp, [19] start ticks."""
-    try:
-        return Path(f"/proc/{pid}/stat").read_text().rsplit(") ", 1)[1].split()
-    except (OSError, IndexError):
-        return None
-
-
-def _live(pid: int, ticks: int | None = None) -> bool:
-    fields = _stat(pid)
-    return fields is not None and fields[0] not in ("Z", "X") and (ticks is None or int(fields[19]) == ticks)
+from command_stop_support import alive as _live, pids_running  # noqa: E402
+from command_stop_support import stat_fields_or_none as _stat  # noqa: E402  ([0] state, [1] ppid, [2] pgrp, [3] session, [19] ticks)
 
 
 def _pids_running(session: int, *argv: str) -> list[int]:
@@ -320,18 +311,7 @@ def _pids_running(session: int, *argv: str) -> list[int]:
     Scoped to the session of the shell this test's backend started (that shell is the session leader, so its pid is the
     session id), never the whole machine: a concurrent suite's identical ``sleep 0.2`` must not be counted here.
     """
-    wanted = b"\0".join(item.encode() for item in argv) + b"\0"
-    found = []
-    for name in os.listdir("/proc"):
-        if name.isdecimal():
-            try:
-                if Path(f"/proc/{name}/cmdline").read_bytes() == wanted and _live(int(name)):
-                    fields = _stat(int(name))
-                    if fields is not None and int(fields[3]) == session:
-                        found.append(int(name))
-            except (OSError, ValueError):
-                continue
-    return found
+    return pids_running(*argv, session=session)
 
 
 def _kill_same(pid: int, ticks: int) -> None:
@@ -908,7 +888,7 @@ from uuid import uuid4  # noqa: E402
 from workbench.backend.command_stop import StopPolicy  # noqa: E402
 from workbench.tasks.repository import TaskRepository  # noqa: E402
 from test_command_stop_outcomes import OutcomeEnvironment  # noqa: E402  (S7: signals that have no effect)
-from test_experiment_command_stop_independent import identity_with_child  # noqa: E402  (waits for the command child)
+from command_stop_support import identity_with_child  # noqa: E402  (waits for the command child)
 from test_task_flow import PublicMailboxFixture  # noqa: E402  (a mailbox whose worker instruction is processed)
 from workbench.workflow.run import TaskWorkflow  # noqa: E402
 

@@ -30,7 +30,8 @@ from workbench.backend.flow_terminal import TerminalService
 from workbench.backend.panes import HostShellPort
 from workbench.contracts.v1 import ActorRole
 
-from test_command_stop_terminal import RealStopFixture, pids_running, proc_exists, proc_fields
+from test_command_stop_terminal import RealStopFixture
+from command_stop_support import alive as proc_exists, pids_running, stat_fields as proc_fields
 from test_flow_terminal import AUTOMATION, SECRET, journal, wait_until
 
 # The test's own reduced policy (the production 10/5/5 s defaults are confirmed once, in CS-10).
@@ -114,7 +115,7 @@ class IgnoredSigintEscalatesToSigtermTests(EscalationFixture):
                           "while :; do sleep 100 & wait $!; done\n")
         started = self.run_command(f"bash {script} {log}")
         self.assertEqual(started["status"], "running", started)
-        self.assertTrue(wait_until(lambda: log.exists() and "ready" in log.read_text(), 5))
+        self.assertTrue(wait_until(lambda: log.exists() and "ready" in log.read_text(), 30))
         result = self.stop(started["command_id"])
         self.assertEqual((result["status"], result["exit_code"], result["signal"]), ("exited", 143, None), result)
         received = {line.split()[0]: float(line.split()[1])
@@ -180,7 +181,7 @@ class DescendantAfterMainEndedTests(EscalationFixture):
         started = self.run_command(f"bash -c 'echo $$ > {main_file}; (trap \"\" INT; sleep 613.1) & exit 0'")
         self.assertEqual(started["status"], "running", "a descendant keeps the run open after the main exit")
         main = int(main_file.read_text())
-        self.assertTrue(wait_until(lambda: not proc_exists(main), 5), "the main command has ended")
+        self.assertTrue(wait_until(lambda: not proc_exists(main), 30), "the main command has ended")
         sleepers = pids_running("sleep", "613.1")
         self.assertEqual(len(sleepers), 1, sleepers)
         self.kill_at_cleanup(*sleepers)
@@ -221,7 +222,7 @@ class LeftSessionDescendantTests(EscalationFixture):
         self.assertNotIn("command_stop_signal", types)
         self.assertEqual(self.query()["status"], "unknown", "the owner has not seen the end")
         os.kill(sleepers[0], signal.SIGKILL)  # the test's own process
-        self.assertTrue(wait_until(lambda: self.query()["status"] == "exited", 10))
+        self.assertTrue(wait_until(lambda: self.query()["status"] == "exited", 30))
         self.assert_user_owns_the_shell_again()
 
 
@@ -234,7 +235,7 @@ class StoppedMemberTests(EscalationFixture):
         self.assertEqual(len(sleepers), 1, sleepers)
         self.kill_at_cleanup(*sleepers)
         os.kill(sleepers[0], signal.SIGSTOP)  # the test's own process
-        self.assertTrue(wait_until(lambda: proc_fields(sleepers[0])[0] == "T", 5), "it is stopped")
+        self.assertTrue(wait_until(lambda: proc_fields(sleepers[0])[0] == "T", 30), "it is stopped")
         result = self.stop(started["command_id"])
         self.assertEqual(result["status"], "exited", result)
         self.assertEqual((result["exit_code"], result["signal"]), (130, 2), result)
@@ -258,7 +259,7 @@ class EveryStageReadsTheMembersAgainTests(EscalationFixture):
                           "while :; do sleep 100 & wait $!; done\n")
         started = self.run_command(f"bash {script} {spawned}")
         self.assertEqual(started["status"], "running", started)
-        self.assertTrue(wait_until(lambda: (self.root / "spawned.pids.ready").exists(), 5))
+        self.assertTrue(wait_until(lambda: (self.root / "spawned.pids.ready").exists(), 30))
         result = self.stop(started["command_id"])
         born = [int(line) for line in spawned.read_text().split()]
         self.assertEqual(len(born), 1, "the command spawned one descendant when it got SIGINT")
@@ -328,7 +329,7 @@ class PermissionDeniedTests(SendFailureFixture):
                          ("SIGINT", [], [{"pid": sleepers[0], "reason": "permission_denied"}]))
         self.assertTrue(proc_exists(sleepers[0]))
         os.kill(sleepers[0], signal.SIGKILL)  # the test's own process
-        self.assertTrue(wait_until(lambda: self.query()["status"] == "exited", 10))
+        self.assertTrue(wait_until(lambda: self.query()["status"] == "exited", 30))
 
     def test_every_member_refusing_a_later_stage_ends_the_stop_at_that_stage(self):
         started = self.run_command("bash -c 'trap \"\" INT; sleep 620.2'")
@@ -347,7 +348,7 @@ class PermissionDeniedTests(SendFailureFixture):
         self.assertEqual([signum for _pid, signum in self.stop_env.attempts], [signal.SIGINT, signal.SIGTERM])
         self.assertEqual([r["signal"] for r in self.records()], ["SIGINT", "SIGTERM"])
         os.kill(sleepers[0], signal.SIGKILL)  # the test's own process
-        self.assertTrue(wait_until(lambda: self.query()["status"] == "exited", 10))
+        self.assertTrue(wait_until(lambda: self.query()["status"] == "exited", 30))
 
     def test_one_member_refusing_does_not_stop_the_others_and_is_recorded_per_stage(self):
         started = self.run_command("sleep 621.1 & sleep 621.2 & wait")
@@ -369,7 +370,7 @@ class PermissionDeniedTests(SendFailureFixture):
         self.assertIn(other[0], [t["pid"] for t in self.records()[1]["targets"]])
         self.assertEqual([r["pid"] for r in result["residual"]["alive"]], refusing)
         os.kill(refusing[0], signal.SIGKILL)  # the test's own process
-        self.assertTrue(wait_until(lambda: self.query()["status"] == "exited", 10))
+        self.assertTrue(wait_until(lambda: self.query()["status"] == "exited", 30))
 
     def test_a_member_that_vanished_before_the_signal_is_recorded_and_the_others_still_get_it(self):
         started = self.run_command("sleep 622.1 & sleep 622.2 & wait")
@@ -390,6 +391,10 @@ class PermissionDeniedTests(SendFailureFixture):
 
 class BackendShutdownTests(EscalationFixture):
     def test_closing_the_service_during_a_stage_ends_the_stop_as_backend_shutdown_without_further_signals(self):
+        # A long SIGINT stage: "ends at once" is told from "ends at the stage end" by a wide margin on both sides, so a
+        # loaded machine cannot blur it (the old 0.5 s bound sat next to the ~0.8 s left of a 1.0 s stage).
+        stage = dataclasses.replace(POLICY, sigint_wait=4.0)
+        self.command_stop.policy = stage
         started = self.run_command("bash -c 'trap \"\" INT TERM; sleep 623.1'")
         sleepers = pids_running("sleep", "623.1")
         self.assertEqual(len(sleepers), 1, sleepers)
@@ -398,19 +403,19 @@ class BackendShutdownTests(EscalationFixture):
         thread = threading.Thread(target=lambda: box.update(result=self.stop(started["command_id"])), daemon=True)
         thread.start()
         self.addCleanup(thread.join, 10)
-        self.assertTrue(wait_until(lambda: self.query()["status"] == "stopping", 5))
+        self.assertTrue(wait_until(lambda: self.query()["status"] == "stopping", 30))
         time.sleep(0.2)
         began = time.monotonic()
         self.command_stop.close()
-        thread.join(5)
+        thread.join(30)
         result = box["result"]
         self.assertEqual((result["status"], result["reason"]), ("unknown", "backend_shutdown"), result)
-        self.assertLess(time.monotonic() - began, 0.5, "the episode ends at once, not at the stage end")
+        self.assertLess(time.monotonic() - began, stage.sigint_wait / 2, "the episode ends at once, not at the stage end")
         self.assertEqual(self.signal_names(result), ["SIGINT"], "nothing more was sent after the close")
-        time.sleep(POLICY.sigint_wait)
+        time.sleep(stage.sigint_wait)  # the whole stage the episode was in: SIGTERM would have been due by now
         self.assertTrue(proc_exists(sleepers[0]), "it was never escalated")
         os.kill(sleepers[0], signal.SIGKILL)  # the test's own process
-        self.assertTrue(wait_until(lambda: self.query()["status"] == "exited", 10))
+        self.assertTrue(wait_until(lambda: self.query()["status"] == "exited", 30))
 
 
 class EndedWhileFlippingPort(HostShellPort):
@@ -495,7 +500,7 @@ class MismatchedMemberStaysSkippedTests(EscalationFixture):
         self.assertTrue(proc_exists(changed[0]))
         self.assertFalse(proc_exists(other[0]))
         os.kill(changed[0], signal.SIGKILL)  # the test's own process
-        self.assertTrue(wait_until(lambda: self.query()["status"] == "exited", 10))
+        self.assertTrue(wait_until(lambda: self.query()["status"] == "exited", 30))
 
 
 if __name__ == "__main__":

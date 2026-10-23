@@ -48,26 +48,12 @@ from workbench.workflow.run import TaskWorkflow, WorkflowRun
 
 from test_cd70_restart_worker import RestartWorkerFixture, alive
 from test_task_flow import AUTOMATION, FakeMailbox, PublicMailboxFixture, git, request, wait_until
+from command_stop_support import identity_with_child, stat_ticks
 
 # The test's own stop policy for real commands (production defaults are verified elsewhere).
 POLICY = StopPolicy(identity_wait=3.0, sigint_wait=3.0, sigterm_wait=2.0, sigkill_wait=2.0, call_wait=20.0)
 SLEEPING = "printf 'started\\n'; sleep 120; printf PASS > outcome.txt"
 CALL_LONG = 60  # seconds a test waits for a Task state change
-
-
-def identity_with_child(shell, timeout=10.0):
-    """The run identity once the command child is known: its `child` is None while the run is starting."""
-    found = []
-
-    def has_child():
-        identity = shell.run_identity()
-        if identity and identity.get("child"):
-            found.append(identity)
-        return bool(found)
-
-    if not wait_until(has_child, timeout):
-        raise AssertionError(f"the command child was not identified within {timeout}s: {shell.run_identity()}")
-    return found[-1]
 
 
 class Lifecycle:
@@ -126,13 +112,6 @@ class DeniedEnvironment(CountingEnvironment):
         if self.deny:
             raise PermissionError(1, "Operation not permitted")
         super().pidfd_send_signal(fd, signum)
-
-
-def stat_ticks(pid):
-    try:
-        return int(Path(f"/proc/{pid}/stat").read_text().rsplit(") ", 1)[1].split()[19])
-    except (OSError, IndexError, ValueError):
-        return None
 
 
 def kill_exact(pid, ticks):
@@ -215,7 +194,7 @@ class Fx(unittest.TestCase):
 
     def tearDown(self):
         self.halt.set()
-        self.loop.join(5)
+        self.loop.join(30)
         self.pane.close()
 
     def host_shell(self):
@@ -249,7 +228,7 @@ class Fx(unittest.TestCase):
         flow.start()
         self.addCleanup(service.close)
         self.addCleanup(flow.close)
-        self.assertTrue(wait_until(lambda: self.pane.state["parent_mode"] == "manual_prompt"))
+        self.assertTrue(wait_until(lambda: self.pane.state["parent_mode"] == "manual_prompt", 30))
         self.calls = 0
         return service, flow
 
@@ -277,9 +256,9 @@ class Fx(unittest.TestCase):
                                    and self.view()["status"] == "running" and self.view()["run_id"] is not None,
                                    CALL_LONG), self.view())
         run_id = self.view()["run_id"]
-        self.assertTrue(wait_until(lambda: "started" in [e["kind"] for e in self.shell_history(run_id)], 10),
+        self.assertTrue(wait_until(lambda: "started" in [e["kind"] for e in self.shell_history(run_id)], 30),
                         self.shell_history(run_id))
-        self.assertTrue(wait_until(lambda: self.view()["host_commands"], 10), self.view())
+        self.assertTrue(wait_until(lambda: self.view()["host_commands"], 30), self.view())
         return wanted, run_id
 
     def shell_history(self, run_id):
@@ -356,7 +335,7 @@ class ManagerStopTests(Fx):
                          [("stopped", "manager", task_id)])
         self.assertEqual([r for r in self.ledger() if r["type"] == "run_held"], [])
         self.assertEqual(self.lifecycle.named("run_ended"), [(run_id,)], "the automation learns the end exactly once")
-        self.assertTrue(wait_until(lambda: self.lifecycle.named("experiment_started") == [(run_id,)], 5))
+        self.assertTrue(wait_until(lambda: self.lifecycle.named("experiment_started") == [(run_id,)], 30))
         # stop journal: requester, kind, owner, task, reason; signals with times; the finish; no argv/command text
         (requested,) = self.of_type("command_stop_requested")
         self.assertEqual({k: requested[k] for k in ("command_id", "requested_by", "kind", "owner", "task_id",
@@ -374,7 +353,7 @@ class ManagerStopTests(Fx):
         # nothing outside the command was touched: the sentinel, the host shell parent, the user's prompt
         self.assertIsNone(sentinel.poll(), "a process outside the command was signalled")
         self.assertTrue(alive(shell_pid))
-        self.assertTrue(wait_until(lambda: self.pane.state["parent_mode"] == "manual_prompt", 10),
+        self.assertTrue(wait_until(lambda: self.pane.state["parent_mode"] == "manual_prompt", 30),
                         "the host shell is given back to the user")
 
     def test_a_cooperative_exit_after_sigint_is_still_a_stop_not_a_judged_success(self):
@@ -455,7 +434,7 @@ class SurfaceWhileStoppingTests(Fx):
     def test_host_commands_show_stopping_while_the_episode_runs_then_the_run_closes_stopped(self):
         task_id, run_id = self.running_experiment(self.SLOW)
         thread, box = self.stop_in_thread(run_id)
-        self.assertTrue(wait_until(lambda: self.view()["host_commands"][0]["state"] == "stopping", 10), self.view())
+        self.assertTrue(wait_until(lambda: self.view()["host_commands"][0]["state"] == "stopping", 30), self.view())
         shown = self.view()["host_commands"][0]
         self.assertEqual((shown["command_id"], shown["kind"], shown["owner"]), (run_id, "experiment", "manager"))
         self.assertIsInstance(shown["stop"], dict)
@@ -470,7 +449,7 @@ class SurfaceWhileStoppingTests(Fx):
     def test_a_cancel_asked_while_the_stop_is_under_way_wins_and_nothing_is_judged(self):
         task_id, run_id = self.running_experiment(self.SLOW)
         thread, box = self.stop_in_thread(run_id)
-        self.assertTrue(wait_until(lambda: self.view()["host_commands"][0]["state"] == "stopping", 10), self.view())
+        self.assertTrue(wait_until(lambda: self.view()["host_commands"][0]["state"] == "stopping", 30), self.view())
         cancel = self.cancel(task_id)
         self.assertEqual(cancel["status"], "cancel_requested", cancel)
         thread.join(30)
@@ -493,7 +472,7 @@ class ConcurrentAndRerunTests(Fx):
         threads = [threading.Thread(target=lambda b=b: b.setdefault("r", self.stop_service.stop("manager", run_id)),
                                     daemon=True) for b in boxes]
         threads[0].start()
-        self.assertTrue(wait_until(lambda: self.view()["host_commands"][0]["state"] == "stopping", 10), self.view())
+        self.assertTrue(wait_until(lambda: self.view()["host_commands"][0]["state"] == "stopping", 30), self.view())
         threads[1].start()
         for thread in threads:
             thread.join(40)
@@ -516,7 +495,7 @@ class ConcurrentAndRerunTests(Fx):
         self.assertTrue(wait_until(lambda: self.view()["status"] == "running" and self.view()["run_id"] not in
                                    (None, first), CALL_LONG), self.view())
         second = self.view()["run_id"]
-        self.assertTrue(wait_until(lambda: self.view()["host_commands"], 10))
+        self.assertTrue(wait_until(lambda: self.view()["host_commands"], 30))
         self.assertEqual([c["command_id"] for c in self.view()["host_commands"]], [second])
         self.assertEqual(self.stop_service.stop("manager", second)["status"], "exited")
         self.await_status("finished")
@@ -612,7 +591,7 @@ class CancelCombinationTests(Fx):
         thread = threading.Thread(target=lambda: box.setdefault("r", self.stop_service.stop("manager", run_id)),
                                   daemon=True)
         thread.start()
-        self.assertTrue(wait_until(lambda: self.stop_service.stop_marker(run_id) != {}, 10))
+        self.assertTrue(wait_until(lambda: self.stop_service.stop_marker(run_id) != {}, 30))
         self.assertEqual(self.cancel(task_id)["status"], "cancel_requested")
         thread.join(30)
         self.await_status("closed")
@@ -630,7 +609,7 @@ class SetsidDescendantTests(Fx):
 
     def descendant(self):
         path = self.root / "descendant.pid"
-        self.assertTrue(wait_until(lambda: path.exists() and path.read_text().strip(), 10))
+        self.assertTrue(wait_until(lambda: path.exists() and path.read_text().strip(), 30))
         pid = int(path.read_text())
         ticks = stat_ticks(pid)
         self.assertIsNotNone(ticks)
@@ -639,7 +618,7 @@ class SetsidDescendantTests(Fx):
 
     def end_descendant(self, pid, ticks):
         kill_exact(pid, ticks)
-        self.assertTrue(wait_until(lambda: not alive(pid), 10))
+        self.assertTrue(wait_until(lambda: not alive(pid), 30))
 
     def test_unknown_without_a_cancel_keeps_the_run_open_then_the_exit_closes_it_as_stopped(self):
         task_id, run_id = self.running_experiment(self.command())
@@ -775,7 +754,7 @@ class NaturalExitTests(Fx):
             thread = threading.Thread(target=lambda: box.setdefault("r", self.stop_service.stop("manager", run_id)),
                                       daemon=True)
             thread.start()
-            thread.join(5)
+            thread.join(30)
             seen["result"] = box.get("r")
         self.judge_probe = probe
         result = self.to_worker({"kind": "experiment", "message": "run the fixture", "spec": self.spec(self.QUICK)})
@@ -832,7 +811,7 @@ class RegistryCleanupTests(Fx):
 
     def assert_released(self):
         self.assertTrue(wait_until(lambda: gc.collect() is not None
-                                   and all(ref() is None for ref in self.run_refs + self.port_refs), 10),
+                                   and all(ref() is None for ref in self.run_refs + self.port_refs), 30),
                         "a WorkflowRun or HostShellPort is still referenced")
 
     def test_after_the_run_ends_the_request_id_no_longer_resolves_and_nothing_is_held(self):

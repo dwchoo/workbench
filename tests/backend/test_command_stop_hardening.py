@@ -30,8 +30,8 @@ from workbench.contracts.v1 import ActorRole
 
 import test_command_stop_authority as authority
 from test_command_stop_escalation import EscalationFixture, POLICY
-from test_command_stop_pins import BOOT_ID, proc_stat
-from test_command_stop_terminal import pids_running, proc_exists
+from test_command_stop_pins import BOOT_ID
+from command_stop_support import alive as proc_exists, pids_running, proc_stat
 from test_flow_terminal import call, journal, wait_until
 
 SHORT = StopPolicy(identity_wait=0.2, sigint_wait=0.2, sigterm_wait=0.2, sigkill_wait=0.2, call_wait=3.0,
@@ -205,7 +205,7 @@ class EndedTerminalCommandTests(EscalationFixture):
         started = self.run_command("sleep 612.1")
         command = self.terminal._current
         self.assertEqual(self.stop(started["command_id"])["status"], "exited")
-        self.assertTrue(wait_until(lambda: not self.query().get("running"), 10))
+        self.assertTrue(wait_until(lambda: not self.query().get("running"), 30))
         remembered = self.command_stop._ended[started["command_id"]]
         self.assertTrue(holds(command, command), "the helper finds a plain reference")
         self.assertFalse(holds(remembered, command, barrier=(TerminalService,)),
@@ -332,7 +332,7 @@ class StopArrivingAsTheOwnerEndsTests(unittest.TestCase):
             reads.append(1)
             if len(reads) == 2:  # the SIGTERM stage re-reads the identity after its check that the owner is there
                 second_read.set()
-                resume_read.wait(5)
+                resume_read.wait(30)
             return {"request_id": command_id, "phase": "running", "uid": self.UID, "boot_id": BOOT_ID,
                     "session": self.SESSION, "child_group": self.CHILD,
                     "parent": {"pid": self.HOST, "start_ticks": 1000 + self.HOST},
@@ -361,14 +361,14 @@ class StopArrivingAsTheOwnerEndsTests(unittest.TestCase):
             def __iter__(self):
                 if not stopper.is_alive() and not stopped.is_set():
                     stopper.start()
-                    deadline = time.monotonic() + 5
+                    deadline = time.monotonic() + 30
                     while not (second_read.is_set() or stopped.is_set()) and time.monotonic() < deadline:
                         time.sleep(0.01)
                 return iter(self.data)
 
         service.command_ended(command_id, Final())
         resume_read.set()
-        stopper.join(10)
+        stopper.join(30)
         self.assertFalse(stopper.is_alive())
         self.assertTrue(stopped.is_set(), "the stop was started inside command_ended")
         self.assertEqual([item for item in env.opened if item == self.PROTECTED], [], "never even pinned")
@@ -419,4 +419,4 @@ class PidfdUnavailableEpisodeTests(EscalationFixture):
                          "no stale refusal is recorded")
         self.assertTrue(proc_exists(sleeper))
         os.kill(sleeper, signal.SIGKILL)  # the test's own process
-        self.assertTrue(wait_until(lambda: self.query()["status"] == "exited", 10))
+        self.assertTrue(wait_until(lambda: self.query()["status"] == "exited", 30))

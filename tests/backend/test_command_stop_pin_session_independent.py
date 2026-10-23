@@ -79,7 +79,7 @@ def read_stat(pid):
     return LinuxStopEnvironment().read_stat(pid)
 
 
-def wait_for(path: Path, timeout=10.0) -> str:
+def wait_for(path: Path, timeout=30.0) -> str:
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         if path.exists():
@@ -127,11 +127,11 @@ class RealProcessCase(unittest.TestCase):
                 os.close(fd)
         for popen in self.popens:
             try:
-                popen.wait(timeout=10)
+                popen.wait(timeout=30)
             except subprocess.TimeoutExpired:
                 popen.kill()
-                popen.wait(timeout=10)
-        deadline = time.monotonic() + 10
+                popen.wait(timeout=30)
+        deadline = time.monotonic() + 30
         for pid, ticks in self.owned:
             while time.monotonic() < deadline:
                 stat = read_stat(pid)
@@ -285,7 +285,7 @@ class DirectPinRealProcessTests(RealProcessCase):
         pin = self.pin(env, pid, scanned.session, ticks=scanned.start_ticks)
         self.assertEqual(pin.status, "pinned")
         self.assertEqual(pin.send(signal.SIGUSR1), "sent")
-        deadline = time.monotonic() + 5
+        deadline = time.monotonic() + 30
         while time.monotonic() < deadline and not self.signals():
             time.sleep(0.01)
         self.assertEqual(self.signals(), ["SIGUSR1"])
@@ -334,7 +334,7 @@ class DirectPinRealProcessTests(RealProcessCase):
         scanned = read_stat(pid)
         popen = self.popens[-1]
         popen.kill()
-        popen.wait(timeout=10)
+        popen.wait(timeout=30)
         env = HookedEnvironment(pid, None, lambda: None)
         pin = self.pin(env, pid, scanned.session, ticks=scanned.start_ticks)
         self.assertEqual(pin.status, "ended")

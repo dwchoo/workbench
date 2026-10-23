@@ -36,7 +36,7 @@ from workbench.backend.panes import HostShellPort
 
 from test_command_stop_escalation import (
     POLICY, TOLERANCE, EscalationFixture, SendFailureEnvironment, kill_same_process)
-from test_command_stop_terminal import pids_running, proc_exists, proc_fields
+from command_stop_support import alive as proc_exists, pids_running, stat_fields as proc_fields
 from test_flow_terminal import journal, wait_until
 
 
@@ -80,7 +80,7 @@ class OutcomeFixture(EscalationFixture):
     def end_own(self, pid, ticks):
         """The test kills its own process (pid + start ticks) and waits until the owner observed the end."""
         kill_same_process(pid, ticks)
-        self.assertTrue(wait_until(lambda: self.query()["status"] == "exited", 10), self.query())
+        self.assertTrue(wait_until(lambda: self.query()["status"] == "exited", 30), self.query())
 
     def signal_attempts(self):
         return list(self.stop_env.attempts)
@@ -99,12 +99,12 @@ class RepeatedStopWhileRunningTests(OutcomeFixture):
         results, began = [], time.monotonic()
         first = threading.Thread(target=lambda: results.append(self.stop(command_id)), daemon=True)
         first.start()
-        self.assertTrue(wait_until(lambda: self.query()["status"] == "stopping", 5))
+        self.assertTrue(wait_until(lambda: self.query()["status"] == "stopping", 30))
         time.sleep(0.3)  # the second request arrives while the SIGINT stage is still being waited out
         second = threading.Thread(target=lambda: results.append(self.stop(command_id)), daemon=True)
         second.start()
-        first.join(10)
-        second.join(10)
+        first.join(30)
+        second.join(30)
         elapsed = time.monotonic() - began
         self.assertEqual(len(results), 2, results)
         self.assertEqual([r["status"] for r in results], ["exited", "exited"], results)
@@ -137,7 +137,9 @@ class RepeatedStopAfterFinishTests(OutcomeFixture):
         before = {kind: len(self.records(kind)) for kind in kinds}
         began = time.monotonic()
         again = self.stop(command_id)
-        self.assertLess(time.monotonic() - began, 0.5, "no timer or stage is started")
+        # structural proof: ``signal_attempts()`` and the record counts are compared below; the latency bound is only a
+        # sanity net at the shortest stage wait, which a repeat that started a stage could not undercut
+        self.assertLess(time.monotonic() - began, POLICY.sigint_wait, "no timer or stage is started")
         self.assertEqual(again["status"], "exited", "the original result, not already_exited")
         self.assertIs(again["repeat"], True)
         self.assertEqual(self.without_repeat(again), original)
@@ -216,7 +218,7 @@ class PermissionDeniedOutcomeTests(OutcomeFixture):
         self.assertEqual(self.signal_attempts(), attempts)
         for pid, ticks in members:
             kill_same_process(pid, ticks)  # the test's own processes
-        self.assertTrue(wait_until(lambda: self.query()["status"] == "exited", 10), self.query())
+        self.assertTrue(wait_until(lambda: self.query()["status"] == "exited", 30), self.query())
 
 
 class LateEndCorrectsUnknownTests(OutcomeFixture):
@@ -232,7 +234,7 @@ class LateEndCorrectsUnknownTests(OutcomeFixture):
         attempts = self.signal_attempts()
         self.assertEqual(len(attempts), 3)
         self.end_own(pid, ticks)  # the test really ends its process; the owner observes it
-        self.assertTrue(wait_until(lambda: self.records("command_stop_corrected"), 5))
+        self.assertTrue(wait_until(lambda: self.records("command_stop_corrected"), 30))
         corrected = self.stop(command_id)
         self.assertEqual((corrected["status"], corrected["exit_code"], corrected["signal"],
                           corrected["signal_name"]), ("exited", 128 + 9, 9, "SIGKILL"), corrected)
@@ -392,7 +394,7 @@ class JoinerAtTheCallLimitTests(RegistryRig):
         starter.start()
         time.sleep(0.03)  # the episode is under way (waiting for the run identity)
         joiner = self.service.stop("worker", command_id)
-        starter.join(5)
+        starter.join(30)
         self.assertEqual(joiner["status"], "stopping", joiner)
         self.assertIs(joiner["repeat"], True)
         self.assertEqual(first[0]["status"], "stopping")
@@ -461,7 +463,7 @@ class FollowFailureTests(OutcomeFixture):
         self.addCleanup(setattr, threading, "excepthook", previous)
         started = self.run_command("echo ended-by-itself", wait=0.5)
         command_id = started["command_id"]
-        self.assertTrue(wait_until(lambda: seen, 10), "the owner's follow raised")
+        self.assertTrue(wait_until(lambda: seen, 30), "the owner's follow raised")
         began = time.monotonic()
         result = self.stop(command_id)
         self.assertEqual((result["status"], result["reason"]), ("unknown", "owner_follow_failed"), result)

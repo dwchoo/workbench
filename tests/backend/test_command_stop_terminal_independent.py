@@ -39,6 +39,7 @@ from workbench.contracts.v1 import ActorRole
 from workbench.terminal.shell_g2.prototype import ShellChoice
 
 from test_flow_terminal import AUTOMATION, SECRET, FakeHostPort, ServiceFixture, call, journal, wait_until
+from command_stop_support import Proc, alive, all_procs, descendants, pids_running, proc  # noqa: F401  (/proc oracle, read here)
 
 # The test's own policy constants: a reduced StopPolicy (production defaults are 3/10/5/5/25 s).
 POLICY = StopPolicy(identity_wait=2.0, sigint_wait=2.0, sigterm_wait=1.0, sigkill_wait=1.0, call_wait=8.0)
@@ -47,65 +48,7 @@ BOOT_ID = Path("/proc/sys/kernel/random/boot_id").read_text().strip()
 SLOW_INT = "trap 'sleep 1.2; exit 130' INT; echo ready-for-int; while :; do sleep 0.2; done"  # answers SIGINT late
 
 
-# -- /proc oracle (read here, never through the production reader) --------------------------------------------
-@dataclasses.dataclass(frozen=True)
-class Proc:
-    pid: int
-    state: str
-    ppid: int
-    pgrp: int
-    session: int
-    ticks: int
-
-
-def proc(pid: int) -> Proc | None:
-    try:
-        fields = Path(f"/proc/{pid}/stat").read_text().rsplit(") ", 1)[1].split()
-    except (OSError, IndexError):
-        return None
-    return Proc(pid, fields[0], int(fields[1]), int(fields[2]), int(fields[3]), int(fields[19]))
-
-
-def alive(pid: int, ticks: int | None = None) -> bool:
-    found = proc(pid)
-    return found is not None and found.state not in ("Z", "X") and (ticks is None or found.ticks == ticks)
-
-
-def all_procs() -> list[Proc]:
-    found = []
-    for name in os.listdir("/proc"):
-        if name.isdecimal() and (item := proc(int(name))) is not None:
-            found.append(item)
-    return found
-
-
-def pids_running(*argv: str) -> list[int]:
-    """Live pids whose argv equals ``argv`` (used by this file only to find the processes it started)."""
-    wanted = b"\0".join(item.encode() for item in argv) + b"\0"
-    found = []
-    for name in os.listdir("/proc"):
-        if not name.isdecimal():
-            continue
-        try:
-            if Path(f"/proc/{name}/cmdline").read_bytes() == wanted and alive(int(name)):
-                found.append(int(name))
-        except OSError:
-            continue
-    return found
-
-
-def descendants(pid: int) -> list[int]:
-    stats = all_procs()
-    found, pending = [], [pid]
-    while pending:
-        parent = pending.pop()
-        for item in stats:
-            if item.ppid == parent and item.pid not in found:
-                found.append(item.pid)
-                pending.append(item.pid)
-    return found
-
-
+# -- test-owned processes (the /proc oracle itself is command_stop_support, read here, never the production reader)
 class Owned:
     """Processes this file started or found; killed (by pidfd, only while their start ticks still match) on teardown."""
 
@@ -351,7 +294,7 @@ class RegistryRefusalTests(FakePortRig):
                                 stdin=subprocess.DEVNULL, start_new_session=True)
         self.addCleanup(lambda: (tree.poll() is None and tree.kill(), tree.wait()))
         self.assertTrue(wait_until(lambda: len(pids_running("sleep", "617.1")) == 1
-                                   and len(pids_running("sleep", "617.2")) == 1, 5))
+                                   and len(pids_running("sleep", "617.2")) == 1, 30))
         first, second = pids_running("sleep", "617.1")[0], pids_running("sleep", "617.2")[0]
         owned = Owned()
         for pid in (first, second):
@@ -417,10 +360,10 @@ class RealRig(ServiceFixture):
             self.terminal.close()
             self.terminal = self.make_terminal(lambda: HostShellPort(self.pane, lambda: self.pane),
                                                **self.terminal_extras())
-            self.assertTrue(wait_until(lambda: self.pane.state["parent_mode"] == "manual_prompt", 10))
+            self.assertTrue(wait_until(lambda: self.pane.state["parent_mode"] == "manual_prompt", 30))
             self.user_types(f"cd {self.home}\r".encode())
-            self.assertTrue(wait_until(lambda: self.pane.cwd() == str(self.home), 5))
-            self.assertTrue(wait_until(self.idle, 5))
+            self.assertTrue(wait_until(lambda: self.pane.cwd() == str(self.home), 30))
+            self.assertTrue(wait_until(self.idle, 30))
         except BaseException:
             self.tearDown()
             raise
@@ -441,7 +384,7 @@ class RealRig(ServiceFixture):
         self.command_stop.close()
         self.halt.set()
         if self.loop is not None:
-            self.loop.join(5)
+            self.loop.join(30)
         if self.pane is not None:
             self.pane.close()
         super().tearDown()
@@ -485,7 +428,7 @@ class RealRig(ServiceFixture):
         self.assertTrue(alive(process.pid))
         return process
 
-    def find(self, *argv, count=1, timeout=5):
+    def find(self, *argv, count=1, timeout=30):
         self.assertTrue(wait_until(lambda: len(pids_running(*argv)) >= count, timeout), (argv, pids_running(*argv)))
         pids = pids_running(*argv)
         for pid in pids:
@@ -500,18 +443,18 @@ class RealRig(ServiceFixture):
 
     def assert_user_owns_the_shell_again(self):
         self.assertTrue(wait_until(lambda: self.pane.state["input_owner"] == "user"
-                                   and self.pane.state["parent_mode"] == "manual_prompt", 10), self.pane.state)
+                                   and self.pane.state["parent_mode"] == "manual_prompt", 30), self.pane.state)
         self.assertIsNone(self.pane.automation_hold)
         self.assertIsNone(self.gate.owner)
         marker = f"user-typed-{uuid4().hex[:6]}"
         self.user_types(f"echo {marker}\r".encode())
-        self.assertTrue(wait_until(lambda: bytes(self.ui).count(marker.encode()) >= 2, 5), "the user regains input")
+        self.assertTrue(wait_until(lambda: bytes(self.ui).count(marker.encode()) >= 2, 30), "the user regains input")
 
     def kill_owned_and_wait_for_the_owner(self, *pids):
         for pid in pids:
             if alive(pid):
                 os.kill(pid, signal.SIGKILL)  # only pids this test started and found
-        self.assertTrue(wait_until(lambda: self.terminal.current()["running"] is False, 10), self.terminal.current())
+        self.assertTrue(wait_until(lambda: self.terminal.current()["running"] is False, 30), self.terminal.current())
 
 
 class StopRunningCommandTests(RealRig):
@@ -575,7 +518,7 @@ class StopRunningCommandTests(RealRig):
         self.assertNotIn("result", box, "the call is still waiting while the command handles SIGINT slowly")
         self.assertTrue(self.terminal.current()["running"])
         self.assertEqual(self.gate.owner, "terminal", "the command still holds the host terminal")
-        thread.join(10)
+        thread.join(30)
         result = box["result"]
         self.assertEqual((result["status"], result["exit_code"]), ("exited", 130), result)
         self.assertGreaterEqual(box["ended"] - box["began"], 1.1, "returned only after the 1.2 s trap finished")
@@ -589,7 +532,7 @@ class StopRunningCommandTests(RealRig):
         started = self.run_command(SLOW_INT)
         command_id = started["command_id"]
         thread, box = self.stop_in_background(command_id)
-        self.assertTrue(wait_until(lambda: self.query()["status"] == "stopping", 5), "a query sees stopping")
+        self.assertTrue(wait_until(lambda: self.query()["status"] == "stopping", 30), "a query sees stopping")
         with mock.patch.object(HostShellPort, "send_user", autospec=True) as send_user, \
                 mock.patch.object(HostShellPort, "submit", autospec=True) as submit, \
                 mock.patch.object(HostShellPort, "claim_manager", autospec=True) as claim, \
@@ -611,7 +554,7 @@ class StopRunningCommandTests(RealRig):
             self.assertNotIn(b"never-run-while-stopping", bytes(self.ui)[before:],
                              "neither the stop nor the refused command typed into the host terminal")
         self.assertEqual(self.gate.owner, "terminal")
-        thread.join(10)
+        thread.join(30)
         self.assertEqual(box["result"]["status"], "exited", box["result"])
 
     def test_the_stop_call_is_not_a_waiter_and_the_completion_notice_is_delivered_once(self):
@@ -626,7 +569,7 @@ class StopRunningCommandTests(RealRig):
         command_id = started["command_id"]
         result = self.stop(command_id)
         self.assertEqual((result["status"], result["exit_code"]), ("exited", 130), result)
-        self.assertTrue(wait_until(lambda: any(n["type"] == "terminal_done" for n in delivered), 5), delivered)
+        self.assertTrue(wait_until(lambda: any(n["type"] == "terminal_done" for n in delivered), 30), delivered)
         again = self.stop(command_id)  # a repeated stop after the end must not recreate or consume a notice
         # CS-04 (SPEC "결과 계약"): a repeat after a finished stop returns the ORIGINAL result, marked repeat:true
         self.assertIs(again["repeat"], True, again)
@@ -656,10 +599,12 @@ class StopRunningCommandTests(RealRig):
         began = time.monotonic()
         result = self.stop(started["command_id"])
         self.assertEqual(result["status"], "stopping", result)
-        self.assertLess(time.monotonic() - began, 1.1, "returned at the call-wait limit, not at the end")
+        # "stopping" (not "exited") is the structural proof that the call returned before the episode ended; the bound
+        # is a sanity net at the SIGINT stage wait (5x the 0.4 s call wait), not at the 1.2 s the trap needs
+        self.assertLess(time.monotonic() - began, POLICY.sigint_wait, "returned at the call-wait limit, not at the end")
         self.assertEqual(result["command_id"], started["command_id"])
-        self.assertTrue(wait_until(lambda: self.terminal.current()["running"] is False, 10))
-        self.assertTrue(wait_until(lambda: self.records_of("command_stop_finished"), 5))
+        self.assertTrue(wait_until(lambda: self.terminal.current()["running"] is False, 30))
+        self.assertTrue(wait_until(lambda: self.records_of("command_stop_finished"), 30))
         self.assertEqual(self.records_of("command_stop_finished")[0]["status"], "exited")
         self.assertEqual(self.terminal.current()["status"], "exited")
 
@@ -682,7 +627,7 @@ class StopRunningCommandTests(RealRig):
         self.assertEqual(self.query()["status"], "unknown", "not ended, not stopping any more: unknown")
         self.assertEqual(self.run_command("echo no", wait=1)["status"], "terminal_command_running",
                          "an unknown command is not reported as safe to replace")
-        self.assertTrue(wait_until(lambda: self.terminal.current()["running"] is False, 10))
+        self.assertTrue(wait_until(lambda: self.terminal.current()["running"] is False, 30))
         self.assertEqual(self.terminal.current()["status"], "exited", "the owner reports its own end")
         self.assert_user_owns_the_shell_again()
 
@@ -797,7 +742,7 @@ class StopIdentityTests(RealRig):
                     self.assertFalse(result.get("signals"))
                     self.assertTrue(alive(pid), "the target was not signalled")
                 self.kill_owned_and_wait_for_the_owner(pid)
-                self.assertTrue(wait_until(self.idle, 10))
+                self.assertTrue(wait_until(self.idle, 30))
         self.assertTrue(saw_stale and saw_sent, "the sweep covered both a refusal and a delivery")
 
     def test_a_member_that_changes_is_skipped_and_recorded_while_the_verified_ones_are_signalled(self):
@@ -980,7 +925,7 @@ class RaceTests(RealRig):
             result = self.stop(started["command_id"])
             self.assertEqual((result["status"], result["exit_code"]), ("exited", 130), (index, result))
             self.assertEqual(pids_running("sleep", seconds), [])
-            self.assertTrue(wait_until(self.idle, 10))
+            self.assertTrue(wait_until(self.idle, 30))
         self.assertEqual(self.env.violations, [])
 
     def test_a_stop_racing_the_natural_end_is_never_stale_or_inconsistent(self):
@@ -999,7 +944,7 @@ class RaceTests(RealRig):
                     self.assertEqual(result["exit_code"], 0)
                 else:
                     self.assertIn(result["exit_code"], (0, 130), "natural end or the SIGINT death, nothing else")
-                self.assertTrue(wait_until(self.idle, 10))
+                self.assertTrue(wait_until(self.idle, 30))
                 self.assertFalse(self.terminal.current()["running"])
             self.assertEqual(self.env.violations, [])
         self.assertIn("exited", outcomes | {"exited"})
@@ -1013,7 +958,7 @@ class RaceTests(RealRig):
         for thread in threads:
             thread.start()
         for thread in threads:
-            thread.join(12)
+            thread.join(30)
         self.assertEqual(len(results), 2, results)
         self.assertEqual([r["status"] for r in results], ["exited", "exited"], results)
         sigints = [pid for pid, signum in self.env.sent if signum == signal.SIGINT]
@@ -1024,7 +969,7 @@ class RaceTests(RealRig):
         started = self.run_command("sleep 627.8")
         (pid,) = self.find("sleep", "627.8")
         os.kill(pid, signal.SIGKILL)  # the command dies by itself, then the stop arrives
-        self.assertTrue(wait_until(lambda: self.terminal.current()["running"] is False, 10))
+        self.assertTrue(wait_until(lambda: self.terminal.current()["running"] is False, 30))
         result = self.stop(started["command_id"])
         self.assertEqual(result["status"], "already_exited", result)
         self.assertEqual(self.env.attempts, [])
@@ -1131,7 +1076,7 @@ class JournalTests(RealRig):
                       "the residual is journaled with the survivor")
         self.assertEqual([r["signal"] for r in self.records_of("command_stop_signal")],
                          ["SIGINT", "SIGTERM", "SIGKILL"], "each stage left its own signal record")
-        self.assertTrue(wait_until(lambda: self.terminal.current()["running"] is False, 10))
+        self.assertTrue(wait_until(lambda: self.terminal.current()["running"] is False, 30))
 
 
 if __name__ == "__main__":

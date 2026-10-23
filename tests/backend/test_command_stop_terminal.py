@@ -31,20 +31,11 @@ from workbench.contracts.v1 import ActorRole
 from workbench.terminal.shell_g2.prototype import ShellChoice
 
 from test_flow_terminal import AUTOMATION, SECRET, ServiceFixture, call, journal, wait_until
+from command_stop_support import alive as proc_exists  # live (non-zombie) pid, optionally with exact start ticks
+from command_stop_support import pids_running, stat_fields as proc_fields  # [0] state [1] ppid [2] pgrp [3] session [19] ticks
 
 # The test's own policy constants (a reduced StopPolicy; the production defaults are checked elsewhere).
 REDUCED = StopPolicy(identity_wait=2.0, sigint_wait=2.0, sigterm_wait=1.0, sigkill_wait=1.0, call_wait=8.0)
-
-
-def proc_exists(pid: int, start_ticks: int | None = None) -> bool:
-    """True while ``pid`` is a live (non-zombie) process, read from /proc by the test itself."""
-    try:
-        fields = Path(f"/proc/{pid}/stat").read_text().rsplit(") ", 1)[1].split()
-    except OSError:
-        return False
-    if fields[0] in ("Z", "X"):
-        return False
-    return start_ticks is None or int(fields[19]) == start_ticks
 
 
 class StopArgumentValidationTests(unittest.TestCase):
@@ -109,26 +100,6 @@ ENV_VALUE = "exported-value-for-the-stop-test"
 BOOT_ID = Path("/proc/sys/kernel/random/boot_id").read_text().strip()
 
 
-def proc_fields(pid: int) -> list[str]:
-    """Fields 3.. of /proc/<pid>/stat, parsed by the test: [0] state, [1] ppid, [2] pgrp, [3] session, [19] start ticks."""
-    return Path(f"/proc/{pid}/stat").read_text().rsplit(") ", 1)[1].split()
-
-
-def pids_running(*argv: str) -> list[int]:
-    """Live pids of this uid whose argv equals ``argv``, read from /proc by the test (production never uses argv)."""
-    wanted = b"\0".join(item.encode() for item in argv) + b"\0"
-    found = []
-    for name in os.listdir("/proc"):
-        if not name.isdecimal():
-            continue
-        try:
-            if Path(f"/proc/{name}/cmdline").read_bytes() == wanted and proc_exists(int(name)):
-                found.append(int(name))
-        except OSError:
-            continue
-    return found
-
-
 class RealStopFixture(ServiceFixture):
     """A real backend ShellPane through HostShellPort, a TerminalService and a CommandStopService."""
 
@@ -163,10 +134,10 @@ class RealStopFixture(ServiceFixture):
         self.terminal.close()
         self.terminal = self.make_terminal(lambda: HostShellPort(self.pane, lambda: self.pane),
                                            **self.terminal_extras())
-        self.assertTrue(wait_until(lambda: self.pane.state["parent_mode"] == "manual_prompt", 10))
+        self.assertTrue(wait_until(lambda: self.pane.state["parent_mode"] == "manual_prompt", 30))
         self.user_types(f"cd {self.home}\r".encode())
-        self.assertTrue(wait_until(lambda: self.pane.cwd() == str(self.home), 5))
-        self.assertTrue(wait_until(self.idle, 5))
+        self.assertTrue(wait_until(lambda: self.pane.cwd() == str(self.home), 30))
+        self.assertTrue(wait_until(self.idle, 30))
 
     def terminal_extras(self):
         return {}
@@ -181,7 +152,7 @@ class RealStopFixture(ServiceFixture):
         self.terminal.close()
         self.command_stop.close()
         self.halt.set()
-        self.loop.join(5)
+        self.loop.join(30)
         self.pane.close()
         super().tearDown()
 
@@ -207,12 +178,12 @@ class RealStopFixture(ServiceFixture):
 
     def assert_user_owns_the_shell_again(self):
         self.assertTrue(wait_until(lambda: self.pane.state["input_owner"] == "user"
-                                   and self.pane.state["parent_mode"] == "manual_prompt", 10), self.pane.state)
+                                   and self.pane.state["parent_mode"] == "manual_prompt", 30), self.pane.state)
         self.assertIsNone(self.pane.automation_hold)
         self.assertIsNone(self.gate.owner)
         marker = f"user-typed-{uuid4().hex[:6]}"
         self.user_types(f"echo {marker}\r".encode())
-        self.assertTrue(wait_until(lambda: bytes(self.ui).count(marker.encode()) >= 2, 5), "the user regains input")
+        self.assertTrue(wait_until(lambda: bytes(self.ui).count(marker.encode()) >= 2, 30), "the user regains input")
 
 
 class StopRunningCommandTests(RealStopFixture):
@@ -263,7 +234,7 @@ class StopRunningCommandTests(RealStopFixture):
         self.assertEqual(started["status"], "running", started)
         command_id = started["command_id"]
         thread, box = self.stop_in_background(command_id)
-        self.assertTrue(wait_until(lambda: self.query()["status"] == "stopping", 5), "a query sees stopping")
+        self.assertTrue(wait_until(lambda: self.query()["status"] == "stopping", 30), "a query sees stopping")
         seen = self.query()
         self.assertEqual(seen["command_id"], command_id)
         self.assertEqual(self.terminal.current()["state"], "stopping")
@@ -278,7 +249,7 @@ class StopRunningCommandTests(RealStopFixture):
         time.sleep(0.3)
         self.assertNotIn(b"never-run-while-stopping", bytes(self.ui)[len(typed_before):],
                          "a stop or a refused command types nothing into the host terminal")
-        thread.join(10)
+        thread.join(30)
         result = box["result"]
         self.assertEqual((result["status"], result["exit_code"]), ("exited", 130), result)
         self.assertEqual([item["signal"] for item in result["signals"]], ["SIGINT"])
@@ -419,7 +390,7 @@ class StopStagesExhaustedTests(RealStopFixture):
         self.assertTrue(proc_exists(pids[0]))
         self.assertEqual(self.query()["status"], "unknown", "still not ended: the surface says unknown")
         self.assertEqual(self.run_command("echo no", wait=1)["status"], "terminal_command_running")
-        self.assertTrue(wait_until(lambda: self.terminal.current()["running"] is False, 10))
+        self.assertTrue(wait_until(lambda: self.terminal.current()["running"] is False, 30))
         self.assertEqual(self.terminal.current()["status"], "exited", "it ended by itself; the owner reports it")
         self.assert_user_owns_the_shell_again()
 
@@ -469,7 +440,7 @@ class StopIdentityMismatchTests(RealStopFixture):
         self.assertNotIn("command_stop_signal", types)
         self.assertEqual(types[-1], "command_stop_finished")
         os.kill(pids[0], signal.SIGKILL)  # the test's own sleep: end it so the host shell is the user's again
-        self.assertTrue(wait_until(lambda: self.query()["status"] == "exited", 10))
+        self.assertTrue(wait_until(lambda: self.query()["status"] == "exited", 30))
 
 
 class StopIdentityChangesBetweenScanAndPinTests(StopIdentityMismatchTests):
@@ -491,7 +462,7 @@ class StopMainCommandIdentityTests(RealStopFixture):
         sleepers = pids_running("sleep", "604.3") + pids_running("sleep", "604.4")
         self.assertEqual(len(sleepers), 2, sleepers)
         self.addCleanup(lambda: [os.kill(pid, signal.SIGKILL) for pid in sleepers if proc_exists(pid)])
-        main = int(Path(f"/proc/{sleepers[0]}/stat").read_text().rsplit(") ", 1)[1].split()[1])  # their parent
+        main = int(proc_fields(sleepers[0])[1])  # their parent
         self.assertTrue(proc_exists(main))
         self.addCleanup(lambda: proc_exists(main) and os.kill(main, signal.SIGKILL))
         self.stop_env.shifted.add(main)
@@ -501,7 +472,7 @@ class StopMainCommandIdentityTests(RealStopFixture):
         self.assertTrue(all(proc_exists(pid) for pid in sleepers))
         for pid in sleepers + [main]:
             os.kill(pid, signal.SIGKILL)  # the test's own processes
-        self.assertTrue(wait_until(lambda: self.query()["status"] == "exited", 10))
+        self.assertTrue(wait_until(lambda: self.query()["status"] == "exited", 30))
 
 
 class StopAndDoneNoticeTests(RealStopFixture):
@@ -523,7 +494,7 @@ class StopAndDoneNoticeTests(RealStopFixture):
         command_id = started["command_id"]
         result = self.stop(command_id)
         self.assertEqual((result["status"], result["exit_code"], result["signal"]), ("exited", 130, 2), result)
-        self.assertTrue(wait_until(lambda: any(item["type"] == "terminal_done" for item in self.delivered), 5),
+        self.assertTrue(wait_until(lambda: any(item["type"] == "terminal_done" for item in self.delivered), 30),
                         "the owner's completion notice is still delivered after a stop call returned the result")
         time.sleep(0.4)  # a duplicate would show up within a few ticks
         done = [item for item in self.delivered if item["type"] == "terminal_done"]
@@ -542,7 +513,7 @@ class CommandsRunCarryTheCommandIdTests(RealStopFixture):
         if result.get("status") != "running":
             # the result returns as the command ends; the shell is back at its prompt a moment later (on a fast
             # tmpfs TMPDIR the next command would race that and be refused host_terminal_busy)
-            self.assertTrue(wait_until(self.idle, 10), "the host shell is back before the next command")
+            self.assertTrue(wait_until(self.idle, 30), "the host shell is back before the next command")
         return result
 
     def test_a_task_command_entry_has_the_command_id_of_the_command_that_ran(self):

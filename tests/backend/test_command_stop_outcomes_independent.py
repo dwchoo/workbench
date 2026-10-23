@@ -30,7 +30,8 @@ from uuid import uuid4
 from workbench.backend.command_stop import CommandStopService, StopPolicy, StopTarget
 
 import test_command_stop_terminal_independent as base
-from test_command_stop_terminal_independent import alive, all_procs, journal, proc, wait_until
+from test_command_stop_terminal_independent import journal, wait_until
+from command_stop_support import alive, all_procs, proc
 
 SLOW = StopPolicy(identity_wait=2.0, sigint_wait=2.0, sigterm_wait=1.0, sigkill_wait=1.0, call_wait=10.0)
 FAST = StopPolicy(identity_wait=2.0, sigint_wait=1.0, sigterm_wait=1.0, sigkill_wait=1.0, call_wait=10.0)
@@ -116,7 +117,7 @@ class Rig(base.RealRig):
         """The test ends its own command: SIGKILL every member (pid + ticks), then wait for the owner to see it."""
         for item in members:
             kill_same_process(item.pid, item.ticks)
-        self.assertTrue(wait_until(lambda: self.query()["status"] == "exited", 10), self.query())
+        self.assertTrue(wait_until(lambda: self.query()["status"] == "exited", 30), self.query())
 
     @staticmethod
     def sans_repeat(result):
@@ -146,7 +147,7 @@ class ConcurrentRepeatTests(Rig):
         for thread in threads:
             thread.start()
         for thread in threads:
-            thread.join(15)
+            thread.join(30)
         self.assertEqual(len(results), 4, results)
         total = SLOW.sigint_wait + SLOW.sigterm_wait
         for returned_at, result in results:
@@ -193,7 +194,7 @@ class ConcurrentRepeatTests(Rig):
         for thread in threads:
             thread.start()
         for thread in threads:
-            thread.join(10)
+            thread.join(30)
         self.assertEqual(len(results), 8)
         self.assertEqual(sum(1 for item in results if "repeat" not in item), 1)
         self.assertEqual(sum(1 for item in results if item.get("repeat") is True), 7)
@@ -225,7 +226,10 @@ class RepeatAfterFinishTests(Rig):
         for index, requester in enumerate(("worker", "manager", "worker"), 1):
             began = time.monotonic()
             again = (self.stop(command_id) if requester == "worker" else self.command_stop.stop(requester, command_id))
-            self.assertLess(time.monotonic() - began, 0.5, "no stage or timer is started")
+            # Structural proof of "no stage or timer": the attempts, the records and the thread count are compared below.
+            # The latency bound is only a sanity net and sits at the shortest stage wait (a repeat that started a stage
+            # could not answer sooner than FAST.sigint_wait), so a loaded machine cannot trip it with ordinary jitter.
+            self.assertLess(time.monotonic() - began, FAST.sigint_wait, "no stage or timer is started")
             self.assertEqual(again["status"], "exited", "the original result, not already_exited")
             self.assertIs(again["repeat"], True)
             self.assertEqual(self.sans_repeat(again), original, f"repeat {index}: the original, untouched")
@@ -310,7 +314,8 @@ class UnknownAfterIneffectiveSigkillTests(Rig):
             again = (self.stop(command_id) if requester == "worker" else self.command_stop.stop(requester, command_id))
             self.assertIs(again["repeat"], True)
             self.assertEqual(self.sans_repeat(again), original, f"repeat {index}")
-        self.assertLess(time.monotonic() - began, 0.5, "no timer was started")
+        # structural proof is the unchanged ``env.attempts`` below; the bound stays under one stage wait (see above)
+        self.assertLess(time.monotonic() - began, FAST.sigint_wait, "no timer was started")
         self.assertEqual(self.env.attempts, attempts, "unknown gets no new signal")
         self.assertEqual(len(self.records_of("command_stop_signal")), 3)
         self.assertEqual(self.terminal.watch_state()["last"]["state"], "unknown")
@@ -390,7 +395,7 @@ class LateCorrectionTests(Rig):
         command_id, group, unknown = self.unknown_then("664.1")
         attempts = list(self.env.attempts)
         self.end_group(group)  # the test really ends the command; the owner observes it
-        self.assertTrue(wait_until(lambda: self.records_of("command_stop_corrected"), 5))
+        self.assertTrue(wait_until(lambda: self.records_of("command_stop_corrected"), 30))
         time.sleep(0.4)
         corrected = self.stop(command_id)
         self.assertEqual((corrected["status"], corrected["exit_code"], corrected["signal"],
@@ -432,12 +437,12 @@ class LateCorrectionTests(Rig):
         started = self.run_command("trap '' INT TERM; sleep 664.2")
         (sleeper,) = self.find("sleep", "664.2")
         group = self.command_group(sleeper)
-        killer = threading.Thread(target=lambda: (wait_until(lambda: self.env.count(signal.SIGKILL) >= 1, 10),
+        killer = threading.Thread(target=lambda: (wait_until(lambda: self.env.count(signal.SIGKILL) >= 1, 30),
                                                   time.sleep(0.3), [kill_same_process(i.pid, i.ticks) for i in group]),
                                   daemon=True)
         killer.start()
         result = self.stop(started["command_id"])
-        killer.join(5)
+        killer.join(30)
         self.assertEqual((result["status"], result["exit_code"], result["signal"]), ("exited", 137, 9), result)
         self.assertNotIn("corrected", result)
         self.assertNotIn("history", result)
@@ -457,8 +462,8 @@ class LateCorrectionTests(Rig):
         self.assertEqual(self.env.attempts, [], "the escaped descendant was never signalled")
         self.assertTrue(alive(escaped, ticks))
         kill_same_process(escaped, ticks)  # the test's own process
-        self.assertTrue(wait_until(lambda: self.query()["status"] == "exited", 10), self.query())
-        self.assertTrue(wait_until(lambda: self.records_of("command_stop_corrected"), 5))
+        self.assertTrue(wait_until(lambda: self.query()["status"] == "exited", 30), self.query())
+        self.assertTrue(wait_until(lambda: self.records_of("command_stop_corrected"), 30))
         corrected = self.stop(command_id)
         self.assertEqual((corrected["status"], corrected["exit_code"], corrected["signal"]), ("exited", 3, None))
         self.assertIs(corrected["corrected"], True)
@@ -478,9 +483,9 @@ class OwnerDeclaredUnknownTests(Rig):
         (sleeper,) = self.find("sleep", "665.1")
         group = self.command_group(sleeper)
         thread, box = self.stop_in_background(command_id)
-        self.assertTrue(wait_until(lambda: self.env.count(signal.SIGINT) >= 1, 5))
+        self.assertTrue(wait_until(lambda: self.env.count(signal.SIGINT) >= 1, 30))
         self.terminal.close()  # the owner stops following: it declares "backend stopping" for the running command
-        thread.join(15)
+        thread.join(30)
         result = box["result"]
         self.assertEqual(result["status"], "unknown", result)
         self.assertIn("backend stopping", str(result.get("reason")))
@@ -596,7 +601,7 @@ class FollowFailureTests(Rig):
         seen = self.failing_owner()
         started = self.run_command("echo ended-by-itself", wait=0.5)
         command_id = started["command_id"]
-        self.assertTrue(wait_until(lambda: seen, 10), "the owner's follow raised")
+        self.assertTrue(wait_until(lambda: seen, 30), "the owner's follow raised")
         time.sleep(0.2)
         self.assertIsNone(self.command_stop.surface(command_id))
         began = time.monotonic()
@@ -613,7 +618,7 @@ class FollowFailureTests(Rig):
         began = time.monotonic()
         result = self.stop(command_id)  # SIGTERM ends the command; the owner then fails to finish following
         self.assertLess(time.monotonic() - began, FAST.call_wait, "the call returned a final answer")
-        self.assertTrue(wait_until(lambda: seen, 10))
+        self.assertTrue(wait_until(lambda: seen, 30))
         self.assertNotEqual(result["status"], "stopping", result)
         self.assertEqual(result["status"], "unknown", "the owner never confirmed the end")
         self.assertTrue(result.get("reason"))

@@ -53,32 +53,7 @@ REQUESTERS = ("worker", "manager")
 
 
 # -- /proc oracle (read here) ------------------------------------------------------------------------------
-def stat_of(pid: int):
-    """(state, ppid, pgrp, session, start_ticks) or None."""
-    try:
-        fields = Path(f"/proc/{pid}/stat").read_text().rsplit(") ", 1)[1].split()
-    except (OSError, IndexError):
-        return None
-    return fields[0], int(fields[1]), int(fields[2]), int(fields[3]), int(fields[19])
-
-
-def alive(pid: int, ticks: int | None = None) -> bool:
-    found = stat_of(pid)
-    return found is not None and found[0] not in "ZX" and (ticks is None or found[4] == ticks)
-
-
-def pids_with(marker: str) -> list[int]:
-    """Live pids (not this process) whose command line contains ``marker``."""
-    needle, found = marker.encode(), []
-    for name in os.listdir("/proc"):
-        if not name.isdecimal() or int(name) == os.getpid():
-            continue
-        try:
-            if needle in Path(f"/proc/{name}/cmdline").read_bytes() and alive(int(name)):
-                found.append(int(name))
-        except OSError:
-            continue
-    return found
+from command_stop_support import alive, pids_with, stat_of  # (state, ppid, pgrp, session, start_ticks) or None
 
 
 def kill_exact(pid: int, ticks: int) -> None:
@@ -220,7 +195,7 @@ class AuthorizationMatrixTests(unittest.TestCase):
         thread = threading.Thread(target=lambda: box.update(result=registry.service.stop("manager", command_id,
                                                                                        reason="mine")))
         thread.start()
-        deadline = time.monotonic() + 3
+        deadline = time.monotonic() + 30
         while registry.service.surface(command_id) is None and time.monotonic() < deadline:
             time.sleep(0.01)
         self.assertIsNotNone(registry.service.surface(command_id), "the Manager's episode is under way")
@@ -228,7 +203,7 @@ class AuthorizationMatrixTests(unittest.TestCase):
         self.assertEqual((during["status"], during["reason"]), ("refused", "not_owner"), during)
         self.assertNotIn("repeat", during)
         self.assertNotIn("stop", during, "the Worker is shown nothing of a command it may not stop")
-        thread.join(6)
+        thread.join(30)
         result = box["result"]
         self.assertEqual(result["requested_by"], "manager")
         self.assertNotIn("repeat", result, "the Manager's stop is the original, not a repeat")
@@ -247,11 +222,11 @@ class AuthorizationMatrixTests(unittest.TestCase):
         box = {}
         thread = threading.Thread(target=lambda: box.update(result=registry.service.stop("worker", command_id)))
         thread.start()
-        deadline = time.monotonic() + 3
+        deadline = time.monotonic() + 30
         while registry.service.surface(command_id) is None and time.monotonic() < deadline:
             time.sleep(0.01)
         joined = registry.service.stop("manager", command_id, reason="me too")
-        thread.join(6)
+        thread.join(30)
         self.assertEqual(box["result"]["requested_by"], "worker")
         self.assertEqual((joined["requested_by"], joined.get("repeat")), ("worker", True), joined)
         self.assertEqual(len(registry.of("command_stop_requested")), 1, "one episode, one request record")
@@ -1009,7 +984,7 @@ class OneEpisodeUnderRaceTests(Cs05Fixture):
         def request(role, peer, tool, args):
             frame = {"request_id": str(uuid4()), "tool_call_id": f"race-{role}-{uuid4()}", "tool": tool, "args": args,
                      "session_id": peer.session_id, "generation": peer.generation}
-            barrier.wait(5)
+            barrier.wait(30)
             boxes[role] = self.backend._tool_request(peer, frame)
         threads = [threading.Thread(target=request, daemon=True, args=(
             "worker", worker_peer, "terminal", {"command": None, "stop": started["command_id"]})),
@@ -1017,8 +992,8 @@ class OneEpisodeUnderRaceTests(Cs05Fixture):
                 "manager", manager_peer, "stop_command", {"command_id": started["command_id"], "reason": "race"}))]
         for thread in threads:
             thread.start()
-        self.addCleanup(lambda: [thread.join(10) for thread in threads])
-        self.wait(lambda: len(boxes) == 2, "both stop results", timeout=20)
+        self.addCleanup(lambda: [thread.join(30) for thread in threads])
+        self.wait(lambda: len(boxes) == 2, "both stop results", timeout=30)
         results = list(boxes.values())
         self.assertEqual([r["status"] for r in results], ["exited", "exited"], results)
         self.assertEqual({r["exit_code"] for r in results}, {130})

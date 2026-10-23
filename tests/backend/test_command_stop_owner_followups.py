@@ -77,7 +77,7 @@ class TerminalRegistrationFailureTests(FailingRegisterTerminal):
         self.assertEqual(self.command_stop.stop_marker(started["command_id"]), {})
         # the command is the test's own: end it the plain way (Ctrl-C typed as the user)
         self.user_types(b"\x03")
-        self.assertTrue(wait_until(lambda: self.query().get("status") != "running", 10))
+        self.assertTrue(wait_until(lambda: self.query().get("status") != "running", 30))
 
 
 class FlowRegistrationFailureTests(ExperimentStopFixture):

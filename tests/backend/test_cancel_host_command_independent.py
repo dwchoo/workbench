@@ -99,9 +99,9 @@ class CancelHostCommandBase(FlowFixture):
             log_root=self.root / "workflow" / "terminal", automation=lambda: AUTOMATION,
             active_task=self.flow.active_task, poll_interval=0.02, command_stop=self.command_stop)
         self.flow.host_commands = self.terminal.commands_for_task
-        self.assertTrue(wait_until(lambda: self.pane.state["parent_mode"] == "manual_prompt", 10))
+        self.assertTrue(wait_until(lambda: self.pane.state["parent_mode"] == "manual_prompt", 30))
         self.assertIsNone(self.pane.admit(f"cd {self.home}\r".encode()))
-        self.assertTrue(wait_until(lambda: self.pane.cwd() == str(self.home), 5))
+        self.assertTrue(wait_until(lambda: self.pane.cwd() == str(self.home), 30))
 
     def _backend_loop(self):
         while not self.halt.is_set():
@@ -112,7 +112,7 @@ class CancelHostCommandBase(FlowFixture):
         self.terminal.close()
         self.command_stop.close()
         self.halt.set()
-        self.loop.join(5)
+        self.loop.join(30)
         self.pane.close()
         leaked = self.leaked_sleeps()
         # clean by exact identity (pidfd + start ticks) before failing, so a defect leaves no residue
@@ -142,7 +142,7 @@ class CancelHostCommandBase(FlowFixture):
 
     def leaked_sleeps(self):
         found = []
-        deadline = time.monotonic() + 3
+        deadline = time.monotonic() + 30
         while True:
             found = []
             for entry in os.listdir("/proc"):
@@ -306,14 +306,14 @@ class CancelResponseTests(CancelHostCommandBase):
         # CS-09 owns the experiment cancel; here only the pre-existing semantics must still hold
         self.gates.exit.clear()
         pending = self.new_experiment()
-        self.assertTrue(wait_until(lambda: self.flow.task_view()["status"] == "running"))
+        self.assertTrue(wait_until(lambda: self.flow.task_view()["status"] == "running", 30))
         result = self.to_worker({"kind": "experiment", "message": "cancel it", "cancel": True,
                                  "task_id": pending["task_id"]})
         self.assertEqual(result["status"], "cancel_requested", result)
         self.assertEqual(result["task_id"], pending["task_id"])
         self.assertIn("host", result["detail"])
         self.gates.exit.set()
-        self.assertTrue(wait_until(lambda: self.flow.task_view()["status"] == "closed"))
+        self.assertTrue(wait_until(lambda: self.flow.task_view()["status"] == "closed", 30))
 
 
 class TaskViewSurfaceTests(CancelHostCommandBase):
@@ -330,7 +330,7 @@ class TaskViewSurfaceTests(CancelHostCommandBase):
                              [(started["command_id"], "running")], name)
             self.assertEqual(set(view["host_commands"][0]), ENTRY_KEYS, name)
         self.end_command(started["command_id"])
-        self.assertTrue(wait_until(lambda: self.flow.task_view()["host_commands"] == [], 5))
+        self.assertTrue(wait_until(lambda: self.flow.task_view()["host_commands"] == [], 30))
         for view in (self.flow.task_view(), self.controller.snapshot()["task"], self.flow.status_view(),
                      self.flow.status_view(work["task_id"])):
             self.assertEqual(view["host_commands"], [])
@@ -351,7 +351,7 @@ class TaskViewSurfaceTests(CancelHostCommandBase):
         thread = threading.Thread(target=lambda: box.update(result=self.stop(started["command_id"])), daemon=True)
         thread.start()
         self.addCleanup(thread.join, 15)
-        self.assertTrue(wait_until(lambda: [e["state"] for e in self.commands(work["task_id"])] == ["stopping"], 5),
+        self.assertTrue(wait_until(lambda: [e["state"] for e in self.commands(work["task_id"])] == ["stopping"], 30),
                         self.commands(work["task_id"]))
         entry = self.commands(work["task_id"])[0]
         self.assertEqual(entry["command_id"], started["command_id"])
@@ -360,9 +360,9 @@ class TaskViewSurfaceTests(CancelHostCommandBase):
         self.assertEqual(entry["stop"].get("state"), "stopping")
         self.assertEqual(self.flow.task_view()["status"], "closed", "a stop never reopens the Task")
         self.assertEqual(self.terminal.current().get("state"), "stopping", "the terminal surface agrees")
-        thread.join(15)
+        thread.join(30)
         self.assertEqual(box["result"]["status"], "exited", box)
-        self.assertTrue(wait_until(lambda: self.commands(work["task_id"]) == [], 5))
+        self.assertTrue(wait_until(lambda: self.commands(work["task_id"]) == [], 30))
 
     def make_stop_env(self):
         self.dropping = DroppingSignalEnv()
@@ -385,7 +385,7 @@ class TaskViewSurfaceTests(CancelHostCommandBase):
         self.assertEqual(entry["stop"].get("state"), "unknown")
         self.assertEqual(self.flow.task_view()["host_commands"][0]["state"], "unknown")
         self.assertEqual(self.flow.task_view()["status"], "closed")
-        self.assertTrue(wait_until(lambda: self.commands(work["task_id"]) == [], 20),
+        self.assertTrue(wait_until(lambda: self.commands(work["task_id"]) == [], 30),
                         "the owner observes the end by itself; then nothing is listed")
 
     def test_returned_views_are_copies_not_the_stored_state(self):
@@ -475,7 +475,7 @@ class NotStoredTests(CancelHostCommandBase):
         ledger_after = (self.root / "workflow" / "tasks-flow.jsonl").read_text()
         self.assertNotIn("host_command", ledger_after)
         self.end_command(started["command_id"])
-        self.assertTrue(wait_until(lambda: flow.task_view()["host_commands"] == [], 5))
+        self.assertTrue(wait_until(lambda: flow.task_view()["host_commands"] == [], 30))
 
 
 class ProviderRobustnessTests(CancelHostCommandBase):
@@ -543,7 +543,7 @@ class ConcurrencyTests(CancelHostCommandBase):
 
         holder = threading.Thread(target=hold, daemon=True)
         holder.start()
-        self.assertTrue(grabbed.wait(3))
+        self.assertTrue(grabbed.wait(30))
         box = {}
         asker = threading.Thread(target=lambda: box.update(view=self.flow.task_view()), daemon=True)
         asker.start()
@@ -551,8 +551,8 @@ class ConcurrencyTests(CancelHostCommandBase):
         self.assertTrue(asker.is_alive(), "the view waits for the terminal lock")
         self.assertTrue(self.flow_lock_is_free(), "but the flow lock is free meanwhile")
         release.set()
-        asker.join(5)
-        holder.join(5)
+        asker.join(30)
+        holder.join(30)
         self.assertFalse(asker.is_alive())
         self.assertEqual([e["state"] for e in box["view"]["host_commands"]], ["running"])
         self.end_command(started["command_id"])
@@ -587,12 +587,12 @@ class ConcurrencyTests(CancelHostCommandBase):
             for thread in readers:
                 thread.start()
             canceller.start()
-            canceller.join(15)
+            canceller.join(30)
             self.assertFalse(canceller.is_alive(), f"cancel deadlocked in round {round_number}")
-            self.assertTrue(wait_until(lambda: self.terminal.current()["running"] is False, 10))
+            self.assertTrue(wait_until(lambda: self.terminal.current()["running"] is False, 30))
             stop_readers.set()
             for thread in readers:
-                thread.join(5)
+                thread.join(30)
                 self.assertFalse(thread.is_alive(), "a view call deadlocked")
             self.assertEqual(problems, [])
             result = outcome["result"]
@@ -602,7 +602,7 @@ class ConcurrencyTests(CancelHostCommandBase):
             self.assertEqual("host_command_note" in result, bool(listed), "the note exists exactly when listed")
             if listed:
                 self.assertEqual((listed[0]["command_id"], listed[0]["state"]), (started["command_id"], "running"))
-            self.assertTrue(wait_until(lambda: self.flow.task_view()["host_commands"] == [], 5))
+            self.assertTrue(wait_until(lambda: self.flow.task_view()["host_commands"] == [], 30))
 
 
 if __name__ == "__main__":

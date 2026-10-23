@@ -30,6 +30,7 @@ from workbench.app.recovery import BOOT_HOLD
 from workbench.contracts.v1 import ActorRole
 
 from test_cd70_restart_worker import RestartWorkerFixture, alive
+from command_stop_support import pids_running
 
 SHORT = StopPolicy(identity_wait=0.2, sigint_wait=0.2, sigterm_wait=0.2, sigkill_wait=0.2, call_wait=3.0,
                    poll_interval=0.01)
@@ -189,20 +190,6 @@ class AllowedMatrixTests(unittest.TestCase):
             result = registry.service.stop(requester, command_id)
             self.assertEqual((result["status"], result["reason"]), ("refused", "not_owner"), (requester, result))
         registry.assert_no_process_was_touched(self)
-
-
-def pids_running(*argv: str) -> list[int]:
-    """Live pids whose argv equals ``argv``, read from /proc by the test itself (production never uses argv)."""
-    wanted = b"\0".join(item.encode() for item in argv) + b"\0"
-    found = []
-    for name in os.listdir("/proc"):
-        if name.isdecimal():
-            try:
-                if Path(f"/proc/{name}/cmdline").read_bytes() == wanted and alive(int(name)):
-                    found.append(int(name))
-            except OSError:
-                continue
-    return found
 
 
 class BackendStopFixture(RestartWorkerFixture):

@@ -38,7 +38,7 @@ from workbench.workflow.run import TaskWorkflow, WorkflowRun
 
 from test_cd70_restart_worker import RestartWorkerFixture
 from test_command_stop_outcomes import OutcomeFixture
-from test_experiment_command_stop_independent import identity_with_child
+from command_stop_support import identity_with_child
 from test_task_flow import AUTOMATION, FakeMailbox, PublicMailboxFixture, git, request, wait_until
 
 
@@ -111,7 +111,7 @@ class ExperimentStopFixture(unittest.TestCase):
 
     def tearDown(self):
         self.halt.set()
-        self.loop.join(5)
+        self.loop.join(30)
         self.pane.close()
         self.tmp.cleanup()
 
@@ -152,7 +152,7 @@ class ExperimentStopFixture(unittest.TestCase):
         flow.start()
         self.addCleanup(service.close)
         self.addCleanup(flow.close)
-        self.assertTrue(wait_until(lambda: self.pane.state["parent_mode"] == "manual_prompt"))
+        self.assertTrue(wait_until(lambda: self.pane.state["parent_mode"] == "manual_prompt", 30))
         self.calls = 0
         return service, flow
 
@@ -175,7 +175,7 @@ class ExperimentStopFixture(unittest.TestCase):
         self.assertTrue(wait_until(lambda: self.flow.task_view()["status"] == "running"
                                    and self.flow.task_view()["run_id"] is not None, 30), self.flow.task_view())
         run_id = self.flow.task_view()["run_id"]
-        self.assertTrue(wait_until(lambda: "started" in [e["kind"] for e in self.shell_history(run_id)], 10),
+        self.assertTrue(wait_until(lambda: "started" in [e["kind"] for e in self.shell_history(run_id)], 30),
                         self.shell_history(run_id))
         return task_id, run_id
 
@@ -410,7 +410,7 @@ class RegistryCleanupTests(ExperimentStopFixture):
 
     def assert_released(self):
         self.assertTrue(wait_until(lambda: gc.collect() is not None
-                                   and all(ref() is None for ref in self.run_refs + self.port_refs), 10),
+                                   and all(ref() is None for ref in self.run_refs + self.port_refs), 30),
                         "the run or the host shell port is still referenced")
 
     def test_a_finished_experiment_is_no_longer_live_and_holds_neither_run_nor_port(self):

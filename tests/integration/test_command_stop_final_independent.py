@@ -54,6 +54,7 @@ from workbench.contracts.v1 import ActorRole  # noqa: E402
 import test_command_stop_authority as authority  # noqa: E402
 import test_experiment_command_stop as experiment  # noqa: E402
 from test_cd70_restart_worker import alive  # noqa: E402
+from command_stop_support import alive as is_live, stat_of  # noqa: E402  (live pid with optional start ticks; /proc tuple or None)
 from test_task_flow import wait_until  # noqa: E402
 
 GATE = "WB_FINAL_COMMAND_STOP"
@@ -69,18 +70,11 @@ BANNED_AUDIT_KEYS = {"argv", "cmdline", "comm", "env", "environment", "command"}
 # ----------------------------------------------------------------------------------------------- /proc helpers
 def proc_info(pid):
     """(state, ppid, pgrp, session, start_ticks) read by the test itself; None when the process is gone."""
-    try:
-        text = Path(f"/proc/{pid}/stat").read_text()
-    except OSError:
+    found = stat_of(pid)
+    if found is None:
         return None
-    fields = text.rsplit(") ", 1)[1].split()
-    return {"state": fields[0], "ppid": int(fields[1]), "pgrp": int(fields[2]), "session": int(fields[3]),
-            "start_ticks": int(fields[19])}
-
-
-def is_live(pid, start_ticks=None):
-    info = proc_info(pid)
-    return info is not None and info["state"] not in "ZX" and (start_ticks is None or info["start_ticks"] == start_ticks)
+    state, ppid, pgrp, session, start_ticks = found
+    return {"state": state, "ppid": ppid, "pgrp": pgrp, "session": session, "start_ticks": start_ticks}
 
 
 def kill_exact(pid, start_ticks):

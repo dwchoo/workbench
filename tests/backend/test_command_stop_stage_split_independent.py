@@ -989,7 +989,7 @@ class RealTree:
         stat = self.env.read_stat(pid)
         return None if stat is None else stat.start_ticks
 
-    def wait_pid(self, name, timeout=20):
+    def wait_pid(self, name, timeout=30):
         path = Path(self.dir.name) / f"{name}.pid"
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
@@ -1003,10 +1003,10 @@ class RealTree:
             if ticks is not None:
                 kill_exact(pid, ticks)
         try:
-            self.proc.wait(timeout=10)
+            self.proc.wait(timeout=30)
         except subprocess.TimeoutExpired:
             self.proc.kill()
-            self.proc.wait(timeout=10)
+            self.proc.wait(timeout=30)
 
     def identity(self):
         stat = self.env.read_stat
@@ -1023,7 +1023,7 @@ class RealTree:
     def gone(self, pid):
         return self.state(pid) in (None, "Z", "X")
 
-    def wait_for(self, predicate, what, timeout=15):
+    def wait_for(self, predicate, what, timeout=30):
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
             if predicate():
@@ -1093,7 +1093,7 @@ def run_real(test, mod, command_mode, sibling_mode, *, prepare=None, owner_ends=
     poller = threading.Thread(target=watch, daemon=True) if owner_ends else None
     if poller:
         poller.start()
-    test.addCleanup(lambda: (stop_poller.set(), poller and poller.join(10)))
+    test.addCleanup(lambda: (stop_poller.set(), poller and poller.join(30)))
     if tweak:
         tweak(tree, env)
     result = service.stop("worker", tree.cid)

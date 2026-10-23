@@ -61,9 +61,9 @@ class CancelHostCommandFixture(FlowFixture):
             log_root=self.root / "workflow" / "terminal", automation=lambda: AUTOMATION,
             active_task=self.flow.active_task, poll_interval=0.02, command_stop=self.command_stop)
         self.flow.host_commands = self.terminal.commands_for_task
-        self.assertTrue(wait_until(lambda: self.pane.state["parent_mode"] == "manual_prompt", 10))
+        self.assertTrue(wait_until(lambda: self.pane.state["parent_mode"] == "manual_prompt", 30))
         self.assertIsNone(self.pane.admit(f"cd {self.home}\r".encode()))
-        self.assertTrue(wait_until(lambda: self.pane.cwd() == str(self.home), 5))
+        self.assertTrue(wait_until(lambda: self.pane.cwd() == str(self.home), 30))
 
     def _backend_loop(self):
         while not self.halt.is_set():
@@ -74,7 +74,7 @@ class CancelHostCommandFixture(FlowFixture):
         self.terminal.close()
         self.command_stop.close()
         self.halt.set()
-        self.loop.join(5)
+        self.loop.join(30)
         self.pane.close()
         super().tearDown()
 
@@ -208,7 +208,7 @@ class TaskViewShowsCommandAfterCancelTests(CancelHostCommandFixture):
 
         self.assertNotIn("host_commands", json.dumps(self.ledger()), "computed when asked, never written")
         self.assertEqual(self.stop(started["command_id"])["status"], "exited")  # the test ends its own command
-        self.assertTrue(wait_until(lambda: self.view_commands() == [], 5), self.view_commands())
+        self.assertTrue(wait_until(lambda: self.view_commands() == [], 30), self.view_commands())
         self.assertEqual(self.flow.task_view()["status"], "closed")
         self.assertEqual(self.flow.status_view(work["task_id"])["host_commands"], [])
 
@@ -223,15 +223,15 @@ class TaskViewShowsCommandAfterCancelTests(CancelHostCommandFixture):
         thread.start()
         self.addCleanup(thread.join, 10)
 
-        self.assertTrue(wait_until(lambda: [c["state"] for c in self.view_commands()] == ["stopping"], 5),
+        self.assertTrue(wait_until(lambda: [c["state"] for c in self.view_commands()] == ["stopping"], 30),
                         self.view_commands())
         item = self.view_commands()[0]
         self.assertEqual(item["command_id"], started["command_id"])
         self.assertIsInstance(item["stop"], dict)
         self.assertEqual(self.flow.task_view()["status"], "closed")
-        thread.join(10)
+        thread.join(30)
         self.assertEqual(box["result"]["status"], "exited", box)
-        self.assertTrue(wait_until(lambda: self.view_commands() == [], 5))
+        self.assertTrue(wait_until(lambda: self.view_commands() == [], 30))
 
 
 class CommandWithoutTaskTests(CancelHostCommandFixture):

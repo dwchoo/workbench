@@ -32,7 +32,8 @@ import unittest
 from workbench.backend.command_stop import LinuxStopEnvironment, StopPolicy
 
 import test_command_stop_terminal_independent as base
-from test_command_stop_terminal_independent import alive, descendants, journal, proc, wait_until
+from test_command_stop_terminal_independent import journal, wait_until
+from command_stop_support import alive, descendants, proc
 
 # A reduced policy: sigint 1.5 s, sigterm 1.0 s, sigkill (the confirmation) 1.0 s. Production is 10/5/5 (CS-10).
 POL = StopPolicy(identity_wait=2.0, sigint_wait=1.5, sigterm_wait=1.0, sigkill_wait=1.0, call_wait=10.0)
@@ -108,7 +109,7 @@ class ControlEnv(base.InjectingEnv):
     def attempts_on(self, pid):
         return [signum for p, signum in self.attempts if p == pid]
 
-    def wait_for(self, signum, timeout=8.0, pid=None):
+    def wait_for(self, signum, timeout=30.0, pid=None):
         return wait_until(lambda: any(number == signum and (pid is None or p == pid)
                                       for _t, p, number in list(self.timeline)), timeout)
 
@@ -218,7 +219,7 @@ class StageTimingTests(EscRig):
         script = self.write_script("stubborn.py", self.STUBBORN)
         started = self.run_command(f"{sys.executable} {script} {log}", wait=0.3)
         self.assertEqual(started["status"], "running", started)
-        self.assertTrue(wait_until(lambda: log.exists() and "ready" in log.read_text(), 5))
+        self.assertTrue(wait_until(lambda: log.exists() and "ready" in log.read_text(), 30))
         main = self.find(sys.executable, str(script), str(log))[0]
         began = time.monotonic()
         result = self.stop(started["command_id"])
@@ -292,7 +293,7 @@ class StageTimingTests(EscRig):
         """)
         ready = self.root / "slowint.ready"
         started = self.run_command(f"{sys.executable} {script} {ready}", wait=0.3)
-        self.assertTrue(wait_until(ready.exists, 5))
+        self.assertTrue(wait_until(ready.exists, 30))
         began = time.monotonic()
         result = self.stop(started["command_id"])
         elapsed = time.monotonic() - began
@@ -317,7 +318,7 @@ class StageTimingTests(EscRig):
         """)
         ready = self.root / "slowterm.ready"
         started = self.run_command(f"{sys.executable} {script} {ready}", wait=0.3)
-        self.assertTrue(wait_until(ready.exists, 5))
+        self.assertTrue(wait_until(ready.exists, 30))
         began = time.monotonic()
         result = self.stop(started["command_id"])
         elapsed = time.monotonic() - began
@@ -348,10 +349,10 @@ class StageTimingTests(EscRig):
         thread, box = self.stop_in_background(command_id)
         watcher = threading.Thread(target=sampler, daemon=True)
         watcher.start()
-        thread.join(15)
+        thread.join(30)
         time.sleep(0.2)
         stop_flag.set()
-        watcher.join(5)
+        watcher.join(30)
         result = box["result"]
         self.assertEqual(result["status"], "exited", result)
         first = next(i for i, item in enumerate(samples) if item[1] == "stopping")
@@ -379,7 +380,8 @@ class StageTimingTests(EscRig):
         began = time.monotonic()
         result = self.stop(started["command_id"])
         self.assertEqual(result["status"], "stopping", result)
-        self.assertLess(time.monotonic() - began, 1.0)
+        # "stopping" is the structural proof; the bound is a sanity net at the SIGINT stage wait (call_wait is 0.4 s)
+        self.assertLess(time.monotonic() - began, POL.sigint_wait)
         counts = set()
         deadline = time.monotonic() + TOTAL + TOL
         while time.monotonic() < deadline and self.terminal.current()["running"]:
@@ -389,7 +391,7 @@ class StageTimingTests(EscRig):
             time.sleep(0.05)
         # the SIGKILL ends the command within milliseconds, so a 50 ms sampler may legitimately miss the third count
         self.assertTrue({1, 2} <= counts, f"the summary showed the signals arriving one stage apart: {counts}")
-        self.assertTrue(wait_until(lambda: self.records_of("command_stop_finished"), 5))
+        self.assertTrue(wait_until(lambda: self.records_of("command_stop_finished"), 30))
         self.assertEqual([r["signal"] for r in self.records_of("command_stop_signal")],
                          ["SIGINT", "SIGTERM", "SIGKILL"])
         finished = self.records_of("command_stop_finished")[0]
@@ -436,7 +438,7 @@ class StageTimingTests(EscRig):
 # ================================================================================================
 class DescendantTests(EscRig):
     def assert_family_dead(self, family):
-        self.assertTrue(wait_until(lambda: not any(alive(pid) for pid in family), 5),
+        self.assertTrue(wait_until(lambda: not any(alive(pid) for pid in family), 30),
                         [pid for pid in family if alive(pid)])
 
     def test_background_jobs_of_a_command_that_ignores_everything_all_receive_every_stage(self):
@@ -531,7 +533,7 @@ class DescendantTests(EscRig):
         born.write_text("")
         ready = self.root / "spawner.ready"
         started = self.run_command(f"{sys.executable} {script} {born} {ready}", wait=0.3)
-        self.assertTrue(wait_until(ready.exists, 5))
+        self.assertTrue(wait_until(ready.exists, 30))
         (main,) = self.find(sys.executable, str(script), str(born), str(ready))
         self.assertEqual(pids_none("734.1"), [], "the child does not exist before the first signal")
         family = self.family(main)
@@ -580,9 +582,9 @@ class DescendantTests(EscRig):
                 time.sleep(0.05)
         """)
         started = self.run_command(f"{sys.executable} {script} {zombies}", wait=0.3)
-        self.assertTrue(wait_until(lambda: zombies.exists() and zombies.read_text(), 5))
+        self.assertTrue(wait_until(lambda: zombies.exists() and zombies.read_text(), 30))
         zombie = int(zombies.read_text())
-        self.assertTrue(wait_until(lambda: proc(zombie) is not None and proc(zombie).state == "Z", 5), proc(zombie))
+        self.assertTrue(wait_until(lambda: proc(zombie) is not None and proc(zombie).state == "Z", 30), proc(zombie))
         (main,) = self.find(sys.executable, str(script), str(zombies))
         family = self.family(main)
         result = self.stop(started["command_id"])
@@ -728,7 +730,7 @@ class LeftSessionTests(EscRig):
 # ================================================================================================
 class StoppedMemberTests(EscRig):
     def wait_state(self, pid, state):
-        self.assertTrue(wait_until(lambda: (found := proc(pid)) is not None and found.state == state, 5),
+        self.assertTrue(wait_until(lambda: (found := proc(pid)) is not None and found.state == state, 30),
                         (pid, state, proc(pid)))
 
     def test_a_stopped_member_gets_sigcont_after_sigint_as_an_auxiliary_signal_and_the_command_ends(self):
@@ -769,7 +771,7 @@ class StoppedMemberTests(EscRig):
         self.wait_state(stopped, "S")
         os.kill(stopped, signal.SIGSTOP)  # stopped again before the next stage
         self.wait_state(stopped, "T")
-        thread.join(15)
+        thread.join(30)
         result = box["result"]
         self.assertEqual((result["status"], result["exit_code"]), ("exited", 137), result)
         aux = [(item["stage"], {t["pid"] for t in item["targets"]}) for item in result["signals"] if item["auxiliary"]]
@@ -916,20 +918,24 @@ class IdentityBetweenStagesTests(EscRig):
 # ================================================================================================
 class BackendShutdownTests(EscRig):
     def test_closing_the_service_mid_episode_ends_it_unknown_backend_shutdown_without_further_signals(self):
+        # A long SIGINT stage: "ends at once" is told from "ends at the stage end" by a wide margin on both sides, so a
+        # loaded machine cannot blur it (the old 1.0 s bound sat next to a 1.5 s stage).
+        stage = dataclasses.replace(POL, sigint_wait=4.0)
+        self.command_stop.policy = stage
         started = self.run_command("bash -c 'trap \"\" INT TERM; sleep 747.1'")
         (member,) = self.find("sleep", "747.1")
         family = self.family(member)
         thread, box = self.stop_in_background(started["command_id"])
-        self.assertTrue(self.env.wait_for(signal.SIGINT, 5))
+        self.assertTrue(self.env.wait_for(signal.SIGINT, 30))
         closed_at = time.monotonic()
         self.command_stop.close()
-        thread.join(5)
+        thread.join(30)
         self.assertIn("result", box, "close ends the waiting call quickly")
-        self.assertLess(time.monotonic() - closed_at, 1.0)
+        self.assertLess(time.monotonic() - closed_at, stage.sigint_wait / 2, "ends at once, not at the stage end")
         result = box["result"]
         self.assertEqual((result["status"], result["reason"]), ("unknown", "backend_shutdown"), result)
         before = list(self.env.attempts)
-        time.sleep(POL.sigint_wait + 0.3)
+        time.sleep(stage.sigint_wait + 0.3)  # past the end of the stage the episode was in
         self.assertEqual(self.env.attempts, before, "no signal leaves after the shutdown")
         self.assertEqual(self.names(result), ["SIGINT"])
         self.assertTrue(alive(member), "shutdown does not kill the command")

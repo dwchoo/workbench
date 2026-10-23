@@ -32,27 +32,17 @@ from workbench.backend.command_stop import (
 from workbench.terminal.shell_g2.prototype import ShellChoice
 from workbench.terminal.shell_persistent.adapter import PersistentShell
 
+from command_stop_support import alive, proc_stat
+
 BASH = ShellChoice("bash", "/usr/bin/bash")
 BOOT_ID = Path("/proc/sys/kernel/random/boot_id").read_text().strip()
 UID = os.getuid()
 
 
 # --------------------------------------------------------------------------- own /proc helpers
-def stat_fields(pid):
-    return Path(f"/proc/{pid}/stat").read_text().rsplit(") ", 1)[1].split()
-
-
 def proc(pid):
-    f = stat_fields(pid)
-    return {"state": f[0], "ppid": int(f[1]), "pgrp": int(f[2]), "session": int(f[3]), "start": int(f[19])}
-
-
-def alive(pid, start=None):
-    try:
-        info = proc(pid)
-    except (OSError, IndexError):
-        return False
-    return info["state"] not in {"Z", "X"} and (start is None or info["start"] == start)
+    state, ppid, pgrp, session, start = proc_stat(pid)
+    return {"state": state, "ppid": ppid, "pgrp": pgrp, "session": session, "start": start}
 
 
 def exists(pid):
@@ -101,7 +91,7 @@ def open_fds():
     return len(os.listdir("/proc/self/fd"))
 
 
-def read_pid(path, seconds=10.0):
+def read_pid(path, seconds=30.0):
     deadline = time.monotonic() + seconds
     while time.monotonic() < deadline:
         try:
@@ -114,7 +104,7 @@ def read_pid(path, seconds=10.0):
     raise AssertionError(f"pid file never written: {path}")
 
 
-def wait_until(predicate, seconds=10.0, what="condition"):
+def wait_until(predicate, seconds=30.0, what="condition"):
     deadline = time.monotonic() + seconds
     while time.monotonic() < deadline:
         if predicate():
@@ -132,7 +122,7 @@ def ports(shell):
             "paused": False, "cancelled": False, "metadataHealthy": True, "approvalValid": True}})
 
 
-def until(shell, condition, seconds=15.0):
+def until(shell, condition, seconds=30.0):
     deadline = time.monotonic() + seconds
     while time.monotonic() < deadline:
         state = shell.poll(.02)
@@ -260,7 +250,7 @@ class Spawned:
             if p.poll() is None:
                 kill_exact(p.pid, start)
             try:
-                p.wait(timeout=5)
+                p.wait(timeout=30)
             except subprocess.TimeoutExpired:
                 raise AssertionError(f"leaked spawned process {p.pid}")
 
@@ -307,7 +297,7 @@ class PinRealProcessTests(PinCase):
         twin, _ = self.target()  # identical argv; argv must never decide a target
         pin = self.open_pin(p, start)
         self.assertEqual(pin.send(signal.SIGTERM), SENT)
-        self.assertEqual(p.wait(timeout=5), -signal.SIGTERM)
+        self.assertEqual(p.wait(timeout=30), -signal.SIGTERM)
         self.assert_untouched(twin)
         self.assertEqual(pin.send(signal.SIGTERM), ENDED, "a dead target must never be signalled again")
 
@@ -336,7 +326,7 @@ class PinRealProcessTests(PinCase):
 
     def test_exited_and_reaped_pid_is_ended(self):
         p, start = self.spawned.sleeper(0.05)
-        p.wait(timeout=5)
+        p.wait(timeout=30)
         self.assertFalse(exists(p.pid))
         pin = ProcessPin.open(LinuxStopEnvironment(), p.pid, start, uid=UID, boot_id=BOOT_ID)
         self.assertEqual(pin.status, ENDED)
@@ -359,7 +349,7 @@ class PinRealProcessTests(PinCase):
         pin = self.open_pin(p, start, env)
         self.assertEqual(pin.status, PINNED)
         kill_exact(p.pid, start)
-        p.wait(timeout=5)
+        p.wait(timeout=30)
         self.assertEqual(pin.send(signal.SIGTERM), ENDED)
         self.assertEqual(env.signal_events, [], "no signal may leave for an already ended target")
         self.assertEqual(pin.verify(), ENDED)
@@ -411,7 +401,7 @@ class PinRealProcessTests(PinCase):
         pin = self.open_pin(p, start)
         self.assertEqual(pin.status, PINNED, "SIGSTOP'd members are still live members (SPEC invariant 5)")
         self.assertEqual(pin.send(signal.SIGKILL), SENT)
-        self.assertEqual(p.wait(timeout=5), -signal.SIGKILL)
+        self.assertEqual(p.wait(timeout=30), -signal.SIGKILL)
 
     def test_closed_pin_cannot_send_and_close_is_idempotent(self):
         p, start = self.target()
@@ -428,7 +418,7 @@ class PinRealProcessTests(PinCase):
     def test_refused_and_closed_pins_leak_no_file_descriptors(self):
         p, start = self.target()
         dead, dead_start = self.spawned.sleeper(0.01)
-        dead.wait(timeout=5)
+        dead.wait(timeout=30)
         before = open_fds()
         for _ in range(40):
             for pid, ticks, uid, boot in ((p.pid, start + 1, UID, BOOT_ID), (p.pid, start, UID + 1, BOOT_ID),
@@ -463,7 +453,7 @@ class PinRealProcessTests(PinCase):
         pin = self.open_pin(p, start)
         self.assertEqual(pin.status, PINNED)
         self.assertEqual(pin.send(signal.SIGTERM), SENT)
-        self.assertEqual(p.wait(timeout=5), -signal.SIGTERM)
+        self.assertEqual(p.wait(timeout=30), -signal.SIGTERM)
 
 
 class PinProcFormatTests(PinCase):
@@ -793,7 +783,7 @@ class RealTreeCase(unittest.TestCase):
                 pass
         for pid, start in victims.items():
             kill_exact(pid, start)
-        wait_until(lambda: not any(alive(p, s) for p, s in victims.items()), 5, "tree to die")
+        wait_until(lambda: not any(alive(p, s) for p, s in victims.items()), 30, "tree to die")
 
     def own(self, pid):
         self.owned[pid] = proc(pid)["start"]

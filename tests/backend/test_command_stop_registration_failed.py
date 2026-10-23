@@ -97,7 +97,7 @@ class TerminalAuditTests(FailingRegisterTerminal):
         self.assertTrue(record.get("at"))
         self.assertNotIn(SECRET_MESSAGE, json.dumps(record))
         self.user_types(b"\x03")
-        self.assertTrue(wait_until(lambda: self.query().get("status") != "running", 10))
+        self.assertTrue(wait_until(lambda: self.query().get("status") != "running", 30))
 
     def test_a_worker_stop_is_answered_registration_failed_and_signals_nothing(self):
         started = self.run_command("sleep 614.2")
@@ -106,12 +106,12 @@ class TerminalAuditTests(FailingRegisterTerminal):
         self.assertEqual(self.command_stop.stop_marker(started["command_id"]), {})
         self.assertEqual(self.query()["status"], "running", "the command keeps running")
         self.user_types(b"\x03")
-        self.assertTrue(wait_until(lambda: self.query().get("status") != "running", 10))
+        self.assertTrue(wait_until(lambda: self.query().get("status") != "running", 30))
 
     def test_the_answer_survives_the_commands_end(self):
         started = self.run_command("sleep 614.3")
         self.user_types(b"\x03")
-        self.assertTrue(wait_until(lambda: self.query().get("status") != "running", 10))
+        self.assertTrue(wait_until(lambda: self.query().get("status") != "running", 30))
         answer = self.command_stop.stop("manager", started["command_id"])
         self.assertEqual((answer["status"], answer["reason"]), ("refused", "registration_failed"), answer)
         self.assertNotIn("exit_code", answer)

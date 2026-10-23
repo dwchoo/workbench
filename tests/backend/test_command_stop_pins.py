@@ -17,13 +17,9 @@ from workbench.backend.command_stop import LinuxStopEnvironment, ProcessPin, Pro
 from workbench.terminal.shell_g2.prototype import ShellChoice
 from workbench.terminal.shell_persistent.adapter import PersistentShell
 
+from command_stop_support import proc_stat  # (state, ppid, pgrp, session, start ticks), parsed by the test itself
+
 BOOT_ID = Path("/proc/sys/kernel/random/boot_id").read_text().strip()
-
-
-def proc_stat(pid):
-    """(state, ppid, pgrp, session, starttime) parsed by the test itself."""
-    fields = Path(f"/proc/{pid}/stat").read_text().rsplit(") ", 1)[1].split()
-    return fields[0], int(fields[1]), int(fields[2]), int(fields[3]), int(fields[19])
 
 
 class RealProcessCase(unittest.TestCase):
@@ -70,7 +66,7 @@ class ProcessPinTests(RealProcessCase):
         self.assertEqual(self.open_pin(reaped, reaped_ticks).status, "ended")
         zombie = self.spawn("true")
         ticks = proc_stat(zombie.pid)[4]
-        deadline = time.monotonic() + 5
+        deadline = time.monotonic() + 30
         while proc_stat(zombie.pid)[0] != "Z" and time.monotonic() < deadline:
             time.sleep(0.01)
         self.assertEqual(proc_stat(zombie.pid)[0], "Z")
@@ -182,7 +178,7 @@ class ScanTrackedTests(unittest.TestCase):
         self.shell.submit(control, script.replace("@", self.directory.name), automation)
         until(self.shell, lambda s: s["lifecycle"]["experiment_started"])
         pids = {}
-        deadline = time.monotonic() + 5
+        deadline = time.monotonic() + 30
         for name in ("cmd", "bg", "away", "short"):
             path = Path(self.directory.name) / name
             if f"> @/{name}" not in script:
@@ -205,7 +201,7 @@ class ScanTrackedTests(unittest.TestCase):
         pids = self.run_command("echo $$ > @/cmd; sleep 60 & echo $! > @/bg; setsid sleep 61 & echo $! > @/away; wait")
         # The test reads the structure itself.
         away_state = None
-        deadline = time.monotonic() + 5
+        deadline = time.monotonic() + 30
         while time.monotonic() < deadline:
             away_state = proc_stat(pids["away"])
             if away_state[3] == pids["away"]:
@@ -261,7 +257,7 @@ class ScanTrackedTests(unittest.TestCase):
 
     def test_exited_members_are_not_reported(self):
         pids = self.run_command("echo $$ > @/cmd; sleep 0.1 & echo $! > @/short; exec sleep 60")
-        deadline = time.monotonic() + 5
+        deadline = time.monotonic() + 30
         while proc_stat(pids["short"])[0] != "Z" and time.monotonic() < deadline:
             time.sleep(0.01)
         self.assertEqual(proc_stat(pids["short"])[0], "Z", "the exited child stays a zombie of the exec'd command")

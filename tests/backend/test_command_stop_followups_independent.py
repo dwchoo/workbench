@@ -139,7 +139,7 @@ class AlreadyExitedEndTimeTests(RegistryClockCase):
         timer = threading.Thread(target=owner_reports)
         timer.start()
         result = self.service.stop("worker", command_id)
-        timer.join(5)
+        timer.join(30)
         self.assertEqual(result["status"], "already_exited", result)
         self.assert_between(result["ended_at"], *stamp["window"], "the owner's report")
         again = self.service.stop("worker", command_id)
@@ -375,14 +375,14 @@ class RepeatedCancelRealCommandTests(cancel_base.CancelHostCommandFixture):
         stopper.start()
         try:
             self.assertTrue(wait_until(lambda: any(
-                i["state"] == "stopping" for i in self.cancel(work["task_id"]).get("host_commands", [])), 5))
+                i["state"] == "stopping" for i in self.cancel(work["task_id"]).get("host_commands", [])), 30))
             again = self.cancel(work["task_id"])
             (entry,) = again["host_commands"]
             self.assertEqual(set(entry), HOST_ITEM_KEYS)
             self.assertEqual(entry["state"], "stopping")
             self.assertIsNotNone(entry["stop"], entry)
         finally:
-            stopper.join(15)
+            stopper.join(30)
         self.assertEqual(results[0]["status"], "exited", results)
 
 

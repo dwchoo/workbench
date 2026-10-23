@@ -32,6 +32,7 @@ import time
 import unittest
 from uuid import uuid4
 
+from workbench.terminal.shell_g2.lifecycle import RUN_REQUEST_MAX, encode_run, normalize_run
 from workbench.terminal.shell_g2.prototype import ShellChoice
 from workbench.terminal.shell_persistent.adapter import PersistentShell
 
@@ -339,8 +340,12 @@ class DefaultPipeXfszTests(Case):
                           f"( sh -c {descendant['dfork']} & ); "
                           f"( setsid sh -c {descendant['setsid']} & ); "
                           "wait; sleep 1; exit 0")
-                # the submitted request (base64 JSON) must stay well under RUN_REQUEST_MAX whatever the temp root is
-                self.assertLess(len(script.encode()) * 4 // 3, 3300, f"{len(script)}-byte probe script too long")
+                # the submitted request must fit RUN_REQUEST_MAX whatever the temp root is: measure the real
+                # `RUN:<base64 JSON>\n` line PersistentShell.submit sends (argv = [shell, "-c", script])
+                request = normalize_run(choice.executable, [choice.executable, "-c", script], str(uuid4()),
+                                        start_timeout=5.0)
+                need = len(f"RUN:{encode_run(request)}\n".encode())
+                self.assertLessEqual(need, RUN_REQUEST_MAX, f"{len(script)}-byte probe script gives a {need}-byte request")
                 began = time.monotonic()
                 control, automation = ports(shell)
                 shell.submit(control, script, automation)

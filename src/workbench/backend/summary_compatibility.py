@@ -155,7 +155,16 @@ def collect_runtime_identity(root: Path | None = None) -> dict[str, Any]:
         if name != "workbench" and not name.startswith("workbench."):
             return []
         base = "src/" + name.replace(".", "/")
-        return [p for p in (base + ".py", base + "/__init__.py") if checked_path(p).is_file()]
+
+        def candidate(p: str) -> bool:
+            try:
+                return checked_path(p).is_file()
+            except ValueError:
+                # Unsafe (symlinked) input is never followed; keep it as a candidate so
+                # include() records it as an explicit unsafe_runtime_input unknown.
+                return True
+
+        return [p for p in (base + ".py", base + "/__init__.py") if candidate(p)]
 
     pending = [p for p, item in entries.items() if p.endswith(".py") and item["kind"] == "file"]
     visited: set[str] = set()

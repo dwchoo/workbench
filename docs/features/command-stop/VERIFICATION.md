@@ -228,9 +228,12 @@ CS-G12 재확인: `omp/18.11.1`, `OmpSchemaAcceptanceTests` 5개 통과. `omp_br
 | 감사 type `command_stop_repeat` | 감사 목록(`command_stop_requested` … `command_interrupt`)에 없음 | episode가 끝난 뒤 들어온 반복 요청의 횟수(`repeat_requests`)를 남기는 추가 레코드. 새 신호·타이머는 만들지 않음 | `command_stop.py`(반복 요청 처리부) |
 | 감사 type `stop_command_request` | 목록에 없음 | Manager `stop_command` 호출 자체의 기록(`stop_survivor`의 요청 기록 선례). 검열 사유(`invalid_arguments`, `environment_value`)도 같은 type에 `redacted`로 남김 | `service.py` `_stop_command` |
 | `host_commands_unavailable` | `host_commands`만 정의 | provider가 없거나 실패하면 `host_commands: []`에 `host_commands_unavailable: true`를 더해 "읽을 수 없음"이 "명령 없음"으로 보이지 않게 함(CS-08 리뷰 P2) | `flow_tasks.py` `_host_command_fields` |
-| 명시적 금지 집합 | 구조적 제외 + 명시적 금지 집합 | 구조적 제외(session, uid, 자손 조건, parent·supervisor·backend pid)는 적용된다. owner(`flow_terminal.py`, `flow_tasks.py`)가 `StopTarget.forbidden`을 연결하지 않아 명시 집합은 비어 있다. 구조적 제외만으로 OMP pane은 대상이 되지 않는다. 9절 후속 과제 | `flow_terminal.py` `_register_stop_target`, `flow_tasks.py` `_register_stop_target` |
+| 명시적 금지 집합 | 구조적 제외 + 명시적 금지 집합 | 2026-10-23 연결함(96eca26). 구조적 제외(session, uid, 자손 조건, parent·supervisor·backend pid)에 더해, service가 주입한 provider가 돌려주는 OMP pane pid를 `StopTarget.forbidden`으로 넘긴다(두 owner 모두, 호출 시점에 평가). `_finish`에서 provider가 실패하면 마지막으로 성공한 집합을 residual 점검에 쓴다(bb0f810). 최초부터 실패했다면 빈 집합이다 | `command_stop_owner.py`, `flow_terminal.py` `_register_stop_target`, `flow_tasks.py` `_register_stop_target`, `service.py`, `command_stop.py` `_finish` |
+| refused 이유 `registration_failed` | refused 이유 목록에 없음 | stop 등록이 실패한 명령에 `stop`을 보내면 `refused` + `registration_failed`로 답한다. 등록 실패는 흐름을 바꾸지 않으므로 명령은 계속 추적되지만 중지 대상은 아니다(135ce17) | `command_stop.py`, `command_stop_owner.py` |
+| 감사 type `command_stop_register_failed` | 감사 목록에 없음 | 등록 예외를 조용히 넘기지 않고 남기는 기록. 사용자 결정(2026-10-23): 추적은 계속하고 기록하며 중지는 불가(135ce17, cd42a92) | `command_stop_owner.py`, `flow_terminal.py`, `flow_tasks.py` |
+| command_id 패턴 | canonical lowercase uuid(8절 6번) | 엄격한 패턴(버전 `[1-8]`, variant `[89ab]`)을 `command_stop_owner.py`의 `COMMAND_ID` 하나로 모으고 owner·`flow_recovery.py`가 같이 쓴다. Manager `stop_command`에도 같은 패턴이 적용되어, 전에 임의의 nibble을 받던 `flow_recovery.py`가 이제 거절한다(96eca26) | `command_stop_owner.py`, `flow_recovery.py` |
 
-`pidfd_unavailable` 행의 코드 근거는 delta 리뷰 이후 수정을 반영한 worktree 후보에 있다(커밋 `edf38fa`에는 없음). 위 행 중 SPEC 본문을 고치지 않은 것은 계획 문서 수정 금지 때문이다.
+`pidfd_unavailable` 행의 코드 근거는 delta 리뷰 이후 수정을 반영한 worktree 후보에 있다(커밋 `edf38fa`에는 없음). 위 행 중 SPEC 본문을 고치지 않은 것은 계획 문서 수정 금지 때문이다. SPEC 본문 정정은 사용자 확인 대기 중이다(이 표가 정본).
 
 ## 8. 판정 목록
 
@@ -250,26 +253,28 @@ CS-G12 재확인: `omp/18.11.1`, `OmpSchemaAcceptanceTests` 5개 통과. `omp_br
 12. 기존 `terminal_request` 등 기록의 명령 텍스트는 기능 이전 설계이며 "argv 없음"은 stop 감사 기록 기준이다(CS-G11).
 13. 최종 시나리오의 모호 3건: 무전달이면 평소 판정, 원 요청자 유지, 취소된 Task 종료 알림 지연(기존 C-D70).
 14. 시각 표현은 ms 단위로 바꾸지 않는다. 독립 테스트가 초 단위 형식을 고정한다.
-15. 기록만 하는 한계: CS-07 감사 `input_owner`/`parent_mode`는 쓰기 이후 값, PTY 큐 0.25 s 초과 시 `fail_closed`가 이후 Ctrl+C·dispatch를 hold(기존 manual write와 동일), journal fsync가 `io_lock` 안(데드락 없음). CS-03 `send`가 session을 재확인하지 않음(SPEC 불변식 범위 밖), `close` 직후 한 단계 신호 가능. CS-09 등록 예외 시 명령이 추적 없이 남음(runner_error 보류). CS-06 P3-3 stop 대기 abort 시 일반 명령 문구(보류).
+15. 기록만 하는 한계: CS-07 감사 `input_owner`/`parent_mode`는 쓰기 이후 값, PTY 큐 0.25 s 초과 시 `fail_closed`가 이후 Ctrl+C·dispatch를 hold(기존 manual write와 동일), journal fsync가 `io_lock` 안(데드락 없음). CS-03 `send`가 session을 재확인하지 않음(SPEC 불변식 범위 밖)은 2026-10-23에 pin·verify·send 모두 재확인하도록 바뀌었다(a81d43f). `close` 직후 한 단계 신호 가능. CS-09 등록 예외 시 명령이 추적 없이 남음(runner_error 보류)은 2026-10-23 사용자 결정으로 추적 계속 + `command_stop_register_failed` 기록 + 중지 불가(`registration_failed`)로 바뀌었다(135ce17). CS-06 P3-3 stop 대기 abort 시 일반 명령 문구(보류).
 
 ## 9. 후속 과제
 
 | 항목 | 출처 |
 |---|---|
 | Q3(처리됨, 후속 커밋): 사용자 TUI Task 줄이 stopped 실험을 `중지됨(사용자/Manager/Worker)`로, 남은 host 명령을 `명령 확인 불가` > `명령 실행 중` > `명령 종료 미확인` 중 하나로 표시. 계약·backend 변경 없이 `ui/product/model.py`만 수정. worker TDD(B1~B5), 독립 검증 pass(`test_product_task_stop_labels_independent` 24), 리뷰 approve | `open-questions.md` Q3 답변 a |
-| 중복 adapter 통합 | Standards P2-2 |
-| 긴 함수 분해 | Standards P2-3 |
-| pin 시점의 session 재확인 | P3-1 |
-| forbidden pid 배선 | P3-2 |
-| `run._record` 공개 accessor | 리뷰 |
-| `_COMMAND_ID` 정규식이 3곳에 정의됨 | 리뷰 |
-| 등록 실패 시 follow가 생략됨 | CS-09 |
-| `_registered` id 집합이 backend 수명 동안 무제한 | 리뷰 |
-| DoS(partially): 위 id 집합, 결과 보관(`RESULTS_KEPT` 256으로 일부 완화) | Security |
-| `live_command_stop`의 `_pids_running`이 `/proc` 전체에서 argv로 찾아 동시 실행 테스트의 프로세스를 셈. 테스트가 띄운 명령의 session·pid로 범위를 좁혀야 함 | 5절 |
-| journal 읽기 실패 시 이전 backend 색인을 기억하지 않음 | delta 재리뷰 P3 |
-| `_finish`에서 `forbidden()` 예외 시 빈 집합 대체(residual 보고에만 영향) | 보안 delta 리뷰 P3 |
+| 처리됨(2026-10-23): 두 owner의 safe-wrapper를 `command_stop_owner.py` 공용 helper 하나로 통합 (9446e31) | Standards P2-2 |
+| 부분 처리(2026-10-23): `_stage`만 pin·signal·wait helper로 분해(89cbc08, 차등 테스트 5dea474). `_start_unlocked`·`_follow`·`_execute` 분해는 기존 부채로 열려 있음 | Standards P2-3 |
+| 처리됨(2026-10-23): pin 때 대상 session이 스캔 시점과 다르면 거절 (a81d43f, 독립 테스트 2d24f07) | P3-1 |
+| 처리됨(2026-10-23): service provider가 OMP pane pid를 두 owner의 `forbidden`으로 연결 (96eca26, 7절) | P3-2 |
+| 부분 처리(2026-10-23): command-stop이 `flow_tasks.py`에서 쓰던 `run._record`를 `WorkflowRun.shell_request_id` accessor로 대체 (9446e31, d3a0436). 그 밖의 `_record` 사용은 남아 있음 | 리뷰 |
+| 처리됨(2026-10-23): 엄격한 단일 `COMMAND_ID`를 `command_stop_owner.py`에 두고 3곳이 공유 (96eca26, 7절) | 리뷰 |
+| 처리됨(2026-10-23, 사용자 결정): 등록 실패여도 추적(follow)을 계속하고 `command_stop_register_failed`를 기록하며 중지는 불가 (96eca26, 135ce17, cd42a92) | CS-09 |
+| 수용(2026-10-23): 유입이 owner가 등록한 uuid뿐이고, 상한을 두면 `previous_backend`로 오분류되므로 무제한으로 둔다 | 리뷰 |
+| DoS(partially): 위 id 집합은 수용(2026-10-23, 유입이 owner 등록 uuid뿐), 결과 보관(`RESULTS_KEPT` 256)은 일부 완화 | Security |
+| 처리됨(2026-10-22): 테스트가 띄운 명령의 범위로 좁힘 (e326fdd) | 5절 |
+| 처리됨(2026-10-23): 읽기 실패를 기억하고 30 s 뒤 재시도 (44ef1d0) | delta 재리뷰 P3 |
+| 처리됨(2026-10-23): provider 실패 시 마지막 성공 집합을 residual 점검에 사용 (bb0f810) | 보안 delta 리뷰 P3 |
 | 처리됨(2026-10-22): `already_exited`의 `ended_at`이 실제 종료 시각(소유자가 종료를 보고한 시각). `_Entry.ended_at`에 기록 | 최종 Standards P2 |
-| `_stage` 분해, 테스트 `/proc` helper 공용 모듈화 | 최종 Standards P2 |
+| 처리됨(2026-10-23): `_stage` 분해(89cbc08)와 테스트 `/proc` helper 공용 모듈 `tests/backend/command_stop_support.py`(12a4129). 이 모듈로 신원 helper 위치도 정리됨 | 최종 Standards P2 |
 | 처리됨(2026-10-22, 사용자 승인): 재취소 `task_closed` 응답에 `host_commands` 추가(8절 8번) | 최종 Spec P3 |
-| 0.5 s·10 s 같은 고정 시간 상한을 쓰는 테스트가 부하에서 흔들림 | 5절 |
+| 처리됨(2026-10-23): 고정 상한을 부하에 견디는 한도로 바꿈 (12a4129) | 5절 |
+| P3(2026-10-23): `registration_failed` 응답이 `_live` 항목을 지우지 않음. 실제로는 도달 불가라 수정하지 않음 | C-T3 리뷰 |
+| P3(2026-10-23): 원 예외 미보존, 30 s 재시도 경계 테스트 없음 | 44ef1d0 리뷰 |

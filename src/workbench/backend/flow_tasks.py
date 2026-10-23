@@ -114,6 +114,7 @@ from workbench.backend.flow import (
     experiment_command_error,
 )
 from workbench.backend.command_stop import CommandStopService, StopTarget
+from workbench.backend.command_stop_owner import register_target, report_ended, stop_marks
 from workbench.backend.flow_terminal import RETURN_WAIT, HostGate
 from workbench.contracts.v1 import ActorRole, MessageKind
 from workbench.ipc.bridge_g3.mailbox import MailboxStatus
@@ -1954,17 +1955,12 @@ class TaskFlow:
             self._stop_registered.add(run.run_id)
             self._host_runs[task_id] = {"command_id": run.run_id, "kind": "experiment", "owner": "manager",
                                         "started_at": _now(), "log_path": None if raw_log is None else str(raw_log)}
-            request_id = (getattr(run, "_record", None) or {}).get("shell_request_id")
+            request_id = run.shell_request_id
             if isinstance(request_id, str):
                 self._run_requests[request_id] = run.run_id
-        if self.command_stop is not None:
-            try:
-                self.command_stop.register(StopTarget(run.run_id, "manager", "experiment", task_id,
-                                                      identity=self._stop_identity(run, port),
-                                                      forbidden=lambda: self.stop_forbidden(),
-                                                      task_status=lambda: self.task_status(task_id)))
-            except Exception:
-                pass  # a stop service fault never changes the flow: the run is followed and reported, unstoppable
+        register_target(self.command_stop, StopTarget(
+            run.run_id, "manager", "experiment", task_id, identity=self._stop_identity(run, port),
+            forbidden=lambda: self.stop_forbidden(), task_status=lambda: self.task_status(task_id)))
 
     @staticmethod
     def _stop_identity(run: Any, port: Any) -> Callable[[], dict[str, Any] | None]:
@@ -1974,7 +1970,7 @@ class TaskFlow:
         of any other request (a later run in the same shell) is never offered."""
         def identity() -> dict[str, Any] | None:
             found = port.run_identity()
-            wanted = (getattr(run, "_record", None) or {}).get("shell_request_id")
+            wanted = run.shell_request_id
             if not found or wanted is None or found.get("request_id") != wanted:
                 return None
             return {**found, "request_id": run.run_id}
@@ -2002,21 +1998,11 @@ class TaskFlow:
             for request_id, owner in list(self._run_requests.items()):
                 if owner == run_id:
                     del self._run_requests[request_id]
-        if self.command_stop is None:
-            return
-        try:
-            self.command_stop.command_ended(run_id, result)
-        except Exception:
-            pass
+        report_ended(self.command_stop, run_id, result)
 
     def _stop_marks(self, run_id: str) -> dict[str, str]:
         """``stopped_by``/``stop_signal`` when a stop signalled this run's command, else nothing."""
-        if self.command_stop is None:
-            return {}
-        try:
-            return self.command_stop.stop_marker(run_id)
-        except Exception:
-            return {}
+        return stop_marks(self.command_stop, run_id)
 
     def _finish_stopped(self, task: FlowTask, run: Any, record: Mapping[str, Any], marks: Mapping[str, str]) -> None:
         """A stop ended the command and no cancel is pending: close the run as ``stopped`` (runner thread).

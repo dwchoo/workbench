@@ -99,7 +99,7 @@ from typing import Any, Callable, Iterable, Mapping
 from uuid import uuid4
 
 from workbench.backend.command_stop import CommandStopService, StopTarget
-from workbench.backend.command_stop_owner import COMMAND_ID
+from workbench.backend.command_stop_owner import COMMAND_ID, register_target, report_ended, stop_marks
 from workbench.backend.flow import (
     HandoffService, environment_value_findings, rejected,
 )
@@ -1594,26 +1594,15 @@ class TerminalService:
 
     def _stop_marks(self, command: _Command) -> dict[str, str]:
         """``stopped_by``/``stop_signal`` when a stop signalled this command, else nothing (a service fault: nothing)."""
-        if self._command_stop is None:
-            return {}
-        try:
-            return self._command_stop.stop_marker(command.command_id)
-        except Exception:
-            return {}
+        return stop_marks(self._command_stop, command.command_id)
 
     def _register_stop_target(self, command: _Command, port: Any) -> None:
         """Offer the command to the stop service: its run identity is read through the port that runs it."""
         command.port = port
-        if self._command_stop is None:
-            return
         task_id = command.task_id  # a plain value: what an ended command's target keeps must not hold the command
-        try:
-            self._command_stop.register(StopTarget(command.command_id, "worker", "terminal", task_id,
-                                                   identity=lambda: command.port.run_identity(),
-                                                   forbidden=self._stop_forbidden,
-                                                   task_status=lambda: self._status_of(task_id)))
-        except Exception:
-            pass  # a stop service fault never changes the flow: the command runs, is followed and reported, unstoppable
+        register_target(self._command_stop, StopTarget(
+            command.command_id, "worker", "terminal", task_id, identity=lambda: command.port.run_identity(),
+            forbidden=self._stop_forbidden, task_status=lambda: self._status_of(task_id)))
 
     def _status_of(self, task_id: str | None) -> str | None:
         if task_id is None or self._task_status is None:
@@ -1622,13 +1611,8 @@ class TerminalService:
 
     def _report_stop_end(self, command: _Command) -> None:
         """The owner observed the end: the stop service learns the final result (after every completion step)."""
-        if self._command_stop is None:
-            return
-        try:
-            self._command_stop.command_ended(command.command_id, command.result
-                                             or {"status": "unknown", "reason": "owner_follow_failed"})
-        except Exception:
-            pass  # a stop service fault never changes how a command ends
+        report_ended(self._command_stop, command.command_id,
+                     command.result or {"status": "unknown", "reason": "owner_follow_failed"})
 
     def _collect(self, port: Any, command: _Command) -> dict[str, Any]:
         while True:

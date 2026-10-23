@@ -18,6 +18,7 @@ from uuid import uuid4
 from workbench.backend.command_stop import CommandStopService
 from workbench.backend.flow_recovery import validate_stop_command_arguments
 from workbench.backend.flow_terminal import TerminalService, validate_terminal_arguments
+from workbench.workflow.run import WorkflowRun
 
 from test_command_stop_authority import BackendStopFixture
 from test_command_stop_terminal import REDUCED, RealStopFixture
@@ -192,6 +193,28 @@ class ManagerRefusesAnOutOfPatternIdTests(BackendStopFixture):
         self.assertEqual((result["status"], result["reason"]), ("rejected", "invalid_arguments"), result)
         self.assertEqual(self.records("command_stop_requested", "command_stop_signal"), [])
         self.assertEqual(self.manager_stop(started["command_id"])["status"], "exited")
+
+
+class RunShellRequestIdTests(unittest.TestCase):
+    """R2: the run offers the host shell request id it recorded through a read-only accessor."""
+
+    def run_with(self, record):
+        run = object.__new__(WorkflowRun)  # the accessor reads the record only
+        run._record = record
+        return run
+
+    def test_the_recorded_request_id_is_offered(self):
+        request_id = str(uuid4())
+        self.assertEqual(self.run_with({"shell_request_id": request_id}).shell_request_id, request_id)
+
+    def test_nothing_recorded_or_not_a_string_reads_as_none(self):
+        for record in ({}, {"shell_request_id": None}, {"shell_request_id": 7}):
+            self.assertIsNone(self.run_with(record).shell_request_id, record)
+
+    def test_it_is_read_only(self):
+        run = self.run_with({})
+        with self.assertRaises(AttributeError):
+            run.shell_request_id = "x"
 
 
 if __name__ == "__main__":

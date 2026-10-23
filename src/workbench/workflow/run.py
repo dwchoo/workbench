@@ -294,6 +294,12 @@ class WorkflowRun:
     _matched_proof_id: str | None = None
     _observation_finished: bool = False
 
+    @property
+    def shell_request_id(self) -> str | None:
+        """The id of the host shell request this run's command was sent with (None until it was recorded)."""
+        value = self._record.get("shell_request_id")
+        return value if isinstance(value, str) else None
+
     def _persist(self) -> None:
         _write_json(self.result_path, self._record)
 

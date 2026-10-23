@@ -877,8 +877,10 @@ class CommandStopService:
         """The owner could not register ``target``: one audit record (``error`` is an exception type name only).
 
         The id is remembered (bounded) so that a stop of it is answered ``refused: registration_failed``; it is also
-        this backend's own id, never a previous backend's."""
+        this backend's own id, never a previous backend's. A live entry a faulting ``register`` left behind is dropped:
+        the command is not stoppable, and a stop must not find it before the failure."""
         with self._lock:
+            self._live.pop(target.command_id, None)
             self._registered.add(target.command_id)
             self._failed.pop(target.command_id, None)
             self._failed[target.command_id] = target.owner

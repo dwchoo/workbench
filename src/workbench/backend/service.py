@@ -269,6 +269,7 @@ class Backend:
         self._previous_commands: frozenset[str] | None = None  # started-not-ended ids of the journal, built on first need
         self._previous_index_clock = time.monotonic  # C-T2: injectable clock of the failed-read retry interval
         self._previous_index_retry_at = 0.0  # no journal read before this clock value, after a failed read
+        self._previous_index_error: Exception | None = None  # the last failed read: the cause of the retry-window errors
 
     # -- lifecycle -------------------------------------------------------
     def run(self) -> int:
@@ -1997,7 +1998,8 @@ class Backend:
         with self._previous_commands_lock:
             if self._previous_commands is None:
                 if self._previous_index_clock() < self._previous_index_retry_at:
-                    raise OSError("the previous-backend command index could not be read; retrying later")
+                    raise OSError("the previous-backend command index could not be read; retrying later") \
+                        from self._previous_index_error
                 started: set[str] = set()
                 try:
                     for record in self.handoffs.read_records(("terminal_started", "terminal_ended")):
@@ -2005,10 +2007,12 @@ class Backend:
                             started.add(record.get("command_id"))
                         else:
                             started.discard(record.get("command_id"))
-                except Exception:
+                except Exception as exc:
+                    self._previous_index_error = exc  # chained into the errors raised inside the retry window
                     self._previous_index_retry_at = self._previous_index_clock() + PREVIOUS_INDEX_RETRY
                     raise
                 self._previous_commands = frozenset(started)
+                self._previous_index_error = None
             return command_id in self._previous_commands
 
     def _omp_pane_pids(self) -> frozenset[int]:

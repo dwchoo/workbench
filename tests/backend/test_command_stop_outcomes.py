@@ -135,9 +135,10 @@ class RepeatedStopAfterFinishTests(OutcomeFixture):
         attempts = self.signal_attempts()
         kinds = ("command_stop_requested", "command_stop_target", "command_stop_signal", "command_stop_finished")
         before = {kind: len(self.records(kind)) for kind in kinds}
+        threads_before = threading.active_count()
         began = time.monotonic()
         again = self.stop(command_id)
-        # structural proof: ``signal_attempts()`` and the record counts are compared below; the latency bound is only a
+        # structural proof: ``signal_attempts()``, the record counts and the thread count are compared below; the latency bound is only a
         # sanity net at the shortest stage wait, which a repeat that started a stage could not undercut
         self.assertLess(time.monotonic() - began, POLICY.sigint_wait, "no timer or stage is started")
         self.assertEqual(again["status"], "exited", "the original result, not already_exited")
@@ -148,6 +149,7 @@ class RepeatedStopAfterFinishTests(OutcomeFixture):
         self.assertIsNone(bystander.poll(), "an unrelated process is untouched")
         third = self.stop(command_id)
         self.assertEqual(self.without_repeat(third), original)
+        self.assertEqual(threading.active_count(), threads_before, "no new thread (timer) was started")
         repeats = self.records("command_stop_repeat")
         self.assertEqual([(r["command_id"], r["requested_by"], r["repeat_requests"]) for r in repeats],
                          [(command_id, "worker", 1), (command_id, "worker", 2)])

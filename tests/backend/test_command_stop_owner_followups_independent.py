@@ -148,6 +148,8 @@ class BackendHelpers:
         """B2, structural: write the Worker OMP's own session/process group into the command's identity so that a
         scan tracks the pane unless it is forbidden; then ask for a stop and require that the pane is never pinned."""
         worker = self.backend.panes[PaneId.WORKER_OMP]
+        # the run identity can still read ``starting`` for a moment after the command was listed: wait (bounded) for it
+        self.wait(lambda: (target.identity() or {}).get("phase") == "running", "the run identity to be running", 30)
         real = target.identity()
         self.assertTrue(real and real.get("phase") == "running", real)
         spoofed = {**real, "session": os.getsid(worker.pid), "child_group": os.getpgid(worker.pid),

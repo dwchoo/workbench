@@ -117,6 +117,7 @@ RESTART_GRACE = 3.0
 RESTART_JOB_BUDGET = 8.0  # the tool waits this long (from the request) for the restart itself ...
 RESTART_TOOL_BUDGET = 9.0  # ... and until here for the new worker's bridge registration (the bridge waits 10 s)
 WATCH_EVENTS = ("agent_start", "agent_end", "tool_execution_start")  # a worker turn the watchdog did not probe
+PREVIOUS_INDEX_RETRY = 30.0  # C-T2: after a failed journal read the previous-backend index is tried again this late
 METADATA_RETRY = 5.0  # CW-19: while metadata writes fail, the backend record is tried again this often
 SURVIVOR_STOPS_KEPT = 20
 
@@ -266,6 +267,8 @@ class Backend:
         self._causes_reported: set[int] = set()
         self._previous_commands_lock = threading.Lock()
         self._previous_commands: frozenset[str] | None = None  # started-not-ended ids of the journal, built on first need
+        self._previous_index_clock = time.monotonic  # C-T2: injectable clock of the failed-read retry interval
+        self._previous_index_retry_at = 0.0  # no journal read before this clock value, after a failed read
 
     # -- lifecycle -------------------------------------------------------
     def run(self) -> int:
@@ -1985,15 +1988,25 @@ class Backend:
         later questions (a Worker or Manager may send any number of unknown ids) are answered from it and never touch
         the journal. A command started after the index was built is never in it. A command of this backend that is in
         it (running when it was built, or its end record lost) is never asked: the stop service answers every id it
-        registered itself (``CommandStopService._registered``)."""
+        registered itself (``CommandStopService._registered``).
+
+        A failed journal read is remembered (C-T2): until ``PREVIOUS_INDEX_RETRY`` has passed every question is
+        answered as "not a previous backend's" without touching the journal (the caller treats the raised error that
+        way too), and the first question after that reads it again."""
         with self._previous_commands_lock:
             if self._previous_commands is None:
+                if self._previous_index_clock() < self._previous_index_retry_at:
+                    raise OSError("the previous-backend command index could not be read; retrying later")
                 started: set[str] = set()
-                for record in self.handoffs.read_records(("terminal_started", "terminal_ended")):
-                    if record["type"] == "terminal_started":
-                        started.add(record.get("command_id"))
-                    else:
-                        started.discard(record.get("command_id"))
+                try:
+                    for record in self.handoffs.read_records(("terminal_started", "terminal_ended")):
+                        if record["type"] == "terminal_started":
+                            started.add(record.get("command_id"))
+                        else:
+                            started.discard(record.get("command_id"))
+                except Exception:
+                    self._previous_index_retry_at = self._previous_index_clock() + PREVIOUS_INDEX_RETRY
+                    raise
                 self._previous_commands = frozenset(started)
             return command_id in self._previous_commands
 

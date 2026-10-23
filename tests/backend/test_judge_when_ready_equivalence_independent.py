@@ -4,9 +4,9 @@ Contract under test
 -------------------
 Both commits are PURE refactors:
 
-* da64675: ``WorkflowRun.worker_analysis_request`` (property) and ``WorkflowRun.record_snapshot()`` replace the two
-  direct reads of the private ``_record`` in ``automation.py`` (``_collect_non_model``) and ``workflow_binding.py``
-  (``collect_and_notify``).
+* da64675 (+ bf7f151): ``WorkflowRun.worker_analysis_request`` (property, the RAW stored value) and
+  ``WorkflowRun.record_snapshot()`` replace the direct reads of the private ``_record`` in ``automation.py``
+  (``_collect_non_model``) and ``workflow_binding.py`` (``collect_and_notify``).
 * 5aa7d9e: ``TaskFlow._judge_when_ready`` was cut into ``_wait_out_hold``, ``_busy_past_limit``, ``_judge_once``,
   ``_analysis_held`` (+ ``_AnalysisWait``, ``_JUDGE_AGAIN``, ``_worker_analysis_request``).
 
@@ -243,12 +243,15 @@ class DirectRun:
 
 
 class DirectRunProp(DirectRun):
-    """Like ``WorkflowRun``: exposes ``worker_analysis_request`` as a property of the record (dict or None)."""
+    """Like ``WorkflowRun``: exposes ``worker_analysis_request`` as a property returning the RAW stored value."""
 
     @property
     def worker_analysis_request(self):
-        value = self._record.get("worker_analysis_request")
-        return value if isinstance(value, dict) else None
+        return self._record.get("worker_analysis_request")
+
+
+class DirectRunReal(DirectRun, WorkflowRun):
+    """A real ``WorkflowRun`` instance (its own property) whose ``judge`` is the scripted one."""
 
 
 class DirectEnv:
@@ -263,7 +266,8 @@ class DirectEnv:
         self.task = SimpleNamespace(task_id="task-1")
         self.accepted: list[bool] = []
         self.on_report = lambda event, record: self.trace.append(("on_report", event))
-        self.run = (DirectRunProp if spec.get("prop") else DirectRun)(self)
+        kind = spec.get("prop")
+        self.run = (DirectRunReal if kind == "real" else DirectRunProp if kind else DirectRun)(self)
         flow = object.__new__(module.TaskFlow)
         flow._poll_interval = spec.get("poll", 1.0)
         flow._analysis_idle_limit = spec.get("limit", 10.0)
@@ -523,7 +527,7 @@ class DirectDifferential(NoLeak):
     @needs_baseline
     def test_every_scenario_is_identical_before_and_after_the_split(self):
         for name, spec in DIRECT_SCENARIOS.items():
-            for prop in (False, True):  # a run with / without the ``worker_analysis_request`` property
+            for prop in (False, True, "real"):  # duck-typed run / run with the property / a real WorkflowRun
                 with self.subTest(scenario=name, prop=prop):
                     case = dict(spec, prop=prop)
                     before = run_direct(BASE_TASKS, case)
@@ -556,20 +560,23 @@ class DirectDifferential(NoLeak):
             self.assertGreater(seen[needed], 0, needed)
 
     @needs_baseline
-    def test_a_truthy_non_dict_request_is_the_one_documented_divergence(self):
-        # WorkflowRun only ever records a dict (run.py: ``worker_analysis_request = {...}`` twice), so this input
-        # is unreachable in the product. Pinned so the difference is visible: the baseline raised AttributeError
-        # out of the ``except WorkflowHeld`` handler; the accessor now turns a non-dict into "no request".
-        for value in ("deferred", ["status", "deferred"], 7, True):
-            with self.subTest(value=value):
-                spec = {"judge": ["held_keep"], "prop": True, "record": {"worker_analysis_request": value}}
-                before, after = run_direct(BASE_TASKS, spec), run_direct(current_tasks, spec)
-                duck = run_direct(current_tasks, dict(spec, prop=False))
-                self.assertEqual(duck, run_direct(BASE_TASKS, dict(spec, prop=False)),
-                                 "a duck-typed run (no accessor) still reads the raw record: no change at all")
-                self.assertEqual(before["outcome"][0:2], ("raised", "AttributeError"))
-                self.assertEqual(after["outcome"], FOLLOW)
-                self.assertEqual([e[3] for e in after["trace"] if e[0] == "finish"], ["held"])
+    def test_a_truthy_non_dict_request_fails_exactly_as_before_for_every_kind_of_run(self):
+        # the raw stored value is passed on (bf7f151): ``.get`` on a non-dict raises AttributeError out of the
+        # ``except WorkflowHeld`` handler, on a duck-typed run, a run with the property and a real WorkflowRun alike
+        for value in ("deferred", ["status", "deferred"], 7, True, 1.5, ("status",), {"status"}):
+            for kind in (False, True, "real"):
+                with self.subTest(value=value, run=kind):
+                    spec = {"judge": ["held_keep"], "prop": kind, "record": {"worker_analysis_request": value}}
+                    before, after = run_direct(BASE_TASKS, spec), run_direct(current_tasks, spec)
+                    self.assertEqual(after, before)
+                    self.assertEqual(after["outcome"][:2], ("raised", "AttributeError"))
+                    self.assertEqual(names(after, "finish", "unavailable", "run_error"), [])
+
+    def test_a_real_workflow_run_is_used_by_the_direct_layer(self):
+        env = DirectEnv(current_tasks, {"prop": "real", "record": {"worker_analysis_request": {"status": "deferred"}}})
+        self.assertIsInstance(env.run, WorkflowRun)
+        self.assertIs(type(env.run).worker_analysis_request, WorkflowRun.worker_analysis_request)
+        self.assertEqual(env.run.worker_analysis_request, {"status": "deferred"})
 
 
 class DirectPins(NoLeak):
@@ -1167,18 +1174,20 @@ class AccessorPins(unittest.TestCase):
         run._record = record
         return run
 
-    def test_worker_analysis_request_is_the_recorded_dict_itself_or_none(self):
+    def test_worker_analysis_request_is_the_stored_value_itself(self):
         request = {"status": "deferred", "message_id": "m"}
         run = self.run_with({"worker_analysis_request": request})
         self.assertIs(run.worker_analysis_request, request, "no copy: the live dict")
-        for record in ({}, {"worker_analysis_request": None}, {"worker_analysis_request": []},
-                       {"worker_analysis_request": "deferred"}, {"worker_analysis_request": 0},
-                       {"worker_analysis_request": ["status"]}):
+        for record in ({}, {"worker_analysis_request": None}):
             with self.subTest(record=record):
                 self.assertIsNone(self.run_with(record).worker_analysis_request)
+        for value in ([], "deferred", 0, ["status"], 7, "", True):
+            with self.subTest(value=value):
+                got = self.run_with({"worker_analysis_request": value}).worker_analysis_request
+                self.assertIs(got, value, "a non-dict is returned as stored, not turned into None")
         empty = {}
         self.assertIs(self.run_with({"worker_analysis_request": empty}).worker_analysis_request, empty,
-                      "an empty dict is still the recorded dict (the caller applies ``or {}``)")
+                      "an empty dict is still the stored dict (the caller applies ``or {}``)")
 
     def test_the_property_follows_later_changes_of_the_record(self):
         run = self.run_with({})
@@ -1206,7 +1215,7 @@ class AccessorPins(unittest.TestCase):
         self.assertIsNot(again, snapshot)
         self.assertIn("late", again)
 
-    def test_the_helper_prefers_the_property_and_falls_back_to_the_record(self):
+    def test_the_helper_reads_the_property_once_and_falls_back_to_the_record_on_attribute_error(self):
         helper = current_tasks._worker_analysis_request
         duck = SimpleNamespace(_record={"worker_analysis_request": {"status": "deferred"}})
         self.assertEqual(helper(duck), {"status": "deferred"})
@@ -1217,6 +1226,42 @@ class AccessorPins(unittest.TestCase):
         self.assertEqual(helper(real), {"status": "deferred"})
         none_prop = SimpleNamespace(worker_analysis_request=None, _record={"worker_analysis_request": {"s": 1}})
         self.assertIsNone(helper(none_prop), "a property that says None is not overridden by the record")
+        self.assertEqual(helper(self.run_with({"worker_analysis_request": "deferred"})), "deferred",
+                         "a non-dict is passed on raw")
+
+        class Counting:
+            reads = 0
+            _record = {"worker_analysis_request": {"from": "record"}}
+
+            @property
+            def worker_analysis_request(self):
+                type(self).reads += 1
+                return {"from": "property"}
+
+        self.assertEqual(helper(Counting()), {"from": "property"})
+        self.assertEqual(Counting.reads, 1, "the property is evaluated exactly once")
+
+        class Missing:
+            reads = 0
+            _record = {"worker_analysis_request": {"from": "record"}}
+
+            @property
+            def worker_analysis_request(self):
+                type(self).reads += 1
+                raise AttributeError("no such thing")
+
+        self.assertEqual(helper(Missing()), {"from": "record"}, "an AttributeError of the property falls back")
+        self.assertEqual(Missing.reads, 1)
+
+        class Broken:
+            _record = {}
+
+            @property
+            def worker_analysis_request(self):
+                raise RuntimeError("property failed")
+
+        with self.assertRaises(RuntimeError):
+            helper(Broken())
 
     def test_the_wait_state_starts_empty_and_reset_clears_both_marks(self):
         wait = current_tasks._AnalysisWait()

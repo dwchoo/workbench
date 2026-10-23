@@ -156,6 +156,32 @@ REPORT_SETTLE_WAIT = 2.0
 ANALYSIS_IDLE_LIMIT = 180.0
 # the follow's judging helpers return this when the follow is over (their caller just returns)
 _FOLLOW_ENDED = object()
+# ``_judge_once`` returns this when the judge was held without anything sent and the wait loop asks again
+_JUDGE_AGAIN = object()
+
+
+class _AnalysisWait:
+    """Where the staged analysis waits for the worker (smoke-04 G2, fix-05 P3a), as ``time.monotonic`` marks.
+
+    ``busy_since``: the worker has been busy (not idle for the analysis) since then; one continuous busy period,
+    so an idle observation starts a new one. ``deferred_since``: analysis deliveries deferred while the worker
+    looked idle in between (no busy observation), which must not wait forever either.
+    """
+    __slots__ = ("busy_since", "deferred_since")
+
+    def __init__(self) -> None:
+        self.busy_since: float | None = None
+        self.deferred_since: float | None = None
+
+    def reset(self) -> None:
+        self.busy_since = self.deferred_since = None
+
+
+def _worker_analysis_request(run: Any) -> Any:
+    """The staged analysis request of ``run``'s record (a duck-typed run in tests only has its ``_record``)."""
+    if hasattr(run, "worker_analysis_request"):
+        return run.worker_analysis_request
+    return run._record.get("worker_analysis_request")
 # C-D68 (3): every accepted to_worker result says who does the work.
 def _analysis_fields(level: object) -> dict[str, str]:
     """The TASK message lines for the analysis level (C-D69 (2)); null is ``summary``."""
@@ -2106,64 +2132,81 @@ class TaskFlow:
     def _judge_when_ready(self, task: FlowTask, run: Any, accepted: list[bool],
                           on_report: Callable) -> Any:
         """Judge when not paused and the worker can take the staged analysis; ``_FOLLOW_ENDED`` ends the follow."""
-        # G2: the worker has been busy (not idle for the analysis) since then; fix-05 P3a: one continuous busy
-        # period, so an idle observation starts a new one. ``deferred_since``: analysis deliveries deferred
-        # while the worker looked idle in between (no busy observation), which must not wait forever either.
-        busy_since: float | None = None
-        deferred_since: float | None = None
+        wait = _AnalysisWait()
         while True:  # judge only when not paused and the worker can take the staged analysis
             if not self._wait(0):
                 return _FOLLOW_ENDED
             if self._cancelled(task):
                 self._end_cancelled_run(task, run)
                 return _FOLLOW_ENDED
-            if self._paused_now():
-                busy_since = deferred_since = None
-                self._set_held(task.task_id, "paused")
-                self._wait(self._poll_interval)
-                continue
-            hold = self._held_now(ActorRole.WORKER)
-            if hold is not None:  # CW-19: the staged analysis is automatic model work for the worker
-                busy_since = deferred_since = None
-                self._set_held(task.task_id, hold)
-                self._wait(self._poll_interval)
+            if self._wait_out_hold(task, wait):
                 continue
             if self._omp_idle(ActorRole.WORKER) is not True:
-                deferred_since = None
-                busy_since = time.monotonic() if busy_since is None else busy_since
-                if time.monotonic() - busy_since >= self._analysis_idle_limit:
+                if self._busy_past_limit(wait):
                     self._judgment_unavailable(task, run, self._worker_not_idle_reason(), None)
                     return _FOLLOW_ENDED
                 self._set_held(task.task_id, "worker_busy")
                 self._wait(self._poll_interval)
                 continue
-            busy_since = None  # P3a: the worker is idle; a later busy observation starts a new period
+            wait.busy_since = None  # P3a: the worker is idle; a later busy observation starts a new period
             self._set_held(task.task_id, None)
-            try:
-                judge = run.judge
-                if accepts_keyword(judge, "report_hold"):  # P3-2: the report waits out a manager hold
-                    judge = functools.partial(judge, report_hold=lambda: self._held_now(ActorRole.MANAGER))
-                return self._call_with_report_hook(judge, on_report)
-            except WorkerJudgmentUnavailable as exc:  # G2: rejected or unknown worker analysis
-                self._judgment_unavailable(task, run, exc.reason, exc.host_evidence or None)
+            judged = self._judge_once(task, run, accepted, on_report, wait)
+            if judged is not _JUDGE_AGAIN:
+                return judged
+
+    def _wait_out_hold(self, task: FlowTask, wait: _AnalysisWait) -> bool:
+        """Show a pause or a worker hold and wait one poll; ``True`` when one applies (no busy period counts)."""
+        if self._paused_now():
+            wait.reset()
+            self._set_held(task.task_id, "paused")
+            self._wait(self._poll_interval)
+            return True
+        hold = self._held_now(ActorRole.WORKER)
+        if hold is not None:  # CW-19: the staged analysis is automatic model work for the worker
+            wait.reset()
+            self._set_held(task.task_id, hold)
+            self._wait(self._poll_interval)
+            return True
+        return False
+
+    def _busy_past_limit(self, wait: _AnalysisWait) -> bool:
+        """The worker is not idle: extend the busy period; ``True`` when it reached the analysis idle limit."""
+        wait.deferred_since = None
+        wait.busy_since = time.monotonic() if wait.busy_since is None else wait.busy_since
+        return time.monotonic() - wait.busy_since >= self._analysis_idle_limit
+
+    def _judge_once(self, task: FlowTask, run: Any, accepted: list[bool], on_report: Callable,
+                    wait: _AnalysisWait) -> Any:
+        """Run the judge; the record, ``_FOLLOW_ENDED`` or ``_JUDGE_AGAIN`` (the worker was not ready)."""
+        try:
+            judge = run.judge
+            if accepts_keyword(judge, "report_hold"):  # P3-2: the report waits out a manager hold
+                judge = functools.partial(judge, report_hold=lambda: self._held_now(ActorRole.MANAGER))
+            return self._call_with_report_hook(judge, on_report)
+        except WorkerJudgmentUnavailable as exc:  # G2: rejected or unknown worker analysis
+            self._judgment_unavailable(task, run, exc.reason, exc.host_evidence or None)
+            return _FOLLOW_ENDED
+        except WorkflowHeld as exc:
+            return self._analysis_held(task, run, exc, wait)
+        except Exception as exc:  # fix-05 P2: any other failure of the analysis stage or the report
+            self._run_error(task, run, accepted, on_report, exc)
+            return _FOLLOW_ENDED
+
+    def _analysis_held(self, task: FlowTask, run: Any, exc: WorkflowHeld, wait: _AnalysisWait) -> Any:
+        """A held judge: a deferred analysis delivery asks again within the idle limit, else the run ends held."""
+        request = _worker_analysis_request(run) or {}
+        if request.get("status") == MailboxStatus.DEFERRED.value:
+            now = time.monotonic()
+            wait.busy_since = now if wait.busy_since is None else wait.busy_since
+            wait.deferred_since = now if wait.deferred_since is None else wait.deferred_since
+            if now - min(wait.busy_since, wait.deferred_since) >= self._analysis_idle_limit:
+                self._judgment_unavailable(task, run, self._worker_not_idle_reason(), None)
                 return _FOLLOW_ENDED
-            except WorkflowHeld as exc:
-                request = run._record.get("worker_analysis_request") or {}
-                if request.get("status") == MailboxStatus.DEFERRED.value:
-                    now = time.monotonic()
-                    busy_since = now if busy_since is None else busy_since
-                    deferred_since = now if deferred_since is None else deferred_since
-                    if now - min(busy_since, deferred_since) >= self._analysis_idle_limit:
-                        self._judgment_unavailable(task, run, self._worker_not_idle_reason(), None)
-                        return _FOLLOW_ENDED
-                    self._set_held(task.task_id, "worker_busy")  # nothing was sent: ask again
-                    self._wait(self._poll_interval)
-                    continue
-                self._finish_run(task, run, "held", {"reason": str(exc)[:SUMMARY_MAX]})
-                return _FOLLOW_ENDED
-            except Exception as exc:  # fix-05 P2: any other failure of the analysis stage or the report
-                self._run_error(task, run, accepted, on_report, exc)
-                return _FOLLOW_ENDED
+            self._set_held(task.task_id, "worker_busy")  # nothing was sent: ask again
+            self._wait(self._poll_interval)
+            return _JUDGE_AGAIN
+        self._finish_run(task, run, "held", {"reason": str(exc)[:SUMMARY_MAX]})
+        return _FOLLOW_ENDED
 
     def _retry_deferred_report(self, task: FlowTask, run: Any, record: Any, accepted: list[bool],
                                on_report: Callable) -> Any:

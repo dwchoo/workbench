@@ -878,11 +878,13 @@ class ImeNeutralPrefixTests(unittest.TestCase):
 
 
 FAKE_OMP = r'''#!{python}
-import json, os, socket, sys, uuid
+import json, os, socket, sys, time, uuid
 argv = sys.argv[1:]
 if argv[:2] == ["config", "get"]:
     print("[]")
     sys.exit(0)
+if os.environ.get("FAKE_PANE_DELAY_ROLE") == os.environ["WORKBENCH_G3_ROLE"]:
+    time.sleep(0.15)  # test knob: this role's record is written after the other role's (process-start order != fork order)
 with open(os.environ["FAKE_PANE_RECORD"], "a") as stream:
     stream.write(json.dumps({{"pid": os.getpid(), "role": os.environ["WORKBENCH_G3_ROLE"]}}) + "\n")
 sock = socket.socket(socket.AF_UNIX)
@@ -972,6 +974,8 @@ def _alive(pid):
 class RealBackendCase(unittest.TestCase):
     """A real Backend (fake OMP panes, real bash host shell) with the product UI on a PTY."""
 
+    fake_env = {}  # extra environment for the fake OMP panes (a subclass knob)
+
     def setUp(self):
         from workbench.backend.launcher import LaunchPlan
         from workbench.backend.paths import DataLayout, ensure_private_dir
@@ -988,7 +992,8 @@ class RealBackendCase(unittest.TestCase):
         fake.write_text(FAKE_OMP.format(python=sys.executable))
         fake.chmod(0o700)
         self.record = root / "panes.jsonl"
-        env = {"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "HOME": str(home), "FAKE_PANE_RECORD": str(self.record)}
+        env = {"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "HOME": str(home), "FAKE_PANE_RECORD": str(self.record),
+               **self.fake_env}
         plan = LaunchPlan(ShellChoice("bash", "/usr/bin/bash"), str(fake), "omp/18.4.4", "/x/bridge.ts", ("--plan-arg",))
         patcher = mock.patch("workbench.backend.service.check_isolation",
                              lambda *a, role, **k: {"role": role, "state": "ok", "ok": True, "leaks": [],
@@ -1031,8 +1036,10 @@ class RestartExitedOmpPtyTests(RealBackendCase):
 
     def test_exited_manager_shows_the_notice_and_enter_starts_a_new_session_that_takes_input(self):
         ui = self.ui
-        old = json.loads(self.record.read_text().splitlines()[0])
-        self.assertEqual("manager", old["role"])  # the manager registered first: it is spawned before the worker
+        # The record file is in process-start order, which is not the (manager-first) fork order: select by role.
+        before = [json.loads(line) for line in self.record.read_text().splitlines() if line.strip()]
+        self.assertEqual(["manager", "worker"], sorted(r["role"] for r in before), "one manager and one worker so far")
+        old = next(r for r in before if r["role"] == "manager")
         self.assertTrue(ui.until(lambda: f"fake omp manager pid={old['pid']}" in ui.text()), ui.text())
         ui.send(b"exit\r")  # the fake OMP exits on this line
         self.assertTrue(ui.until(lambda: "OMP 종료됨" in ui.text() and "/resume" in ui.text()), ui.text())
@@ -1050,10 +1057,22 @@ class RestartExitedOmpPtyTests(RealBackendCase):
         self.assertNotIn("echo:stray", ui.text())
         invocations = [json.loads(line) for line in self.record.read_text().splitlines() if line.strip()]
         self.assertEqual(3, len(invocations), "manager, worker and exactly one restarted manager")
-        self.assertEqual("manager", invocations[-1]["role"])
-        self.assertNotEqual(old["pid"], invocations[-1]["pid"])
+        managers = [r for r in invocations if r["role"] == "manager"]
+        self.assertEqual(2, len(managers), "the old manager and exactly one restarted manager")
+        self.assertEqual(old["pid"], managers[0]["pid"])
+        self.assertNotEqual(old["pid"], managers[1]["pid"])
+        self.assertEqual(1, len([r for r in invocations if r["role"] == "worker"]), "the worker was not restarted")
         ui.send(P + b"q")
         self.assertEqual(0, ui.wait_exit())
+
+
+class RestartExitedOmpDelayedManagerRecordPtyTests(RestartExitedOmpPtyTests):
+    """Same flow, but the manager fake OMP writes its invocation record 0.15 s late, so the worker's line comes first.
+
+    The record is written at process start, not at fork: the product forks the manager first, yet the file order is
+    only the start order. The test must pick records by role, never by position."""
+
+    fake_env = {"FAKE_PANE_DELAY_ROLE": "manager"}
 
 
 def _session_members(sid, comm=None):

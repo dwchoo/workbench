@@ -19,9 +19,23 @@ def pane_rects(rows: int, cols: int, layout: Layout = DEFAULT_LAYOUT,
     return pane_boxes(rows, cols, layout, zoom)
 
 
+def _clip_cells(text: str, width: int) -> str:
+    """The longest prefix of ``text`` that fits ``width`` terminal cells; a wide character that would
+    straddle the limit is dropped, zero-width and control characters cost no cell."""
+    out, used = [], 0
+    for ch in text:
+        size = max(wcswidth(ch), 0)
+        if used + size > width:
+            break
+        out.append(ch)
+        used += size
+    return "".join(out)
+
+
 def _put(win: curses.window, y: int, x: int, text: str, width: int, attr: int = 0) -> None:
+    clipped = _clip_cells(text, max(0, width))  # curses counts characters, so clip by cells first
     try:
-        win.addnstr(y, x, text, max(0, width), attr)
+        win.addnstr(y, x, clipped, len(clipped), attr)
     except curses.error:
         pass
 

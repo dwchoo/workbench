@@ -876,17 +876,34 @@ class RegistryCleanupTests(Fx):
         self.assertEqual((self.env.opened, self.env.sent), ([], []), "no pid of a dead-owned entry was pinned")
 
     def test_a_failing_registration_does_not_leave_a_stoppable_entry(self):
+        # user decision 2026-10-23 (replaces "the run is held as runner_error"): the experiment keeps running, is
+        # followed and judged as usual, but is not stoppable; the stop is answered, never silent
+        gate = self.root / "gate"
+        command = f"printf 'started\\n'; while [ ! -e {gate} ]; do sleep 0.1; done; printf PASS; printf PASS > outcome.txt"
         with mock.patch.object(self.stop_service, "register", side_effect=RuntimeError("registry broke")):
-            result = self.to_worker({"kind": "experiment", "message": "run it", "spec": self.spec(SLEEPING)})
+            result = self.to_worker({"kind": "experiment", "message": "run it", "spec": self.spec(command)})
             self.assertEqual(result["status"], "dispatched", result)
-            self.assertTrue(wait_until(lambda: (self.view() or {}).get("held_reason") == "runner_error:RuntimeError",
-                                       CALL_LONG), self.view())
+            self.assertTrue(wait_until(lambda: (self.view() or {}).get("run_id") is not None
+                                       and self.view()["host_commands"], CALL_LONG), self.view())
         run_id = self.view()["run_id"]
-        self.assertEqual(self.view()["host_commands"], [])
+        self.assertEqual(self.view()["status"], "running", "the run is not held: it keeps running")
+        self.assertEqual([c["command_id"] for c in self.view()["host_commands"]], [run_id])
         answer = self.stop_service.stop("manager", run_id)
-        self.assertNotEqual(answer["status"], "exited", answer)
+        self.assertEqual((answer["status"], answer["reason"]), ("refused", "registration_failed"), answer)
         self.assertEqual(answer.get("signals", []), [])
         self.assertEqual((self.env.opened, self.env.sent), ([], []))
+        self.assertEqual(self.view()["status"], "running", "the refused stop changed nothing")
+        (audit,) = self.of_type("command_stop_register_failed")
+        self.assertEqual({k: audit[k] for k in ("command_id", "kind", "owner", "error")},
+                         {"command_id": run_id, "kind": "experiment", "owner": "manager", "error": "RuntimeError"})
+        self.assertNotIn("registry broke", json.dumps(self.records), "only the error's type name is recorded")
+        gate.write_text("go")
+        self.await_status("finished")
+        self.assertEqual(self.judge_calls, 1, "the run was followed to its end and judged")
+        self.assertEqual(self.view()["host_commands"], [])
+        again = self.stop_service.stop("manager", run_id)
+        self.assertEqual((again["status"], again["reason"]), ("refused", "registration_failed"), again)
+        self.assertEqual((self.env.opened, self.env.sent), ([], []), "no pid was ever pinned or signalled")
 
     def test_a_stopped_runs_id_never_reaches_the_next_runs_command(self):
         first_task, first = self.running_experiment()

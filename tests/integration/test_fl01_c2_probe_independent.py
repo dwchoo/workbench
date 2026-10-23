@@ -29,6 +29,64 @@ import probe_dvl02_c2_escape as probe  # noqa: E402
 
 ESC_TRACE_FIXTURE = HERE / "fixtures/c2_manager_esc_trace.json"
 
+# Real OMP 18.8.6 startup Tip (a random pick), captured on the failing plain/dash FL-01 cell:
+# .workflow/dev-validation-log-retention/runs/dvl13-20261015/final-integration01/final-precise02/
+#   04-compat_plain_dash-compat-plain-dash.json (c2_esc_failure). OMP wraps it at the box width.
+REAL_OMP_TIP = ("Tip: With default keybindings, Ctrl+D deletes the character under the cursor "
+                "instead of quitting your draft \u2014 see /hotkeys for your exit key")
+# `raw_tail_hex` of that same record (last 2048 bytes of the client byte stream; the frame draws
+# the wrapped Tip at rows 11-12 and the `/hot` draft at row 16, with no completion menu row).
+# Embedded because .workflow is untracked (gitignored), so it cannot be read at test time.
+REAL_OMP_TIP_RAW_TAIL_HEX = (
+    "67656c6f6720656e74726965731b5b33396d1b5b3236581b5b31363b34481b5b33383b353b3234386df09f9ba020201b"
+    "5b33396d746f6f6c731b5b31363b3233481b5b33383b353b3234386d546f6f6c733a20313720616374697665202f2032"
+    "3520617661696c61626c651b5b31373b3448e297ab20201b5b33396d636f6e746578741b5b31373b3233481b5b33383b"
+    "353b3234386d436f6e746578743a203239252028392c3536342f33322c373638291b5b33396d2020201b5b31383b3448"
+    "1b5b33383b353b3234386de286bb20201b5b33396d66726573681b5b31383b3233481b5b33383b353b3234386d467265"
+    "73683a2072656164791b5b33396d1b5b3139581b5b31393b34481b5b33383b353b3234386de286bb20201b5b33396d72"
+    "656c6f61642d706c7567696e731b5b33383b353b3234386d202052656c6f616420616c6c20706c7567696e732028736b"
+    "696c6c732c20636f6d6d616e64732c20686f6f6b732c20746f6f6c732c206167656e74732c1b5b32303b324820202020"
+    "202020201b5b32303b3234484350291b5b33396d1b5b3332581b5b31303b39481b28421b5b6d1b5b35641b5b3139581b"
+    "5b353b3238481b5b33383b353b3230366de29688e296881b5b33383b353b3137306de29688e29688e29688e296881b5b"
+    "33383b353b3133346de29688e29688e296881b5b33383b353b3133356de29688e296881b5b33383b353b39396de29688"
+    "1b5b33396d1b5b3338581b5b363b38481b5b3233581b5b363b3331481b5b33383b353b3133346de29688e296881b5b33"
+    "396d20201b5b33383b353b3133356de296881b5b33383b353b39396de296881b5b33396d202020202020201b28421b5b"
+    "303b316de29684e29680e29680e2968420e29688e29680e29684e29680e2968420e29688e29680e29680e296841b2842"
+    "1b5b306d1b5b3139581b5b373b3331481b5b33383b353b3133346de296881b5b33383b353b3133356de296881b5b3339"
+    "6d20201b5b33383b353b39396de296881b5b33383b353b36396de296881b5b3434471b28421b5b303b316de29680e296"
+    "84e29684e2968020e2968820e2968820e2968820e29688e29684e29684e296801b5b383b3331481b28421b5b306d1b5b"
+    "33383b353b39396de29692e296921b5b33396d20201b5b33383b353b36396de296881b5b33383b353b37356de296881b"
+    "5b3434471b28421b5b303b316d2020202020202020202020e296881b5b393b32481b28421b5b306d1b5b3333581b5b39"
+    "3b3335481b5b33383b353b37346de296881b5b33383b353b33386de296881b5b33396d202020202020201b5b33383b35"
+    "3b3234336d7631382e382e361b5b33396d1b5b3334581b5b31303b3248202020202020201b5b31313b32482020202020"
+    "20201b28421b5b306d1b5b336d1b5b33383b353b3138306d5469703a201b28421b5b306d1b5b336d1b5b33383b353b32"
+    "34386d576974682064656661756c74206b657962696e64696e67732c204374726c2b442064656c657465732074686520"
+    "63686172616374657220756e646572207468651b5b3834471b28421b5b306d1b5b32336d201b5b31323b344820202020"
+    "1b28421b5b306d1b5b336d1b5b33383b353b3234386d637572736f7220696e7374656164206f66207175697474696e67"
+    "20796f757220647261667420e2809420736565202f686f746b65797320666f7220796f75722065786974206b65791b5b"
+    "3834471b28421b5b306d1b5b32336d201b5b31333b34481b5b3239581b5b31333b383448201b5b31343b34481b5b3439"
+    "581b5b31343b383448201b5b31353b32481b5b34383b353b3233336d201b5b33383b353b3234336d1b5b34383b353b32"
+    "33336dcf801b5b33393b34396d1b5b34383b353b3233336d201b5b33383b353b3233366d1b5b34383b353b3233336d3e"
+    "1b5b33393b34396d1b5b34383b353b3233336d201b5b33383b353b33396d1b5b34383b353b3233336de2aca22043572d"
+    "31362073637269707465641b5b33393b34396d1b5b34383b353b3233336d201b5b33383b353b3233366d1b5b34383b35"
+    "3b3233336d3e1b5b33393b34396d1b5b34383b353b3233336d201b5b33383b353b3235356d1b5b34383b353b3233336d"
+    "f09f9791207762633136706c64612d695f306f755f77632f701b5b33393b34396d1b5b34383b353b3233336d201b5b33"
+    "383b353b3233366d1b5b34383b353b3233336d3e1b5b33393b34396d1b5b34383b353b3233336d201b5b33383b353b32"
+    "31356d1b5b34383b353b3233336de29182206d6173746572201b5b33383b353b3234386d1b5b34383b353b3233336d3f"
+    "361b5b33393b34396d1b5b34383b353b3233336d201b5b34396d1b5b33383b353b3233336de296b61b5b33383b353b33"
+    "396de29480e29480e29480e294801b5b33383b353b3234386de2958e1b5b33383b353b33396d3239251b5b33383b353b"
+    "3233366de294801b5b33383b353b36376de294831b5b33383b353b3233366de29480e29480e29480e29480e29480e294"
+    "80e294801b5b33383b353b36376d33334b1b5b33383b353b3233366de294801b5b31363b32481b5b33383b353b323339"
+    "6de295b0e29480201b5b33383b353b3235346d2f686f741b5b33396d1b5b3435581b5b31363b383448201b5b31373b34"
+    "481b5b3436581b5b31373b383448201b5b31383b34481b5b3331581b5b31383b383448201b5b31393b34481b5b383158"
+    "1b5b32306408081b5b3235581b5b32303b383448201b5b31363b39481b28421b5b6d1b5b323b38364835301b5b31363b"
+    "39481b5b323b383748311b5b31363b39481b5b323b383748321b5b31363b3948")
+
+
+def _old_esc_closed_judgement(text):
+    """The pre-7e67fe2 C2 check, kept only to show the real Tip frame fooled it."""
+    return "/hot" not in text or "hotkeys" not in text
+
 
 def _original_esc_attempt(*, include_open=False):
     """Execute the actual Esc send/predicate/capture and original assertion only.
@@ -54,15 +112,15 @@ def _original_esc_attempt(*, include_open=False):
     return namespace["attempt"]
 
 
-def _rendered_menu_ui(text):
+def _rendered_menu_ui(text, *, rows=12, cols=160):
     """The real owner emulator, fed fixture bytes without opening a PTY."""
     ui = probe.h.Ui.__new__(probe.h.Ui)
     screen, stream = probe.h.screen_classes()
-    ui.screen = screen(160, 12)
+    ui.screen = screen(cols, rows)
     ui.stream = stream(ui.screen)
     ui.raw, ui.raw_limit, ui.total_bytes = bytearray(), 1 << 20, 0
     ui.osc52, ui._osc_tail = [], b""
-    ui._feed(text.encode())
+    ui._feed(text if isinstance(text, bytes) else text.encode())
     return ui
 
 
@@ -73,7 +131,7 @@ class C2ProbeIndependentTests(unittest.TestCase):
 
     def test_menu_predicates_distinguish_command_row_from_retained_tip(self) -> None:
         # Command row shape is from pinned public OMP source, not a Native capture.
-        tip = "Tip: see /hotkeys for your exit key"
+        tip = REAL_OMP_TIP
         row = "> hotkeys  Show all keyboard shortcuts"
         states = [("menu", row + "\r\n/hot", True, False),
                   ("row_only", row, True, False),
@@ -102,7 +160,7 @@ class C2ProbeIndependentTests(unittest.TestCase):
 
     def test_esc_requires_menu_row_to_disappear_despite_retained_tip(self) -> None:
         attempt = _original_esc_attempt(include_open=True)
-        tip = "Tip: see /hotkeys for your exit key\r\n"
+        tip = REAL_OMP_TIP + "\r\n"
         menu = "> hotkeys  Show all keyboard shortcuts\r\n"
         for remains, tip_and_draft in ((False, True), (True, True), (False, False), (True, False)):
             with self.subTest(menu_remains=remains, tip_and_draft=tip_and_draft):
@@ -131,6 +189,35 @@ class C2ProbeIndependentTests(unittest.TestCase):
                     self.assertEqual(report.data["c2_esc_failure"]["omp_input_delivery"], "unknown")
                 else:
                     self.assertNotIn("c2_esc_failure", report.data)
+
+    def test_real_omp_tip_frame_is_closed_now_but_fooled_the_old_judgement(self) -> None:
+        # Esc did close the menu; the frame keeps the real random Tip plus the `/hot` draft.
+        # Replayed bytes first, then the same Tip as plain text, both via the original C2 path.
+        replayed = _rendered_menu_ui(bytes.fromhex(REAL_OMP_TIP_RAW_TAIL_HEX), rows=24, cols=100)
+        # Per frame: the rendered draft line. "/hot" alone would match the Tip's "/hotkeys".
+        frames = {"replayed_raw_tail": (replayed, "\u2570\u2500 /hot"),
+                  "tip_and_draft_text": (_rendered_menu_ui(REAL_OMP_TIP + "\r\n/hot"), "/hot")}
+        self.assertIn("see /hotkeys for your exit key", replayed.text())
+        attempt = _original_esc_attempt()
+        for name, (ui, draft_line) in frames.items():
+            with self.subTest(frame=name):
+                text = ui.text()
+                self.assertIn("/hotkeys", text)
+                self.assertIn(draft_line, [line.strip() for line in ui.lines()])
+                self.assertFalse(probe.live._hotkeys_completion_visible(text))
+                # Old judgement: "esc_closed_menu" False, i.e. "menu not closed".
+                self.assertFalse(_old_esc_closed_judgement(text))
+                ui.keys = mock.Mock()
+                ui.wait = lambda predicate, timeout: predicate()
+                report = SimpleNamespace(data={})
+                owner = SimpleNamespace(ui=ui, report=report, outer_name="plain", shell="dash")
+                owner._retain_esc_failure = probe.live.CompatRun._retain_esc_failure.__get__(owner)
+                flags = dict.fromkeys(("typed_visible", "alt_enter_newline", "ctrl_c_cleared",
+                                       "slash_menu", "hangul_composer", "alive"), True)
+                attempt(owner, "manager_omp", flags)  # current judgement: no AssertionError
+                self.assertIs(flags["esc_closed_menu"], True)
+                self.assertEqual(report.data, {})
+                ui.keys.assert_called_once_with(b"\x1b", gap=1.0)
 
     def test_successful_esc_adds_no_buffer_observation_or_diagnostic_io(self) -> None:
         attempt = _original_esc_attempt()

@@ -147,7 +147,7 @@ class LinuxStopEnvironment(StopEnvironment):
 
 
 class ProcessPin:
-    """A pidfd proven to name one process: same pid, start ticks, uid and boot.
+    """A pidfd proven to name one process: same pid, start ticks, uid and boot (and session, when the scan recorded one).
 
     ``open`` reads ``/proc``, opens the pidfd and reads ``/proc`` again, so the pidfd
     provably names the recorded process (the ``panes._pin_member`` precedent).
@@ -155,18 +155,20 @@ class ProcessPin:
     ``different_uid``, ``pidfd_unavailable:<errno name>``); a pin that is not ``pinned`` holds no pidfd and never signals.
     """
 
-    def __init__(self, env: StopEnvironment, pid: int, start_ticks: int, uid: int, status: str, fd: int | None):
-        self._env, self.pid, self.start_ticks, self.uid = env, pid, start_ticks, uid
+    def __init__(self, env: StopEnvironment, pid: int, start_ticks: int, uid: int, status: str, fd: int | None,
+                 session: int | None = None):
+        self._env, self.pid, self.start_ticks, self.uid, self.session = env, pid, start_ticks, uid, session
         self.status, self._fd = status, fd
 
     @classmethod
-    def open(cls, env: StopEnvironment, pid: int, start_ticks: int, *, uid: int, boot_id: str) -> ProcessPin:
+    def open(cls, env: StopEnvironment, pid: int, start_ticks: int, *, uid: int, boot_id: str,
+             session: int | None = None) -> ProcessPin:
         def refuse(status: str) -> ProcessPin:
-            return cls(env, pid, start_ticks, uid, status, None)
+            return cls(env, pid, start_ticks, uid, status, None, session)
         if not boot_id or env.boot_id() != boot_id:
             return refuse(STALE)
         before = env.read_stat(pid)
-        reason = cls._mismatch(before, start_ticks, uid)
+        reason = cls._mismatch(before, start_ticks, uid, session)
         if reason:
             return refuse(reason)
         try:
@@ -175,29 +177,31 @@ class ProcessPin:
             return refuse(ENDED)
         except OSError as exc:  # no pidfd means no proof either way: neither stale nor signalled
             return refuse(f"{PIDFD_UNAVAILABLE}:{errno.errorcode.get(exc.errno, exc.errno)}")
-        reason = cls._mismatch(env.read_stat(pid), start_ticks, uid)
+        reason = cls._mismatch(env.read_stat(pid), start_ticks, uid, session)
         if reason is None and env.pidfd_exited(fd):
             reason = ENDED
         if reason:
             env.close(fd)
             return refuse(reason)
-        return cls(env, pid, start_ticks, uid, PINNED, fd)
+        return cls(env, pid, start_ticks, uid, PINNED, fd, session)
 
     @staticmethod
-    def _mismatch(stat: ProcStat | None, start_ticks: int, uid: int) -> str | None:
+    def _mismatch(stat: ProcStat | None, start_ticks: int, uid: int, session: int | None = None) -> str | None:
         if stat is None or stat.state in _DEAD_STATES:
             return ENDED if stat is None or stat.start_ticks == start_ticks else STALE
         if stat.start_ticks != start_ticks:
             return STALE
         if stat.uid != uid:
             return DIFFERENT_UID
+        if session is not None and stat.session != session:  # called setsid since the scan: no longer a tracked member
+            return STALE
         return None
 
     def verify(self) -> str:
         """Re-read the process now; the status becomes the first mismatch found, else stays ``pinned``."""
         if self._fd is None:
             return self.status
-        reason = self._mismatch(self._env.read_stat(self.pid), self.start_ticks, self.uid)
+        reason = self._mismatch(self._env.read_stat(self.pid), self.start_ticks, self.uid, self.session)
         if reason is None and self._env.pidfd_exited(self._fd):
             reason = ENDED
         if reason:
@@ -213,7 +217,7 @@ class ProcessPin:
         status = self.verify()
         if status != PINNED or self._fd is None:
             return status
-        reason = self._mismatch(self._env.read_stat(self.pid), self.start_ticks, self.uid)
+        reason = self._mismatch(self._env.read_stat(self.pid), self.start_ticks, self.uid, self.session)
         if reason:
             self.status = reason
             return ENDED if reason == ENDED else IDENTITY_CHANGED
@@ -530,7 +534,7 @@ class StopEpisode:
                     failed.append({"pid": stat.pid, "reason": "identity_mismatch"})
                     continue
                 pin = pins.enter_context(ProcessPin.open(env, stat.pid, stat.start_ticks, uid=identity["uid"],
-                                                         boot_id=identity["boot_id"]))
+                                                         boot_id=identity["boot_id"], session=stat.session))
                 if pin.status == PINNED:
                     live.append(pin)
                 elif pin.status != ENDED:

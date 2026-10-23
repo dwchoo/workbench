@@ -12,7 +12,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 from test_product_model import host_exited, make  # noqa: E402
 from workbench.ui.product import view  # noqa: E402
 
-RESTARTING_MODE = "shell mode: 재시작 중 · 입력 받지 않음"
+RESTARTING_MODE = "shell mode: 재시작 중 (shell 입력 받지 않음)"
 _ACS = {name: ord("+") for name in ("ACS_ULCORNER", "ACS_LLCORNER", "ACS_URCORNER", "ACS_LRCORNER",
                                     "ACS_HLINE", "ACS_VLINE")}
 
@@ -93,6 +93,35 @@ class DrawnLineWidthTests(unittest.TestCase):
         text = "ééé"  # three combining pairs: 3 cells
         view._put(win, 0, 0, text, 3)
         self.assertEqual(text, win.drawn[0][2])
+
+    def test_control_characters_are_drawn_as_spaces_within_the_limit(self):
+        win = FakeWindow(5, 80)
+        for text, limit, expected in (("a\tb", 10, "a b"),
+                                      ("x\x1b[31mred", 20, "x [31mred"),
+                                      ("a\x00b\x07c\x7fd\x85e\u2028f", 20, "a b c d e f"),
+                                      ("a\tbcd", 3, "a b"),
+                                      ("가\t나", 4, "가 ")):
+            with self.subTest(text=text):
+                win.drawn.clear()
+                view._put(win, 0, 0, text, limit)
+                shown = win.drawn[0][2]
+                self.assertEqual(expected, shown)
+                self.assertLessEqual(wcswidth(shown), limit)
+                self.assertTrue(all(ch.isprintable() for ch in shown), repr(shown))
+
+    def test_zero_width_format_characters_and_combining_marks_are_kept(self):
+        win = FakeWindow(5, 80)
+        text = "👨\u200d👩 e\u0301 \ufe0f"
+        view._put(win, 0, 0, text, 20)
+        self.assertEqual(text, win.drawn[0][2])
+
+    def test_a_status_line_with_control_characters_reaches_curses_as_spaces(self):
+        model, _ = make()
+        model.notice = "bad\tnotice\x1b[2Jend"
+        win = render(model, 30, 80)
+        for y, x, text in win.drawn:
+            self.assertTrue(all(ch.isprintable() for ch in text), f"row {y}: {text!r}")
+        self.assertTrue(any("bad notice [2Jend" in text for _, _, text in win.drawn))
 
     def test_ascii_lines_are_drawn_unchanged(self):
         win = FakeWindow(5, 80)

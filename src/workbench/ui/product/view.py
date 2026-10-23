@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import curses
+import unicodedata
 
 from wcwidth import wcswidth
 
@@ -19,11 +20,17 @@ def pane_rects(rows: int, cols: int, layout: Layout = DEFAULT_LAYOUT,
     return pane_boxes(rows, cols, layout, zoom)
 
 
+def _drawable(ch: str) -> str:
+    """``ch`` itself, or a space for a control or other non-printable character (never raw to curses).
+    Format characters (ZWJ, variation selectors) and combining marks stay: zero-width, but part of the glyph."""
+    return ch if ch.isprintable() or unicodedata.category(ch) == "Cf" else " "
+
+
 def _clip_cells(text: str, width: int) -> str:
-    """The longest prefix of ``text`` that fits ``width`` terminal cells; a wide character that would
-    straddle the limit is dropped, zero-width and control characters cost no cell."""
+    """The longest prefix of ``text`` that fits ``width`` terminal cells, control characters blanked to
+    spaces; a wide character that would straddle the limit is dropped, zero-width characters cost no cell."""
     out, used = [], 0
-    for ch in text:
+    for ch in map(_drawable, text):
         size = max(wcswidth(ch), 0)
         if used + size > width:
             break

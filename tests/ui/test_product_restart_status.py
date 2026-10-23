@@ -6,10 +6,11 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 
 from support import snapshot  # noqa: E402
-from test_product_model import display, host_exited  # noqa: E402
+from test_product_model import P, display, host_exited  # noqa: E402
 from workbench.contracts import ui_v1  # noqa: E402
+from workbench.contracts.v1 import PaneId  # noqa: E402
 
-RESTARTING_MODE = "shell mode: 재시작 중 · 입력 받지 않음"
+RESTARTING_MODE = "shell mode: 재시작 중 (shell 입력 받지 않음)"
 
 
 def mode_part(model):
@@ -35,6 +36,16 @@ class RestartStatusLineTests(unittest.TestCase):
         self.assertEqual(RESTARTING_MODE, mode_part(model))
         self.assertNotIn("user_control", model.status_lines()[0])
         self.assertIn("focus:", model.status_lines()[0])
+
+    def test_the_status_names_the_shell_when_an_omp_pane_has_focus_and_omp_keys_still_go_through(self):
+        model, sender = self.restarting()
+        model.handle_input(P + b"1")
+        self.assertEqual(PaneId.MANAGER_OMP, model.focus)
+        self.assertEqual(RESTARTING_MODE, mode_part(model))
+        self.assertIn("focus: MANAGER OMP", model.status_lines()[0])
+        sender.sent.clear()
+        model.handle_input(b"hello")
+        self.assertEqual([("input", {"pane": "manager_omp"}, b"hello")], sender.of("input"))
 
     def test_keys_and_paste_during_the_restart_are_dropped_and_the_status_stays(self):
         model, sender = self.restarting()

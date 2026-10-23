@@ -467,6 +467,7 @@ class StopEpisode:
         self._identity: Mapping[str, Any] | None = None
         self._unknown_at = ""  # when the stop ended unknown (for the history of a later correction)
         self._forbidden: frozenset[int] | None = None  # the owner's forbidden pids, fixed when the episode finishes
+        self._last_forbidden: frozenset[int] | None = None  # the last set the provider gave (stage scans, identity wait)
         self._mismatched: set[int] = set()  # pids whose identity failed verification: never signalled in this episode
         self._thread = threading.Thread(target=self._run, daemon=True, name=f"command-stop-{self.command_id[:8]}")
 
@@ -641,8 +642,14 @@ class StopEpisode:
             self._identity = identity
 
     def _scan(self) -> TrackScan:
-        forbidden = self._forbidden if self._forbidden is not None else frozenset(self._entry.target.forbidden())
+        forbidden = self._forbidden if self._forbidden is not None else self._read_forbidden()
         return scan_tracked(self._identity, self._service.env, forbidden=forbidden)
+
+    def _read_forbidden(self) -> frozenset[int]:
+        """The owner's forbidden pids now; a provider that fails raises (the caller fails closed), a set read is kept."""
+        forbidden = frozenset(self._entry.target.forbidden())
+        self._last_forbidden = forbidden
+        return forbidden
 
     def _await_identity(self):
         """The scan once the run's identity is complete and names a member, or None (ended, closed or ``identity_wait`` over)."""
@@ -654,7 +661,7 @@ class StopEpisode:
             except Exception:
                 identity = None
             if _complete(identity, self.command_id):
-                scan = scan_tracked(identity, env, forbidden=frozenset(entry.target.forbidden()))
+                scan = scan_tracked(identity, env, forbidden=self._read_forbidden())
                 if scan.tracked or scan.left_session:  # descendants that left the session are reported, not signalled
                     self._identity = identity
                     return scan
@@ -767,9 +774,9 @@ class StopEpisode:
                             "residual": result.get("residual"), "elapsed_seconds": elapsed,
                             "repeat_requests": self._entry.repeats})
         try:
-            self._forbidden = frozenset(self._entry.target.forbidden())  # before ``release`` drops the provider
-        except Exception:
-            self._forbidden = frozenset()
+            self._forbidden = self._read_forbidden()  # before ``release`` drops the provider
+        except Exception:  # the last set the provider gave, else (never obtained) none
+            self._forbidden = self._last_forbidden if self._last_forbidden is not None else frozenset()
         with self._settle:
             self.stage = "done"
             self.result = result

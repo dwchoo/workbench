@@ -15,9 +15,12 @@ import json
 from uuid import uuid4
 import unittest
 from unittest import mock
+from unittest.mock import Mock
 
 from workbench.backend.command_stop import FAILED_KEPT, CommandStopService, StopTarget
 from workbench.backend.command_stop_owner import register_target
+from workbench.backend.service import Backend
+from workbench.contracts.v1 import PaneId
 
 from test_command_stop_owner_followups import CapturingStop, FailingRegisterTerminal
 from test_command_stop_terminal import REDUCED
@@ -163,6 +166,27 @@ class FlowAuditTests(GatedFlow):
         answer = self.stop_service.stop("manager", run_id)
         self.assertEqual((answer["status"], answer["reason"]), ("refused", "registration_failed"), answer)
         self.assertNotIn("ended_at", answer, "the run was never reported ended to the stop service")
+
+
+    def test_a_user_ctrl_c_is_journaled_with_the_run_id_of_a_command_that_could_not_be_registered(self):
+        gate, command = self.gated()
+        task_id, run_id = self.running_experiment(command)
+        backend = Backend.__new__(Backend)  # built without starting a backend, as the CS-07 audit tests do
+        backend.panes = {PaneId.HOST_SHELL: self.pane}
+        backend.handoffs = Mock()
+        backend.terminal = Mock()
+        backend.terminal.summary_command_active.return_value = False  # a Worker command is not what ran
+        backend.flow = self.flow
+        backend._wire_shell(self.pane)
+        self.assertIsNone(backend.admit(PaneId.HOST_SHELL, b"\x03", "input"))
+        interrupts = [call.args[0] for call in backend.handoffs.record.call_args_list
+                      if call.args[0]["type"] == "command_interrupt"]
+        self.assertEqual([(r["requested_by"], r["command_id"]) for r in interrupts], [("user", run_id)])
+        self.assertTrue(flow_wait_until(lambda: self.view()["status"] in ("finished", "held", "cancelled"), 30),
+                        self.view())
+        # the lookup never reaches the stop service: still no ended record, the stop answer is unchanged
+        answer = self.stop_service.stop("manager", run_id)
+        self.assertEqual((answer["status"], answer["reason"]), ("refused", "registration_failed"), answer)
 
 
 class RegisterTargetTests(unittest.TestCase):

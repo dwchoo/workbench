@@ -147,6 +147,20 @@ class ShellKillRestartTests(unittest.TestCase):
         self.fail(f"timed out waiting for {what}; phase={self.backend.phase} reason={self.backend.reason} "
                   f"shell={self.backend.shell.shell_state()}")
 
+    def kill_when_free(self):
+        """Kill the host shell, retrying while a concurrent kill/restart holds the shell lock."""
+        result = []
+
+        def attempt():
+            try:
+                result.append(self.backend.kill_pane(PaneId.HOST_SHELL))
+            except Held as held:
+                self.assertEqual(held.reason, Reason.KILL_IN_PROGRESS)
+                return False
+            return True
+        self.wait(attempt, "the shell lock to be free for the kill")
+        return result[0]
+
     def mode(self):
         return self.backend.shell.state["parent_mode"]
 
@@ -417,13 +431,68 @@ class ShellKillRestartTests(unittest.TestCase):
         second = self.backend.shell
         self.assertEqual(second.generation, first.generation + 1)
         self.wait(lambda: self.mode() == "manual_prompt", "prompt")
+        second_ticks, kills_before, restarts_before = (
+            stat(second.pid)[19], len(self.backend.kills), len(self.backend.restarts))
         mixed = race([lambda: self.backend.kill_pane(PaneId.HOST_SHELL),
                       lambda: self.backend.restart_pane(PaneId.HOST_SHELL)])
-        self.assertEqual(mixed[0][0], "ok", mixed)
-        self.assertEqual(mixed[1], ("held", mixed[1][1]))
-        self.assertIn(mixed[1][1], {Reason.PANE_ALIVE, Reason.RESTART_IN_PROGRESS})
-        self.assertIs(self.backend.shell, second)
-        self.assertFalse(alive(second.pid))
+        # Both take _shell_lock without blocking, so the order decides. Allowed outcomes:
+        #  a) kill holds the lock and succeeds; restart finds it held (PANE_ALIVE or RESTART_IN_PROGRESS);
+        #  b) restart holds it first and refuses the live shell (PANE_ALIVE); kill finds it held;
+        #  c) kill finishes first and the restart then runs serially on the exited shell and succeeds.
+        # Restart never replaces a live shell, and two shells are never alive at once.
+        kill_outcome, restart_outcome = mixed
+        if restart_outcome[0] == "held":
+            self.assertIs(self.backend.shell, second)
+            self.assertEqual(len(self.backend.restarts), restarts_before)
+            if kill_outcome[0] == "ok":
+                self.assertIn(restart_outcome[1], {Reason.PANE_ALIVE, Reason.RESTART_IN_PROGRESS}, mixed)
+                self.assertEqual(len(self.backend.kills), kills_before + 1)
+            else:
+                self.assertEqual(kill_outcome, ("held", Reason.KILL_IN_PROGRESS), mixed)
+                self.assertEqual(restart_outcome[1], Reason.PANE_ALIVE, mixed)  # the lock holder refused
+                self.assertEqual(len(self.backend.kills), kills_before)
+                self.assertTrue(alive(second.pid))
+                self.kill_when_free()
+            self.assertFalse(alive(second.pid))
+        else:
+            self.assertEqual(kill_outcome[0], "ok", mixed)  # a restart only succeeds on an exited shell
+            new = self.backend.shell
+            self.assertIsNot(new, second)
+            self.assertEqual(restart_outcome[1]["restarted"], True)
+            self.assertEqual(new.generation, second.generation + 1)
+            self.assertEqual(restart_outcome[1]["generation"], new.generation)
+            self.assertNotEqual(new.pid, second.pid)
+            gone = stat(second.pid)  # the old shell is dead (or its pid was recycled by another process)
+            self.assertTrue(gone is None or gone[19] != second_ticks or gone[0] in "ZX", gone)
+            self.assertEqual(session_members(second.pid), [])
+            self.assertEqual(len(self.backend.kills), kills_before + 1)
+            self.assertEqual(len(self.backend.restarts), restarts_before + 1)
+            self.wait(lambda: self.mode() == "manual_prompt", "prompt of the restarted shell")
+            self.assertTrue(alive(new.pid))
+            self.kill_when_free()  # the same ending as the other orders: no live shell is left
+            self.assertFalse(alive(new.pid))
+
+    def test_kill_and_restart_are_held_while_the_shell_lock_is_taken_and_leave_the_shell_alone(self):
+        shell, before = self.backend.shell, stat(self.backend.shell.pid)
+        kills, restarts = list(self.backend.kills), list(self.backend.restarts)
+        self.assertTrue(self.backend._shell_lock.acquire(blocking=False))
+        try:
+            with self.assertRaises(Held) as killed:
+                self.backend.kill_pane(PaneId.HOST_SHELL)
+            self.assertEqual(killed.exception.reason, Reason.KILL_IN_PROGRESS)
+            with self.assertRaises(Held) as restarted:
+                self.backend.restart_pane(PaneId.HOST_SHELL)
+            self.assertEqual(restarted.exception.reason, Reason.RESTART_IN_PROGRESS)
+            self.assertIs(self.backend.shell, shell)
+            self.assertTrue(alive(shell.pid))
+            self.assertEqual(stat(shell.pid)[19], before[19])  # same process, not a recycled pid
+            self.assertEqual(self.backend.kills, kills)
+            self.assertEqual(self.backend.restarts, restarts)
+        finally:
+            self.backend._shell_lock.release()
+        self.backend.kill_pane(PaneId.HOST_SHELL)
+        self.assertFalse(alive(shell.pid))
+        self.assertEqual(len(self.backend.kills), len(kills) + 1)
 
     def test_repeated_kill_restart_cycles_leak_no_descriptor_or_process(self):
         def children():

@@ -24,7 +24,10 @@ class FakeClock:
         return self.now
 
 
-class PreviousIndexRetryTests(authority.BackendStopFixture):
+class PreviousIndexRetryFixture(authority.BackendStopFixture):
+    """The shared setup and helpers, with no test of its own: subclasses add the tests, so reusing the fixture never
+    re-runs the retry tests."""
+
     def setUp(self):
         super().setUp()
         self.clock = FakeClock()
@@ -54,6 +57,8 @@ class PreviousIndexRetryTests(authority.BackendStopFixture):
         for result in (self.manager_stop(command_id), self.worker_terminal(command=None, stop=command_id)):
             self.assertEqual((result["status"], result["reason"]), ("not_found", "unknown_command"), result)
 
+
+class PreviousIndexRetryTests(PreviousIndexRetryFixture):
     def test_a_failed_read_is_not_repeated_within_the_interval(self):
         previous, process = self.previous_command("613.5")
         self.assert_unknown(previous)

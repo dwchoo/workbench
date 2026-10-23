@@ -50,7 +50,7 @@ class FailedRegistrationLeavesNoLiveEntryTests(unittest.TestCase):
         self.assertEqual(self.stop.stop_marker(self.command_id), {})
 
 
-class PreviousIndexErrorCauseTests(retry.PreviousIndexRetryTests):
+class PreviousIndexErrorCauseTests(retry.PreviousIndexRetryFixture):
     def test_a_lookup_inside_the_window_chains_the_original_read_error(self):
         with self.assertRaises(OSError) as first:
             self.backend._journaled_unfinished_command(str(uuid4()))
@@ -65,6 +65,34 @@ class PreviousIndexErrorCauseTests(retry.PreviousIndexRetryTests):
         with self.assertRaises(OSError) as again:
             self.backend._journaled_unfinished_command(str(uuid4()))
         self.assertIs(again.exception.__cause__, original)
+
+    def test_just_below_30_s_no_read_and_the_error_is_chained(self):
+        with self.assertRaises(OSError) as first:
+            self.backend._journaled_unfinished_command(str(uuid4()))
+        self.clock.now += 29.9  # the 30 s interval is spelled out here, not read from the product
+        with self.assertRaises(OSError) as inside:
+            self.backend._journaled_unfinished_command(str(uuid4()))
+        self.assertIs(inside.exception.__cause__, first.exception)
+        self.assertEqual(len(self.reads), 1, "no second journal read at 29.9 s")
+
+    def test_at_exactly_30_s_the_journal_is_read_again(self):
+        # the product compares ``clock < retry_at`` to refuse, so the question at exactly +30.0 s reads again
+        with self.assertRaises(OSError):
+            self.backend._journaled_unfinished_command(str(uuid4()))
+        self.clock.now += 30.0
+        with self.assertRaises(OSError) as again:
+            self.backend._journaled_unfinished_command(str(uuid4()))
+        self.assertEqual(len(self.reads), 2, "the journal is read again at exactly 30 s")
+        self.assertEqual(again.exception.errno, errno.ENOSPC, "a fresh read error, not the retry-window error")
+        self.assertIsNone(again.exception.__cause__)
+
+    def test_just_after_30_s_the_journal_is_read_again_and_a_success_is_kept(self):
+        with self.assertRaises(OSError):
+            self.backend._journaled_unfinished_command(str(uuid4()))
+        self.clock.now += 30.1
+        self.failing = False
+        self.assertFalse(self.backend._journaled_unfinished_command(str(uuid4())))
+        self.assertEqual(len(self.reads), 2, self.reads)
 
 
 if __name__ == "__main__":

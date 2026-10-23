@@ -410,22 +410,34 @@ class IndependentLiveContractTests(unittest.TestCase):
         self.assertEqual((refused["ok"], refused["reason"]), (False, "attached_elsewhere"))
         denied = other.input(PaneId.HOST_SHELL, b"echo no\r")
         self.assertEqual((denied["ok"], denied["reason"]), (False, "not_attached"))
+        # The product caps concurrent ui_v1 connections at MAX_CONNECTIONS (src/workbench/backend/ui_server.py);
+        # the literal is kept here on purpose so a changed cap fails this test. ``holder`` and ``other`` are
+        # two of them, so exactly CAP - 2 further connections are welcomed and every later one is rejected.
+        # Each peer completes hello -> reply before the next one connects, so at most one connection waits in
+        # the listen backlog and the accept timing of the backend loop cannot make a connect() fail.
+        cap = 16
+        welcomed_expected = cap - 2
+        attempts = welcomed_expected + 6
         extra = []
+        outcomes = []
         try:
-            for _ in range(20):
+            for index in range(attempts):
                 conn = Raw(self.sock_path)
                 extra.append(conn)
-            rejected = 0
-            for conn in extra:
                 try:
                     conn.frame(ui_v1.hello("cap"))
-                except OSError:
-                    pass
+                except (BrokenPipeError, ConnectionResetError):
+                    # Over the cap the backend rejects at accept time, before any hello, and closes: the
+                    # hello may find the peer already gone while the reject frame is still readable.
+                    if index < welcomed_expected:
+                        raise
                 frame = conn.read(5)
-                if frame is not None and frame.header["type"] == "reject":
+                self.assertIsNotNone(frame, f"connection {index}: no welcome or reject")
+                outcomes.append(frame.header["type"])
+                if frame.header["type"] == "reject":
                     self.assertEqual(frame.header["reason"], "protocol_error")
-                    rejected += 1
-            self.assertGreater(rejected, 0, "no connection cap observed")
+            self.assertEqual(outcomes, ["welcome"] * welcomed_expected + ["reject"] * (attempts - welcomed_expected),
+                             "the connection cap is not exact")
         finally:
             for conn in extra:
                 conn.close()

@@ -800,7 +800,7 @@ class AutomationController:
         workflow_run = None if bound is None else bound.workflow_run
         if workflow_run is None:
             return {"phase": "unknown", "unknowns": ["no_host_run"]}
-        record = dict(workflow_run._record)
+        record = workflow_run.record_snapshot()
         try:
             life = (workflow_run.shell.snapshot() or {}).get("lifecycle") or {}
         except Exception:

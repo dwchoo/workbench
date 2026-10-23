@@ -83,7 +83,7 @@ class WorkflowObservationBinding:
                 or type(record.get("revision")) is not int
                 or record["revision"] != self.run.revision
                 or record.get("run_id") != self.run.run_id
-                or record != workflow_run._record
+                or record != workflow_run.record_snapshot()
                 or workflow_run._terminal is not True
                 or "ended" not in workflow_run._observed
                 or record.get("shell_state") != "exited"

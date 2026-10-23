@@ -300,6 +300,16 @@ class WorkflowRun:
         value = self._record.get("shell_request_id")
         return value if isinstance(value, str) else None
 
+    @property
+    def worker_analysis_request(self) -> dict[str, Any] | None:
+        """The staged worker analysis request of this run (None until one was recorded)."""
+        value = self._record.get("worker_analysis_request")
+        return value if isinstance(value, dict) else None
+
+    def record_snapshot(self) -> dict[str, Any]:
+        """A copy of the run record as last written (what ``collect`` returns)."""
+        return dict(self._record)
+
     def _persist(self) -> None:
         _write_json(self.result_path, self._record)
 

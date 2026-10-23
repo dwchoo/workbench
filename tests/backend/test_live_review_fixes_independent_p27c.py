@@ -281,7 +281,10 @@ class LiveSignalDispositionAndShutdownTests(LiveCase):
         self.assertEqual(shell_masks["SigBlk"] & PIPE_XFSZ, 0, shell_masks)
         d = live.project
         self.wait_mode(client, "manual_prompt")
-        self.run_line(client, f"sh -c 'cat /proc/$$/status' > {d}/child.status; "
+        # The child samples its OWN state (/proc/self, read by the exec'd cat). Sampling the
+        # sh parent via /proc/$$ races dash's vfork window: dash blocks every signal around
+        # vfork, so a loaded host can read SigBlk=0xfffffffe7ffbfeff from a healthy parent.
+        self.run_line(client, f"sh -c 'cat /proc/self/status' > {d}/child.status; "
                               f"s=$(date +%s%N); (yes; echo $? > {d}/pipe) | head -1 > /dev/null; "
                               f"e=$(date +%s%N); echo $(( (e - s) / 1000000 )) > {d}/ms; "
                               f"(ulimit -f 1; head -c 65536 /dev/zero > {d}/big; echo $? > {d}/xfsz) 2>/dev/null")

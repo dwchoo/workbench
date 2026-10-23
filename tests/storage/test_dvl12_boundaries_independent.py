@@ -3,6 +3,7 @@
 import base64
 from hashlib import sha256
 import json
+import os
 from pathlib import Path
 import shlex
 import subprocess
@@ -10,6 +11,7 @@ import tempfile
 import unittest
 from uuid import uuid4
 
+from workbench.backend.paths import MAX_SOCKET_PATH_BYTES
 from workbench.storage.log_raw.port import DisabledSegmentedRawPort, raw_query, raw_usage
 from workbench.storage.log_raw.segments import SegmentedRawStore
 from workbench.storage.log_raw.store import RawLogStore
@@ -17,7 +19,7 @@ from workbench.storage.log_raw.store import RawLogStore
 
 class Dvl12SourceBoundaries(unittest.TestCase):
     def setUp(self):
-        temporary = tempfile.TemporaryDirectory(prefix="dvl12-independent-")
+        temporary = tempfile.TemporaryDirectory(prefix="d12-")
         self.addCleanup(temporary.cleanup)
         self.root = Path(temporary.name)
         self.run_id = str(uuid4())
@@ -99,6 +101,10 @@ class Dvl12SourceBoundaries(unittest.TestCase):
     def test_returned_commands_read_run_and_command_from_quoted_private_root(self):
         # The command is executed only after its parsed argv selects this exact fixture root.
         private = self.root / "private data 'x'; touch PWNED; $(touch PWNED2)"
+        # The hostile name is the point; keep the temp prefix short so the data dir's
+        # AF_UNIX socket path stays within the product limit even under a long TMPDIR.
+        self.assertLessEqual(len(os.fsencode(private / "bridge.sock")), MAX_SOCKET_PATH_BYTES,
+                             f"temp root too long for the hostile private root: {private}")
         private.mkdir(mode=0o700)
         (private / "workflow").mkdir(mode=0o700)
         (private / "workflow" / "runs").mkdir(mode=0o700)

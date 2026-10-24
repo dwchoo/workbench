@@ -202,7 +202,9 @@ class ToManagerPlaceholderTests(SmokeFlowFixture):
 
     def test_null_and_false_placeholders_are_not_reported(self):
         payload = self.report(in_reply_to=None, requires_code_change=False, reason=None, request=None)
-        self.assertEqual(payload, {"handoff": "to_manager", "kind": "done", "message": "wrote work/hello.txt"})
+        # CS-O02 (FU-D01): every to_manager message carries its per-Task report_seq (the Task's first report: 1)
+        self.assertEqual(payload, {"handoff": "to_manager", "kind": "done", "message": "wrote work/hello.txt",
+                                   "report_seq": 1})
 
     def test_smoke_placeholder_request_without_paths_is_not_a_request(self):
         payload = self.report(in_reply_to="", requires_code_change=None, reason="",

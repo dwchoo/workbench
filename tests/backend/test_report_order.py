@@ -116,6 +116,21 @@ class ReportSeqTests(ReportFixture):
         self.assertEqual([(m.payload["message"], m.payload.get("report_seq")) for m in self.manager_reports()],
                          [("10%", 1), ("42%", 2), ("73%", 3)])
 
+    def test_an_answer_is_in_the_same_order_and_seq_as_the_reports(self):
+        task_id = self.work()
+        self.mailbox.held.add("42%")
+        self.to_manager({"kind": "progress", "message": "42%", "task_id": task_id})
+        self.defer_until_cycled("42%")
+        self.assertEqual(self.to_manager({"kind": "answer", "message": "yes", "task_id": task_id,
+                                          "in_reply_to": str(uuid4())})["status"], "queued")
+        seen = self.mailbox.deferred("42%")
+        self.defer_until_cycled("42%", seen + 2)
+        self.assertNotIn("yes", self.mailbox.order)
+        self.mailbox.release("42%")
+        self.assertTrue(fx.wait_until(lambda: "yes" in self.mailbox.order))
+        sent = {m.payload["message"]: m.payload.get("report_seq") for m in self.mailbox.to(ActorRole.MANAGER)}
+        self.assertEqual((sent["42%"], sent["yes"]), (1, 2))
+
     def test_a_new_task_starts_again_from_one(self):
         first = self.work()
         self.to_manager({"kind": "progress", "message": "first 1", "task_id": first})

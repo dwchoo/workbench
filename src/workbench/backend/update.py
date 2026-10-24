@@ -28,6 +28,9 @@ from .maintenance import discover, fence, require_no_writers
 from .process_identity import inspect_backend, process_state
 from . import update_backup
 from workbench.contracts.ui_v1 import ClientType
+from workbench.hub import process as hub_process
+from workbench.hub.client import HubClient
+from workbench.hub.paths import hub_layout
 
 
 def command(argv, *, env=None, timeout=180, pass_fds=()):
@@ -228,12 +231,61 @@ def refuse_managed_caller(identities):
         raise DataDirError(message) from error
 
 
+def _hub_version_text(version):
+    if not isinstance(version, dict):
+        return 'unknown'
+    commit, kind = version.get('commit'), version.get('kind')
+    return f"{version.get('release')} ({commit[:12] if kind == 'git' and isinstance(commit, str) else kind})"
+
+
+def hub_to_stop():
+    """The Hub ``wb update`` stops (SPEC "`wb update`와의 관계"), or None when none runs.
+
+    ``unknown`` stops the update before any question or backend. A proven Hub that
+    does not answer is returned: :func:`hub_process.stop_hub` may still end it by SIGTERM.
+    """
+    layout = hub_layout()
+    try:
+        with HubClient(layout, name='workbench-update', timeout=hub_process.RESPONSE_TIMEOUT) as client:
+            return client.identity
+    except hub_process.HubNotRunning:
+        return None
+    except hub_process.HubUnresponsive as exc:
+        return hub_process.HubIdentity(hub_process.UNKNOWN, layout, exc.record, exc.reason)
+    except hub_process.HubUnknown as exc:
+        raise DataDirError(f"Hub 상태 불명({exc.reason}, lock {layout.lock})이라 업데이트를 중단합니다; "
+                           "어떤 backend도 종료하지 않았습니다. 'wb hub stop'으로 Hub를 멈춘 뒤 다시 실행하세요.") from exc
+
+
+def hub_stop_notice(identity):
+    shown = identity.welcome or identity.record or {}
+    return f"Hub(pid {shown.get('pid')}, version {_hub_version_text(shown.get('version'))})를 멈춥니다"
+
+
+def hub_active_confirmed(active):
+    """(A) extension point: Hub-owned live things (``stop_request.active``) join the update
+    question. (B) never lists any, so an unexpected entry is refused and nothing stops."""
+    return False
+
+
+def stop_hub_for_update(identity, *, announced=False):
+    """Stop the Hub before any backend; any failure stops the update first."""
+    if not announced:
+        print(hub_stop_notice(identity))
+    result = hub_process.stop_hub(hub_active_confirmed, identity.layout)
+    if result.status not in ('stopped', 'not_running'):
+        raise DataDirError(f"Hub(pid {result.pid})를 멈추지 못해 업데이트를 중단합니다 ({result.status}: {result.reason}); "
+                           "어떤 backend도 종료하지 않았습니다. 'wb hub stop'으로 Hub를 멈춘 뒤 다시 실행하세요.")
+    return result
+
+
 def _run(args, fence_descriptor):
     install = installation()
     with tempfile.TemporaryDirectory(prefix='wb-update-') as temporary, ExitStack() as stack:
         target = prepare(install, args.ref, Path(temporary))
         identities = discover(args)
         refuse_managed_caller(identities)
+        hub = hub_to_stop()
         projects, live, active = [], [], []
         for identity in identities:
             item = {'data_root':str(identity.layout.root), 'project_root':str(identity.project_root or identity.layout.root.parent),
@@ -258,6 +310,9 @@ def _run(args, fence_descriptor):
         if active:
             print('업데이트를 위해 다음 작업과 backend·양 역할 OMP·host shell을 종료합니다:')
             print(json.dumps(active, ensure_ascii=False, sort_keys=True))
+            if hub is not None:
+                # The Hub joins an existing question; it never asks one by itself.
+                print(hub_stop_notice(hub))
             try:
                 if sys.stdin is None or not sys.stdin.isatty() or input('종료·기록·백업 후 업데이트할까요? [y/N] ').strip().lower() != 'y':
                     print('업데이트 취소: 작업은 유지됩니다.')
@@ -265,6 +320,8 @@ def _run(args, fence_descriptor):
             except (EOFError, KeyboardInterrupt, OSError, ValueError):
                 print('업데이트 취소: 작업은 유지됩니다.')
                 return 1
+        if hub is not None:
+            stop_hub_for_update(hub, announced=bool(active))
         state = os.environ.get('XDG_STATE_HOME', '')
         base = (Path(state) if os.path.isabs(state) else Path.home()/'.local/state')/'omp-workbench/updates'
         for item in projects:

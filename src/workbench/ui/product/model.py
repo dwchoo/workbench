@@ -69,7 +69,8 @@ _ARROWS = {"\x1b[A": "up", "\x1bOA": "up", "\x1b[B": "down", "\x1bOB": "down",
 # must not confirm a takeover). The plain letters keep working in English mode.
 CTRL_ALIASES = {"\x11": "q", "\x14": "t", "\x19": "c", "\x0f": "h", "\x12": "r", "\x05": "m", "\x1a": "z",
                 "\x0b": "k",  # Ctrl-k: host terminal kill (C-D63); 0x0b collides with no other key here
-                "\x10": "p"}  # Ctrl-p: automation pause/resume (CW-18 U5); 0x10 collides with no other key here
+                "\x10": "p",  # Ctrl-p: automation pause/resume (CW-18 U5); 0x10 collides with no other key here
+                "\x18": "x"}  # Ctrl-x: stop the running Workbench command (CS-O10); 0x18 collides with no other key here
 HANGUL_HINT = "한글 입력 상태: Ctrl-] 뒤 자모 + Space (예: ㅂ Space = q detach), Ctrl 조합(Ctrl-] Ctrl-q), Ctrl-] Space 메뉴"
 DETACH_MOVED = "detach는 이제 Ctrl-] q (Ctrl-q) — d / Ctrl-d 는 더 이상 detach가 아닙니다"
 CTRL_D = 0x04
@@ -106,6 +107,19 @@ RESUME_CONFIRM_LINES = ("자동화 재개 확인", "", "대조 후 재개합니�
 PAUSE_CONFIRM_FOOTER = "자동화 일시정지 확인: p(Ctrl-p·ㅔ) = 확인 · Esc/다른 키 = 취소 · 키는 pane으로 전달되지 않음"
 RESUME_CONFIRM_FOOTER = "자동화 재개(대조 후) 확인: p(Ctrl-p·ㅔ) = 확인 · Esc/다른 키 = 취소 · 키는 pane으로 전달되지 않음"
 PAUSE_MENU_ROW = ("자동화 일시정지 / 재개 (확인 후 실행)", "p", "Ctrl-p")
+# stop the Workbench command running in the host terminal (CS-O10): prefix x / Ctrl-x / jamo ㅌ opens a confirmation;
+# only the x forms confirm. The target is the command the backend snapshot names (panes.host_shell.command); programs
+# the user started in the shell are not targets (Ctrl+C reaches them, prefix k ends the whole shell).
+STOP_KEYS = ("x", "X")  # the command key after CTRL_ALIASES (Ctrl-x -> x; ㅌ -> x via the jamo table)
+STOP_LABEL_COLS = 60  # the command text in the confirmation is cut to this display width
+STOP_CONFIRM_FOOTER = "명령 중지 확인: x(Ctrl-x·ㅌ) = 중지 · Esc/다른 키 = 취소 · 키는 pane으로 전달되지 않음"
+STOP_CANCELLED_NOTICE = "확인이 취소되었습니다 — x 한 번만 눌러 확인"
+STOP_NO_COMMAND_NOTICE = ("중지할 Workbench 명령이 없습니다 — 직접 실행한 프로그램은 Ctrl+C, "
+                          "host terminal 전체는 prefix k")
+STOP_ALREADY_NOTICE = "명령 중지 진행 중 — 종료 확인을 기다리세요"
+STOPPING_NOTICE = "명령 중지 요청 중…"
+STOP_RUNNING_NOTICE = "명령 중지 중… (SIGINT → SIGTERM → SIGKILL, 최대 약 20초) — 결과는 여기에 표시됩니다"
+STOP_MENU_ROW = ("Workbench 명령 중지 (확인 후 실행)", "x", "Ctrl-x")
 SUMMARY_MAX_COLS = 40  # the Task summary in the status line is shortened to at most this display width
 SUMMARY_MIN_COLS = 8
 WORKER_TEXT = {"idle": "대기", "busy": "작업 중"}
@@ -206,6 +220,7 @@ HELP_LINES = (
     "  종료된 OMP pane(종료됨 안내): 그 pane에서 Enter = 새 OMP 세션으로 다시 시작 (이전 대화는 새 OMP에서 /resume)",
     "  host shell 종료 시: Enter = 새 shell 시작 · prefix k (Ctrl-k / ㅏ Space) = host terminal 강제 종료 (확인 필요)",
     "  prefix p        자동화 일시정지 / 재개(대조 후) (확인 필요)  (prefix Ctrl-p · 한글: ㅔ Space)",
+    "  prefix x        실행 중인 Workbench 명령 중지 (확인 필요, 직접 실행한 프로그램은 Ctrl+C)  (prefix Ctrl-x · 한글: ㅌ Space)",
     "  prefix ?        이 도움말 (아무 키로 닫기)",
     "  prefix Space    명령 메뉴: ↑/↓+Enter 또는 숫자 1-9/0 (Esc 취소) — 글자 키 없이 쓸 수 있음",
     "한글 IME: Ctrl-] 뒤 자모 + Space 로 영문 키 명령 (예: ㅂ Space = q detach, ㅋ = z; scroll 모드도 ㅓ/ㅏ/ㅎ/ㅂ),",
@@ -466,6 +481,7 @@ class ProductModel:
         self.menu_index = 0
         self.kill_confirm_open = False  # host terminal kill confirmation (C-D63): modal like the menu
         self.pause_confirm: str | None = None  # automation "pause" / "resume" confirmation (CW-18 U5): same kind of modal
+        self.stop_confirm: dict[str, str] | None = None  # command stop confirmation (CS-O10): the command shown {command_id, owner, label}
         self._mode: PaneId | None = None  # explicit scroll mode (prefix [): keys drive the view, never the pane
         self._views: dict[PaneId, _ScrollView] = {}  # panes whose view is scrolled back (wheel, Shift+PgUp, mode)
         self.mouse_capture = True  # outer-terminal mouse reporting wanted (prefix m toggles; the app loop applies it)
@@ -785,6 +801,9 @@ class ProductModel:
     def on_result(self, header: dict[str, Any]) -> None:
         self.touch()
         kind, pane = self.pending.pop(header.get("id"), (None, None))
+        if header.get("final") is True:  # the final outcome of a stop (CS-O10): its request was answered by an ack already
+            self._stop_outcome(header)
+            return
         if header.get("snapshot"):
             self.apply_snapshot(header["snapshot"])
         shell = header.get("shell")
@@ -818,12 +837,15 @@ class ProductModel:
                 self.notice = "host shell을 manager에게 되돌림"
             elif kind in (ClientType.PAUSE, ClientType.RESUME):
                 self._automation_result(kind, header.get("automation"))
+            elif kind is ClientType.STOP_COMMAND:
+                self.notice = STOP_RUNNING_NOTICE  # accepted: the outcome follows as a final result
             return
         if kind is ClientType.INPUT and pane is None:
             return  # terminal-query reply refused; not a user action
         what = {ClientType.PASTE: "붙여넣기", ClientType.INPUT: "입력",
                                          ClientType.RESTART_PANE: "재시작", ClientType.KILL_PANE: "강제 종료",
-                                         ClientType.PAUSE: "일시정지", ClientType.RESUME: "재개"}.get(kind, str(kind.value if kind else "요청"))
+                                         ClientType.PAUSE: "일시정지", ClientType.RESUME: "재개",
+                                         ClientType.STOP_COMMAND: "명령 중지"}.get(kind, str(kind.value if kind else "요청"))
         target = f" [{TITLES[pane]}]" if pane else ""
         text = f"{what} 거부{target}: {header.get('reason')}: {header.get('detail') or ''}".rstrip(": ")
         held = self._held_reasons(header)
@@ -1102,6 +1124,9 @@ class ProductModel:
             elif byte == 0x10:  # Ctrl-p: the pause/resume row below it
                 self.menu_open = False
                 self._command("p")
+            elif byte == 0x18:  # Ctrl-x: the command stop row below it
+                self.menu_open = False
+                self._command("x")
             elif 0x30 <= byte <= 0x39 and chr(byte) in MENU_DIGITS:
                 self._menu_run(MENU_DIGITS.index(chr(byte)))
             # anything else (letters, Hangul, Tab, Backspace, ...) is swallowed: the menu is arrows/Enter/digits/Esc
@@ -1119,6 +1144,8 @@ class ProductModel:
         lines.append(f"  Ctrl-k  {label}   [Ctrl-] {letter} / Ctrl-] {ctrl}]")
         label, letter, ctrl = PAUSE_MENU_ROW
         lines.append(f"  Ctrl-p  {label}   [Ctrl-] {letter} / Ctrl-] {ctrl}]")
+        label, letter, ctrl = STOP_MENU_ROW
+        lines.append(f"  Ctrl-x  {label}   [Ctrl-] {letter} / Ctrl-] {ctrl}]")
         lines += ["", "focus: Ctrl-] 1/2/3 · Tab   경계 조절: Ctrl-] ←↑↓→   literal prefix: Ctrl-] Ctrl-]",
                   "한글 입력 상태에서는 글자 키 대신 Ctrl 조합이나 이 메뉴를 쓰세요"]
         return lines
@@ -1151,13 +1178,19 @@ class ProductModel:
     def pause_confirm_open(self) -> bool:
         return self.pause_confirm is not None
 
+    @property
+    def stop_confirm_open(self) -> bool:
+        return self.stop_confirm is not None
+
     def _confirm_open(self) -> bool:
-        return self.kill_confirm_open or self.pause_confirm is not None
+        return self.kill_confirm_open or self.pause_confirm is not None or self.stop_confirm is not None
 
     def _confirm_keys(self) -> tuple[str, ...]:
         """The command letters that confirm the modal now open (empty when none is)."""
         if self.kill_confirm_open:
             return KILL_KEYS
+        if self.stop_confirm is not None:
+            return STOP_KEYS
         return PAUSE_KEYS if self.pause_confirm is not None else ()
 
     @staticmethod
@@ -1172,7 +1205,9 @@ class ProductModel:
 
     @staticmethod
     def _cancelled_notice(keys: tuple[str, ...]) -> str:
-        return KILL_CANCELLED_NOTICE if keys == KILL_KEYS else PAUSE_CANCELLED_NOTICE
+        if keys == KILL_KEYS:
+            return KILL_CANCELLED_NOTICE
+        return STOP_CANCELLED_NOTICE if keys == STOP_KEYS else PAUSE_CANCELLED_NOTICE
 
     def _confirm_event(self, event: Any, *, single: bool = True) -> None:
         """While a confirmation is open no event reaches a pane: only one confirm key on its own confirms.
@@ -1187,12 +1222,16 @@ class ProductModel:
         else:
             confirmed = starts  # a prefix command is one key; paste, mouse and page scroll never confirm
         confirmed = confirmed and single
-        which = self.pause_confirm
+        which, shown = self.pause_confirm, self.stop_confirm
         self.kill_confirm_open = False
         self.pause_confirm = None
+        self.stop_confirm = None
         if confirmed and keys == KILL_KEYS:
             self._send(ClientType.KILL_PANE, pane=PaneId.HOST_SHELL)
             self.notice = KILLING_NOTICE
+        elif confirmed and keys == STOP_KEYS and shown is not None:
+            self._send(ClientType.STOP_COMMAND, command_id=shown["command_id"])  # the id shown, never a newer one
+            self.notice = STOPPING_NOTICE
         elif confirmed and which == "resume":
             self._send(ClientType.RESUME, reconciled=True)
             self.notice = RESUMING_NOTICE
@@ -1201,6 +1240,69 @@ class ProductModel:
             self.notice = PAUSING_NOTICE
         else:
             self.notice = self._cancelled_notice(keys) if starts else ""
+
+    # -- Workbench command stop (CS-O10) ---------------------------------------------------------------------------
+    def _host_command(self) -> dict[str, Any] | None:
+        """The Workbench command the snapshot says runs in the host terminal; None unless it is well formed."""
+        found = self.host_info().get("command")
+        if isinstance(found, dict) and isinstance(found.get("command_id"), str) and found["command_id"]:
+            return found
+        return None
+
+    def stop_confirm_lines(self) -> list[str]:
+        shown = self.stop_confirm or {}
+        owner = shown.get("owner") or "?"
+        return ["Workbench 명령 중지 확인", "",
+                f"{_clip(shown.get('label') or '(이름 없음)', STOP_LABEL_COLS)}  ({owner} 명령)",
+                "SIGINT를 보내고 종료하지 않으면 10초 뒤 SIGTERM, 5초 뒤 SIGKILL로 이어집니다.",
+                "x: 중지 · Esc/다른 키: 취소"]
+
+    def _open_stop_confirm(self) -> None:
+        """prefix x: ask before stopping the Workbench command in the host terminal; nothing reaches any pane meanwhile."""
+        if self._pending_kind(ClientType.STOP_COMMAND):
+            self.notice = STOPPING_NOTICE
+            return
+        found = self._host_command()
+        if found is None:
+            self.notice = STOP_NO_COMMAND_NOTICE
+            return
+        if found.get("state") == "stopping":
+            self.notice = STOP_ALREADY_NOTICE
+            return
+        label = found.get("label")
+        owner = found.get("owner")
+        self.stop_confirm = {"command_id": found["command_id"], "owner": owner if isinstance(owner, str) else "",
+                             "label": label if isinstance(label, str) else ""}
+        self.notice = ""
+        self._cancel_ctrl_d()
+
+    def _stop_outcome(self, header: dict[str, Any]) -> None:
+        """The final answer of a stop (a ``final`` result frame): never a success unless the command exited."""
+        stop = header.get("stop")
+        stop = stop if isinstance(stop, dict) else {}
+        status = stop.get("status")
+        reason = stop.get("reason") or header.get("reason")
+        detail = stop.get("detail")
+        why = f"{reason}: {detail}" if reason and detail else (reason or detail or "")
+        if status == "exited":
+            code, name = stop.get("exit_code"), stop.get("signal_name")
+            self.notice = ("명령 중지됨 — 종료 코드 " + (str(code) if code is not None else "?")
+                           + (f" ({name})" if name else ""))
+        elif status == "unknown":
+            self.notice = "명령 중지 결과 불명 — 종료를 확인하지 못했습니다" + (f": {why}" if why else "")
+        elif status == "stopping":
+            self.notice = STOP_ALREADY_NOTICE
+        elif status == "already_exited":
+            code = stop.get("exit_code")
+            self.notice = "이미 끝난 명령입니다 — 중지할 것이 없음" + (f" (종료 코드 {code})" if code is not None else "")
+        elif status == "not_found":
+            self.notice = f"명령 중지 대상 없음 — 이미 끝났거나 알 수 없는 명령: {why}".rstrip(": ")
+        elif status == "refused":
+            self.notice = f"명령 중지 거부: {why}".rstrip(": ")
+        elif status == "error":
+            self.notice = f"명령 중지 실패: {why}".rstrip(": ")
+        else:
+            self.notice = "명령 중지 결과를 해석하지 못했습니다 — 명령이 아직 실행 중일 수 있습니다"
 
     # -- automation pause / resume (CW-18 U5) ---------------------------------------------------------------------
     def _automation(self) -> dict[str, Any]:
@@ -1275,6 +1377,8 @@ class ProductModel:
             self._open_kill_confirm()
         elif key in PAUSE_KEYS:
             self._open_pause_confirm()
+        elif key in STOP_KEYS:
+            self._open_stop_confirm()
         else:
             self.notice = f"알 수 없는 prefix 명령 {key!r} (Ctrl-] Space 메뉴 · Ctrl-] ? 도움말)"
 
@@ -1678,6 +1782,7 @@ class ProductModel:
         self.rows, self.cols = rows, cols
         self.pause_confirm = None  # ... and the automation pause/resume one (CW-18 U5)
         self.kill_confirm_open = False  # a resize cancels the host-shell kill confirmation (C-D63): like any non-confirm input
+        self.stop_confirm = None  # ... and the command stop one (CS-O10)
         if self.too_small():
             self._end_drag()
             return
@@ -2271,11 +2376,13 @@ class ProductModel:
             return KILL_CONFIRM_FOOTER
         if self.pause_confirm is not None:
             return RESUME_CONFIRM_FOOTER if self.pause_confirm == "resume" else PAUSE_CONFIRM_FOOTER
+        if self.stop_confirm is not None:
+            return STOP_CONFIRM_FOOTER
         if self.menu_open:
             return self.notice or "명령 메뉴: ↑/↓ + Enter · 숫자 1-9/0 · Esc 취소 · 키는 pane으로 전달되지 않음"
         if self.parser.prefix_active:
-            return ("prefix… Space 메뉴 · 한글 IME는 Ctrl+q/t/y(확인)/o(handoff)/r/e(mouse)/z · 1/2/3 Tab [ = ? · "
-                    "영문 q t c h r m z · ←↑↓→ 분할 · Ctrl-] 한 번 더 = 리터럴")
+            return ("prefix… Space 메뉴 · 한글 IME는 Ctrl+q/t/y(확인)/o(handoff)/r/e(mouse)/z/x(명령 중지) · 1/2/3 Tab [ = ? · "
+                    "영문 q t c h r m z x · ←↑↓→ 분할 · Ctrl-] 한 번 더 = 리터럴")
         if self.resize_repeat_active:
             return (f"{self.notice} · " if self.notice else "") + "←↑↓→ 계속 조절 · 다른 키는 종료 후 그대로 처리"
         if self._mode is not None:

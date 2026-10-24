@@ -1771,7 +1771,7 @@ class CtrlAliasTests(unittest.TestCase):
         model, sender = make()
         model.handle_input(P + P)
         self.assertEqual([b"\x1d"], [x[2] for x in sender.of("input")])
-        for letter in "abcfglnsuvwx":  # Ctrl-k is the host terminal kill alias since C-D63, Ctrl-p pause/resume since CW-18 U5
+        for letter in "abcfglnsuvw":  # Ctrl-k is the host terminal kill alias since C-D63, Ctrl-p pause/resume since CW-18 U5, Ctrl-x command stop since CS-O10
             other, other_sender = make()
             other.handle_input(P + CTRL(letter))
             self.assertEqual([], other_sender.sent)
@@ -2848,7 +2848,7 @@ class DragToCopyTests(unittest.TestCase):
 
     def test_help_gets_one_short_drag_to_copy_line(self):
         self.assertTrue(any("드래그" in ln and "복사" in ln for ln in HELP_LINES))
-        self.assertLessEqual(len(HELP_LINES), HELP_LINES_BEFORE_COPY + 4)  # + exited-pane Enter (C-D62) + host kill/restart (C-D63) + pause/resume (CW-18 U5)
+        self.assertLessEqual(len(HELP_LINES), HELP_LINES_BEFORE_COPY + 5)  # + exited-pane Enter (C-D62) + host kill/restart (C-D63) + pause/resume (CW-18 U5) + command stop (CS-O10)
 
     def test_trimmed_history_rows_are_never_copied_and_an_empty_selection_is_cancelled(self):
         pane = PaneId.MANAGER_OMP

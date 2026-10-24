@@ -11,6 +11,8 @@ and the command ids and owners the test registers. Every process here was starte
 
 from __future__ import annotations
 
+from pathlib import Path
+import tempfile
 import threading
 import unittest
 from unittest import mock
@@ -203,6 +205,57 @@ class UserStopsAnExperimentTests(ExperimentStopFixture):
         self.assertEqual(self.view()["last_result"], {"run_id": run_id, "outcome": "stopped", "stopped_by": "user",
                                                        "exit_code": 130, "signal": 2, "run_closed": True})
         self.assertEqual(self.judge_calls, 0)
+
+
+RAW_SCRIPT = """\
+import signal, sys, termios, time, tty
+{ignore}
+tty.setraw(sys.stdin.fileno())
+isig = bool(termios.tcgetattr(sys.stdin.fileno())[3] & termios.ISIG)
+open({marker!r}, "w").write("isig=%d pid=%d" % (isig, __import__("os").getpid()))
+time.sleep(600)
+"""
+
+
+class RawModeCommandTests(BackendStopFixture):
+    """Behavior 5 (the reason for the key): a command that puts the host terminal in raw mode (ISIG off) turns the
+    user's Ctrl+C into an input byte, and the user stop still ends it through the backend."""
+
+    def start_raw(self, ignore):
+        directory = tempfile.TemporaryDirectory(prefix="cso10-raw-")
+        self.addCleanup(directory.cleanup)
+        marker = Path(directory.name) / "marker"
+        script = Path(directory.name) / "raw_job.py"
+        script.write_text(RAW_SCRIPT.format(ignore=ignore, marker=str(marker)))
+        started = self.run_command(f"python3 {script}")
+        self.wait(marker.exists, "the raw-mode command to report")
+        self.wait(lambda: "pid=" in marker.read_text(), "the marker to be written")
+        text = marker.read_text()
+        self.assertTrue(text.startswith("isig=0 "), f"the tty must be raw (ISIG off): {text}")
+        return started, int(text.split("pid=")[1])
+
+    def assert_host_shell_still_runs_commands(self):
+        again = self.worker_terminal(command="echo shell-still-works")
+        self.assertEqual((again["status"], again["exit_code"]), ("exited", 0), again)
+        self.assertIn("shell-still-works", again["output_tail"])
+
+    def test_a_raw_mode_command_is_stopped_by_the_user_stop_with_sigint(self):
+        started, pid = self.start_raw("")
+        result = self.backend.stop_command(started["command_id"])
+        self.assertEqual(result["status"], "exited", result)
+        self.assertEqual([item["signal"] for item in result["signals"]], ["SIGINT"])
+        self.assertEqual((result["requested_by"], result["command_id"]), ("user", started["command_id"]))
+        self.assertFalse(alive(pid), "the raw-mode command is gone")
+        self.assert_host_shell_still_runs_commands()
+
+    def test_a_raw_mode_command_that_ignores_sigint_is_stopped_by_sigterm(self):
+        started, pid = self.start_raw("signal.signal(signal.SIGINT, signal.SIG_IGN)")
+        result = self.backend.stop_command(started["command_id"])
+        self.assertEqual(result["status"], "exited", result)
+        self.assertEqual([item["signal"] for item in result["signals"]], ["SIGINT", "SIGTERM"])
+        self.assertEqual((result["exit_code"], result["signal_name"]), (128 + 15, "SIGTERM"), result)
+        self.assertFalse(alive(pid))
+        self.assert_host_shell_still_runs_commands()
 
 
 if __name__ == "__main__":

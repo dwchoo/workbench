@@ -156,6 +156,48 @@ class HubStartCommandTests(unittest.TestCase):
         self.assertNotEqual(session_of(pid), os.getsid(0))
         self.assertNotEqual(session_of(pid), caller.pid)
 
+    def test_hub_start_works_when_the_caller_already_uses_more_than_1024_fds(self):
+        crowded = ("import os, resource\n"
+                   "soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)\n"
+                   "resource.setrlimit(resource.RLIMIT_NOFILE, (min(max(soft, 4096), hard), hard))\n"
+                   "keep = [os.open(os.devnull, os.O_RDONLY) for _ in range(1100)]\n" + DRIVER)
+        soft, hard = __import__('resource').getrlimit(__import__('resource').RLIMIT_NOFILE)
+        if hard != -1 and hard < 1200:
+            self.skipTest(f'RLIMIT_NOFILE hard limit {hard} cannot hold 1100 extra fds')
+        result = subprocess.run([sys.executable, '-c', crowded, 'hub', 'start'], env=self.box.env,
+                                cwd=self.box.base, stdin=subprocess.DEVNULL, capture_output=True, text=True,
+                                timeout=40)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.box.hub_pids(), [reported_pid(result)])
+
+    def seed_log(self, size: int) -> bytes:
+        self.box.state.mkdir(mode=0o700, parents=True)
+        log = self.box.state / 'hub.log'
+        data = (b'old hub log line\n' * (size // 17 + 1))[:size]
+        log.write_bytes(data)
+        log.chmod(0o600)
+        return data
+
+    def test_a_log_over_1_mib_is_rotated_once_at_start(self):
+        old = self.seed_log(1024 * 1024 + 1)
+        (self.box.state / 'hub.log.1').write_bytes(b'older generation')
+        pid = reported_pid(self.box.wb('hub', 'start'))
+        log, rotated = self.box.state / 'hub.log', self.box.state / 'hub.log.1'
+        self.assertEqual(rotated.read_bytes(), old)
+        self.assertLess(log.stat().st_size, 1024 * 1024)
+        self.assertEqual(stat.S_IMODE(log.stat().st_mode), 0o600)
+        self.assertEqual(stat.S_IMODE(rotated.stat().st_mode), 0o600)
+        for fd in (1, 2):
+            self.assertEqual(os.readlink(f'/proc/{pid}/fd/{fd}'), str(log))
+
+    def test_a_log_at_or_under_1_mib_is_kept(self):
+        old = self.seed_log(1024 * 1024)
+        pid = reported_pid(self.box.wb('hub', 'start'))
+        log = self.box.state / 'hub.log'
+        self.assertFalse((self.box.state / 'hub.log.1').exists())
+        self.assertEqual(log.read_bytes()[:len(old)], old)
+        self.assertEqual(os.readlink(f'/proc/{pid}/fd/1'), str(log))
+
     def test_hub_start_reuses_a_running_hub(self):
         first = reported_pid(self.box.wb('hub', 'start'))
         start_ticks = proc_stat(first)[19]
@@ -189,6 +231,7 @@ class HubStartCommandTests(unittest.TestCase):
         if child == 0:  # pragma: no cover - exec'd immediately
             try:
                 os.chdir(self.box.base)
+                signal.signal(signal.SIGHUP, signal.SIG_DFL)  # a nohup'd runner must not make the shell immune
                 os.execve('/bin/sh', ['/bin/sh', '-c', command], self.box.env)
             finally:
                 os._exit(127)
@@ -283,6 +326,19 @@ class AutoStartTests(unittest.TestCase):
         self.assertEqual(len(result.stderr.strip().splitlines()), 1, result.stderr)
         self.assertEqual(self.box.hub_pids(), [])
         self.assertFalse(self.box.lock.exists() and flock_holder(self.box.lock) is not None)
+
+    def test_an_unwritable_stderr_for_the_failure_line_does_not_break_the_command(self):
+        self.hold_update_fence()  # auto-start fails and wants to print one stderr line
+        read_end, write_end = os.pipe()
+        os.close(read_end)  # writing the line raises BrokenPipeError
+        try:
+            caller = subprocess.run(self.box.wb_argv('status'), env=self.box.env, cwd=self.box.base,
+                                    stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=write_end,
+                                    text=True, timeout=40)
+        finally:
+            os.close(write_end)
+        self.assertEqual(caller.returncode, 3)
+        self.assertIn('no backend is running', caller.stdout)
 
     def test_a_held_update_fence_makes_hub_start_fail_with_a_reason(self):
         self.hold_update_fence()

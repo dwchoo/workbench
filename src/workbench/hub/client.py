@@ -71,7 +71,9 @@ class HubClient:
     def _next(self, deadline: float) -> dict[str, Any]:
         while not self.pending:
             remaining = deadline - time.monotonic()
-            if remaining <= 0 or not select.select([self.sock], [], [], remaining)[0]:
+            poller = select.poll()  # not select(): the caller may already hold fds >= 1024
+            poller.register(self.sock, select.POLLIN)
+            if remaining <= 0 or not poller.poll(max(1, int(remaining * 1000))):
                 raise HubUnresponsive("timeout", self.record)
             try:
                 data = self.sock.recv(65536)

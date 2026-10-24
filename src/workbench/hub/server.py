@@ -8,6 +8,7 @@ from pathlib import Path
 import secrets
 import signal
 import socket
+import stat
 import struct
 import sys
 import time
@@ -324,6 +325,41 @@ class Connection:
         return True
 
 
+LOG_ROTATE_BYTES = 1024 * 1024
+
+
+def rotate_log(layout: HubLayout) -> None:
+    """Once at start, under the lock: a ``hub.log`` over 1 MiB becomes ``hub.log.1``.
+
+    stdout/stderr that point at the old file (spawned mode) move to a fresh
+    ``hub.log``; a foreground Hub's terminal is left alone.
+    """
+    try:
+        info = os.stat(layout.log, follow_symlinks=False)
+    except FileNotFoundError:
+        return
+    if not stat.S_ISREG(info.st_mode) or info.st_size <= LOG_ROTATE_BYTES:
+        return
+    redirected = []
+    for fd in (1, 2):
+        try:
+            opened = os.fstat(fd)
+        except OSError:
+            continue
+        if (opened.st_dev, opened.st_ino) == (info.st_dev, info.st_ino):
+            redirected.append(fd)
+    sys.stdout.flush()
+    sys.stderr.flush()
+    os.replace(layout.log, layout.state_dir / (layout.log.name + ".1"))
+    if redirected:
+        fresh = os.open(layout.log, os.O_WRONLY | os.O_CREAT | os.O_APPEND | os.O_NOFOLLOW | os.O_CLOEXEC, 0o600)
+        try:
+            for fd in redirected:
+                os.dup2(fresh, fd)
+        finally:
+            os.close(fresh)
+
+
 def main_hub(args: argparse.Namespace) -> int:
     mode = args.mode or ("foreground" if args.foreground else "spawned")
     layout = hub_layout()
@@ -354,6 +390,10 @@ def main_hub(args: argparse.Namespace) -> int:
     except (DataDirError, OSError) as exc:
         print(f"[workbench] Hub start failed: {exc}", file=sys.stderr)
         return 1
+    try:
+        rotate_log(layout)
+    except OSError as exc:  # a log problem never blocks the Hub
+        print(f"[workbench] hub.log rotation skipped: {exc}", file=sys.stderr)
     try:
         hub.bind()
         hub.publish_record()

@@ -148,14 +148,20 @@ def clean_base_env(**extra: str) -> dict[str, str]:
     env = {"PATH": "/usr/bin:/bin", "LANG": "C.UTF-8", "TERM": "xterm-256color", "USER": user, "LOGNAME": user}
     env.update(extra)
     for key in list(env):
-        if key.startswith(("TMUX", "HERDR_", "WORKBENCH_")) or key in ("DISPLAY", "WAYLAND_DISPLAY"):
+        if ((key.startswith(("TMUX", "HERDR_", "WORKBENCH_")) and key != HUB_AUTOSTART_OPT_OUT)
+                or key in ("DISPLAY", "WAYLAND_DISPLAY")):
             del env[key]
     return env
 
 
+# The Hub auto-start opt-out (HB-02) is our own setting, not outer context; only "0" passes.
+HUB_AUTOSTART_OPT_OUT = "WORKBENCH_HUB_AUTOSTART"
+
+
 def assert_env_isolated(env: dict[str, str], root: Path) -> None:
     """Fail closed when a child environment could reach the user's servers, home or network."""
-    leaked = sorted(k for k in env if k.startswith(("TMUX", "HERDR_ENV", "HERDR_PANE", "HERDR_SOCKET", "WORKBENCH_"))
+    leaked = sorted(k for k in env if (k.startswith(("TMUX", "HERDR_ENV", "HERDR_PANE", "HERDR_SOCKET", "WORKBENCH_"))
+                                       and not (k == HUB_AUTOSTART_OPT_OUT and env[k] == "0"))
                     or k in ("DISPLAY", "WAYLAND_DISPLAY", "SSH_AUTH_SOCK", "DBUS_SESSION_BUS_ADDRESS"))
     if leaked:
         raise AssertionError(f"outer context leaked into a child env: {leaked}")
@@ -842,6 +848,7 @@ class Sandbox:
             **{key: BLOCKED_PROXY for key in PROXY_KEYS}, NO_PROXY="127.0.0.1", no_proxy="127.0.0.1")
         (self.root / "r").mkdir(mode=0o700)
         assert_env_isolated(self.env, self.root)
+        self.env[HUB_AUTOSTART_OPT_OUT] = "0"  # HB-02: product commands here never start a Hub
 
     def __enter__(self) -> "Sandbox":
         return self

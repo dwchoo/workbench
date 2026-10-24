@@ -208,7 +208,9 @@ def _terminate(layout: HubLayout, record: dict[str, Any], reason: str) -> StopRe
                                            boot_id=record["boot_id"]) != "alive"):
             return StopResult("unknown", pid, "identity_changed")
         signal.pidfd_send_signal(pidfd, signal.SIGTERM)
-        exited = bool(select.select([pidfd], [], [], TERM_TIMEOUT)[0])
+        poller = select.poll()  # not select(): pidfd may be >= 1024
+        poller.register(pidfd, select.POLLIN)
+        exited = bool(poller.poll(int(TERM_TIMEOUT * 1000)))
     except OSError:
         return StopResult("failed", pid, "signal_failed")
     finally:
@@ -379,7 +381,9 @@ def _spawn(layout: HubLayout, timeout: float, environment: dict[str, str], boots
     os.close(write_end)
     try:
         os.waitpid(intermediate, 0)
-        if not select.select([read_end], [], [], timeout)[0]:
+        poller = select.poll()  # not select(): the caller may already hold fds >= 1024
+        poller.register(read_end, select.POLLIN)
+        if not poller.poll(max(0, int(timeout * 1000))):
             return SPAWN_TIMEOUT
         code = os.read(read_end, 1)
     finally:

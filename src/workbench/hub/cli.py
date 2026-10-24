@@ -120,26 +120,42 @@ def autostart(args: argparse.Namespace) -> None:
 
     A failure is one stderr line; the managed-tree hold is shown only on a TTY.
     """
-    if not autostart_wanted(args):
-        return
-    from .process import ensure_hub
-    try:
-        result = ensure_hub()
-    except Exception as exc:  # the command must run whatever happens to the Hub
-        reason = type(exc).__name__
-    else:
-        if result.ok:
+    try:  # the command must run whatever happens to the Hub or to this report
+        if not autostart_wanted(args):
             return
-        reason = result.reason
+        from .process import ensure_hub
+        try:
+            result = ensure_hub()
+        except Exception as exc:
+            reason = type(exc).__name__
+        else:
+            if result.ok:
+                return
+            reason = result.reason
         if reason == "managed_tree":
             if sys.stderr.isatty():
-                print(MANAGED_TREE_TEXT, file=sys.stderr)
-            return
-    if reason == "update_in_progress":
-        print("[workbench] 업데이트가 진행 중이라 Hub를 자동으로 시작하지 않았습니다.", file=sys.stderr)
-    else:
-        print(f"[workbench] Hub를 자동으로 시작하지 못했습니다({reason}); 명령은 계속합니다. "
-              f"log: {hub_layout().log}", file=sys.stderr)
+                _report(MANAGED_TREE_TEXT)
+        elif reason == "update_in_progress":
+            _report("[workbench] 업데이트가 진행 중이라 Hub를 자동으로 시작하지 않았습니다.")
+        else:
+            _report(f"[workbench] Hub를 자동으로 시작하지 못했습니다({reason}); 명령은 계속합니다. "
+                    f"log: {hub_layout().log}")
+    except Exception:
+        pass
+
+
+def _report(line: str) -> None:
+    """One unbuffered stderr line: a broken stderr leaves nothing buffered to fail at exit."""
+    try:
+        sys.stderr.flush()
+        fd = sys.stderr.fileno()
+    except (OSError, ValueError, AttributeError):
+        print(line, file=sys.stderr)
+        return
+    try:
+        os.write(fd, (line + "\n").encode("utf-8", "replace"))
+    except OSError:
+        pass
 
 
 def cmd_hub_start(args: argparse.Namespace) -> int:

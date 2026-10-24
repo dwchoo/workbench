@@ -28,6 +28,9 @@ from .maintenance import discover, fence, require_no_writers
 from .process_identity import inspect_backend, process_state
 from . import update_backup
 from workbench.contracts.ui_v1 import ClientType
+from workbench.hub import process as hub_process
+from workbench.hub.client import HubClient
+from workbench.hub.paths import hub_layout
 
 
 def command(argv, *, env=None, timeout=180, pass_fds=()):
@@ -228,12 +231,64 @@ def refuse_managed_caller(identities):
         raise DataDirError(message) from error
 
 
+def _hub_version_text(version):
+    if not isinstance(version, dict):
+        return 'unknown'
+    commit, kind = version.get('commit'), version.get('kind')
+    return f"{version.get('release')} ({commit[:12] if kind == 'git' and isinstance(commit, str) else kind})"
+
+
+def hub_to_stop():
+    """The Hub ``wb update`` stops (SPEC "`wb update`와의 관계"), or None when none runs.
+
+    ``unknown`` stops the update before any question or backend. A proven Hub that
+    does not answer is returned: :func:`hub_process.stop_hub` may still end it by SIGTERM.
+    """
+    layout = hub_layout()
+    try:
+        with HubClient(layout, name='workbench-update', timeout=hub_process.RESPONSE_TIMEOUT) as client:
+            return client.identity
+    except hub_process.HubNotRunning:
+        return None
+    except hub_process.HubUnresponsive as exc:
+        return hub_process.HubIdentity(hub_process.UNKNOWN, layout, exc.record, exc.reason)
+    except hub_process.HubUnknown as exc:
+        raise DataDirError(f"Hub 상태 불명({exc.reason}, lock {layout.lock})이라 업데이트를 중단합니다; "
+                           "어떤 backend도 종료하지 않았습니다. 'wb hub stop'으로 Hub를 멈춘 뒤 다시 실행하세요.") from exc
+
+
+def hub_stop_notice(identity):
+    shown = identity.welcome or identity.record or {}
+    return f"Hub(pid {shown.get('pid')}, version {_hub_version_text(shown.get('version'))})를 멈춥니다"
+
+
+HUB_STOPPED_TEXT = 'Hub는 멈춘 상태입니다. 다음 `wb` 실행 때 다시 시작됩니다.'
+
+
+def hub_active_confirmed(active):
+    """(A) extension point: Hub-owned live things (``stop_request.active``) join the update
+    question. (B) never lists any, so an unexpected entry is refused and nothing stops."""
+    return False
+
+
+def stop_hub_for_update(identity, *, announced=False):
+    """Stop the Hub before any backend; any failure stops the update first."""
+    if not announced:
+        print(hub_stop_notice(identity))
+    result = hub_process.stop_hub(hub_active_confirmed, identity.layout)
+    if result.status not in ('stopped', 'not_running'):
+        raise DataDirError(f"Hub(pid {result.pid})를 멈추지 못해 업데이트를 중단합니다 ({result.status}: {result.reason}); "
+                           "어떤 backend도 종료하지 않았습니다. 'wb hub stop'으로 Hub를 멈춘 뒤 다시 실행하세요.")
+    return result
+
+
 def _run(args, fence_descriptor):
     install = installation()
     with tempfile.TemporaryDirectory(prefix='wb-update-') as temporary, ExitStack() as stack:
         target = prepare(install, args.ref, Path(temporary))
         identities = discover(args)
         refuse_managed_caller(identities)
+        hub = hub_to_stop()
         projects, live, active = [], [], []
         for identity in identities:
             item = {'data_root':str(identity.layout.root), 'project_root':str(identity.project_root or identity.layout.root.parent),
@@ -258,6 +313,9 @@ def _run(args, fence_descriptor):
         if active:
             print('업데이트를 위해 다음 작업과 backend·양 역할 OMP·host shell을 종료합니다:')
             print(json.dumps(active, ensure_ascii=False, sort_keys=True))
+            if hub is not None:
+                # The Hub joins an existing question; it never asks one by itself.
+                print(hub_stop_notice(hub))
             try:
                 if sys.stdin is None or not sys.stdin.isatty() or input('종료·기록·백업 후 업데이트할까요? [y/N] ').strip().lower() != 'y':
                     print('업데이트 취소: 작업은 유지됩니다.')
@@ -272,15 +330,25 @@ def _run(args, fence_descriptor):
             data = Path(item['data_root']).resolve()
             if base.resolve().is_relative_to(source) or base.resolve().is_relative_to(data):
                 raise DataDirError('backup root가 프로젝트 source와 겹칩니다.')
-        base.mkdir(mode=0o700, parents=True, exist_ok=True)
-        run = base/uuid4().hex
-        run.mkdir(mode=0o700)
-        manifest = {'schema_version':1, 'source':safe_url(install['url']), 'previous':install['previous'],
-                    'target':target, 'installation':'not_started', 'projects':projects,
-                    'backup_complete':False, 'complete':False}
-        manifest['manual_reinstall'] = shlex.join([install['uv'], 'tool', 'install', '--force',
-            '--python', install['python'], 'git+'+safe_url(install['url'])+'@'+install['previous']])
-        write_private_json(run/'manifest.json', manifest)
+        hub_note = ''
+        if hub is not None:
+            stop_hub_for_update(hub, announced=bool(active))
+            hub_note = '\n' + HUB_STOPPED_TEXT  # every abort from here on leaves the Hub stopped
+        try:
+            base.mkdir(mode=0o700, parents=True, exist_ok=True)
+            run = base/uuid4().hex
+            run.mkdir(mode=0o700)
+            manifest = {'schema_version':1, 'source':safe_url(install['url']), 'previous':install['previous'],
+                        'target':target, 'installation':'not_started', 'projects':projects,
+                        'backup_complete':False, 'complete':False}
+            manifest['manual_reinstall'] = shlex.join([install['uv'], 'tool', 'install', '--force',
+                '--python', install['python'], 'git+'+safe_url(install['url'])+'@'+install['previous']])
+            write_private_json(run/'manifest.json', manifest)
+        except OSError as error:
+            if not hub_note:
+                raise
+            raise DataDirError(f'업데이트 확인 실패 ({type(error).__name__}); 원본·updates manifest와 실행 상태를 확인하세요.'
+                               + hub_note) from error
         print(f"업데이트 {install['previous']} -> {target}\n백업: {run}")
         try:
             for identity, client, pending, item in live:
@@ -335,7 +403,7 @@ def _run(args, fence_descriptor):
                 pass  # 실패 기록을 못 써도 backup·수동 복구 안내는 표시한다.
             print(f"업데이트 중단: {reason}; 설치 상태 {manifest['installation']} (uv exit {manifest.get('uv_returncode', '미실행/미확인')}). 백업 {run}\n"
                   f"이전/목표 commit: {install['previous']} / {target}\n"
-                  f"이전 ref 수동 재설치: {manifest['manual_reinstall']}", file=sys.stderr)
+                  f"이전 ref 수동 재설치: {manifest['manual_reinstall']}{hub_note}", file=sys.stderr)
             return 1
         print('업데이트 완료: 새 interpreter·출처 commit·필수 assets 확인')
         return 0

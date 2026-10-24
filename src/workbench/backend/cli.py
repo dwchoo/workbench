@@ -1209,6 +1209,21 @@ def cmd_hub_list(args: argparse.Namespace) -> int:
     return run(args)
 
 
+def cmd_hub_enable(args: argparse.Namespace) -> int:
+    from workbench.hub.cli import cmd_hub_enable as run
+    return run(args)
+
+
+def cmd_hub_disable(args: argparse.Namespace) -> int:
+    from workbench.hub.cli import cmd_hub_disable as run
+    return run(args)
+
+
+def cmd_hub_reserved(args: argparse.Namespace) -> int:
+    from workbench.hub.cli import cmd_hub_reserved as run
+    return run(args)
+
+
 def cmd_hub_add(args: argparse.Namespace) -> int:
     from workbench.hub.cli import cmd_hub_add as run
     return run(args)
@@ -1239,8 +1254,21 @@ def cmd_hub_process(args: argparse.Namespace) -> int:
     return main_hub(args)
 
 
+class _VersionAction(argparse.Action):
+    """``--version`` printed lazily (distribution metadata is read only when asked)."""
+
+    def __init__(self, option_strings, dest=argparse.SUPPRESS, default=argparse.SUPPRESS, help=None):
+        super().__init__(option_strings, dest=dest, default=default, nargs=0, help=help)
+
+    def __call__(self, parser, namespace, values, option_string=None):
+        from workbench.hub.cli import version_line
+        print(version_line())
+        parser.exit()
+
+
 def parser() -> argparse.ArgumentParser:
     root = argparse.ArgumentParser(prog="wb", description=__doc__.splitlines()[0])
+    root.add_argument("--version", action=_VersionAction, help="wb 버전을 표시하고 끝냄")
     sub = root.add_subparsers(dest="command", required=True)
 
     def common(p: argparse.ArgumentParser) -> argparse.ArgumentParser:
@@ -1392,6 +1420,12 @@ def parser() -> argparse.ArgumentParser:
     hub_list = hub_sub.add_parser("list", help="등록된 WB 프로젝트 목록과 상태")
     hub_list.add_argument("--json", action="store_true", help="hub_v1 list 결과 그대로")
     hub_list.set_defaults(handler=cmd_hub_list)
+    hub_sub.add_parser("enable", help="로그인(linger 시 부팅) 뒤 Hub를 systemd 사용자 서비스로 자동 시작") \
+        .set_defaults(handler=cmd_hub_enable)
+    hub_sub.add_parser("disable", help="부팅 자동 시작 unit을 끄고 지움 (실행 중인 Hub는 유지)") \
+        .set_defaults(handler=cmd_hub_disable)
+    for reserved in ("passwd", "tls"):
+        hub_sub.add_parser(reserved, help="예약 (Web Board 기능에서 제공 예정)").set_defaults(handler=cmd_hub_reserved)
     hub_add = hub_sub.add_parser("add", help="WB 프로젝트 root를 Hub registry에 등록")
     hub_add.add_argument("path", metavar="PATH")
     hub_add.set_defaults(handler=cmd_hub_add)

@@ -1,4 +1,4 @@
-"""``wb hub status`` and ``wb hub stop`` handlers (other ``wb hub`` commands come later)."""
+"""``wb hub`` handlers, ``wb --version`` text and the systemd enable/disable commands."""
 from __future__ import annotations
 
 import argparse
@@ -21,6 +21,15 @@ def _version_text(version: object) -> str:
     release, commit, kind = version.get("release"), version.get("commit"), version.get("kind")
     detail = commit[:12] if kind == "git" and isinstance(commit, str) else kind
     return f"{release} ({detail})"
+
+
+def version_line(version: dict | None = None) -> str:
+    """``wb <release> (<commit 12>|editable|unknown)`` (SPEC "CLI 계약"); same source as the Hub record."""
+    version = installed_version() if version is None else version
+    kind, commit = version.get("kind"), version.get("commit")
+    detail = commit[:12] if kind == "git" and isinstance(commit, str) and commit else (
+        "editable" if kind == "editable" else "unknown")
+    return f"wb {version.get('release')} ({detail})"
 
 
 def _print_json(value: dict) -> None:
@@ -51,8 +60,10 @@ def cmd_hub_status(args: argparse.Namespace) -> int:
     status = {key: reply.get(key) for key in ("hub", "registry", "web", "board_agent")}
     local = installed_version()
     drift = status["hub"].get("version") != local
+    from .service_unit import boot_autostart_state
+    boot = boot_autostart_state()
     if args.json:
-        _print_json({"state": "running", **status, "version_drift": drift})
+        _print_json({"state": "running", **status, "version_drift": drift, "boot_autostart": boot})
         return EXIT_OK
     hub, registry = status["hub"], status["registry"] or {}
     started = hub.get("started_at")
@@ -66,8 +77,49 @@ def cmd_hub_status(args: argparse.Namespace) -> int:
     print(f"  socket: {hub.get('socket')}")
     print(f"  log: {hub.get('log')}")
     print(f"  registry: {registry.get('state')}, {registry.get('count')}개 ({registry.get('path')})")
-    print("  부팅 자동 시작: unknown")
+    print(f"  부팅 자동 시작: {boot}")
     print(f"  web: {(status['web'] or {}).get('state')}")
+    return EXIT_OK
+
+
+def cmd_hub_reserved(args: argparse.Namespace) -> int:
+    """``wb hub passwd|tls``: names are reserved for the Web Board; nothing runs."""
+    print(f"'wb hub {args.hub_action}'은(는) Web Board 기능에서 제공 예정입니다.", file=sys.stderr)
+    return EXIT_REQUIREMENT
+
+
+def cmd_hub_enable(args: argparse.Namespace) -> int:
+    from . import service_unit
+    outcome = service_unit.enable()
+    if outcome.status == "unavailable":
+        print(outcome.detail, file=sys.stderr)
+        return EXIT_REQUIREMENT
+    if outcome.status != "ok":
+        print(outcome.detail, file=sys.stderr)
+        return EXIT_FAILURE
+    print(f"부팅 자동 시작을 켰습니다: {outcome.detail}")
+    print("지금 실행 중인 Hub는 바꾸지 않았습니다.")
+    linger = service_unit.linger_state()
+    print(f"linger: {linger}")
+    if linger == "yes":
+        print("linger가 켜져 있어 부팅 직후 사용자 서비스로 Hub가 시작됩니다.")
+    else:
+        print("linger를 켜지 않으면 로그인 뒤에 시작됩니다.")
+        print("로그인 전(부팅 직후)에 시작하려면 'loginctl enable-linger'가 필요합니다. 이 명령은 그것을 바꾸지 않습니다.")
+    return EXIT_OK
+
+
+def cmd_hub_disable(args: argparse.Namespace) -> int:
+    from . import service_unit
+    outcome = service_unit.disable()
+    if outcome.status == "already_off":
+        print("이미 꺼져 있습니다")
+        return EXIT_OK
+    if outcome.status != "ok":
+        print(outcome.detail, file=sys.stderr)
+        return EXIT_REQUIREMENT if outcome.status == "unavailable" else EXIT_FAILURE
+    print(f"부팅 자동 시작을 껐습니다: {outcome.detail} 삭제")
+    print("실행 중인 Hub는 멈추지 않았습니다. 멈추려면 'wb hub stop'을 실행하세요.")
     return EXIT_OK
 
 

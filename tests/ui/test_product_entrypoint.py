@@ -29,7 +29,7 @@ while True:
     sys.stdout.write(f"[{role} got {data!r}]\\r\\n> "); sys.stdout.flush()
 '''
 ENV = {"PATH": "/usr/bin:/bin", "PYTHONPATH": SRC, "PYTHONDONTWRITEBYTECODE": "1", "LANG": "C.UTF-8",
-       "TERM": "xterm-256color"}
+       "TERM": "xterm-256color", "WORKBENCH_HUB_AUTOSTART": "0"}
 MAIN = "import sys; from workbench.backend.cli import main; raise SystemExit(main(sys.argv[1:]))"
 
 
@@ -41,10 +41,14 @@ class EntrypointSmoke(unittest.TestCase):
         self.omp.write_text(STUB)
         self.omp.chmod(0o755)
         self.data = self.root / "d"
+        # Hub/registry state stays in the temp root, never under the real ~/.local/state. HOME stays
+        # real: `start --omp` reads $HOME/.omp/agent/agent.db.
+        (self.root / "state").mkdir(mode=0o700)
+        self.env = dict(ENV, XDG_STATE_HOME=str(self.root / "state"))
         self.addCleanup(self.stop_backend)
 
     def cli(self, *args, timeout=60):
-        return subprocess.run([sys.executable, "-c", MAIN, *args], env=ENV, cwd=self.root, capture_output=True,
+        return subprocess.run([sys.executable, "-c", MAIN, *args], env=self.env, cwd=self.root, capture_output=True,
                               text=True, timeout=timeout, stdin=subprocess.DEVNULL)
 
     def wait_backend_reachable(self, deadline=30.0):
@@ -78,7 +82,7 @@ class EntrypointSmoke(unittest.TestCase):
         UiProcess.set_size(master, (30, 120))
         ui = UiProcess.__new__(UiProcess)
         ui.proc = subprocess.Popen([sys.executable, "-c", MAIN, "attach", "--data-dir", str(self.data)],
-                                   stdin=slave, stdout=slave, stderr=slave, env=ENV, start_new_session=True)
+                                   stdin=slave, stdout=slave, stderr=slave, env=self.env, start_new_session=True)
         os.close(slave)
         ui.fd, ui.raw = master, bytearray()
         ui.screen = pyte.Screen(120, 30)

@@ -24,7 +24,7 @@
 
 ## 테스트 실행
 
-- 인터프리터는 repo 루트의 `.venv`(Python 3.12, `pyte`·`wcwidth`만 설치)다. worktree에서는 main checkout의 `.venv`를 절대 경로로 쓴다.
+- 인터프리터는 repo 루트의 `.venv`(Python 3.12, `pyte`·`wcwidth`·`aiohttp`(와 하위 의존성)만 설치. `aiohttp`는 2026-10-25 Phase 2 Hub·Web Board용으로 추가)다. worktree에서는 main checkout의 `.venv`를 절대 경로로 쓴다.
 - 공통 접두사: `env PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src .venv/bin/python`
   - 단일 모듈: `... -m unittest tests.<dir>.test_<name>` 또는 `... -m unittest discover -s tests/<dir> -p 'test_<name>.py'`
   - 디렉터리: `... -m unittest discover -s tests/<dir>`. 전체는 디렉터리별로 따로 실행한다. `-t .`는 쓰지 않는다.

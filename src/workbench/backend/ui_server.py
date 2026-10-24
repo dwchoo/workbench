@@ -33,6 +33,8 @@ MAX_CONNECTIONS = 16
 MAX_STOPS_IN_FLIGHT = 8  # stop_command requests answered but not yet finished (each waits on its own thread)
 # The only attach-requiring requests a non-attached ``NON_ATTACHED_CONTROL_CLIENTS`` connection may send (HB-06)
 _UNATTACHED_CONTROL = frozenset({ClientType.PAUSE, ClientType.RESUME})
+# Task Inbox (TI-09): requests served to the Hub only (same name + peer uid rule, attached or not); never to a UI
+_HUB_ONLY = frozenset({ClientType.INBOX_NOTICE, ClientType.TASK_STATUS, ClientType.CANCEL_TASK})
 
 
 class Held(Exception):
@@ -66,6 +68,11 @@ class Controller(Protocol):
     def stop_command(self, command_id: str) -> dict[str, Any]: ...
     def pause(self) -> dict[str, Any]: ...
     def resume(self, reconciled: bool) -> dict[str, Any]: ...
+    # Task Inbox (TI-09), Hub only: raise ``Held`` for a refusal (``unsupported_type`` until implemented)
+    def inbox_notice(self, request_id: str, delivery_id: str, event: str, fields: dict[str, Any]) -> dict[str, Any]: ...
+    def task_status(self, task_ids: list[str], detail: bool) -> dict[str, Any]: ...
+    def cancel_task(self, task_id: str, request_id: str, expect: dict[str, Any],
+                    reason: str | None) -> dict[str, Any]: ...
 
 
 class _Connection:
@@ -404,6 +411,16 @@ class UiServer:
                                                    fields["offset"], fields["limit"])}
         if kind is ClientType.RAW_STATUS:
             return {"result": controller.raw_status()}
+        if kind in _HUB_ONLY:
+            if not self._may_control_unattached(connection):
+                raise Held(Reason.NOT_ATTACHED, f"{kind.value} is a Workbench Hub request")
+            if kind is ClientType.INBOX_NOTICE:
+                return controller.inbox_notice(fields["request_id"], fields["delivery_id"], fields["event"],
+                                               fields["fields"])
+            if kind is ClientType.TASK_STATUS:
+                return controller.task_status(fields["task_ids"], fields["detail"])
+            return controller.cancel_task(fields["task_id"], fields["request_id"], fields["expect"],
+                                          fields["reason"])
         if not (kind in _UNATTACHED_CONTROL and self._may_control_unattached(connection)):
             self._require_attached(connection)
         if kind in {ClientType.INPUT, ClientType.PASTE}:

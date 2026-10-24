@@ -33,6 +33,7 @@ import json
 import os
 from pathlib import Path
 import signal
+import sqlite3
 import sys
 import threading
 import time
@@ -2254,6 +2255,48 @@ class Backend:
             raise Held(Reason.RESUME_NOT_RECONCILED, "resume needs reconciled: true")
         return {"automation": dict(self.resume_hook())}
 
+    # -- Task Inbox (TI-09): Hub-only ui_v1 requests ----------------------------
+    def inbox_notice(self, request_id: str, delivery_id: str, event: str, fields: dict[str, Any]) -> dict[str, Any]:
+        raise Held(Reason.UNSUPPORTED_TYPE, "inbox_notice is not served by this backend yet")  # TI-10
+
+    def cancel_task(self, task_id: str, request_id: str, expect: dict[str, Any], reason: str | None) -> dict[str, Any]:
+        raise Held(Reason.UNSUPPORTED_TYPE, "cancel_task is not served by this backend yet")  # TI-13
+
+    def task_status(self, task_ids: list[str], detail: bool) -> dict[str, Any]:
+        """ui_v1 ``task_status``: read only (TaskFlow views, ``tasks.sqlite3`` read-only, the terminal journal);
+        no model call and no bridge frame (P2-AC-06)."""
+        return {"tasks": [self._task_status_item(task_id, detail) for task_id in task_ids]}
+
+    def _task_status_item(self, task_id: str, detail: bool) -> dict[str, Any]:
+        view = self.flow.status_view(task_id) if self.flow is not None else None
+        if view is None:
+            return {"task_id": task_id, "exists": False}
+        task = self.flow.tasks.get(task_id)
+        cancel = getattr(task, "cancel_requested", None) or {}
+        last = view.get("last_result") or {}
+        commands = []
+        if self.terminal is not None:
+            try:
+                runs = self.terminal.runs_for_task(task_id)
+            except Exception:  # the list is a view; an unreadable journal leaves it empty
+                runs = []
+            commands = [{"command_id": item.get("command_id"), "owner": "worker", "exit_code": item.get("exit_code"),
+                         "log_path": item.get("log_path")} for item in runs]
+        stored = read_task_store(self.layout.tasks, task_id, detail=detail)
+        for run in stored["runs"]:
+            if last.get("run_id") == run["run_id"]:
+                run["exit_code"] = run["exit_code"] if run["exit_code"] is not None else last.get("exit_code")
+                run["stopped_by"] = run["stopped_by"] or last.get("stopped_by")
+            if view.get("kind") == "experiment":
+                run["log_sources"] = [{"source_kind": "run", "source_id": run["run_id"]}]
+        item = {"task_id": task_id, "exists": True, "status": view.get("status"),
+                "closed_reason": view.get("closed_reason"), "revision": view.get("revision"),
+                "cancel_requested_by": cancel.get("by") if isinstance(cancel, dict) else None,
+                "runs": stored["runs"], "commands": commands}
+        if detail:
+            item["reports"] = stored["reports"]
+        return item
+
     def _default_pause(self) -> dict[str, Any]:
         if self.automation.get("state") != "paused":
             self.automation = {"state": "paused", "source": "user", "detail": "paused from the UI",
@@ -2362,6 +2405,62 @@ class Backend:
                                                            "run_id")},
                 "classification": startup.get("classification"), "run": startup.get("run"), "survivors": survivors,
                 "outbox_not_sent": startup.get("outbox_lost_count", 0), "instruction": BACKEND_RESTARTED_HINT}
+
+
+_RUN_ENDS = ("completed", "failed", "cancelled")
+
+
+def _decoded_json(text: object) -> Any:
+    try:
+        return json.loads(text) if isinstance(text, str) else text
+    except ValueError:
+        return None
+
+
+def read_task_store(path: Path, task_id: str, *, detail: bool) -> dict[str, list]:
+    """A Task's runs (and with ``detail`` the worker reports to the manager) from ``tasks.sqlite3``, opened read-only
+    (``mode=ro``) on its own short-lived connection, so it never writes or waits on the backend's writers for long."""
+    runs: list[dict[str, Any]] = []
+    reports: list[dict[str, Any]] = []
+    try:
+        connection = sqlite3.connect(f"file:{path}?mode=ro", uri=True, timeout=1.0)
+    except sqlite3.Error:
+        return {"runs": runs, "reports": reports}
+    try:
+        rows = connection.execute("SELECT run_id, created_at FROM runs WHERE task_id = ? ORDER BY created_at, rowid",
+                                  (task_id,)).fetchall()
+        for run_id, created_at in rows:
+            events = connection.execute("SELECT kind, details_json, created_at FROM run_events WHERE run_id = ? "
+                                        "ORDER BY rowid", (run_id,)).fetchall()
+            started = next((at for kind, _, at in events if kind == "started"), None)
+            end = next(((kind, _decoded_json(text) or {}, at) for kind, text, at in reversed(events)
+                        if kind in _RUN_ENDS), None)
+            details = end[1] if end is not None and isinstance(end[1], dict) else {}
+            runs.append({"run_id": run_id, "status": end[0] if end is not None else ("running" if started else
+                                                                                     "created"),
+                         "exit_code": details.get("exit_code"), "started_at": started or created_at,
+                         "ended_at": end[2] if end is not None else None, "stopped_by": details.get("stopped_by"),
+                         "log_sources": []})
+        if detail:
+            for message_id, content, created_at in connection.execute(
+                    "SELECT message_id, content_json, created_at FROM messages WHERE task_id = ? ORDER BY rowid",
+                    (task_id,)).fetchall():
+                content = _decoded_json(content)
+                if not isinstance(content, dict) or (content.get("sender_role"), content.get("target_role")) != (
+                        "worker", "manager"):
+                    continue
+                payload = _decoded_json(content.get("payload"))
+                payload = payload if isinstance(payload, dict) else {}
+                text = payload.get("message")
+                text = text if isinstance(text, str) else json.dumps(payload, ensure_ascii=False)
+                encoded = text.encode("utf-8")[:ui_v1.MAX_REPORT_TEXT_BYTES]
+                reports.append({"message_id": message_id, "kind": payload.get("kind") or content.get("kind"),
+                                "at": created_at, "text": encoded.decode("utf-8", "ignore")})
+    except sqlite3.Error:
+        pass
+    finally:
+        connection.close()
+    return {"runs": runs, "reports": reports}
 
 
 def experiment_host_command(task: dict[str, Any] | None) -> dict[str, Any] | None:

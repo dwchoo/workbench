@@ -138,7 +138,12 @@ class NegotiationAndValidationTests(unittest.TestCase):
                   "resume": {"reconciled": True},
                   "important_archive_close": {"subject_kind": "task", "subject_id": uid, "confirmed": True},
                   "important_delete_db": {"db_uuid": uid, "confirmed": True},
-                  "raw_query": {"source_kind": "run", "source_id": uid, "offset": 0, "limit": 10}}
+                  "raw_query": {"source_kind": "run", "source_id": uid, "offset": 0, "limit": 10},
+                  "inbox_notice": {"request_id": REQUEST_ID, "delivery_id": DELIVERY_ID, "event": "new",
+                                   "fields": notice_fields()},
+                  "task_status": {"task_ids": [uid]},
+                  "cancel_task": {"task_id": uid, "request_id": REQUEST_ID,
+                                  "expect": {"status": "running", "command_id": None}, "reason": None}}
         for kind in ClientType:
             if kind is ClientType.HELLO:
                 continue
@@ -281,6 +286,96 @@ class NegotiationAndValidationTests(unittest.TestCase):
         self.assertEqual((result["ok"], result["reason"], result["detail"]), (False, "paste_too_large", "d"))
         reject = ui_v1.reject(Reason.VERSION_MISMATCH, "no")
         self.assertEqual((reject["type"], reject["supported"]), ("reject", [1]))
+
+
+REQUEST_ID = "6f1b6a3e-2f40-4a3f-9d4e-0c1b2a3d4e5f"
+DELIVERY_ID = "0b9c4f62-0d2a-4b8e-9b55-3f2c1d0e9a87"
+TASK_ID = "2c5e8a1f-7b3d-4c9e-8f60-1a2b3c4d5e6f"
+COMMAND_ID = "9a8b7c6d-5e4f-4a3b-8c2d-1e0f9a8b7c6d"
+
+
+def notice_fields(**changes):
+    fields = {"request_id": REQUEST_ID, "seq": 3, "title": "Collect the logs", "origin": {"kind": "owner"},
+              "state": "NEW", "excerpt": "first 1000 characters", "hint": "workbench_inbox show"}
+    fields.update(changes)
+    return fields
+
+
+class InboxRequestShapeTests(unittest.TestCase):
+    """TI-09 (Task Inbox SPEC "Hub → backend"): ``inbox_notice``, ``task_status``, ``cancel_task`` field rules."""
+
+    def parse(self, header):
+        return ui_v1.parse_client_frame(ui_v1.Frame(header, b"", 0), 1)
+
+    def assert_invalid(self, *headers):
+        for header in headers:
+            with self.subTest(header=header), self.assertRaises(ContractError):
+                self.parse(header)
+
+    def test_inbox_notice_carries_a_request_delivery_event_and_bounded_fields(self):
+        header = {"v": 1, "type": "inbox_notice", "id": "n", "request_id": REQUEST_ID, "delivery_id": DELIVERY_ID,
+                  "event": "new", "fields": notice_fields()}
+        message = self.parse(header)
+        self.assertIs(message.type, ClientType.INBOX_NOTICE)
+        self.assertEqual(message.fields, {"request_id": REQUEST_ID, "delivery_id": DELIVERY_ID, "event": "new",
+                                          "fields": notice_fields()})
+        for event in ("new", "answered", "updated", "revised", "cancelled", "linked_task_closed"):
+            self.assertEqual(self.parse({**header, "event": event}).fields["event"], event)
+        self.assertEqual(self.parse({**header, "fields": notice_fields(excerpt="x" * 1000, hint=None)})
+                         .fields["fields"]["excerpt"], "x" * 1000)
+        missing = notice_fields()
+        del missing["hint"]
+        self.assert_invalid(
+            {**header, "request_id": REQUEST_ID.upper()}, {**header, "delivery_id": "d1"},
+            {**header, "event": "started"}, {**header, "event": None}, {**header, "fields": None},
+            {**header, "fields": missing}, {**header, "fields": notice_fields(extra=1)},
+            {**header, "fields": notice_fields(request_id=DELIVERY_ID)},
+            {**header, "fields": notice_fields(seq=0)}, {**header, "fields": notice_fields(seq=True)},
+            {**header, "fields": notice_fields(title="")}, {**header, "fields": notice_fields(title="t" * 201)},
+            {**header, "fields": notice_fields(origin="owner")}, {**header, "fields": notice_fields(state="DONE")},
+            {**header, "fields": notice_fields(excerpt="x" * 1001)}, {**header, "fields": notice_fields(hint=3)})
+
+    def test_task_status_names_one_to_64_distinct_task_ids_and_a_detail_flag(self):
+        many = [str(__import__("uuid").uuid4()) for _ in range(64)]
+        header = {"v": 1, "type": "task_status", "id": "t", "task_ids": [TASK_ID], "detail": True}
+        message = self.parse(header)
+        self.assertIs(message.type, ClientType.TASK_STATUS)
+        self.assertEqual(message.fields, {"task_ids": [TASK_ID], "detail": True})
+        self.assertEqual(self.parse({"v": 1, "type": "task_status", "id": "t", "task_ids": many}).fields,
+                         {"task_ids": many, "detail": False})
+        self.assert_invalid({**header, "task_ids": []}, {**header, "task_ids": many + [TASK_ID]},
+                            {**header, "task_ids": [TASK_ID, TASK_ID]}, {**header, "task_ids": TASK_ID},
+                            {**header, "task_ids": ["t1"]}, {**header, "task_ids": None},
+                            {**header, "detail": "yes"}, {**header, "detail": 1})
+
+    def test_cancel_task_names_the_task_the_request_and_the_expected_state(self):
+        header = {"v": 1, "type": "cancel_task", "id": "c", "task_id": TASK_ID, "request_id": REQUEST_ID,
+                  "expect": {"status": "running", "command_id": COMMAND_ID}, "reason": "owner cancelled"}
+        message = self.parse(header)
+        self.assertIs(message.type, ClientType.CANCEL_TASK)
+        self.assertEqual(message.fields, {"task_id": TASK_ID, "request_id": REQUEST_ID,
+                                          "expect": {"status": "running", "command_id": COMMAND_ID},
+                                          "reason": "owner cancelled"})
+        for status in ui_v1.TASK_STATUSES:
+            self.assertEqual(self.parse({**header, "expect": {"status": status, "command_id": None}})
+                             .fields["expect"], {"status": status, "command_id": None})
+        self.assertIsNone(self.parse({**header, "reason": None}).fields["reason"])
+        self.assert_invalid({**header, "task_id": "t"}, {**header, "request_id": None},
+                            {**header, "expect": None}, {**header, "expect": {"status": "running"}},
+                            {**header, "expect": {"status": "gone", "command_id": None}},
+                            {**header, "expect": {"status": "running", "command_id": "c1"}},
+                            {**header, "expect": {"status": "running", "command_id": None, "x": 1}},
+                            {**header, "reason": "r" * 1001}, {**header, "reason": 5})
+
+    def test_the_three_requests_are_documented_as_hub_only_non_attached_additions(self):
+        self.assertEqual((ui_v1.VERSION, ui_v1.SUPPORTED_VERSIONS), (1, (1,)))
+        doc = " ".join(ui_v1.__doc__.split())
+        start = doc.index("Hub requests (Task Inbox")
+        section = doc[start:doc.index("Automation state (CW-18 U3", start)]
+        for phrase in ("``inbox_notice``", "``task_status``", "``cancel_task``",
+                       ":data:`NON_ATTACHED_CONTROL_CLIENTS`", "``not_attached``", "``unsupported_type``",
+                       "attach slot", "64"):
+            self.assertIn(phrase, section)
 
 
 class DisplayTests(unittest.TestCase):

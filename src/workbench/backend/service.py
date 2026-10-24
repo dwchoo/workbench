@@ -910,6 +910,7 @@ class Backend:
 
     # -- ui_v1 controller ------------------------------------------------
     def snapshot(self) -> dict[str, Any]:
+        task = self.flow.task_view() if self.flow else None
         return {"contract": {"name": ui_v1.CONTRACT_NAME, "version": ui_v1.VERSION},
                 "backend": {"pid": os.getpid(), "process": ref_dict(self.ref), "session_id": os.getsid(0),
                             "data_dir": str(self.layout.root), "project_dir": self.project_dir,
@@ -920,10 +921,9 @@ class Backend:
                 "phase": self.phase, "reason": self.reason,
                 "attached": self.ui is not None and self.ui.attached is not None,
                 "focus": self.focus.value,
-                "panes": {pane_id.value: self._pane_info(pane, host=pane_id is PaneId.HOST_SHELL)
-                          for pane_id, pane in self.panes.items()},
+                "panes": self._panes_view(task),
                 "bridge": self.bridge_state(), "automation": (automation := self._automation_view()),
-                "task": (task := self.flow.task_view() if self.flow else None),
+                "task": task,
                 "worker": self.flow.worker_view() if self.flow else {"state": "idle", "task_id": None},
                 "usage": self._usage_view(task, automation),
                 "omp_isolation": self.omp_isolation,
@@ -1240,6 +1240,14 @@ class Backend:
             return None
         return {**status, "text": text}
 
+    def _panes_view(self, task: dict[str, Any] | None) -> dict[str, Any]:
+        """Every pane's ui_v1 info; the host shell also names the running Workbench command (``command``, CS-O10)."""
+        panes = {pane_id.value: self._pane_info(pane, host=pane_id is PaneId.HOST_SHELL)
+                 for pane_id, pane in self.panes.items()}
+        if PaneId.HOST_SHELL.value in panes:
+            panes[PaneId.HOST_SHELL.value]["command"] = self._host_command_view(task)
+        return panes
+
     def _pane_info(self, pane: Any, *, host: bool) -> dict[str, Any]:
         """A pane's ui_v1 info; the host shell also says who operates it (``operated_by``, smoke-01 P2)."""
         info = dict(pane.info())
@@ -1249,21 +1257,17 @@ class Backend:
                 info["operated_by"] = terminal.host_operator() if terminal is not None else None
             except Exception:
                 info["operated_by"] = None
-            info["command"] = self._host_command_view()
         return info
 
-    def _host_command_view(self) -> dict[str, Any] | None:
-        """The Workbench command running in the host terminal (the Worker's, else the Manager's experiment), with or
-        without a Task, as ``{command_id, owner, label, state}``; None when none runs (the UI's stop key, CS-O10)."""
-        sources = (getattr(self, "terminal", None), getattr(self, "flow", None))
-        for source in sources:
-            try:
-                found = source.running_host_command() if source is not None else None
-            except Exception:
-                found = None
-            if found is not None:
-                return found
-        return None
+    def _host_command_view(self, task: dict[str, Any] | None) -> dict[str, Any] | None:
+        """The Workbench command running in the host terminal (the Worker's, else the Manager's experiment command from
+        the Task view), with or without a Task, as ``{command_id, owner, label, state}``; None when none runs (the UI's
+        stop key, CS-O10)."""
+        try:
+            found = self.terminal.running_host_command() if getattr(self, "terminal", None) is not None else None
+        except Exception:
+            found = None
+        return found if found is not None else experiment_host_command(task)
 
     @staticmethod
     def _state_view(snapshot: dict[str, Any]) -> dict[str, Any]:
@@ -2356,6 +2360,19 @@ class Backend:
                                                            "run_id")},
                 "classification": startup.get("classification"), "run": startup.get("run"), "survivors": survivors,
                 "outbox_not_sent": startup.get("outbox_lost_count", 0), "instruction": BACKEND_RESTARTED_HINT}
+
+
+def experiment_host_command(task: dict[str, Any] | None) -> dict[str, Any] | None:
+    """The running experiment command (owner ``manager``) of a Task view as the UI's ``host_shell.command``, else None.
+
+    Read from ``host_commands`` (CS-08/09) so the flow needs no second accessor; the host terminal holds at most one.
+    """
+    commands = task.get("host_commands") if isinstance(task, dict) else None
+    for item in commands if isinstance(commands, list) else ():
+        if isinstance(item, dict) and item.get("kind") == "experiment" and isinstance(item.get("command_id"), str):
+            return {"command_id": item["command_id"], "owner": "manager",
+                    "label": f"experiment {item['command_id'][:8]}", "state": item.get("state") or "running"}
+    return None
 
 
 def _with_home_problems(result: dict[str, Any], problems: list[str]) -> dict[str, Any]:

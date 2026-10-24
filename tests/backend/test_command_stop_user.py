@@ -20,6 +20,7 @@ from unittest import mock
 from uuid import uuid4
 
 from workbench.backend.client import UiClient
+from workbench.backend.service import experiment_host_command
 from command_stop_support import alive, pids_running
 from test_experiment_command_stop import ExperimentStopFixture
 from test_task_flow import wait_until
@@ -176,25 +177,31 @@ class HostCommandSnapshotTests(BackendStopFixture):
         self.assertLessEqual(len(label), 130)
         self.backend.stop_command(started["command_id"])
 
-    def test_a_running_experiment_command_is_exposed_as_the_managers(self):
-        found = {"command_id": str(uuid4()), "owner": "manager", "label": "experiment abcd1234", "state": "running"}
-        with mock.patch.object(self.backend.flow, "running_host_command", return_value=found):
-            self.assertEqual(self.host_command(), found)
-
 
 class UserStopsAnExperimentTests(ExperimentStopFixture):
     """Behavior 4: the Manager's experiment command is listed for the stop key and a user stop closes the run as
     ``stopped`` (``stopped_by: user``), without a judgment."""
 
+    def test_a_cancelling_experiment_still_names_its_command_and_a_task_without_commands_none(self):
+        self.assertIsNone(experiment_host_command(None))
+        self.assertIsNone(experiment_host_command({"host_commands": "garbage"}))
+        self.assertIsNone(experiment_host_command({"host_commands": [{"kind": "terminal", "command_id": "x"}]}))
+        task_id, run_id = self.running_experiment()
+        cancel = self.to_worker({"kind": "experiment", "message": "not needed", "task_id": task_id, "cancel": True})
+        self.assertEqual(cancel["status"], "cancel_requested", cancel)
+        self.assertEqual(experiment_host_command(self.view())["command_id"], run_id, "the command still runs")
+        self.stop_service.stop("user", run_id, reason="user stop")
+        self.assertTrue(wait_until(lambda: self.view()["status"] == "closed", 30), self.view())
+
     def test_the_running_experiment_is_the_current_host_command_until_it_ends(self):
-        self.assertIsNone(self.flow.running_host_command())
+        self.assertIsNone(experiment_host_command(self.view()))
         _task_id, run_id = self.running_experiment()
-        found = self.flow.running_host_command()
+        found = experiment_host_command(self.view())
         self.assertEqual(found, {"command_id": run_id, "owner": "manager", "label": f"experiment {run_id[:8]}",
                                  "state": "running"})
         stopped = self.stop_service.stop("user", run_id, reason="user stop")
         self.assertEqual((stopped["status"], stopped["requested_by"]), ("exited", "user"), stopped)
-        self.assertTrue(wait_until(lambda: self.flow.running_host_command() is None, 30))
+        self.assertTrue(wait_until(lambda: experiment_host_command(self.view()) is None, 30))
         self.assertTrue(wait_until(lambda: self.view()["status"] == "finished", 30), self.view())  # the run closes
 
     def test_a_user_stop_closes_the_run_as_stopped_by_the_user_without_analysis(self):

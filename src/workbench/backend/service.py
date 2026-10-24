@@ -227,6 +227,7 @@ class Backend:
         self.pause_journal: PauseJournal | None = None
         self.lifecycle_journal: LifecycleJournal | None = None
         self.ui: UiServer | None = None
+        self.inbox_link: Any = None  # Task Inbox (TI-09): workbench.backend.inbox_link.InboxLink once _open ran
         self._lock = InstanceLock(layout.lock)
         self._stop_signal: int | None = None
         self._shutdown_token: tuple[str, float] | None = None
@@ -589,6 +590,20 @@ class Backend:
         self._isolation_thread = threading.Thread(target=self._run_isolation_check, args=(checks,),
                                                   name="omp-isolation-check", daemon=True)
         self._isolation_thread.start()
+        self._start_inbox_link()
+
+    def _start_inbox_link(self) -> None:
+        """Task Inbox (TI-09): this backend's hub_v1 link (backend principal), after ``backend.json`` names this
+        process. It never starts a Hub; with no Hub it only retries every 5 s and core work is unaffected."""
+        if self.project_id is None:
+            return
+        from workbench.backend.inbox_link import InboxLink
+        try:
+            self.inbox_link = InboxLink(self.project_id, environment=self.environment)
+            self.inbox_link.start()
+        except Exception as exc:  # the inbox is optional; the backend runs without it
+            self.inbox_link = None
+            _log(f"inbox link not started: {type(exc).__name__}: {exc}")
 
     def _run_isolation_check(self, checks: dict[str, tuple[list[str], dict[str, str], tuple[str, ...]]],
                              *, recheck: bool = False) -> None:
@@ -748,6 +763,11 @@ class Backend:
 
     def _close(self) -> dict[str, Any]:
         self.hold.set(SHUTDOWN_HOLD)  # CW-19: nothing automatic starts from here
+        if self.inbox_link is not None:
+            try:
+                self.inbox_link.close()
+            except Exception as exc:
+                _log(f"inbox link close failed: {type(exc).__name__}: {exc}")
         if self.ui is not None:
             # CW-16 O4 (C-AC-22): the confirm's answer was only queued; send it now, not after the whole close.
             self.ui.flush(SHUTDOWN_ANSWER_FLUSH)

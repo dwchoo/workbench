@@ -155,7 +155,8 @@ def reject(reason: Reason) -> dict[str, Any]:
     return {"v": VERSION, "type": ServerType.REJECT.value, "reason": reason.value}
 
 
-def request(request_id: str, op: str, **fields: Any) -> dict[str, Any]:
+def request(request_id: str, op: str, /, **fields: Any) -> dict[str, Any]:
+    """``request_id`` is the frame ``id`` (positional: inbox ops carry a ``request_id`` field)."""
     return {"v": VERSION, "id": request_id, "type": op, **fields}
 
 

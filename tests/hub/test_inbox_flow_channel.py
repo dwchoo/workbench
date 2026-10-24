@@ -108,5 +108,42 @@ class TaskStatusTests(ChannelCase):
             self.assertEqual((answer['ok'], answer.get('reason')), (False, 'unsupported_type'), answer)
 
 
+class BackendLinkTests(ChannelCase):
+    """TI-T04 with a real backend: its ``inbox_link`` gets the backend principal; nothing else does."""
+
+    def grants(self, project_id: str) -> list[tuple[int, int]]:
+        """(pid, start ticks) of each backend principal the Hub granted for ``project_id`` (``hub.log``)."""
+        log = self.box.hub_state / 'hub.log'
+        found = []
+        for line in (log.read_text().splitlines() if log.exists() else ()):
+            prefix = f'[workbench] backend principal: project {project_id} pid '
+            if line.startswith(prefix):
+                pid, _, ticks = line[len(prefix):].split()
+                found.append((int(pid), int(ticks)))
+        return found
+
+    def test_the_backend_links_to_a_hub_started_later_and_again_after_a_hub_restart(self):
+        root, project_id = self.box.project('alpha')
+        self.box.register(self.box.entry(root, project_id))
+        pid, ticks = self.box.power_on(root, project_id)  # no Hub: the backend starts and is ready all the same
+        self.assertEqual(self.box.status(root)['phase'], 'ready')
+        self.box.start_hub()
+        self.assertTrue(wait_until(lambda: self.grants(project_id), 15), 'the backend did not link to the Hub')
+        self.assertEqual(self.grants(project_id), [(pid, ticks)])
+        # the test process is not that backend: the same hello is refused
+        from test_hub_protocol import Line
+        line = Line(json.loads((self.box.hub_state / 'hub.json').read_text())['socket'])
+        self.addCleanup(line.close)
+        line.send({'v': 1, 'type': 'hello', 'client': 'workbench-backend', 'project_id': project_id})
+        self.assertEqual(line.recv(), {'v': 1, 'type': 'reject', 'reason': 'principal_mismatch'})
+        # the Hub goes away and comes back: the backend keeps running and links again
+        done = self.box.wb('hub', 'stop', '--yes', timeout=60)
+        self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+        self.assertEqual(self.box.status(root)['backend']['pid'], pid)
+        self.box.start_hub()
+        self.assertTrue(wait_until(lambda: len(self.grants(project_id)) >= 2, 15), self.grants(project_id))
+        self.assertEqual(set(self.grants(project_id)), {(pid, ticks)})
+
+
 if __name__ == '__main__':
     unittest.main()

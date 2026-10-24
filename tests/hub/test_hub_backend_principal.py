@@ -13,6 +13,7 @@ import json
 import os
 from pathlib import Path
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -387,6 +388,112 @@ class InboxReadTests(BackendPrincipalCase):
         self.assertEqual((bad['ok'], bad['reason']), (False, 'invalid_input'), bad)
         bad = peer.request('b2', 'inbox_list', limit=0)
         self.assertEqual((bad['ok'], bad['reason']), (False, 'invalid_input'), bad)
+
+
+class InboxLinkResultTests(BackendPrincipalCase):
+    """``workbench.backend.inbox_link.InboxLink`` run inside the fake backend peer: ok / rejected / unavailable /
+    unknown are told apart (SPEC "Manager 도구" result classes)."""
+
+    def link(self, peer: Peer, call: str, timeout: float = 5.0, **fields) -> dict:
+        return peer.ask(op='link', call=call, fields=fields, timeout=timeout)
+
+    def test_without_a_hub_a_call_is_unavailable(self):
+        root, project_id = self.box.project('alpha')
+        self.box.register(root, project_id)
+        peer = self.box.peer(root)
+        answer = self.link(peer, 'inbox_list')
+        self.assertEqual(answer['status'], 'unavailable', answer)
+
+    def test_answers_are_ok_or_rejected_and_a_refused_principal_is_unavailable(self):
+        root, project_id = self.box.project('alpha')
+        other, _other_id = self.box.project('beta')
+        self.box.register(root, project_id)
+        self.box.start_hub()
+        peer = self.box.peer(root)
+        listed = self.link(peer, 'inbox_list')
+        self.assertEqual((listed['status'], listed['value'].get('requests')), ('ok', []), listed)
+        missing = self.link(peer, 'inbox_show', request_id=str(uuid.uuid4()))
+        self.assertEqual((missing['status'], missing['reason']), ('rejected', 'not_found'), missing)
+        stranger = self.box.peer(other)  # beta is not registered: the Hub refuses its principal
+        refused = self.link(stranger, 'inbox_list')
+        self.assertEqual((refused['status'], refused['reason']), ('unavailable', 'principal_mismatch'), refused)
+
+    def test_a_sent_request_without_an_answer_is_unknown(self):
+        root, project_id = self.box.project('alpha')
+        self.box.register(root, project_id)
+        hub = self.box.start_hub()
+        peer = self.box.peer(root)
+        self.assertEqual(self.link(peer, 'inbox_list', timeout=1.0)['status'], 'ok')
+        os.kill(hub.pid, signal.SIGSTOP)  # our own Hub; the sandbox cleanup continues it before ending it
+        try:
+            answer = self.link(peer, 'inbox_list', timeout=1.0)
+        finally:
+            os.kill(hub.pid, signal.SIGCONT)
+        self.assertEqual(answer['status'], 'unknown', answer)
+
+
+CONTRACT_BACKEND =Path(__file__).resolve().parent / 'fixtures' / 'contract_backend.py'
+TASK_ID = '2c5e8a1f-7b3d-4c9e-8f60-1a2b3c4d5e6f'
+
+
+class BackendPortTests(BackendPrincipalCase):
+    """The Hub's ui_v1 helper (``workbench.hub.inbox.backend_port``) against a contract backend fixture."""
+
+    def contract_backend(self, root: Path, replies: dict | None = None) -> subprocess.Popen:
+        frames = self.box.base / f'frames-{root.name}.jsonl'
+        process = self.box.popen([sys.executable, str(CONTRACT_BACKEND), str(root), '--frames-log', str(frames),
+                                  '--replies-json', json.dumps(replies or {})])
+        self.assertEqual(process.stdout.readline().strip(), 'ready')
+        return process
+
+    def frames(self, root: Path) -> list[dict]:
+        path = self.box.base / f'frames-{root.name}.jsonl'
+        return [json.loads(line) for line in path.read_text().splitlines()] if path.exists() else []
+
+    def environment(self):
+        """The helper runs in this test process: point its environment at the sandbox (restored afterwards)."""
+        saved = {key: os.environ.get(key) for key in self.box.env}
+        os.environ.update(self.box.env)
+
+        def restore():
+            for key, value in saved.items():
+                if value is None:
+                    os.environ.pop(key, None)
+                else:
+                    os.environ[key] = value
+        self.addCleanup(restore)
+
+    def test_a_running_backend_answers_through_a_verified_hub_connection(self):
+        from workbench.hub.inbox import backend_port
+        root, _project_id = self.box.project('alpha')
+        self.environment()
+        process = self.contract_backend(root, {'task_status': {'tasks': [{'task_id': TASK_ID, 'exists': False}]}})
+        tasks = backend_port.task_status(root, [TASK_ID], detail=True)
+        self.assertEqual(tasks, [{'task_id': TASK_ID, 'exists': False}])
+        hello, request = [item['header'] for item in self.frames(root)]
+        self.assertEqual((hello['type'], hello['client']), ('hello', 'workbench-hub'))
+        self.assertEqual((request['type'], request['task_ids'], request['detail']), ('task_status', [TASK_ID], True))
+        self.assertIsNone(process.poll())
+
+    def test_an_older_backend_is_backend_too_old(self):
+        from workbench.hub.inbox import backend_port
+        self.environment()
+        for reason in ('unsupported_type', 'not_attached'):
+            with self.subTest(reason=reason):
+                root, _project_id = self.box.project(reason)
+                self.contract_backend(root, {'task_status': {'ok': False, 'reason': reason}})
+                with self.assertRaises(backend_port.BackendPortError) as raised:
+                    backend_port.task_status(root, [TASK_ID])
+                self.assertEqual(raised.exception.reason, 'backend_too_old')
+
+    def test_a_stopped_project_is_backend_not_running_and_nothing_is_contacted(self):
+        from workbench.hub.inbox import backend_port
+        root, _project_id = self.box.project('alpha')
+        self.environment()
+        with self.assertRaises(backend_port.BackendPortError) as raised:
+            backend_port.task_status(root, [TASK_ID])
+        self.assertEqual(raised.exception.reason, 'backend_not_running')
+        self.assertEqual(self.frames(root), [])
 
 
 if __name__ == '__main__':

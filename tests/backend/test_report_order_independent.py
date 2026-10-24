@@ -110,7 +110,10 @@ class OrderFixture(FlowFixture):
             super().setUp()
         self.holds = Holds()
         self.mailbox.defer_if = self.holds
-        self.addCleanup(self.holds.release)  # a lane held on a failing test must not outlive it
+
+    def tearDown(self):
+        self.holds.release()  # a report held back on a failing test must not keep the lane open
+        super().tearDown()
 
     def queued(self, kind, message="m", **extra):
         result = self.to_manager({"kind": kind, "message": message, **extra})

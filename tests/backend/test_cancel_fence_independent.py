@@ -100,7 +100,10 @@ class FenceFixture(FlowFixture):
     def setUp(self):
         with mock.patch.object(test_task_flow, "FakeMailbox", NoticeMailbox):
             super().setUp()
-        self.addCleanup(self.mailbox.gate.set)
+
+    def tearDown(self):
+        self.mailbox.gate.set()  # a lane held in a notice attempt must end before the flow closes
+        super().tearDown()
 
     def cancel_work(self, mode, message="the user changed plans"):
         self.mailbox.mode = mode
@@ -203,20 +206,23 @@ class ArmedUntilTheNoticeReachesTheWorkerTests(FenceFixture):
                         if found is not None:
                             refusals.append((found, self.fence_of(found)))
                         time.sleep(0.0005)
-                threads = [threading.Thread(target=hammer) for _ in range(3)]
+                threads = [threading.Thread(target=hammer, daemon=True) for _ in range(3)]
                 for thread in threads:
                     thread.start()
-                self.to_worker({"kind": "work", "message": "stop", "cancel": True, "task_id": work["task_id"]})
-                self.assertTrue(self.mailbox.entered.wait(10))
-                self.mailbox.mode = "ok"
-                self.mailbox.gate.set()
-                self.assertTrue(wait_until(lambda: any(
-                    m.task_id == work["task_id"] and m.message_id in self.mailbox.delivered
-                    for m in self.mailbox.cancel_notices()), 10), "this round's notice was delivered")
-                time.sleep(0.05)
-                stop.set()
-                for thread in threads:
-                    thread.join(5)
+                try:
+                    self.to_worker({"kind": "work", "message": "stop", "cancel": True, "task_id": work["task_id"]})
+                    self.assertTrue(self.mailbox.entered.wait(10))
+                    self.mailbox.mode = "ok"
+                    self.mailbox.gate.set()
+                    self.assertTrue(wait_until(lambda: any(
+                        m.task_id == work["task_id"] and m.message_id in self.mailbox.delivered
+                        for m in self.mailbox.cancel_notices()), 10), "this round's notice was delivered")
+                    time.sleep(0.05)
+                finally:  # the hammering threads never outlive a failing round
+                    stop.set()
+                    for thread in threads:
+                        thread.join(5)
+                    self.mailbox.gate.set()
                 self.assertLessEqual(len(refusals), 1, f"refused more than once: {refusals}")
                 self.assertIsNone(self.flow.take_cancel_fence())
                 # a Task that is not the newest never fences: the next round's Task replaces this one

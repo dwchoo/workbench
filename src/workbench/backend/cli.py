@@ -22,7 +22,7 @@ import select
 import shlex
 import sys
 import time
-from typing import Mapping
+from typing import Mapping, NamedTuple
 
 from workbench.backend.client import ClientError, NotRunning, UiClient, run_attach
 from workbench.backend.launcher import ISOLATION_CHECK_TIMEOUT, LaunchPlan, StartRequirementError, build_plan
@@ -1028,6 +1028,59 @@ def _backend_state(ref: object, wait: float) -> str:
         time.sleep(0.1)
 
 
+class ShutdownWait(NamedTuple):
+    """``confirm_shutdown``: the confirm's refusal (the ``ok: false`` reply), or the ``closing``
+    frame's ``result`` (None when none came) and why none came (``lost``)."""
+    refused: dict | None
+    result: dict | None
+    lost: str | None
+
+
+def confirm_shutdown(client: UiClient, token: str, *, progress=None) -> ShutdownWait:
+    """Send ``shutdown_confirm`` and wait for the backend's ``closing`` result until its own
+    ``result_deadline`` (``SHUTDOWN_RESULT_WAIT`` for an older backend). Shared by ``wb shutdown``
+    and ``workbench.hub.projects.power_off``. A lost connection, a timeout or Ctrl-C while
+    waiting leaves ``result`` None (never a success, C-AC-22). ``progress`` (a text stream, or
+    None for none) gets the human progress lines."""
+    wait = SHUTDOWN_RESULT_WAIT
+    lost: str | None = None
+    try:
+        try:
+            confirmed = client.request(ClientType.SHUTDOWN_CONFIRM, token=token)
+        except TimeoutError:  # an older backend answers only when its close ends: keep waiting for the result
+            confirmed = {"ok": True}
+        except (OSError, ClientError) as exc:
+            confirmed = {"ok": True}
+            lost = f"{type(exc).__name__}: {exc}"
+        if not confirmed.get("ok"):
+            return ShutdownWait(confirmed, None, None)
+        bound = confirmed.get("result_deadline")
+        if type(bound) in (int, float) and bound > 0:
+            wait = float(bound)
+        started = time.monotonic()
+        deadline, next_progress = started + wait, started + SHUTDOWN_PROGRESS_EVERY
+        if progress is not None and client.closing is None and lost is None:
+            print(f"종료 중: 진행 중인 OMP turn 중단과 process 정리를 기다립니다 (최대 {wait:.0f}초)",
+                  file=progress)
+        while client.closing is None and lost is None:
+            now = time.monotonic()
+            if now >= deadline:
+                lost = f"no result within {wait:.0f} s"
+                break
+            if progress is not None and now >= next_progress:
+                print(f"종료 중… {now - started:.0f}초 경과", file=progress)
+                next_progress = now + SHUTDOWN_PROGRESS_EVERY
+            try:
+                if not client.pump(min(0.2, deadline - now)):
+                    lost = "the backend closed the connection before its result"
+            except (OSError, ClientError) as exc:
+                lost = f"{type(exc).__name__}: {exc}"
+    except KeyboardInterrupt:  # fix-05 (C17 P3-2): the wait ended by the user; the stop was requested, not confirmed
+        lost = "interrupted (Ctrl-C) while waiting for the result"
+    result = (client.closing or {}).get("result")
+    return ShutdownWait(None, result if isinstance(result, dict) else None, lost)
+
+
 def cmd_shutdown(args: argparse.Namespace) -> int:
     """C-AC-22: show the active work, confirm, then wait for the backend's own result; a result that is not
     verified, or none at all, is never shown as success, and no failure ends in a traceback (CW-16 O4)."""
@@ -1040,8 +1093,6 @@ def cmd_shutdown(args: argparse.Namespace) -> int:
     except (OSError, ClientError) as exc:
         print(f"backend did not answer: {type(exc).__name__}: {exc}", file=sys.stderr)
         return EXIT_FAILURE
-    result: dict | None = None
-    lost: str | None = None
     backend_ref: object = None
     with client:
         try:
@@ -1080,42 +1131,10 @@ def cmd_shutdown(args: argparse.Namespace) -> int:
             if answer.strip().lower() != "y":
                 print("cancelled")
                 return EXIT_FAILURE
-        wait = SHUTDOWN_RESULT_WAIT
-        try:
-            try:
-                confirmed = client.request(ClientType.SHUTDOWN_CONFIRM, token=pending["token"])
-            except TimeoutError:  # an older backend answers only when its close ends: keep waiting for the result
-                confirmed = {"ok": True}
-            except (OSError, ClientError) as exc:
-                confirmed = {"ok": True}
-                lost = f"{type(exc).__name__}: {exc}"
-            if not confirmed.get("ok"):
-                print(f"shutdown refused: {confirmed.get('reason')}: {confirmed.get('detail')}", file=sys.stderr)
-                return EXIT_FAILURE
-            bound = confirmed.get("result_deadline")
-            if type(bound) in (int, float) and bound > 0:
-                wait = float(bound)
-            started = time.monotonic()
-            deadline, next_progress = started + wait, started + SHUTDOWN_PROGRESS_EVERY
-            if not args.json and client.closing is None and lost is None:
-                print(f"종료 중: 진행 중인 OMP turn 중단과 process 정리를 기다립니다 (최대 {wait:.0f}초)",
-                      file=sys.stderr)
-            while client.closing is None and lost is None:
-                now = time.monotonic()
-                if now >= deadline:
-                    lost = f"no result within {wait:.0f} s"
-                    break
-                if not args.json and now >= next_progress:
-                    print(f"종료 중… {now - started:.0f}초 경과", file=sys.stderr)
-                    next_progress = now + SHUTDOWN_PROGRESS_EVERY
-                try:
-                    if not client.pump(min(0.2, deadline - now)):
-                        lost = "the backend closed the connection before its result"
-                except (OSError, ClientError) as exc:
-                    lost = f"{type(exc).__name__}: {exc}"
-        except KeyboardInterrupt:  # fix-05 (C17 P3-2): the wait ended by the user; the stop was requested, not confirmed
-            lost = "interrupted (Ctrl-C) while waiting for the result"
-        result = (client.closing or {}).get("result")
+        refused, result, lost = confirm_shutdown(client, pending["token"], progress=None if args.json else sys.stderr)
+        if refused is not None:
+            print(f"shutdown refused: {refused.get('reason')}: {refused.get('detail')}", file=sys.stderr)
+            return EXIT_FAILURE
     if not isinstance(result, dict):
         result = None
     if result is None:

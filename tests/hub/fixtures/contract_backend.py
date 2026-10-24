@@ -13,6 +13,11 @@ frame (connection numbers start at 1, so the count of connections is the largest
 ``--closing-on-snapshot REASON`` answers ``snapshot`` with a ``closing`` frame of that reason
 and closes the connection.
 
+HB-07 options: ``--replies-json`` maps a request type to fields laid over its ``result`` reply
+(``{"pause": {"ok": false, "reason": "not_attached"}}``: an older backend),
+``--close-after TYPE`` ends the connection right after answering a request of that type, first
+sending ``--closing-json`` (a ``closing`` frame header, ``null`` for none: the connection just ends).
+
 Environment (``PYTHONPATH`` to ``src``, ``XDG_RUNTIME_DIR``) comes from the test, so the
 runtime root matches the one ``wb`` computes for the same project.
 Not a real backend: it starts no OMP and writes no other state.
@@ -41,6 +46,9 @@ def main() -> None:
     parser.add_argument('--snapshot-delay', type=float, default=0.0)
     parser.add_argument('--frames-log')
     parser.add_argument('--closing-on-snapshot')
+    parser.add_argument('--replies-json', default='{}')
+    parser.add_argument('--close-after')
+    parser.add_argument('--closing-json', default='null')
     args = parser.parse_args()
     context = resolve_project_context(Path(args.project_dir), dict(os.environ))
     data, runtime = context.data_root, context.runtime_root
@@ -61,6 +69,7 @@ def main() -> None:
                 'panes': {}, 'omp_isolation': {'state': 'ok'}, 'attached': False}
     snapshot.update(json.loads(args.snapshot_json))
     snapshot['backend'].update(json.loads(args.backend_json))
+    replies, closing = json.loads(args.replies_json), json.loads(args.closing_json)
     log_lock = threading.Lock()
 
     def record_frame(number: int, header: dict) -> None:
@@ -87,7 +96,12 @@ def main() -> None:
                         reply = {'v': 1, 'type': 'result', 'id': frame.header['id'], 'ok': True}
                         if kind in ('snapshot', 'attach'):
                             reply['snapshot'] = snapshot
+                        reply.update(replies.get(kind) or {})
                     connection.sendall(encode_frame(reply))
+                    if kind == args.close_after:
+                        if closing is not None:
+                            connection.sendall(encode_frame(closing))
+                        return
 
     with socket.socket(socket.AF_UNIX) as server:
         server.bind(record['ui_socket'])

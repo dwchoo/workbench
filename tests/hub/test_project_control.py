@@ -251,6 +251,67 @@ class ProjectSandbox:
                 found[pid] = ticks
         return found
 
+    # -- attached UI and host shell -----------------------------------------------------------
+    def attach(self, root: Path):
+        """An attached UI client (the user's screen) on the verified backend socket."""
+        from workbench.backend.client import UiClient
+        pid, ticks, record = self.backend_ref(root)
+        client = UiClient(Path(record['ui_socket']), name='hb07-ui', timeout=10,
+                          expected_process={'pid': pid, 'start_ticks': ticks})
+        self.case.addCleanup(client.close)
+        client.attach((30, 120))
+        return client
+
+    def type_shell(self, client, text: str) -> None:
+        from workbench.contracts.ui_v1 import ClientType
+        answer = client.request(ClientType.INPUT, text.encode(), pane='host_shell')
+        self.case.assertTrue(answer.get('ok'), answer)
+
+    def sleeper(self, root: Path, seconds: int, timeout: float = 15) -> int:
+        """Start ``sleep SECONDS`` in the background of the host shell; its pid (from ``/proc``)."""
+        snapshot = self.status(root)
+        shell = snapshot['panes']['host_shell']['process']['pid']
+        found: list[int] = []
+
+        def started() -> bool:
+            for name in os.listdir('/proc'):
+                if not name.isdigit():
+                    continue
+                try:
+                    argv = Path(f'/proc/{name}/cmdline').read_bytes().split(b'\0')
+                except OSError:
+                    continue
+                if argv[:2] == [b'sleep', str(seconds).encode()] and self.descends(int(name), shell):
+                    found.append(int(name))
+                    return True
+            return False
+
+        client = self.attach_client
+        self.type_shell(client, f'sleep {seconds} &\n')
+        client.pump(0.2)
+        self.case.assertTrue(wait_until(started, timeout), f'sleep {seconds} not seen under shell {shell}')
+        return found[0]
+
+    @staticmethod
+    def descends(pid: int, ancestor: int) -> bool:
+        for _ in range(64):
+            if pid == ancestor:
+                return True
+            if pid <= 1:
+                return False
+            fields = stat_fields(pid)
+            if fields is None:
+                return False
+            pid = int(fields[1])
+        return False
+
+    def pane_processes(self, snapshot: dict) -> dict[str, tuple[int, int]]:
+        return {name: (pane['process']['pid'], pane['process']['start_ticks'])
+                for name, pane in snapshot['panes'].items() if pane.get('process')}
+
+    def asks(self, path: Path) -> list[dict]:
+        return [json.loads(line) for line in path.read_text().splitlines()] if path.exists() else []
+
     # -- cleanup -----------------------------------------------------------------------------
     def cleanup(self) -> None:
         for process in self.processes:
@@ -298,7 +359,7 @@ class ProjectControlCase(unittest.TestCase):
 
 
 class MismatchRefusalTests(ProjectControlCase):
-    """HB-AC-13: a ``mismatch`` entry is refused by ``power_on``/``power_off`` and nothing is started."""
+    """HB-AC-13: a ``mismatch`` entry is refused by every function and nothing is started or sent."""
 
     def test_mismatched_entries_are_refused_without_any_process_or_state(self):
         root, project_id = self.box.project('alpha')
@@ -310,7 +371,7 @@ class MismatchRefusalTests(ProjectControlCase):
                  (self.box.entry(broken, broken_id), 'marker_invalid'),
                  (self.box.entry(root, str(uuid.uuid4())), 'project_id_mismatch')]
         asks = self.box.base / 'asks.jsonl'
-        for op in ('power_on', 'power_off'):
+        for op in ('power_on', 'power_off', 'pause', 'resume', 'confirm_boot'):
             for entry, detail in cases:
                 with self.subTest(op=op, detail=detail):
                     before = {path: sorted(os.listdir(path / '.wb')) for path in (root, broken)}
@@ -376,6 +437,216 @@ class PowerOnTests(ProjectControlCase):
         self.assertTrue(alive(pid, ticks))
         snapshot = self.box.status(root)
         self.assertEqual((snapshot['phase'], snapshot['backend']['pid']), ('ready', pid))
+
+
+
+
+class HubEndTests(ProjectControlCase):
+    """HB-AC-02/03: a backend started by ``power_on`` does not depend on the Hub."""
+
+    def test_after_wb_hub_stop_the_backend_lives_and_a_new_hub_lists_it_on(self):
+        root, project_id = self.box.project('alpha')
+        self.box.register(self.box.entry(root, project_id))
+        pid, ticks = self.box.power_on(root, project_id)
+        hub_pid, hub_ticks = self.box.start_hub()
+        self.assertEqual(self.box.hub_row(root)['power'], 'on')
+        done = self.box.wb('hub', 'stop', timeout=60)
+        self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+        self.assertTrue(wait_until(lambda: not alive(hub_pid, hub_ticks), 15))
+        self.assertTrue(alive(pid, ticks))
+        new_pid, _new_ticks = self.box.start_hub()
+        self.assertNotEqual(new_pid, hub_pid)
+        row = self.box.hub_row(root)
+        self.assertEqual((row['power'], row['backend']), ('on', {'pid': pid, 'start_ticks': ticks}), row)
+
+    def test_after_the_hub_is_sigkilled_the_backend_and_panes_live_and_wb_status_is_ready(self):
+        root, project_id = self.box.project('alpha')
+        self.box.register(self.box.entry(root, project_id))
+        pid, ticks = self.box.power_on(root, project_id)
+        panes = self.box.pane_processes(self.box.status(root))
+        self.assertEqual(set(panes), {'manager_omp', 'worker_omp', 'host_shell'})
+        hub_pid, hub_ticks = self.box.start_hub()
+        self.assertTrue(kill_exact(hub_pid, hub_ticks))
+        self.assertTrue(wait_until(lambda: not alive(hub_pid, hub_ticks), 15))
+        time.sleep(1.0)  # anything tied to the Hub would end now
+        self.assertTrue(alive(pid, ticks))
+        self.assertTrue(all(alive(*ref) for ref in panes.values()), panes)
+        snapshot = self.box.status(root)
+        self.assertEqual((snapshot['phase'], snapshot['backend']['pid']), ('ready', pid))
+        self.assertEqual(self.box.pane_processes(snapshot), panes)
+
+
+class PowerOffTests(ProjectControlCase):
+    """HB-AC-09: ``power_off`` shows the active work, stops nothing unless confirmed, re-asks on change."""
+
+    def running(self, name: str = 'alpha') -> tuple[Path, str, int, int]:
+        root, project_id = self.box.project(name)
+        pid, ticks = self.box.power_on(root, project_id)
+        self.box.attach_client = self.box.attach(root)
+        return root, project_id, pid, ticks
+
+    def test_a_declined_power_off_shows_the_active_work_and_stops_nothing(self):
+        root, project_id, pid, ticks = self.running()
+        sleeper = self.box.sleeper(root, 300)
+        before = self.box.status(root)
+        panes = self.box.pane_processes(before)
+        asks = self.box.base / 'asks.jsonl'
+        outcome = self.box.drive('power_off', self.box.entry(root, project_id), answers=[False], asks=str(asks))
+        self.assertEqual((outcome['ok'], outcome['reason']), (False, 'declined'), outcome)
+        calls = self.box.asks(asks)
+        self.assertEqual([call['call'] for call in calls], [1])
+        jobs = [item for item in calls[0]['active'] if item.get('kind') == 'shell_jobs']
+        self.assertEqual(len(jobs), 1, calls[0]['active'])
+        self.assertIn(sleeper, [item.get('pid') for item in jobs[0]['processes']], jobs)
+        # the same list a shutdown_request answers now (the driver is gone; nothing changed)
+        from workbench.contracts.ui_v1 import ClientType
+        pending = self.box.attach_client.request(ClientType.SHUTDOWN_REQUEST)
+        self.assertEqual(calls[0]['active'], pending['active'])
+        after = self.box.status(root)
+        self.assertTrue(alive(pid, ticks))
+        self.assertEqual(self.box.pane_processes(after), panes)
+        self.assertTrue(all(alive(*ref) for ref in panes.values()))
+        self.assertTrue(alive(sleeper))
+        self.assertNotIn('shutdown_closing', [hold.get('reason') for hold in after.get('holds') or ()])
+        self.assertEqual(after['phase'], 'ready')
+
+    def test_a_confirmed_power_off_returns_the_verified_result_and_the_backend_ends(self):
+        root, project_id, pid, ticks = self.running()
+        panes = self.box.pane_processes(self.box.status(root))
+        asks = self.box.base / 'asks.jsonl'
+        outcome = self.box.drive('power_off', self.box.entry(root, project_id), answers=[True], asks=str(asks))
+        self.assertTrue(outcome['ok'], outcome)
+        self.assertIs(outcome['data']['result']['verified'], True, outcome)
+        self.assertEqual(len(self.box.asks(asks)), 1)
+        self.assertTrue(wait_until(lambda: not alive(pid, ticks), 15))
+        self.assertTrue(wait_until(lambda: not any(alive(*ref) for ref in panes.values()), 15), panes)
+        self.assertIsNone(self.box.status(root))
+        self.assertEqual(self.box.backends(), {})
+
+    def test_work_changed_before_the_confirm_is_refused_and_asked_again_with_the_new_list(self):
+        root, project_id, pid, ticks = self.running()
+        panes = self.box.pane_processes(self.box.status(root))
+        asks, gate, out = self.box.base / 'asks.jsonl', self.box.base / 'gate', self.box.base / 'out.txt'
+        driver, result = self.box.drive_async('power_off', self.box.entry(root, project_id), answers=[True, False],
+                                              asks=str(asks), gate=str(gate), out=str(out))
+        self.assertTrue(wait_until(lambda: len(self.box.asks(asks)) == 1, 60))
+        first = self.box.asks(asks)[0]['active']
+        sleeper = self.box.sleeper(root, 301)  # the user starts work after the list was shown
+        Path(f'{gate}.1').touch()
+        self.assertTrue(wait_until(lambda: len(self.box.asks(asks)) == 2, 60))
+        second = self.box.asks(asks)[1]['active']
+        self.assertNotIn(sleeper, [proc.get('pid') for item in first for proc in item.get('processes') or ()])
+        self.assertIn(sleeper, [proc.get('pid') for item in second for proc in item.get('processes') or ()], second)
+        Path(f'{gate}.2').touch()
+        self.assertEqual(driver.wait(timeout=60), 0)
+        outcome = json.loads(result.read_text())
+        self.assertEqual((outcome['ok'], outcome['reason']), (False, 'declined'), outcome)
+        self.assertIn('작업이 바뀌었습니다', out.read_text())
+        after = self.box.status(root)
+        self.assertTrue(alive(pid, ticks))
+        self.assertEqual(self.box.pane_processes(after), panes)
+        self.assertTrue(alive(sleeper))
+        self.assertNotIn('shutdown_closing', [hold.get('reason') for hold in after.get('holds') or ()])
+
+    def test_work_that_keeps_changing_ends_after_five_new_lists_and_stops_nothing(self):
+        root, project_id, pid, ticks = self.running()
+        asks, gate, out = self.box.base / 'asks.jsonl', self.box.base / 'gate', self.box.base / 'out.txt'
+        driver, result = self.box.drive_async('power_off', self.box.entry(root, project_id), answers=[True] * 10,
+                                              asks=str(asks), gate=str(gate), out=str(out))
+        for call in range(1, 7):  # the first list and five new ones (SPEC: 최대 5회)
+            self.assertTrue(wait_until(lambda: len(self.box.asks(asks)) == call or driver.poll() is not None, 60))
+            self.assertIsNone(driver.poll(), f'driver ended after {call - 1} asks')
+            self.box.sleeper(root, 400 + call)
+            Path(f'{gate}.{call}').touch()
+        self.assertEqual(driver.wait(timeout=60), 0)
+        self.assertEqual(len(self.box.asks(asks)), 6)
+        outcome = json.loads(result.read_text())
+        self.assertEqual((outcome['ok'], outcome['reason']), (False, 'work_kept_changing'), outcome)
+        self.assertIn('작업이 계속 바뀌어 끄지 않았습니다', out.read_text())
+        self.assertTrue(alive(pid, ticks))
+        self.assertEqual(self.box.status(root)['phase'], 'ready')
+
+
+
+class AutomationControlTests(ProjectControlCase):
+    """HB-T02 (real backend): ``pause``/``resume``/``confirm_boot`` without taking the attach slot."""
+
+    def test_pause_and_resume_keep_the_attached_ui_and_confirm_boot_passes_the_backend_reason_through(self):
+        root, project_id = self.box.project('alpha')
+        self.box.power_on(root, project_id)
+        client = self.box.attach(root)
+        entry = self.box.entry(root, project_id)
+        self.assertIs(self.box.status(root)['automation']['paused'], False)
+        outcome = self.box.drive('pause', entry)
+        self.assertTrue(outcome['ok'], outcome)
+        snapshot = self.box.status(root)
+        self.assertIs(snapshot['automation']['paused'], True)
+        self.assertIs(snapshot['attached'], True)
+        self.assertTrue(wait_until(lambda: client.pump(0.1) and any(
+            (state.get('automation') or {}).get('paused') is True for state in client.states), 10))
+        outcome = self.box.drive('resume', entry)
+        self.assertTrue(outcome['ok'], outcome)
+        snapshot = self.box.status(root)
+        self.assertIs(snapshot['automation']['paused'], False)
+        self.assertIs(snapshot['attached'], True)
+        self.assertIs(snapshot['boot']['confirmation_required'], False)
+        outcome = self.box.drive('confirm_boot', entry)
+        self.assertEqual((outcome['ok'], outcome['reason']), (False, 'boot_confirmation_not_required'), outcome)
+        # the attached UI still holds the attach slot: its own request is answered as attached
+        from workbench.contracts.ui_v1 import ClientType
+        self.assertTrue(client.request(ClientType.FOCUS, pane='host_shell').get('ok'))
+
+
+class FixtureBackendTests(ProjectControlCase):
+    """Backend answers a real backend does not give on demand (contract fixture backend, seam S4)."""
+
+    def fixture(self, name: str, **options) -> tuple[Path, str]:
+        root, project_id = self.box.project(name)
+        argv = [sys.executable, str(CONTRACT_BACKEND), str(root)]
+        for key, value in options.items():
+            argv += ['--' + key.replace('_', '-'), value if isinstance(value, str) else json.dumps(value)]
+        process = subprocess.Popen(argv, env=self.box.env, cwd=self.box.base, stdin=subprocess.DEVNULL,
+                                   stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True,
+                                   start_new_session=True)
+        self.box.processes.append(process)
+        self.assertEqual(process.stdout.readline().strip(), 'ready')
+        return root, project_id
+
+    PENDING = {'shutdown_request': {'token': 't-1', 'active': [], 'expires_in': 120}}
+
+    def test_an_unverified_shutdown_result_is_not_a_success(self):
+        result = {'verified': False, 'problems': ['host_shell survived']}
+        root, project_id = self.fixture('alpha', replies_json={**self.PENDING, 'shutdown_confirm': {
+            'shutting_down': True, 'result_deadline': 5}}, close_after='shutdown_confirm',
+            closing_json={'v': 1, 'type': 'closing', 'reason': 'backend_shutdown', 'result': result})
+        outcome = self.box.drive('power_off', self.box.entry(root, project_id), answers=[True])
+        self.assertEqual((outcome['ok'], outcome['reason'], outcome['detail']),
+                         (False, 'unverified', 'host_shell survived'), outcome)
+        self.assertEqual(outcome['data']['result'], result)
+
+    def test_a_connection_lost_before_the_result_is_not_a_success(self):
+        root, project_id = self.fixture('alpha', replies_json={**self.PENDING, 'shutdown_confirm': {
+            'shutting_down': True, 'result_deadline': 5}}, close_after='shutdown_confirm', closing_json=None)
+        outcome = self.box.drive('power_off', self.box.entry(root, project_id), answers=[True])
+        self.assertEqual((outcome['ok'], outcome['reason']), (False, 'no_result'), outcome)
+        self.assertEqual(outcome['data']['backend'], 'unknown')  # no backend reference was given
+
+    def test_no_result_within_the_backends_deadline_is_not_a_success(self):
+        root, project_id = self.fixture('alpha', replies_json={**self.PENDING, 'shutdown_confirm': {
+            'shutting_down': True, 'result_deadline': 1}})
+        started = time.monotonic()
+        outcome = self.box.drive('power_off', self.box.entry(root, project_id), answers=[True])
+        self.assertEqual((outcome['ok'], outcome['reason']), (False, 'no_result'), outcome)
+        self.assertIn('no result within', outcome['detail'])
+        self.assertLess(time.monotonic() - started, 30)
+
+    def test_an_older_backends_not_attached_is_reported_as_backend_too_old(self):
+        refused = {'ok': False, 'reason': 'not_attached', 'detail': 'attach before sending terminal or control input'}
+        root, project_id = self.fixture('alpha', replies_json={'pause': refused, 'resume': refused})
+        for op in ('pause', 'resume'):
+            with self.subTest(op=op):
+                outcome = self.box.drive(op, self.box.entry(root, project_id))
+                self.assertEqual((outcome['ok'], outcome['reason']), (False, 'backend_too_old'), outcome)
 
 
 if __name__ == '__main__':

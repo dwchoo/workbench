@@ -149,6 +149,10 @@ UNKNOWN_TASK_DETAIL = ("task_id: no such Task. For a follow-up, cancel or re-run
                        "dispatched result; for a new Task send task_id null.")
 TASK_NOT_DELIVERED_DETAIL = ("The active Task's instruction has not reached you yet; a report without task_id "
                              "cannot belong to it. Finish the turn; the Task's TASK message follows.")
+# CS-O02 (FU-D02): a progress/report after the run's done/blocked was queued
+RUN_REPORT_FINAL_DETAIL = ("This run's done/blocked report is already queued for the manager; this progress/report "
+                           "was not sent. Nothing more is reported for this run unless the manager follows up; end "
+                           "your turn.")
 # R1: how long a to_worker (to_manager) waits for a report (TASK) the lane is submitting right now.
 REPORT_SETTLE_WAIT = 2.0
 # smoke-04 G2: after the host command exited, the staged analysis waits for an idle worker at most this long
@@ -368,6 +372,7 @@ class FlowTask:
     last_result: dict[str, Any] | None = None
     cancel_requested: dict[str, Any] | None = None
     worker_session: list[Any] | None = None  # C-D70 (4): [session_id, generation] of the worker that got the TASK
+    report_seq: int = 0  # CS-O02 (FU-D01): the last ``report_seq`` given to a worker to_manager message of this Task
 
     def set_status(self, status: str) -> None:
         if status != self.status or not self.since:
@@ -479,6 +484,9 @@ class TaskFlow:
         self._task_message_state: dict[str, str] = {}
         # p27-cd70-fix-01: a full re-send queued or being delivered, per Task: the worker session it goes to
         self._resend_pending: dict[str, list[Any]] = {}
+        # CS-O02 (FU-D02, in memory like the outbox): a work Task -> the run whose done/blocked report was queued; no
+        # progress/report of that run follows it until a manager follow-up
+        self._final_reports: dict[str, str] = {}
         self._ledger = HandoffJournal(ledger_path)
         self.tasks: dict[str, FlowTask] = {}
         self.notices: list[dict[str, Any]] = []
@@ -1029,6 +1037,7 @@ class TaskFlow:
             task.held_reason = None
             task.set_status("running")
             self._save_task(task)
+        self._final_reports.pop(task.task_id, None)  # FU-D02: a new instruction; the worker may report again
         return self._question(task, request, spec)
 
     def _current_worker_session(self) -> list[Any] | None:
@@ -1321,6 +1330,9 @@ class TaskFlow:
                                                                          "detail": TASK_NOT_DELIVERED_DETAIL})
             if task.status == "closed" or task.run_id is None:
                 return HandoffDecision(rejected("no_active_task"))
+        if args["kind"] in ("progress", "report") and self._final_reports.get(task.task_id) == task.run_id:
+            return HandoffDecision(rejected("run_report_final") | {"task_id": task.task_id,
+                                                                   "detail": RUN_REPORT_FINAL_DETAIL})
         payload: dict[str, Any] = {"handoff": "to_manager", "kind": args["kind"], "message": args["message"]}
         for name in ("requires_code_change", "reason"):
             if name in args:
@@ -1347,7 +1359,7 @@ class TaskFlow:
             if args.get("in_reply_to") is not None:
                 payload["in_reply_to"] = args["in_reply_to"]
             kind, reply_to = MessageKind.REPORT, task.task_message_id
-        listener = None
+        listener = on_not_queued = None
         report = task.kind == "work" and args["kind"] in {"done", "blocked"}
         if report and self.terminal_runs is not None:  # C-D69 (6)(d): the worker need not repeat its commands
             try:
@@ -1360,11 +1372,23 @@ class TaskFlow:
         if report:
             listener = self._report_listener(task.task_id, task.run_id, args["kind"], request.tool_call_id)
             task.held_reason = f"{args['kind']}_report_pending"
-            self._save_task(task)
+            task_id, run_id = task.task_id, task.run_id
+            self._final_reports[task_id] = run_id
+
+            def on_not_queued(_result: Mapping[str, Any]) -> None:  # it never went out: the run is not reported yet
+                with self._lock:
+                    if self._final_reports.get(task_id) == run_id:
+                        del self._final_reports[task_id]
+        # CS-O02 (FU-D01): per Task, from 1, in the order the HandoffService queues them (its lock serializes the
+        # calls); kept with the Task so a backend restart continues it. A message that is then not queued leaves a gap.
+        task.report_seq += 1
+        payload["report_seq"] = task.report_seq
+        self._save_task(task)
         return HandoffDecision({"status": "queued", "task_id": task.task_id}, message=OutboundMessage(
             task.task_id, task.run_revision, task.run_id, ActorRole.WORKER, ActorRole.MANAGER, kind, payload,
             in_reply_to_message_id=reply_to), listener=listener, keep_across_pause=report,
-            wait_for_target=report)  # p27-cd70-fix-03: waits for the next manager session if none is connected
+            # p27-cd70-fix-03: waits for the next manager session if none is connected
+            wait_for_target=report, on_not_queued=on_not_queued)
 
     def _report_listener(self, task_id: str, run_id: str, kind: str, tool_call_id: str) -> Callable:
         """The done/blocked report's outbox events (R1): accepted -> the worker is free; lost -> the Task closes."""

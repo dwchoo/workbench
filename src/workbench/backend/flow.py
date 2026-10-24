@@ -1189,10 +1189,23 @@ class HandoffService:
 
     # -- outbox thread ------------------------------------------------------------
     def _next_due(self, role: ActorRole) -> tuple[_OutboxEntry | None, float | None]:
+        """The first pending message of ``role``'s lane that is due, else how long until one may be.
+
+        CS-O02 (FU-D01): a worker's ``to_manager`` messages of one Task go in send order. One waits while an older
+        one of the same Task is still pending or being delivered (deferred, backoff), so it never overtakes it;
+        other Tasks and other streams are not held by it."""
         now = time.monotonic()
         wait: float | None = None
+        waiting_tasks: set[str] = set()  # Tasks with an older worker report not ended yet
         for entry in self._outbox:
-            if entry.state != "pending" or entry.outbound.target_role is not role:
+            if entry.outbound.target_role is not role:
+                continue
+            ordered = self._worker_call_to_manager(entry)
+            if ordered and entry.state in ("pending", "delivering"):
+                if entry.outbound.task_id in waiting_tasks:
+                    continue  # the older report goes first; its end notifies the lane
+                waiting_tasks.add(entry.outbound.task_id)
+            if entry.state != "pending":
                 continue
             if entry.due <= now:
                 return entry, None

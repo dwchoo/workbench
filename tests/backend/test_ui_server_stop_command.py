@@ -140,6 +140,24 @@ class StopCommandRelayTests(ServerFixture):
         finals = [self.next_result(client) for _ in ids]
         self.assertEqual(sorted(f["id"] for f in finals), sorted(ids))
 
+    def test_an_outcome_that_cannot_be_encoded_becomes_a_final_error_and_the_loop_lives(self):
+        client = self.attached_client()
+        self.controller.outcome = {"status": "exited", "oops": object()}
+        self.controller.release.set()
+        request_id = self.send_stop(client, str(uuid4()))
+        ack = self.next_result(client)
+        self.assertEqual((ack["id"], ack["stop"]["status"]), (request_id, "stopping"), "the ack comes first")
+        final = self.next_result(client)
+        self.assertEqual((final["id"], final["ok"], final["final"]), (request_id, True, True), final)
+        self.assertEqual((final["stop"]["status"], final["stop"]["reason"]), ("error", "unencodable_outcome"), final)
+        self.assertNotIn("oops", str(final))
+        self.assertEqual(client.snapshot()["focus"], self.controller.focus.value, "the server loop lives")
+        self.controller.outcome = {"status": "exited", "exit_code": 0}  # the slot was freed: eight more still fit
+        ids = [self.send_stop(client, str(uuid4())) for _ in range(8)]
+        results = [self.next_result(client) for _ in range(16)]  # eight acks and eight finals, interleaved
+        self.assertTrue(all(r["ok"] for r in results), results)
+        self.assertEqual(sum(1 for r in results if r.get("final")), 8)
+
     def test_a_client_that_left_before_the_final_outcome_does_not_hurt_the_server(self):
         client = self.attached_client()
         self.send_stop(client, str(uuid4()))

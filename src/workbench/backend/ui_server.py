@@ -432,6 +432,20 @@ class UiServer:
                        "detail": f"stop failed: {type(exc).__name__}"}
         self._stop_finals.put((connection, request_id, command_id, outcome))
 
+    def _send_stop_final(self, connection: _Connection, request_id: str, command_id: str,
+                         outcome: dict[str, Any]) -> None:
+        """Queue the final result; an outcome that cannot be encoded is sent as ``stop.status: error`` instead, so
+        the user still gets an answer (never a success) and the loop never dies on a controller's value."""
+        try:
+            frame = ui_v1.encode_frame(ui_v1.result(request_id, True, final=True, command_id=command_id,
+                                                    stop=outcome))
+        except Exception:  # ContractError for a value that is not JSON; anything else is as bad
+            traceback.print_exc(file=sys.stderr)
+            frame = ui_v1.encode_frame(ui_v1.result(
+                request_id, True, final=True, command_id=command_id,
+                stop={"status": "error", "reason": "unencodable_outcome", "command_id": command_id}))
+        self._send(connection, frame)
+
     def _deliver_stop_finals(self) -> None:
         delivered = False
         while True:
@@ -442,8 +456,7 @@ class UiServer:
             self._stops_in_flight -= 1
             delivered = True
             if connection in self.connections and not connection.closing:  # a client that left misses it
-                self._header(connection, ui_v1.result(request_id, True, final=True, command_id=command_id,
-                                                      stop=outcome))
+                self._send_stop_final(connection, request_id, command_id, outcome)
         if delivered and self.attached is not None:
             try:  # the command's state changed: tell the UI at once, not on the next periodic push
                 self.push_state(self.controller.snapshot())

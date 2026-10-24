@@ -206,9 +206,9 @@ class PermissionMatrixTests(ServiceCase):
         for principal, expected in ((self.board, 'forbidden'), (self.editor, 'forbidden'),
                                     (self.req1, 'forbidden'), (self.manager, 'forbidden')):
             with self.subTest(principal=principal.kind):
-                self.assertEqual(self.code(self.service.review_mode, principal, self.a, set='manual').code, expected)
-        self.assertEqual(self.service.review_mode(OWNER, self.a, set='manual'), {'review_mode': 'manual'})
-        self.assertEqual(self.service.review_mode(self.local, self.a, set='auto'), {'review_mode': 'auto'})
+                self.assertEqual(self.code(self.service.review_mode, principal, self.a, mode='manual').code, expected)
+        self.assertEqual(self.service.review_mode(OWNER, self.a, mode='manual'), {'review_mode': 'manual'})
+        self.assertEqual(self.service.review_mode(self.local, self.a, mode='auto'), {'review_mode': 'auto'})
         self.assertEqual(self.code(self.service.review_mode, self.req1, self.a).code, 'forbidden')
 
 

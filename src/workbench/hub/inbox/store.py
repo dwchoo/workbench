@@ -104,6 +104,17 @@ def _unavailable(detail: str) -> InboxError:
     return InboxError("inbox_unavailable", detail)
 
 
+_SQLITE_BUSY_CODES = (5, 6)  # SQLITE_BUSY, SQLITE_LOCKED (primary result codes)
+
+
+def _sqlite_error(exc: sqlite3.Error, context: str, code: str) -> InboxError:
+    """``database is locked`` means another opener holds the file (busy), not damage."""
+    primary = getattr(exc, "sqlite_errorcode", None)
+    if (primary is not None and primary & 0xFF in _SQLITE_BUSY_CODES) or "locked" in str(exc):
+        return InboxError("inbox_busy", f"{context}: {exc}")
+    return InboxError(code, f"{context}: {exc}")
+
+
 class InboxStore:
     def __init__(self, root: Path, project_id: str, *, clock: Callable[[], float] = time.time,
                  idle_seconds: float = IDLE_SECONDS):
@@ -126,12 +137,18 @@ class InboxStore:
     def read(self, fn: Callable[[sqlite3.Connection], Any], *, missing: Any = None) -> Any:
         """``fn(connection)``; a missing or never-initialized file returns ``missing`` and creates nothing."""
         connection = self._open(create=False)
+        if connection is None:
+            return missing
         try:
-            if connection is None or not self._initialized(connection):
-                return missing
-            return fn(connection)
+            connection.execute("PRAGMA query_only=1")  # a read path can never write the inbox
+            try:
+                if not self._initialized(connection):
+                    return missing
+                return fn(connection)
+            finally:
+                connection.execute("PRAGMA query_only=0")
         except sqlite3.Error as exc:
-            raise _unavailable(f"read failed: {exc}") from exc
+            raise _sqlite_error(exc, "read failed", "inbox_unavailable") from exc
 
     def write(self, fn: Callable[[sqlite3.Connection], Any]) -> Any:
         """``BEGIN IMMEDIATE`` → ``fn(connection)`` → ``COMMIT``; any exception rolls back everything."""
@@ -142,7 +159,7 @@ class InboxStore:
                 self._set_wal(connection)  # journal_mode cannot change inside a transaction
             connection.execute("BEGIN IMMEDIATE")
         except sqlite3.Error as exc:
-            raise InboxError("internal_error", f"cannot begin a write: {exc}") from exc
+            raise _sqlite_error(exc, "cannot begin a write", "internal_error") from exc
         try:
             if not self._initialized(connection):
                 self._create_schema(connection)
@@ -154,7 +171,7 @@ class InboxStore:
             except sqlite3.Error:
                 pass
             if isinstance(exc, sqlite3.Error):
-                raise InboxError("internal_error", f"write failed: {exc}") from exc
+                raise _sqlite_error(exc, "write failed", "internal_error") from exc
             raise
         return result
 
@@ -196,7 +213,7 @@ class InboxStore:
                 connection.execute("PRAGMA synchronous=NORMAL")
             except sqlite3.DatabaseError as exc:
                 connection.close()
-                raise _unavailable(f"corrupt: {exc}") from exc
+                raise _sqlite_error(exc, "corrupt", "inbox_unavailable") from exc
             except BaseException:
                 connection.close()
                 raise

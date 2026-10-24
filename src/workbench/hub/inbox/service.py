@@ -32,6 +32,7 @@ PRE_DISPATCH = ("NEW", "REVIEWING", "NEEDS_INFO")
 OPEN_STATES = STATES[:-1]
 LINKED = ("READY", "RUNNING")
 LINK_TTL = 30.0
+TASK_VIEW_MAX_BYTES = 256 * 1024  # SPEC schema: task_view ≤ 256 KiB
 # Task statuses (SPEC "Task 동기화") that make a linked request RUNNING rather than READY.
 RUNNING_TASK_STATUSES = frozenset({"running", "waiting_report", "held", "cancelling", "finished", "blocked"})
 REVIEW_ACTIONS = ("begin_review", "ask", "comment", "reject", "close")
@@ -186,7 +187,10 @@ class InboxService:
                  backend_running: Callable[[str], bool] | None = None,
                  clock: Callable[[], float] = time.time, idle_seconds: float = IDLE_SECONDS,
                  link_ttl: float = LINK_TTL):
-        """``on_committed``: post-commit side-effect port (notices, backend ``cancel_task``).
+        """``on_committed``: post-commit side-effect port (notices, backend ``cancel_task``). It runs on
+        the committing project's executor thread, so it must not call this service for the same
+        project with ``wait=True`` (that waits on its own thread and deadlocks); hand work off
+        (``wait=False``, a queue or the event loop) and keep it short.
         ``backend_running(project_id)``: whether READY/RUNNING cancel can reach the backend now."""
         self._on_committed = on_committed
         self._backend_running = backend_running or (lambda project_id: False)
@@ -432,7 +436,14 @@ class InboxService:
         def read() -> dict:
             def fn(connection: sqlite3.Connection) -> dict:
                 return self._full(project, connection, self._visible_row(principal, connection, request_id))
-            return project.store.read(fn, missing=None) or self._raise_not_found()
+            try:
+                return project.store.read(fn, missing=None) or self._raise_not_found()
+            except InboxError as exc:
+                # Only the owner sees every request; for anyone else "busy" would reveal that an id
+                # exists in some project, so it reads exactly like a missing request.
+                if exc.code == "inbox_busy" and principal.kind != "owner":
+                    raise InboxError("not_found", _NOT_FOUND) from None
+                raise
         return self._run(project, read, wait)
 
     @staticmethod
@@ -458,6 +469,8 @@ class InboxService:
         found: list[dict] = []
         unavailable: list[dict] = []
         for project in projects:
+            if project.ref.unavailable is not None:  # like badge(); an explicit project_id raised above
+                continue
             try:
                 rows = self._run(project, lambda p=project: self._rows(p, principal))
             except InboxError as exc:
@@ -473,7 +486,8 @@ class InboxService:
                 if query and query.casefold() not in haystack:
                     continue
                 found.append(row)
-        found.sort(key=lambda r: (r["created_at"], r["project_id"], r["seq"]), reverse=True)
+        # Newest first by arrival order (seq), not by the wall clock, which can step backwards.
+        found.sort(key=lambda r: (r["seq"], r["project_id"]), reverse=True)
         page = found[offset:offset + limit]
         more = offset + limit < len(found)
         result = {"requests": page, "next_cursor": f"o{offset + limit}" if more else None}
@@ -535,27 +549,32 @@ class InboxService:
             return None
 
     # -- review mode ------------------------------------------------------------------------
-    def review_mode(self, principal: Principal, project_id: str, *, set: str | None = None) -> dict:
-        """Read or (owner/local) change ``meta.review_mode`` (D-32); a missing inbox reads ``auto``."""
-        action = "review_mode_read" if set is None else "review_mode_set"
+    def review_mode(self, principal: Principal, project_id: str, mode: str | None = None, *,
+                    set: str | None = None) -> dict:  # noqa: A002 - ``set=`` kept for existing callers
+        """Read or (owner/local) change ``meta.review_mode`` (D-32); a missing inbox reads ``auto``.
+        ``mode`` is the new value; ``set=`` is the earlier keyword for the same thing."""
+        if mode is not None and set is not None and mode != set:
+            raise InboxError("invalid_input", "give the review mode once")
+        mode = mode if mode is not None else set
+        action = "review_mode_read" if mode is None else "review_mode_set"
         if principal.kind not in PERMISSIONS[action]:
             raise InboxError("forbidden", f"{principal.kind} cannot {action.replace('_', ' ')}")
-        if set is not None and set not in ("auto", "manual"):
+        if mode is not None and mode not in ("auto", "manual"):
             raise InboxError("invalid_input", "review mode must be auto or manual")
         project = self._project(principal, project_id)
 
         def current(connection: sqlite3.Connection) -> str:
             row = connection.execute("SELECT value FROM meta WHERE key = 'review_mode'").fetchone()
             return row[0] if row else "auto"
-        if set is None:
+        if mode is None:
             return {"review_mode": self._run(project, lambda: project.store.read(current, missing="auto"))}
 
         def change(tx: _Tx) -> dict:
             previous = current(tx.connection)
-            if previous != set:
-                tx.connection.execute("INSERT OR REPLACE INTO meta (key, value) VALUES ('review_mode', ?)", (set,))
-                tx.event(None, "review_mode_changed", None, None, {"review_mode": set, "previous": previous})
-            return {"review_mode": set}
+            if previous != mode:
+                tx.connection.execute("INSERT OR REPLACE INTO meta (key, value) VALUES ('review_mode', ?)", (mode,))
+                tx.event(None, "review_mode_changed", None, None, {"review_mode": mode, "previous": previous})
+            return {"review_mode": mode}
         return self._run(project, lambda: self._write(project, principal, change))
 
     # -- request changes --------------------------------------------------------------------
@@ -873,11 +892,16 @@ class InboxService:
             return fn(tx, row)
         return self._run(project, lambda: self._write(project, None, change), wait)
 
-    def mark_offered(self, request_id: str, delivery_id: str, backend: str, *, wait: bool = True) -> Any:
-        """Dispatcher: the pending round's notice was queued by ``backend`` (``pid:start_ticks``)."""
+    def mark_offered(self, request_id: str, delivery_id: str, backend: str, *, event: str | None = None,
+                     wait: bool = True) -> Any:
+        """Dispatcher: the pending round's notice (``event``: new, answered, updated, revised, cancelled,
+        linked_task_closed) was queued by ``backend`` (``pid:start_ticks``). A CLOSED request can only
+        be offered as its ``cancelled`` notice (SPEC "취소": the manager hears of a delivered round)."""
         def fn(tx: _Tx, row: sqlite3.Row) -> dict:
             if row["delivery_state"] != "pending":
                 raise self._invalid(row, "no pending round to offer")
+            if row["state"] == "CLOSED" and event != "cancelled":
+                raise self._invalid(row, "a closed request is only offered as a cancelled notice")
             new = self._set(tx, row, delivery_state="offered", delivery_id=delivery_id, delivery_backend=backend,
                             delivery_at=tx.now)
             tx.event(request_id, "offered", row["state"], row["state"], {"delivery_id": delivery_id},
@@ -912,6 +936,20 @@ class InboxService:
         """Task sync for a READY/RUNNING request: READY → RUNNING when the Task starts, CLOSED(cancelled)
         when a user cancel closed it, READY → REVIEWING when the link was never confirmed, otherwise the
         state stays and a ``linked_task_closed`` event is emitted once (P2-AC-09)."""
+        for name, value, optional in (("task_id", task_id, False), ("status", status, False),
+                                      ("closed_reason", closed_reason, True)):
+            if not (optional and value is None) and (not isinstance(value, str) or not 0 < len(value) <= 128):
+                raise InboxError("invalid_input", f"{name} must be 1-128 characters")
+        if view is not None and not isinstance(view, dict):
+            raise InboxError("invalid_input", "view must be an object")
+        try:
+            view_size = len(json.dumps(dict(view or {}, status=status, closed=True, closed_reason=closed_reason),
+                                       ensure_ascii=False).encode("utf-8"))
+        except (TypeError, ValueError) as exc:
+            raise InboxError("invalid_input", f"view is not JSON: {exc}") from None
+        if view_size > TASK_VIEW_MAX_BYTES:
+            raise InboxError("invalid_input", f"task_view exceeds {TASK_VIEW_MAX_BYTES} bytes")
+
         def fn(tx: _Tx, row: sqlite3.Row) -> dict:
             state = row["state"]
             # A REVIEWING/NEEDS_INFO request that still links the Task only follows a user cancel.

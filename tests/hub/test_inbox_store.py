@@ -433,6 +433,104 @@ class ListingTests(StoreCase):
         self.assertIsNone(self.service.pending_requests(str(uuid.uuid4())))
 
 
+SQLITE_WRITER = r'''
+import sqlite3, sys
+connection = sqlite3.connect(sys.argv[1], isolation_level=None)
+connection.execute("BEGIN IMMEDIATE")
+print("writing", flush=True)
+sys.stdin.read()
+'''
+
+
+class ReviewFollowUpTests(LockTests):
+    """TI-04 review follow-ups (items 3-6)."""
+
+    def test_a_busy_inbox_reads_as_not_found_for_everyone_but_the_owner(self):
+        rid = self.service.submit(OWNER, self.project_id, 'hidden', 'b')['request_id']
+        self.service.close_idle(force=True)
+        self.holder()
+        missing = None
+        for principal in (Principal.requester('k5req0000', 'r', None), Principal.editor('k5ed00000', 'e', None),
+                          Principal.manager(self.project_id)):
+            with self.subTest(principal=principal.kind):
+                with self.assertRaises(InboxError) as hidden:
+                    self.service.get(principal, rid)
+                with self.assertRaises(InboxError) as absent:
+                    self.service.get(principal, str(uuid.uuid4()))
+                self.assertEqual(hidden.exception.to_json(), absent.exception.to_json())
+                missing = hidden.exception.code
+        self.assertEqual(missing, 'not_found')
+        with self.assertRaises(InboxError) as caught:
+            self.service.get(OWNER, rid)
+        self.assertEqual(caught.exception.code, 'inbox_busy')
+
+    def test_format_and_separator_characters_are_refused_in_titles(self):
+        for char in ('‮', '​', '⁦', '﻿', ' ', ' '):
+            with self.subTest(char=hex(ord(char))):
+                with self.assertRaises(InboxError) as caught:
+                    self.service.submit(OWNER, self.project_id, f'a{char}b', 'body')
+                self.assertEqual(caught.exception.code, 'invalid_input')
+        self.assertFalse(self.db.exists())
+
+    def test_listing_skips_unavailable_projects_like_the_badge_and_orders_by_seq(self):
+        clock = [5000.0]
+        service = self.make_service(clock=lambda: clock[0])
+        self.service.close()
+        for title in ('first', 'second', 'third'):
+            service.submit(OWNER, self.project_id, title, 'b')
+            clock[0] -= 100.0  # a wall clock stepping backwards must not reorder requests
+        self.assertEqual([r['title'] for r in service.list_requests(OWNER)['requests']],
+                         ['third', 'second', 'first'])
+        service.set_projects([ProjectRef(self.project_id, self.root, 'alpha', unavailable='mismatch')])
+        self.assertEqual(service.list_requests(OWNER), {'requests': [], 'next_cursor': None})
+        self.assertEqual(service.badge(OWNER), {'pending': 0, 'needs_info': 0})
+
+    def test_observe_task_inputs_are_bounded_and_offers_of_closed_requests_are_cancel_notices(self):
+        manager = Principal.manager(self.project_id)
+        rid = self.service.submit(OWNER, self.project_id, 't', 'b')['request_id']
+        token = self.service.link_check(manager, rid)['link_token']
+        self.service.link_commit(manager, token, 'task-1', 1, 'running')
+        for kwargs in ({'task_id': 't' * 129, 'status': 'running'},
+                       {'task_id': 'task-1', 'status': 'closed', 'closed_reason': 'r' * 129},
+                       {'task_id': 'task-1', 'status': 'running', 'view': {'log': 'x' * (256 * 1024)}},
+                       {'task_id': 'task-1', 'status': 's' * 129}):
+            with self.subTest(keys=sorted(kwargs)):
+                with self.assertRaises(InboxError) as caught:
+                    self.service.observe_task(rid, kwargs.pop('task_id'), kwargs.pop('status'), **kwargs)
+                self.assertEqual(caught.exception.code, 'invalid_input')
+        closed = self.service.submit(OWNER, self.project_id, 'c', 'b')['request_id']
+        self.service.mark_offered(closed, 'd-0', '1:1')
+        self.service.record_delivery(closed, 'd-0', 'delivered')
+        self.service.cancel(OWNER, closed)  # manager knew it: a cancel notice is pending
+        with self.assertRaises(InboxError) as caught:
+            self.service.mark_offered(closed, 'd-1', '1:1', event='new')
+        self.assertEqual(caught.exception.code, 'invalid_transition')
+        with self.assertRaises(InboxError):
+            self.service.mark_offered(closed, 'd-1', '1:1')
+        self.assertEqual(self.service.mark_offered(closed, 'd-1', '1:1', event='cancelled')['state'], 'CLOSED')
+
+    def test_an_sqlite_write_lock_held_elsewhere_is_busy_not_corrupt(self):
+        self.service.submit(OWNER, self.project_id, 'seed', 'b')
+        self.service.close_idle(force=True)
+        writer = subprocess.Popen([sys.executable, '-c', SQLITE_WRITER, str(self.db)], stdin=subprocess.PIPE,
+                                  stdout=subprocess.PIPE, text=True)
+
+        def stop():
+            writer.stdin.close()
+            writer.wait(10)
+            writer.stdout.close()
+        self.addCleanup(stop)
+        self.assertEqual(writer.stdout.readline().strip(), 'writing')
+        with self.assertRaises(InboxError) as caught:
+            self.service.submit(OWNER, self.project_id, 'blocked', 'b')
+        self.assertEqual(caught.exception.code, 'inbox_busy')
+
+    def test_review_mode_takes_mode_and_still_accepts_set(self):
+        self.assertEqual(self.service.review_mode(OWNER, self.project_id, 'manual'), {'review_mode': 'manual'})
+        self.assertEqual(self.service.review_mode(OWNER, self.project_id, mode='auto'), {'review_mode': 'auto'})
+        self.assertEqual(self.service.review_mode(OWNER, self.project_id, set='manual'), {'review_mode': 'manual'})
+
+
 class BackupTests(StoreCase):
     """TI-T08: after the Hub store is closed, ``update_backup.snapshot`` holds the committed inbox."""
 

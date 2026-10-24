@@ -37,7 +37,8 @@ SUMMARY_MAX_BYTES = 16 * 1024
 QUERY_MAX_CHARS = 200
 LIST_LIMIT_MAX = 100
 LIST_LIMIT_DEFAULT = 50
-_IDEMPOTENCY_KEY = re.compile(r"[A-Za-z0-9._:-]{1,128}")
+_TITLE_FORBIDDEN = frozenset({"Cc", "Cf", "Zl", "Zp"})
+_IDEMPOTENCY_KEY =re.compile(r"[A-Za-z0-9._:-]{1,128}")
 
 
 def _utf8_size(value: object, what: str) -> int:
@@ -56,8 +57,9 @@ def title(value: object) -> str:
         raise InboxError("invalid_input", "title is empty")
     if len(value) > TITLE_MAX_CHARS:
         raise InboxError("too_large", f"title exceeds {TITLE_MAX_CHARS} characters")
-    if any(unicodedata.category(ch) == "Cc" for ch in value):
-        raise InboxError("invalid_input", "title contains control characters")
+    # Cc controls, Cf format (bidi overrides, zero-width), Zl/Zp line and paragraph separators.
+    if any(unicodedata.category(ch) in _TITLE_FORBIDDEN for ch in value):
+        raise InboxError("invalid_input", "title contains control, format or separator characters")
     return value
 
 

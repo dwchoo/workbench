@@ -22,7 +22,7 @@
 | idna | 3.20 | py3-none-any | BSD-3-Clause | `sha256=29jBTB5MoeDJgkptvHy794iE8461LZEUjNMCX2ceS4U` | yarl |
 | multidict | 7.2.0 | cp312 manylinux_2_17_x86_64 | Apache-2.0 | `sha256=-ivjhvruXPQ4CecQQMk2Xq9Wh8vPmxPSRmbL6oNMCJ0` | aiohttp, yarl |
 | propcache | 0.5.4 | cp312 manylinux_2_17_x86_64 | Apache-2.0 | `sha256=btO6wK1DBQzq-L0Jh4uj1nPJTE2g1EmPkD-Gw2zG-1c` | aiohttp, yarl |
-| typing-extensions | 4.16.0 | py3-none-any | PSF-2.0 | `sha256=sFCEyh1Qh5hlF42f_5-r6rYb37HzYb-96VQh_8j5vkY` | multidict, yarl 등 |
+| typing-extensions | 4.16.0 | py3-none-any | PSF-2.0 | `sha256=sFCEyh1Qh5hlF42f_5-r6rYb37HzYb-96VQh_8j5vkY` | aiohttp, aiosignal (python<3.13) |
 | yarl | 1.25.1 | cp312 manylinux_2_17_x86_64 | Apache-2.0 | `sha256=_WuqJYoRxNfnAIJyppGA1NNKoEpqWv2jasXlWqCqT0E` | aiohttp |
 | pyte | 0.8.2 | py3-none-any | LGPLv3 (classifier) | `sha256=68Y9u6yV6GNDPsz34pMLtIudeJknOVAz57pLuzjFmJQ` | 기존 |
 | wcwidth | 0.8.4 | py3-none-any | MIT | `sha256=ejh76tG45gZ8GVrS-j4cyMXQuTgDTtWW8DI7snvUcPI` | 기존 |

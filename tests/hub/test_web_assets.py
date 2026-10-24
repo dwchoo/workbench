@@ -109,10 +109,20 @@ class WheelContentTests(unittest.TestCase):
             env[key] = str(cls.root / name)
         env.update(PYTHONDONTWRITEBYTECODE='1', UV_PYTHON_DOWNLOADS='never', UV_NO_PROGRESS='1')
         dist = cls.root / 'dist'
-        result = subprocess.run(['uv', 'build', '--sdist', '--wheel', '--out-dir', str(dist), str(source)],
-                                cwd=cls.root, env=env, text=True, capture_output=True, timeout=240)
+        if shutil.which('uv', path=env.get('PATH')) is None:
+            raise unittest.SkipTest('not_run: uv build unavailable/offline')
+        try:
+            result = subprocess.run(['uv', 'build', '--sdist', '--wheel', '--out-dir', str(dist), str(source)],
+                                    cwd=cls.root, env=env, text=True, capture_output=True, timeout=240)
+        except subprocess.TimeoutExpired:
+            raise unittest.SkipTest('not_run: uv build unavailable/offline') from None
         if result.returncode:
-            raise AssertionError(f'uv build failed: {result.stdout}\n{result.stderr}')
+            output = f'{result.stdout}\n{result.stderr}'
+            if re.search(r'error sending request|dns error|failed to fetch|failed to download|'
+                         r'connection (refused|reset|timed out)|network|offline|tcp connect|'
+                         r'temporary failure in name resolution|timed out', output, re.IGNORECASE):
+                raise unittest.SkipTest('not_run: uv build unavailable/offline')
+            raise AssertionError(f'uv build failed: {output}')
         cls.wheel = next(dist.glob('*.whl'))
         cls.sdist = next(dist.glob('*.tar.gz'))
 

@@ -18,6 +18,7 @@ from workbench.backend.paths import (BackendLocked, DataDirError, InstanceLock, 
                                      unlink_stale_socket, write_private_json)
 from workbench.contracts import hub_v1
 
+from . import registry
 from .paths import HubLayout, hub_layout, prepare_socket_path, prepare_state_dir
 from .process import (READY_LOST, READY_MANAGED, READY_STARTED, RECORD_SCHEMA_VERSION, UNVERIFIABLE,
                       installed_version,
@@ -30,19 +31,12 @@ WATCHDOG_INTERVAL = 2.0
 
 
 def registry_summary(layout: HubLayout) -> dict:
-    """Registry state for ``status``; the registry itself belongs to ``hub.registry``."""
-    path = layout.registry
-    summary = {"state": "ok", "count": 0, "path": str(path)}
-    if not os.path.lexists(path):
-        return summary
+    """Registry state for ``status``; reading and validation belong to ``hub.registry``."""
+    summary = {"state": "ok", "count": 0, "path": str(layout.registry)}
     try:
-        value = read_private_json(path)
-    except OSError:
-        value = None
-    projects = value.get("projects") if value is not None and value.get("schema_version") == 1 else None
-    if not isinstance(projects, list):
+        return {**summary, "count": len(registry.read(layout))}
+    except registry.RegistryError:
         return {**summary, "state": "invalid"}
-    return {**summary, "count": len(projects)}
 
 
 def _peer_is_owner(writer: asyncio.StreamWriter) -> bool:

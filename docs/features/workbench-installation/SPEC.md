@@ -132,7 +132,7 @@ source/target backend 및 관련 writer가 중단되었음을 기존 lock, 기�
 | WI-AC-02 | 설치본 skills/reference/helper 사용·기존 역할 격리·Manager user-only report 유지 | WI-02, WI-05 / G-WI-02,06 | WI-08 G-WI-10 |
 | WI-AC-03 | A/B의 `.wb` DB·로그·이력 분리와 Git 제외 | WI-03, WI-05 / G-WI-03,06 | WI-08 G-WI-10 |
 | WI-AC-04 | setup이 OMP를 점검·미설치 시 준비, 별도 수동 설치 불필요 | WI-01, WI-04 / G-WI-01,04,05 | WI-08 G-WI-10 |
-| WI-AC-05 | 첫 실행 root 표시·확인 후 init, 거절은 미생성, nonGit 지원 | WI-03, WI-05 / G-WI-03,06 | WI-08 G-WI-10 |
+| WI-AC-05 | 첫 실행 root 표시·확인 후 init, 거절은 미생성, nonGit 지원 | WI-03, WI-05 / G-WI-03,06 | WI-08 G-WI-10 (갱신: bare `wb` 밖 = Hub 목록, 초기화는 `wb init`/명시 `wb start`. [Hub SPEC](../workbench-hub/SPEC.md) 참고) |
 | WI-AC-06 | 현재/상위의 가장 가까운 정상 `.wb`로 subdir 연결 | WI-03, WI-05 / G-WI-03,06 | WI-08 G-WI-10 |
 | WI-AC-07 | 기존 실행 가능한 OMP 재사용, 없을 때만 공유 user prefix 설치·기존 보존 | WI-01, WI-04 / G-WI-01,04,05 | WI-08 G-WI-10 |
 | WI-AC-08 | 설치 당시 stable, 명시 업데이트, 새 버전을 검증 통과로 위장하지 않음 | WI-01, WI-04 / G-WI-01,04,05 | WI-08 G-WI-10 |
@@ -140,7 +140,7 @@ source/target backend 및 관련 writer가 중단되었음을 기존 lock, 기�
 | WI-AC-10 | 영속 자료·설치본·외부 runtime 분리, 인증 미복사·긴 경로 지원 | WI-02,03,05,06 / G-WI-02,03,06,08 | WI-08 G-WI-10 |
 | WI-AC-11 | invalid/충돌 `.wb`·Git 제외 실패를 표시, 덮어쓰기/untrack/다른 연결 없음 | WI-03, WI-05 / G-WI-03,06 | WI-08 G-WI-10 |
 | WI-AC-12 | 중단·기록 없는 대상·비중첩, persistent reopen·완료 검증, 실패 불완료/no replay·외부 참조 보존 | WI-06 / G-WI-07,08 | WI-08 G-WI-10 |
-| WI-AC-13 | wb 기본 start/attach, setup/start/attach/status/shutdown·기존 명령/flag/env 호환·사용 안내 | WI-04,05,07 / G-WI-04,06,09 | WI-08 G-WI-10 |
+| WI-AC-13 | wb 기본 start/attach, setup/start/attach/status/shutdown·기존 명령/flag/env 호환·사용 안내 | WI-04,05,07 / G-WI-04,06,09 | WI-08 G-WI-10 (갱신: bare `wb` 밖 = Hub 목록, 초기화는 `wb init`/명시 `wb start`. [Hub SPEC](../workbench-hub/SPEC.md) 참고) |
 | WI-AC-14 | setup 선택/무결성/실패/로그인·retry·무sudo·미검증 구분·일반 start 무설치 | WI-01,04,05 / G-WI-01,04,05,06 | WI-08 G-WI-10 |
 | WI-AC-15 | root/process mismatch 보류, 종료 후 명시 업데이트·제외 범위 유지, downgrade 미보장 | WI-03,05,06,07 / G-WI-03,06,07,09 | WI-08 G-WI-10 |
 

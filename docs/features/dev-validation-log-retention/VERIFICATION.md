@@ -26,6 +26,7 @@
 요약 표현·중요도·일부 누락의 품질 편차는 허용한다. provider의 output/reasoning 의미와 프로세스 내부 전체 I/O 귀속은 미검증 한계로 남긴다.
 관련 행동이 별도 근거로 확인된 quoted-root launcher testcase와 과거 특정 batch/hash에 결속된 collector·measurement testcase는 미실행 상태로 유지한다.
 과거 C2 실패 원인을 새 메뉴 검사 정정으로 소급해 확정하지 않는다. C2 hold와 실제 사용자 raw 순환 삭제 OFF는 그대로다.
+(2026-10-24 후속: 실제 사용자 raw rotation은 [BRIEF LG-D34](BRIEF.md#lg-d34--raw-rotation-활성화-결정-2026-10-24)로 활성화 결정됨, 실행 대기다. 아직 어떤 사용자 data dir에서도 실행하지 않았다.)
 
 ## 이전 검증 (2026-10-15)
 
@@ -137,7 +138,7 @@ actual Backend origin trace의 사실별 판정을 공급한다. 이 조합의 �
 
 ## 운영과 시험의 구분
 
-Owned scripted activation/eviction은 전용 데이터만 대상으로 한다. 실제 사용자 raw는 OFF이며 C2 hold는 유지한다.
+Owned scripted activation/eviction은 전용 데이터만 대상으로 한다. 실제 사용자 raw는 활성화 결정됨, 실행 대기다(2026-10-24, [BRIEF LG-D34](BRIEF.md#lg-d34--raw-rotation-활성화-결정-2026-10-24)). 실행 전까지는 기존 정책이며 C2 hold는 유지한다.
 작은 실제 입력 → 요약 → DB → 조회 시험의 기존 성공은 별도 실모델 근거로 유지하고 재실행하지 않는다.
 실모델 품질·provider output enforce·reasoning 의미·GUI fidelity·VM/재부팅의 미검증 범위를 확대 해석하지 않는다.
 LG-D30/31/32의 승인된 한계는 unknown 또는 caveat로 남기며, unobserved 0이나 fixture pass로 대체하지 않는다.

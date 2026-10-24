@@ -835,3 +835,7 @@ LG-D19의 현실 부하 누락0·중복0·경합 capture_unknown0·watchdog 기�
 ## LG-D33 실제 시험 인증 경계 (2026-10-15)
 
 [BRIEF LG-D33](BRIEF.md#lg-d33--작은-실제-요약-시험의-인증-복사-2026-10-15)의 작은 실제 요약 시험에 한해, 필요한 인증 파일을 내용 열람·출력 없이 전용 임시 환경으로 기계적으로 복사하고 기존 OMP가 복사본을 사용하게 할 수 있다. 원본 쓰기·인증 내용의 prompt/대화/로그 노출은 허용하지 않는다. 입력·세션·DB 격리와 복사본을 포함한 owned cleanup을 확인한다. Credential-free scripted verify의 인증정보 제외 조건과 나머지 안전 조건은 유지한다.
+
+## LG-D34 raw rotation 활성화 결정 (2026-10-24)
+
+[BRIEF LG-D34](BRIEF.md#lg-d34--raw-rotation-활성화-결정-2026-10-24)가 §2·§8.1이 요구한 사용자의 별도 활성화 결정이다. 상태는 활성화 결정됨, 실행 대기다. 대상 프로젝트의 data dir에서 `logs summary-compat verify --scripted`로 현재 근거를 새로 만들고, 그 기록 id로 `logs raw-rotation activate --yes --evidence <id>`를 실행해야 활성화된다. 이 host에서는 대상 `.wb/`와 설치된 `omp-workbench`가 없어 실행하지 않았다. §9의 신규 source 한정·legacy 불변·LG-D13 보호 정책과 C2 hold는 그대로다.

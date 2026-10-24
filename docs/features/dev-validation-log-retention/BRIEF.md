@@ -42,6 +42,7 @@ r0.9 전체 bundle의 별도 승인이나 구현 승인을 받은 것으로 확�
 - 기존 raw 정책(64 MiB/run, 512 MiB/project에서 추가 저장 중단)을 신규 로그에 대해서만 대체한다.
   LG-D12에 따라 Q-01 통과 후 사용자가 rotation 활성화를 별도로 결정하기 전에는 기존 한도·저장 중단
   정책을 유지한다. 문서 승인이나 기술 검증 통과만으로 삭제를 활성화하지 않는다.
+  (2026-10-24 후속: 이 별도 결정은 LG-D34로 내려졌다. 활성화 결정됨, 실행 대기.)
   활성화 이후 신규 raw에 한해 core C-AC-24와 OPERATING-CONTRACT §6의 raw 상한·저장 중단·
   자동 삭제 제외 부분을 대체하고 종전 per-run 64 MiB 상한을 폐지한다.
   기존 core의 작업·명세·승인·결과 요약·실행 이력과 실행용 worktree의 보존 계약은 유지한다.
@@ -559,3 +560,14 @@ Q01의 8개 항목과 그 밖의 필수 gate는 유지한다. DB-only tool 및 h
 사용자는 이미 승인한 Worker.default 작은 실제 요약 시험에 필요한 인증 파일을 전용 임시 환경으로 복사하는 것을 허용했다. 복사는 내용을 모델이나 대화에 노출하지 않는 기계적 복사로 한정한다. Assistant는 인증 내용을 열람·출력·로그 기록하지 않고 기존 OMP가 임시 복사본만 사용하도록 한다. 원본 인증 파일에는 쓰지 않으며 복사본은 소유 임시 자원과 함께 정리한다. 실제 입력·작업 세션·요약 DB도 전용 임시 환경을 사용한다.
 
 이는 작은 실제 시험을 위한 범위이며 credential-free scripted verify에 사용자 인증정보를 전달하는 허가가 아니다. 기본 모델 Worker.default·DB-only 및 host 고정 writer·작업 귀속·no replay·실패 기록·C2 hold·실제 raw 비활성은 유지한다. symlink는 원본 인증 DB에 쓰기가 전달될 수 있으므로 이번 시험에서는 원본 대신 임시 복사본을 사용한다.
+
+## LG-D34 — raw rotation 활성화 결정 (2026-10-24)
+
+- 사용자 결정: 2026-10-24 Root가 결정 대기로 정리한 세 항목에 사용자가 "1,2,3 전부 완료해"라고 답했다. 그 3번이 raw log rotation 활성화다. 이 답을 LG-D12와 SPEC §8.1이 요구한 별도 사용자 활성화 결정으로 기록한다. 같은 결정은 [command-stop FOLLOWUPS-BRIEF](../command-stop/FOLLOWUPS-BRIEF.md) FU-D09에도 있다.
+- 상태: 활성화 결정됨, 실행 대기. 코드 변경은 없다. 활성화는 프로젝트별 명령이라 실제 프로젝트의 `.wb/`가 있는 host에서 실행한다. 이 host에는 `.wb/` data dir가 없고 `omp-workbench`도 설치되어 있지 않아 실행하지 않았다. 대상 프로젝트와 시점은 사용자가 정한다(FOLLOWUPS-BRIEF FU-O01).
+- 선행 조건: Q-01은 scripted 8개 판별을 통과했다([VERIFICATION](VERIFICATION.md) "이전 검증 (2026-10-15)"). SPEC §8.1의 "현재 제품/OMP/host에 유효한 근거"는 대상 data dir에서 새로 만든다. 이 결정만으로는 어떤 data dir도 활성화되지 않는다.
+- 절차: 대상 프로젝트에서 설치된 Workbench로 실행한다. data dir는 `--data-dir`, `$WORKBENCH_DATA_DIR`, 가장 가까운 프로젝트 `.wb/` 순으로 정해진다.
+  1. `omp-workbench logs summary-compat verify --scripted`. 결과가 pass여야 하고, 허용된 budget unknown 밖의 unknown이 없어야 한다. 이 명령은 그 data dir에 새 compatibility 기록을 남긴다.
+  2. `omp-workbench logs raw-rotation activate --yes --evidence <1의 기록 id>`. `--evidence`는 그 data dir의 최신 기록 UUID여야 한다. 이 명령도 PATH의 `omp`로 live 관측을 한 번 하고, 통과와 정리 완료를 요구한다. `--yes`로도 건너뛸 수 없다. 성공하면 `<data root>/raw-rotation.json`을 쓴다.
+- 효과: 일방향이다. 비활성화 명령은 없다. 활성화 뒤 새로 시작한 source에만 적용한다. 예산은 segment 100,000,000 B × 5개다. 기존·legacy 파일은 전환하거나 지우지 않는다. 나중에 compatibility admission이 깨지면 새 source는 다시 legacy-stop이다(LG-D13).
+- 유지: C2 hold, gate ID·증거 수준·의존 graph, 요약 route·DB-only·no replay는 그대로다. 이 결정은 Q01 기준 변경이나 다른 gate의 통과가 아니다.

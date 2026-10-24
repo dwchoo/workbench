@@ -59,7 +59,7 @@ runner는 credential-free allowlist 환경과 짧은 전용 `/tmp` namespace를 
   관측하지 못한 사실은 unknown으로 남기며, 다른 그룹의 사실을 일괄 true로 바꾸지 않는다.
 - Nonreasoning scripted 부모의 실제 `thinkingLevel`이 `undefined`이면 현재 observer는 metadata를 보류한다.
   이를 `off` 값으로 바꾸거나 실모델 실패로 해석하지 않는다.
-- 실제 사용자 raw rotation은 OFF, C2 hold는 유지한다. 이미 완료한 작은 실제 요약 시험은 반복하지 않는다.
+- 실제 사용자 raw rotation은 활성화 결정됨, 실행 대기다([BRIEF LG-D34](BRIEF.md#lg-d34--raw-rotation-활성화-결정-2026-10-24)). 실행 전까지 실제 사용자 raw는 기존 정책이다. C2 hold는 유지한다. 이미 완료한 작은 실제 요약 시험은 반복하지 않는다.
   인증 원본을 symlink로 연결하는 새 경로를 추가하지 않는다.
 
 실패한 제품 verify·activation에서 생성된 record와 그 record가 지정한 log도 크기·hash를 확인해 전용 공유 근거에 원본 bytes로 보존한다. 이 archive는 성공 producer나 activation 근거가 아니다. Runner는 실행 중에도 이미 귀속한 종료 프로세스를 정확한 PID identity로 수거하며, 정리 판정은 실제 잔여 자원의 부재를 요구한다.

@@ -1,5 +1,11 @@
 # 개발용 검증·로그 보관 후속 시험 계획
 
+## 2026-10-24 raw rotation 활성화 실행 대기
+
+- 사용자가 raw rotation 활성화를 결정했다([BRIEF LG-D34](BRIEF.md#lg-d34--raw-rotation-활성화-결정-2026-10-24)). 상태는 활성화 결정됨, 실행 대기다.
+- 남은 일: 사용자가 대상 프로젝트를 정하면, 그 프로젝트의 host에서 설치된 Workbench로 `omp-workbench logs summary-compat verify --scripted`를 실행한다. pass이면 그 기록 id로 `omp-workbench logs raw-rotation activate --yes --evidence <id>`를 실행한다. 절차와 효과는 LG-D34를 따른다.
+- 이 host에는 `.wb/` data dir와 설치된 `omp-workbench`가 없어 실행하지 않았다. 실행 전까지 실제 사용자 raw는 기존 한도·저장 중단 정책이다.
+
 ## 2026-10-15 최종 통합 연결 중
 
 - 기존 [core FOLLOWUPS](../core-workbench/FOLLOWUPS.md)의 FL-01~04·RM-01~03 링크와 원래 관측은 유지한다.
@@ -14,7 +20,7 @@
   314.627초 주기의 요약·저장·조회 및 전용 raw/DB 처리를 확인했다. 상세 범위와 정리 사건은 [VERIFICATION](VERIFICATION.md)을 따른다.
   이 결과를 28 AC/46 gate 전체 통과로 올리지 않는다. 기존 core 20개와 비용 근거는 별도 범위로 보존하고,
   남은 gate의 현재 적용 범위를 확인한다. 변경과 무관한 전체 검사나 작은 실제 요약 시험을 반복하지 않는다.
-- 실제 사용자 raw 순환 삭제는 OFF, C2 hold는 유지한다. 내부 native I/O 귀속 unknown과 LG-D30의 세 soft unknown을
+- 실제 사용자 raw 순환 삭제는 OFF, C2 hold는 유지한다(2026-10-24 후속: raw는 활성화 결정됨, 실행 대기. 아래 2026-10-24 절). 내부 native I/O 귀속 unknown과 LG-D30의 세 soft unknown을
   0/pass로 바꾸지 않는다. 새 모델 route·추가 비용 quota·자동 fallback·반복 품질 평가를 도입하지 않는다.
 
 이하 기존 계획 작성 당시 상태: 계획만. 당시 문서 보강에서는 시험·모델 호출을 실행하지 않았다.

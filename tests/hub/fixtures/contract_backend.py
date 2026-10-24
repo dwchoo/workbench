@@ -19,6 +19,7 @@ import socket
 import threading
 
 from workbench.backend.project import resolve_project_context
+from workbench.backend.runtime_paths import ensure_runtime_root
 from workbench.contracts.ui_v1 import FrameDecoder, encode_frame
 
 
@@ -33,10 +34,9 @@ def main() -> None:
     fcntl.flock(lock, fcntl.LOCK_EX)
     ticks = int(Path(f'/proc/{os.getpid()}/stat').read_bytes().rsplit(b') ', 1)[1].split()[19])
     marker = json.loads((data / 'project.json').read_text())
-    runtime.mkdir(parents=True, mode=0o700, exist_ok=True)
-    binding = runtime / 'runtime.json'
-    binding.write_text(json.dumps({'schema_version': 1, 'data_root': str(data), 'project_id': marker['project_id']}))
-    binding.chmod(0o600)
+    # The product's own preparation: every directory it creates is 0700 whatever the umask, and it
+    # writes the runtime.json binding the real backend writes.
+    ensure_runtime_root(runtime, data, marker['project_id'])
     reference = {'pid': os.getpid(), 'start_ticks': ticks}
     record = {'data_dir': str(data), 'project_dir': str(context.project_root), 'runtime_root': str(runtime),
               'project_id': marker['project_id'], 'uid': os.geteuid(),

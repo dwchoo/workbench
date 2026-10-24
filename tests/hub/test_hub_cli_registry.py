@@ -35,11 +35,15 @@ class CliCase(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory(prefix='wb-hubcli-')
         self.addCleanup(self.temp.cleanup)
         self.base = Path(self.temp.name).resolve()
-        for name in ('home', 'state', 'run'):
+        for name in ('home', 'state'):
             (self.base / name).mkdir(mode=0o700)
+        # A short private XDG_RUNTIME_DIR so the runtime root never falls back to /tmp/omp-workbench-<uid>
+        # (a long TMPDIR such as the shm_tests root would push bridge.sock past the socket path limit).
+        self.run = Path(tempfile.mkdtemp(prefix='r')).resolve()
+        self.addCleanup(shutil.rmtree, self.run, ignore_errors=True)
         self.env = {'PATH': '/usr/bin:/bin', 'HOME': str(self.base / 'home'), 'LANG': 'C.UTF-8',
                     'PYTHONPATH': str(REPO / 'src'), 'PYTHONDONTWRITEBYTECODE': '1',
-                    'XDG_STATE_HOME': str(self.base / 'state'), 'XDG_RUNTIME_DIR': str(self.base / 'run'),
+                    'XDG_STATE_HOME': str(self.base / 'state'), 'XDG_RUNTIME_DIR': str(self.run),
                     'WORKBENCH_HUB_AUTOSTART': '0'}
         self.registry_path = self.base / 'state' / 'omp-workbench' / 'hub' / 'registry.json'
         self.children: list[subprocess.Popen] = []
@@ -188,13 +192,27 @@ def tree_state(directory: Path) -> dict:
 
 
 class CliWithBackendCase(CliCase):
-    def run_contract_backend(self, root: Path, *extra: str) -> subprocess.Popen:
+    def run_contract_backend(self, root: Path, *extra: str, umask: int | None = None) -> subprocess.Popen:
         child = subprocess.Popen([sys.executable, str(FIXTURE), str(root), *extra], env=self.env,
                                  stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                                 text=True)
+                                 text=True, preexec_fn=None if umask is None else (lambda: os.umask(umask)))
         self.children.append(child)
         self.assertEqual(child.stdout.readline().strip(), 'ready', child.poll())
         return child
+
+
+class ContractBackendFixtureTests(CliWithBackendCase):
+    def test_runtime_directories_it_creates_are_private_under_any_umask(self):
+        for umask in (0o000, 0o022, 0o077):
+            with self.subTest(umask=oct(umask)):
+                root = self.project(f'umask{umask:o}')
+                self.run_contract_backend(root, umask=umask)
+                runtime = Path(json.loads((root / '.wb' / 'backend.json').read_text())['runtime_root'])
+                below_run = runtime.relative_to(self.run).parts
+                self.assertTrue(below_run)
+                for depth in range(1, len(below_run) + 1):
+                    directory = self.run / Path(*below_run[:depth])
+                    self.assertEqual(stat.S_IMODE(os.lstat(directory).st_mode), 0o700, directory)
 
 
 class HubRemoveTests(CliWithBackendCase):
@@ -309,11 +327,25 @@ class InitTests(CliWithBackendCase):
         self.assertEqual(code, 0, output)
         self.assertEqual([e['root'] for e in self.registered()], [str(folder)])
 
-    def test_init_declined_creates_nothing(self):
-        folder = self.folder('declined')
-        code, output = self.init_in_pty(folder, 'n')
+    def test_init_declined_or_eof_exits_2_and_creates_nothing(self):
+        for label, answer in (('n', 'n'), ('eof', '\x04')):
+            with self.subTest(label):
+                folder = self.folder(f'declined-{label}')
+                code, output = self.init_in_pty(folder, answer)
+                self.assertEqual(code, 2, output)
+                self.assertNotIn('Traceback', output)
+                self.assertFalse(os.path.lexists(folder / '.wb'))
+                self.assertFalse(self.registry_path.exists())
+
+    def test_init_of_a_file_path_fails_before_prompting(self):
+        plain = self.folder('plain') / 'file.txt'
+        plain.write_text('x')
+        code, output = self.init_in_pty(plain, 'y')
         self.assertEqual(code, 1, output)
-        self.assertFalse(os.path.lexists(folder / '.wb'))
+        self.assertNotIn('[y/N]', output)
+        self.assertNotIn('Traceback', output)
+        self.assertIn(str(plain), output)
+        self.assertFalse(os.path.lexists(plain.parent / '.wb'))
         self.assertFalse(self.registry_path.exists())
 
     def test_init_without_a_terminal_exits_2_and_creates_nothing(self):

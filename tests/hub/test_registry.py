@@ -192,6 +192,15 @@ class DamagedRegistryTests(RegistryCase):
             registry.ensure(self.layout, self.root('a'), str(uuid.uuid4()), 'add')
         self.assertEqual(sorted(p.name for p in real.iterdir()), ['registry.json'])
 
+    def test_unreadable_state_directory_parent_is_registry_invalid(self):
+        parent = self.layout.state_dir.parent
+        parent.mkdir(parents=True, mode=0o700)
+        os.chmod(parent, 0o600)  # no search permission: lstat of the state dir fails with EACCES
+        self.addCleanup(os.chmod, parent, 0o700)
+        with self.assertRaises(registry.RegistryError) as raised:
+            registry.read(self.layout)
+        self.assertEqual(raised.exception.reason, 'registry_invalid')
+
 
 WRITER = '''
 import sys, time, uuid

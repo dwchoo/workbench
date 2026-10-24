@@ -83,6 +83,8 @@ def read(layout: HubLayout) -> list[Entry]:
         directory = layout.state_dir.lstat()
     except FileNotFoundError:
         return []
+    except OSError as exc:
+        raise _invalid(layout, f"cannot inspect the state directory: {exc.strerror}") from exc
     if not stat.S_ISDIR(directory.st_mode) or directory.st_uid != os.geteuid():
         raise _invalid(layout, "state directory is not a plain user-owned directory")
     try:

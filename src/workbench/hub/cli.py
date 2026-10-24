@@ -237,6 +237,9 @@ def cmd_init(args: argparse.Namespace) -> int:
     """Initialize ``PATH`` (default cwd) after a terminal ``[y/N]`` confirmation, then register it."""
     from workbench.backend.project import initialize_project
     path_text = args.path or "."
+    target = Path(path_text).expanduser()
+    if target.exists() and not target.is_dir():  # fail before the prompt, not after a "y"
+        return _fail(f"폴더가 아닙니다: {target.resolve()}. .wb를 만들지 않았습니다.")
     try:
         context = _context_at(path_text)
     except FileNotFoundError:
@@ -265,7 +268,7 @@ def cmd_init(args: argparse.Namespace) -> int:
         created = initialize_project(context, confirm=confirm, interactive=True, environment=project_environment())
     except DataDirError as exc:
         if declined:
-            return _fail(f"초기화하지 않았습니다: {requested}")
+            return _fail(f"초기화하지 않았습니다: {requested}", EXIT_REQUIREMENT)
         raise
     if created.project_root != requested:  # an enclosing project appeared before the init lock was taken
         return _fail(f"{requested}는 WB 프로젝트의 하위 폴더입니다. 프로젝트 root: {created.project_root}. "

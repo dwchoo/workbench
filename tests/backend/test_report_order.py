@@ -11,6 +11,7 @@ from __future__ import annotations
 import threading
 import time
 import unittest
+from unittest import mock
 from uuid import uuid4
 
 from workbench.backend.flow import ActiveTask
@@ -204,6 +205,18 @@ class FinalReportTests(ReportFixture):
                                   "in_reply_to": str(uuid4())})
         self.assertEqual(result["status"], "queued", result)
         self.mailbox.release("all done")
+
+    def test_a_done_held_by_a_ledger_fault_does_not_refuse_later_reports(self):
+        task_id = self.work()
+        with mock.patch.object(self.flow._ledger, "append", side_effect=OSError("disk full")):  # the Task save fails
+            held = self.to_manager({"kind": "done", "message": "all done", "task_id": task_id})
+        self.assertEqual((held["status"], held.get("reason")), ("held", "metadata_unavailable"), held)
+        result = self.to_manager({"kind": "progress", "message": "still working", "task_id": task_id})
+        self.assertEqual(result["status"], "queued", result)
+        self.assertNotEqual(self.flow.task_view()["held_reason"], "done_report_pending", "nothing was queued")
+        self.assertTrue(fx.wait_until(lambda: len(self.manager_reports()) == 1))
+        # the held done used up seq 1 (a gap is allowed); the seq never goes back
+        self.assertEqual(self.manager_reports()[0].payload["report_seq"], 2)
 
 
 class StreamTests(unittest.TestCase):

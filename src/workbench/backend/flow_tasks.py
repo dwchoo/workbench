@@ -1431,21 +1431,28 @@ class TaskFlow:
             if runs is not None:
                 payload["commands_run"] = list(runs)
                 payload["commands_run_note"] = _runs_note(runs)
+        held_before = task.held_reason
         if report:
             listener = self._report_listener(task.task_id, task.run_id, args["kind"], request.tool_call_id)
             task.held_reason = f"{args['kind']}_report_pending"
             task_id, run_id = task.task_id, task.run_id
-            self._final_reports[task_id] = run_id
 
             def on_not_queued(_result: Mapping[str, Any]) -> None:  # it never went out: the run is not reported yet
                 with self._lock:
                     if self._final_reports.get(task_id) == run_id:
                         del self._final_reports[task_id]
         # CS-O02 (FU-D01): per Task, from 1, in the order the HandoffService queues them (its lock serializes the
-        # calls); kept with the Task so a backend restart continues it. A message that is then not queued leaves a gap.
+        # calls); kept with the Task so a backend restart continues it. A message that is then not queued (also one
+        # held by a failed save here) leaves a gap; a number is never given twice.
         task.report_seq += 1
         payload["report_seq"] = task.report_seq
-        self._save_task(task)
+        try:
+            self._save_task(task)
+        except OSError:
+            task.held_reason = held_before  # held: metadata_unavailable, nothing queued (C-AC-28)
+            raise
+        if report:  # FU-D02: only once the report is on its way to the queue
+            self._final_reports[task.task_id] = task.run_id
         return HandoffDecision({"status": "queued", "task_id": task.task_id}, message=OutboundMessage(
             task.task_id, task.run_revision, task.run_id, ActorRole.WORKER, ActorRole.MANAGER, kind, payload,
             in_reply_to_message_id=reply_to), listener=listener, keep_across_pause=report,

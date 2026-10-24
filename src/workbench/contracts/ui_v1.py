@@ -27,7 +27,9 @@ The first client frame must be ``hello`` with ``versions`` (a list of integers).
 The server answers ``welcome`` with the chosen version, or ``reject`` with
 ``version_mismatch`` and closes. After ``welcome`` every frame must carry the
 negotiated ``"v"``; a mismatch is rejected and the connection is closed.
-Client requests carry an ``id`` and receive exactly one ``result`` frame.
+Client requests carry an ``id`` and receive one ``result`` frame, except
+``stop_command``, which receives two with the same ``id``: an immediate ack and,
+when the stop has finished, a ``final: true`` result (see below).
 
 ``attach`` makes the connection the single display/input client: the server
 replays each pane's retained display tail (``replay: true``) and then streams
@@ -77,11 +79,37 @@ manager request closed by an exit or kill), ``restart`` and ``kill`` (the last
 force-kill result) next to the ``shell`` control state. ``automation_hold`` is
 a reason while Workbench types an experiment run's start into the idle host shell
 (user input is then refused with ``host_shell_automation``), else null.
+``command`` (additive, CS-O10) is the Workbench command running in the host
+terminal, ``{command_id, owner (worker|manager), label, state
+(running|stopping|unknown)}``, else null: the Worker's ``terminal`` command with
+or without a Task (``label`` is its first line, at most about 120 characters) or
+the Manager's running experiment command (``command_id`` = its ``run_id``,
+``label`` ``experiment <first 8 characters>``). A program the user started in
+the shell is never listed. The UI offers ``prefix x`` only for it.
 ``operated_by`` (additive, C-D68) is ``"worker"`` while the worker OMP's
 ``terminal`` command holds the host shell (its start through its give-back),
 else null; a client shows the worker as the host terminal's user then (the
 shell itself is claimed on the manager side, so ``input_owner`` stays
 ``manager``). Experiment runs leave it null.
+
+``stop_command`` (attached client, ``command_id`` a canonical UUID, CS-O10; the
+UI asks the user to confirm and sends the id it showed) stops that Workbench
+command as the user (``requested_by: user``; the same SIGINT -> SIGTERM ->
+SIGKILL escalation, identity checks, idempotence and audit as the Manager's stop;
+a run it ends closes as ``stopped`` with ``stopped_by: "user"``). The stop can
+take about 25 s, so the server never waits for it on its loop: it answers at once
+with ``{ok: true, command_id, stop: {status: "stopping"}}`` and later sends a
+second ``result`` frame with the same ``id``: ``{ok: true, final: true,
+command_id, stop: <the stop outcome>}``, followed by a ``state`` push.
+``stop.status`` is ``exited`` (``exit_code``, ``signal``, ``signal_name``),
+``unknown`` (the end was not confirmed, with ``reason``; never a success),
+``already_exited``, ``not_found``, ``refused`` (``reason``, e.g. ``not_owner``),
+``stopping`` (still under way when the call wait ended) or ``error``
+(``internal_error`` when the handler failed, ``unencodable_outcome`` when the
+outcome could not be encoded). A stale or finished ``command_id`` signals
+nothing. A request is refused with ``not_attached``, ``invalid_message`` or
+``queue_full`` (too many stops still in progress) as a single ``result``; a
+client that left before the final misses it.
 
 중요 로그 요약 호환 관측 (DVL-14; additive)
 ------------------------------------------
@@ -125,7 +153,8 @@ removed before any release; a client sending ``approval_decide`` gets
   ``kind: experiment``, ``owner: manager`` and ``command_id`` = its ``run_id``
   (what ``stop_command`` takes); the experiment ``cancel_requested`` response
   carries the same ``host_commands``. A run a stop ended closes with
-  ``last_result.outcome: "stopped"`` (``stopped_by``, ``exit_code``, ``signal``),
+  ``last_result.outcome: "stopped"`` (``stopped_by``: ``manager``, or ``user``
+  for the UI stop key (CS-O10); ``exit_code``, ``signal``),
   the Task ``finished``; no new status. :data:`TASK_STATUSES` is unchanged.
   The product UI shows such a Task as ``중지됨(<requester>)`` and adds the note
   ``명령 실행 중`` (a ``running`` or ``stopping`` command), ``명령 종료 미확인``

@@ -920,7 +920,7 @@ class CommandStopService:
         """``{"stopped_by", "stop_signal"}`` once a stop of this command has delivered a signal, else ``{}``.
 
         For the owner, which puts it on the command's result, notice and run record (the Worker must not take a
-        command the Manager stopped for a failure of its own). ``stopped_by`` is the requester of the command's
+        command the Manager stopped for a failure of its own). ``stopped_by`` is the requester (``worker``, ``manager`` or ``user``, the UI stop key) of the command's
         one episode; ``stop_signal`` the last signal that episode delivered. A stop whose every signal was refused
         (EPERM) or found its process gone marks nothing: the command's end is then not the stop's.
         """

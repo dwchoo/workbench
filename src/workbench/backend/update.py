@@ -262,6 +262,9 @@ def hub_stop_notice(identity):
     return f"Hub(pid {shown.get('pid')}, version {_hub_version_text(shown.get('version'))})를 멈춥니다"
 
 
+HUB_STOPPED_TEXT = 'Hub는 멈춘 상태입니다. 다음 `wb` 실행 때 다시 시작됩니다.'
+
+
 def hub_active_confirmed(active):
     """(A) extension point: Hub-owned live things (``stop_request.active``) join the update
     question. (B) never lists any, so an unexpected entry is refused and nothing stops."""
@@ -320,8 +323,6 @@ def _run(args, fence_descriptor):
             except (EOFError, KeyboardInterrupt, OSError, ValueError):
                 print('업데이트 취소: 작업은 유지됩니다.')
                 return 1
-        if hub is not None:
-            stop_hub_for_update(hub, announced=bool(active))
         state = os.environ.get('XDG_STATE_HOME', '')
         base = (Path(state) if os.path.isabs(state) else Path.home()/'.local/state')/'omp-workbench/updates'
         for item in projects:
@@ -329,15 +330,25 @@ def _run(args, fence_descriptor):
             data = Path(item['data_root']).resolve()
             if base.resolve().is_relative_to(source) or base.resolve().is_relative_to(data):
                 raise DataDirError('backup root가 프로젝트 source와 겹칩니다.')
-        base.mkdir(mode=0o700, parents=True, exist_ok=True)
-        run = base/uuid4().hex
-        run.mkdir(mode=0o700)
-        manifest = {'schema_version':1, 'source':safe_url(install['url']), 'previous':install['previous'],
-                    'target':target, 'installation':'not_started', 'projects':projects,
-                    'backup_complete':False, 'complete':False}
-        manifest['manual_reinstall'] = shlex.join([install['uv'], 'tool', 'install', '--force',
-            '--python', install['python'], 'git+'+safe_url(install['url'])+'@'+install['previous']])
-        write_private_json(run/'manifest.json', manifest)
+        hub_note = ''
+        if hub is not None:
+            stop_hub_for_update(hub, announced=bool(active))
+            hub_note = '\n' + HUB_STOPPED_TEXT  # every abort from here on leaves the Hub stopped
+        try:
+            base.mkdir(mode=0o700, parents=True, exist_ok=True)
+            run = base/uuid4().hex
+            run.mkdir(mode=0o700)
+            manifest = {'schema_version':1, 'source':safe_url(install['url']), 'previous':install['previous'],
+                        'target':target, 'installation':'not_started', 'projects':projects,
+                        'backup_complete':False, 'complete':False}
+            manifest['manual_reinstall'] = shlex.join([install['uv'], 'tool', 'install', '--force',
+                '--python', install['python'], 'git+'+safe_url(install['url'])+'@'+install['previous']])
+            write_private_json(run/'manifest.json', manifest)
+        except OSError as error:
+            if not hub_note:
+                raise
+            raise DataDirError(f'업데이트 확인 실패 ({type(error).__name__}); 원본·updates manifest와 실행 상태를 확인하세요.'
+                               + hub_note) from error
         print(f"업데이트 {install['previous']} -> {target}\n백업: {run}")
         try:
             for identity, client, pending, item in live:
@@ -392,7 +403,7 @@ def _run(args, fence_descriptor):
                 pass  # 실패 기록을 못 써도 backup·수동 복구 안내는 표시한다.
             print(f"업데이트 중단: {reason}; 설치 상태 {manifest['installation']} (uv exit {manifest.get('uv_returncode', '미실행/미확인')}). 백업 {run}\n"
                   f"이전/목표 commit: {install['previous']} / {target}\n"
-                  f"이전 ref 수동 재설치: {manifest['manual_reinstall']}", file=sys.stderr)
+                  f"이전 ref 수동 재설치: {manifest['manual_reinstall']}{hub_note}", file=sys.stderr)
             return 1
         print('업데이트 완료: 새 interpreter·출처 commit·필수 assets 확인')
         return 0

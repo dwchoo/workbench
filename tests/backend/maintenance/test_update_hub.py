@@ -12,9 +12,11 @@ import io
 import json
 import os
 from pathlib import Path
+import shutil
 import signal
 import subprocess
 import sys
+import tempfile
 import time
 import unittest
 
@@ -76,7 +78,21 @@ class UpdateHubFixture(unittest.TestCase):
 
     def setUp(self):
         self.setUp_installed()
-        self.state = self.home / 'state' / 'omp-workbench' / 'hub'
+        # A short private runtime base: backend runtimes must never fall back to
+        # /tmp/omp-workbench-<uid> because the socket path got too long.
+        self.runtime = Path(tempfile.mkdtemp(prefix='r'))
+        self.runtime.chmod(0o700)
+        self.addCleanup(shutil.rmtree, self.runtime, ignore_errors=True)
+        self.env['XDG_RUNTIME_DIR'] = str(self.runtime)
+        self.use_state_home(self.home / 'state')
+        self.events: list[tuple[str, dict]] = []
+        self.owned: list[subprocess.Popen] = []
+        self.hub_pids: list[int] = []
+        self.addCleanup(self.reap)
+
+    def use_state_home(self, state_home: Path) -> None:
+        self.env['XDG_STATE_HOME'] = str(state_home)
+        self.state = state_home / 'omp-workbench' / 'hub'
         self.hub_lock = self.state / 'hub.lock'
         self.hub_record = self.state / 'hub.json'
         self.events: list[tuple[str, dict]] = []
@@ -273,6 +289,78 @@ class HubStopFailureTests(UpdateHubFixture):
         self.assert_nothing_changed(status, output, error, backend, data)
         self.assertNotIn('[y/N]', output + error)
         self.assertIsNone(holder.poll())
+
+    def test_a_backup_root_inside_the_project_source_aborts_with_the_hub_untouched(self):
+        project, data, backend = self.recorded_project('project-a', [])
+        # XDG_STATE_HOME (updates/ and the Hub state) inside the project source.
+        self.use_state_home(project / 'xdg-state')
+        hub = self.start_hub()
+        status, output, error = self.invoke(tool=self.recording_tool)
+        self.assertEqual(status, 1, output + error)
+        self.assertIn('backup root가 프로젝트 source와 겹칩니다', error)
+        self.assertEqual(self.events, [])
+        self.assertIsNone(hub.poll())
+        self.assertEqual(flock_holder(self.hub_lock), hub.pid)
+        self.assertIsNone(backend.poll())
+        self.assertFalse(self.applied.exists())
+        self.assertFalse((project / 'xdg-state' / 'omp-workbench' / 'updates').exists())
+
+
+HUB_STOPPED_TEXT = 'Hub는 멈춘 상태입니다. 다음 `wb` 실행 때 다시 시작됩니다.'
+
+
+class FailureAfterHubStopTests(UpdateHubFixture):
+    def test_an_install_failure_after_the_hub_stopped_says_the_hub_stays_stopped(self):
+        import subprocess as sp
+        hub = self.start_hub()
+        self.recorded_project('project-a', [])
+
+        def failing(argv, **kwargs):
+            argv_text = list(map(str, argv))
+            if argv_text[0].endswith('uv') and '--offline' in argv_text:
+                self.events.append(('install', self.hub_view()))
+                return sp.CompletedProcess(argv_text, 2, '', '')
+            return self.tool(argv, **kwargs)
+
+        status, output, error = self.invoke(tool=failing)
+        self.assertEqual(status, 1, output + error)
+        self.assertIn('업데이트 중단', error)
+        self.assertIn(HUB_STOPPED_TEXT, error)
+        self.assertEqual(hub.wait(timeout=5), 0)
+
+    def test_a_backend_shutdown_failure_after_the_hub_stopped_says_the_hub_stays_stopped(self):
+        hub = self.start_hub()
+        before = set(self.clients)
+        self.project('project-a', [])
+        client, = (self.clients[key] for key in set(self.clients) - before)
+        original = client.request
+
+        def request(kind, **kwargs):
+            from workbench.contracts.ui_v1 import ClientType
+            if kind == ClientType.SHUTDOWN_CONFIRM:
+                return {'ok': False}
+            return original(kind, **kwargs)
+
+        client.request = request
+        status, output, error = self.invoke(tool=self.recording_tool)
+        self.assertEqual(status, 1, output + error)
+        self.assertIn(HUB_STOPPED_TEXT, error)
+        self.assertFalse(self.applied.exists())
+        self.assertEqual(hub.wait(timeout=5), 0)
+
+    def test_a_failure_with_no_hub_running_does_not_mention_the_hub(self):
+        import subprocess as sp
+        self.recorded_project('project-a', [])
+
+        def failing(argv, **kwargs):
+            argv_text = list(map(str, argv))
+            if argv_text[0].endswith('uv') and '--offline' in argv_text:
+                return sp.CompletedProcess(argv_text, 2, '', '')
+            return self.tool(argv, **kwargs)
+
+        status, output, error = self.invoke(tool=failing)
+        self.assertEqual(status, 1, output + error)
+        self.assertNotIn('Hub', output + error)
 
 
 # Another ``wb``'s auto-start (``ensure_hub``) with only the update fence relocated.

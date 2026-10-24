@@ -1597,7 +1597,7 @@ FLOW_SCENARIOS = {name: (dict(cfg), driver) for name, (cfg, driver) in FLOW_SCEN
 
 # ------------------------------------------------------------------------- intentional behaviour deltas (CS-O01 / CS-O02)
 # The split commits are pure refactors, but later commits changed the flow ON PURPOSE and the baseline (0dc6392 /
-# 1cdc387) predates them: 01ac223 (CS-O02, worker reports in send order) added ``FlowTask.report_seq`` and 0075cd4
+# 1cdc387) predates them: a8e630d (CS-O02, worker reports in send order) added ``FlowTask.report_seq`` and 8d09b67
 # (CS-O01, one refusal of a task-less command after a free-work cancel) added ``FlowTask.cancel_fence``. Both fields are
 # part of every saved ``task`` ledger record. The differential comparison accepts exactly those two keys inside the
 # ``task`` object of a ``task`` ledger record -- nothing else -- and pins their values separately:

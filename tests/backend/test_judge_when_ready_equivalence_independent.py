@@ -1283,8 +1283,8 @@ class AccessorPins(unittest.TestCase):
                 result = run_direct(current_tasks, spec)
                 self.assertNotEqual(result["outcome"], ("returned", "JUDGE_AGAIN_LEAKED"))
 
-    # CS-O01 (0075cd4: one refusal of a task-less command after a free-work cancel; FlowTask.cancel_fence) and CS-O02
-    # (01ac223: worker reports in send order; FlowTask.report_seq, _final_reports) changed flow_tasks.py on purpose
+    # CS-O01 (8d09b67: one refusal of a task-less command after a free-work cancel; FlowTask.cancel_fence) and CS-O02
+    # (a8e630d: worker reports in send order; FlowTask.report_seq, _final_reports) changed flow_tasks.py on purpose
     # after the refactors under test. Exactly these methods differ from the pre-refactor baseline because of them:
     CS_O01_O02_CHANGED = {"TaskFlow.__init__", "TaskFlow._cancel", "TaskFlow._finish_cancel", "TaskFlow._to_manager",
                           "TaskFlow._work_follow_up"}
@@ -1294,7 +1294,7 @@ class AccessorPins(unittest.TestCase):
     JUDGE_REFACTOR_ADDED = {"_AnalysisWait", "_AnalysisWait.__init__", "_AnalysisWait.reset", "_worker_analysis_request",
                             "TaskFlow._wait_out_hold", "TaskFlow._busy_past_limit", "TaskFlow._judge_once",
                             "TaskFlow._analysis_held"}
-    PRE_CS_REV = "ee5a312"  # main HEAD just before 01ac223 (the first CS-O01/CS-O02 commit)
+    PRE_CS_REV = "ee5a312"  # main HEAD just before a8e630d (the first CS-O01/CS-O02 commit)
 
     @staticmethod
     def _functions(source: str) -> dict[str, str]:

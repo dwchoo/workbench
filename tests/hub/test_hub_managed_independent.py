@@ -39,6 +39,9 @@ from test_hub_spawn_independent import (Box, DRIVER, alive, fd_targets, flock_ho
 
 from workbench.hub.process import UNVERIFIABLE, managed_ancestor
 
+PROC_UNREADABLE_AUTOSTART_TEXT = "[workbench] 프로세스 정보를 읽을 수 없어 Hub 자동 시작을 보류했습니다."
+PROC_UNREADABLE_START_TEXT = ("[workbench] 프로세스 정보를 읽을 수 없어 Hub를 시작하지 않았습니다. "
+                              "/proc 접근(예: hidepid)을 확인하세요.")
 MANAGED_TEXT = ("[workbench] WB가 관리하는 terminal 안에서는 Hub를 자동으로 시작하지 않습니다. "
                 "외부 terminal에서 'wb hub start'를 실행하세요.")
 
@@ -423,6 +426,28 @@ class WalkRaceTests(unittest.TestCase):
                 proc = FakeProc({100: (self.PLAIN, 200), 200: (self.PLAIN, 300), 300: (self.PLAIN, 0)}, hook)
                 self.assertIsNotNone(managed_ancestor(100, proc=proc))
 
+    def test_a_transient_proc_failure_is_retried_and_a_clean_second_walk_is_outside(self):
+        """Up to 3 walks: 1 or 2 transient failures still end "outside" (or the managed match); 3 stay inside."""
+        for failures, plain_expected, managed_expected in ((1, None, 300), (2, None, 300), (3, "inside", "inside")):
+            with self.subTest(failures=failures):
+                for chain, expected in (({100: (self.PLAIN, 200), 200: (self.PLAIN, 300), 300: (self.PLAIN, 0)},
+                                         plain_expected),
+                                        ({100: (self.PLAIN, 200), 200: (self.PLAIN, 300), 300: (self.BACKEND, 0)},
+                                         managed_expected)):
+                    left = [failures]
+
+                    def hook(pid, kind, entries, left=left):
+                        if pid == 200 and kind == "cmdline" and left[0] > 0:
+                            left[0] -= 1
+                            raise FileNotFoundError(2, "an ancestor was exiting", f"/proc/{pid}/{kind}")
+
+                    found = managed_ancestor(100, proc=FakeProc(chain, hook))
+                    if expected == "inside":
+                        self.assertIsNotNone(found)
+                        self.assertEqual(found, UNVERIFIABLE)
+                    else:
+                        self.assertEqual(found, expected)
+
     def test_an_ancestor_that_exits_after_the_walk_passed_it_does_not_matter(self):
         def hook(pid, kind, entries):
             if pid == 300 and kind == "cmdline":
@@ -669,9 +694,9 @@ class UnreadableProcTests(ManagedCase):
                 quiet = self.cli(mode, "status")
                 self.assertEqual((quiet.code, quiet.err), (3, ""), quiet)
                 loud = self.cli(mode, "status", tty=True)
-                self.assertEqual((loud.code, loud.err.strip()), (3, MANAGED_TEXT), loud)
+                self.assertEqual((loud.code, loud.err.strip()), (3, PROC_UNREADABLE_AUTOSTART_TEXT), loud)
                 refused = self.cli(mode, "hub", "start")
-                self.assertEqual((refused.code, refused.err.strip()), (2, MANAGED_TEXT), refused)
+                self.assertEqual((refused.code, refused.err.strip()), (2, PROC_UNREADABLE_START_TEXT), refused)
                 self.assert_no_hub()
 
     def test_a_managed_chain_in_the_fake_proc_is_held_too(self):

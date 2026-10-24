@@ -73,9 +73,14 @@ class Sandbox(unittest.TestCase):
         self.base = Path(self.temp.name).resolve()
         for name in ('home', 'state', 'run', 'work'):
             (self.base / name).mkdir(mode=0o700)
+        # A short private XDG_RUNTIME_DIR: under a long temp root the runtime paths exceed the AF_UNIX
+        # limit and fall back to the real /tmp/omp-workbench-<uid>, which a test must never touch.
+        self.runtime = Path(tempfile.mkdtemp(prefix='r', dir='/tmp')).resolve()
+        os.chmod(self.runtime, 0o700)
+        self.addCleanup(shutil.rmtree, self.runtime, True)
         self.env = {'PATH': '/usr/bin:/bin', 'HOME': str(self.base / 'home'), 'LANG': 'C.UTF-8',
                     'PYTHONPATH': str(REPO / 'src'), 'PYTHONDONTWRITEBYTECODE': '1',
-                    'XDG_STATE_HOME': str(self.base / 'state'), 'XDG_RUNTIME_DIR': str(self.base / 'run'),
+                    'XDG_STATE_HOME': str(self.base / 'state'), 'XDG_RUNTIME_DIR': str(self.runtime),
                     'WORKBENCH_HUB_AUTOSTART': '0'}
         self.state_root = self.base / 'state' / 'omp-workbench'
         self.state_dir = self.state_root / 'hub'

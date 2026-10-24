@@ -31,7 +31,7 @@ class IndependentStartupAdmissionTests(unittest.TestCase):
                 path.mkdir(mode=0o700)
             env = {'HOME': str(home), 'XDG_RUNTIME_DIR': str(runtime),
                    'PATH': '/usr/bin:/bin', 'PYTHONPATH': str(REPO / 'src'),
-                   'PYTHONDONTWRITEBYTECODE': '1', 'LANG': 'C.UTF-8'}
+                   'PYTHONDONTWRITEBYTECODE': '1', 'LANG': 'C.UTF-8', 'WORKBENCH_HUB_AUTOSTART': '0'}
             for key in ('XDG_CONFIG_HOME', 'XDG_DATA_HOME', 'XDG_CACHE_HOME', 'TMPDIR'):
                 path = root / key
                 path.mkdir(mode=0o700)

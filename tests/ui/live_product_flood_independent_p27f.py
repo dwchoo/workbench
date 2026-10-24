@@ -150,7 +150,8 @@ class FloodRuntime(unittest.TestCase):
         self.omp.write_text(STUB)
         self.omp.chmod(0o755)
         self.env = {"PATH": "/usr/bin:/bin", "HOME": str(self.home), "SHELL": BASH, "LANG": "C.UTF-8",
-                    "TERM": "xterm-256color", "PYTHONPATH": str(REPO / "src"), "PYTHONDONTWRITEBYTECODE": "1"}
+                    "TERM": "xterm-256color", "PYTHONPATH": str(REPO / "src"), "PYTHONDONTWRITEBYTECODE": "1",
+                    "WORKBENCH_HUB_AUTOSTART": "0"}
         self.run_: PtyRun | None = None
         self.known: dict[str, tuple[int, int]] = {}
         self.sessions: set[int] = set()

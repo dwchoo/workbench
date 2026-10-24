@@ -99,7 +99,7 @@ class Case:
         self.omp.write_text(STUB)
         self.omp.chmod(0o755)
         self.env = {"PATH": "/usr/bin:/bin", "PYTHONPATH": SRC, "PYTHONDONTWRITEBYTECODE": "1", "LANG": "C.UTF-8",
-                    "TERM": "xterm-256color"}
+                    "TERM": "xterm-256color", "HOME": str(root), "WORKBENCH_HUB_AUTOSTART": "0"}
         self.marker = 0
         self.tmux_setup = None  # tmux only: callable(mark) answering the setup prompt, see ``answer_tmux_setup_prompt``
 

@@ -233,7 +233,7 @@ class Probe:
             "      - id: scripted\n        name: cw19 none\n        contextWindow: 32768\n        maxTokens: 1024\n")
         self.env = {"PATH": "/usr/bin:/bin:" + str(Path(self.omp).parent), "HOME": str(self.home),
                     "SHELL": "/usr/bin/bash", "LANG": "C.UTF-8", "TERM": "xterm-256color",
-                    "PYTHONPATH": str(SRC), "PYTHONDONTWRITEBYTECODE": "1",
+                    "PYTHONPATH": str(SRC), "PYTHONDONTWRITEBYTECODE": "1", "WORKBENCH_HUB_AUTOSTART": "0",
                     "XDG_CONFIG_HOME": str(self.home / ".config"), "XDG_DATA_HOME": str(self.home / ".local/share"),
                     "XDG_STATE_HOME": str(self.home / ".local/state"), "XDG_CACHE_HOME": str(self.home / ".cache"),
                     **{key: BLOCKED_PROXY for key in PROXY_KEYS}, "NO_PROXY": "127.0.0.1", "no_proxy": "127.0.0.1"}

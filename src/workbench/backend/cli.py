@@ -1480,12 +1480,38 @@ def parser() -> argparse.ArgumentParser:
     return root
 
 
+HUB_LIST_NEEDS_TTY = "Hub 목록은 terminal이 필요합니다. 'wb hub list'를 쓰세요"
+
+
+def _bare_outside_project() -> bool:
+    """True when a bare ``wb`` runs outside a WB project: no ``.wb`` above the cwd and no
+    ``WORKBENCH_DATA_DIR``. A marker that cannot be read stays "inside" so ``start`` reports it."""
+    from workbench.backend.project import resolve_project_context
+    try:
+        return resolve_project_context(Path.cwd(), os.environ).needs_initialization
+    except (DataDirError, OSError, ValueError):
+        return False
+
+
+def cmd_hub_tui(args: argparse.Namespace) -> int:
+    from workbench.ui.hub_list.app import run_hub_list
+    return run_hub_list()
+
+
 def main(argv: list[str] | None = None, *, autostart: bool | None = None) -> int:
     """``autostart`` (default: only for the real entrypoint, ``argv is None``) starts
     the Hub after argparse and before the handler (SPEC "자동 시작 규칙"). In-process
     callers that pass ``argv`` never spawn a background Hub unless they ask."""
     values = list(sys.argv[1:] if argv is None else argv)
-    args = parser().parse_args(values or ["start"])
+    if not values and _bare_outside_project():
+        # Bare `wb` outside a project: the Hub list (it needs the Hub, so `hub list` auto-starts it).
+        if not (sys.stdin is not None and sys.stdin.isatty() and sys.stdout.isatty()):
+            print(HUB_LIST_NEEDS_TTY, file=sys.stderr)
+            return EXIT_REQUIREMENT
+        args = parser().parse_args(["hub", "list"])
+        args.handler = cmd_hub_tui
+    else:
+        args = parser().parse_args(values or ["start"])
     if autostart is None:
         autostart = argv is None
     if autostart:

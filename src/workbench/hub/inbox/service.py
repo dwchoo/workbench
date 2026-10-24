@@ -29,6 +29,7 @@ __all__ = ["CommittedEvent", "InboxError", "InboxService", "Principal", "Project
 LOG = logging.getLogger(__name__)
 STATES = ("NEW", "REVIEWING", "NEEDS_INFO", "READY", "RUNNING", "CLOSED")
 PRE_DISPATCH = ("NEW", "REVIEWING", "NEEDS_INFO")
+OPEN_STATES = STATES[:-1]
 LINKED = ("READY", "RUNNING")
 LINK_TTL = 30.0
 # Task statuses (SPEC "Task 동기화") that make a linked request RUNNING rather than READY.
@@ -299,8 +300,8 @@ class InboxService:
             return
         try:
             self._on_committed(event)
-        except Exception:  # a failed notification never undoes the commit
-            LOG.exception("inbox on_committed callback failed for %s", event.type)
+        except Exception as exc:  # a failed notification never undoes the commit
+            LOG.warning("inbox on_committed callback failed for %s %s: %r", event.type, event.request_id, exc)
 
     # -- row helpers ------------------------------------------------------------------------
     @staticmethod
@@ -748,26 +749,24 @@ class InboxService:
                     raise self._invalid(row, "review can only begin on a NEW request")
                 new = self._begin_if_new(tx, row)
                 return {"state": new["state"], "version": new["version"]}
+            # Judge against the state after the implicit NEW → REVIEWING, but refuse before writing it
+            # so a refusal reports the committed state and leaves nothing behind.
+            state = "REVIEWING" if row["state"] == "NEW" else row["state"]
+            allowed = {"ask": ("REVIEWING", "RUNNING"), "comment": OPEN_STATES,
+                       "reject": ("REVIEWING", "NEEDS_INFO"), "close": LINKED}[action]
+            if state not in allowed:
+                raise self._invalid(row, f"cannot {action} a {row['state']} request")
             row = self._begin_if_new(tx, row)
-            state = row["state"]
             if action == "ask":
-                if state not in ("REVIEWING", "RUNNING"):
-                    raise self._invalid(row, f"cannot ask from {state}")
                 comment_id = self._comment(tx, request_id, "question", body)
                 new = self._set(tx, row, state="NEEDS_INFO")
             elif action == "comment":
-                if state == "CLOSED":
-                    raise self._invalid(row, "the request is closed")
                 comment_id = self._comment(tx, request_id, "progress", body)
                 new = self._set(tx, row)
             elif action == "reject":
-                if state not in ("REVIEWING", "NEEDS_INFO"):
-                    raise self._invalid(row, f"cannot reject from {state}")
                 comment_id = self._comment(tx, request_id, "decision", body)
                 new = self._set(tx, row, state="CLOSED", outcome="rejected")
             else:
-                if state not in LINKED:
-                    raise self._invalid(row, f"cannot close from {state}")
                 comment_id = self._comment(tx, request_id, "decision", summary)
                 tx.connection.execute("UPDATE links SET state = 'closed' WHERE request_id = ? AND state = 'active'",
                                       (request_id,))
@@ -783,9 +782,9 @@ class InboxService:
         """First half of the approved-spec link: a 30 s token bound to the request's current version.
         Any later commit on the request (a cancel, an edit) invalidates it (D-35)."""
         def fn(tx: _Tx, row: sqlite3.Row) -> dict:
-            row = self._begin_if_new(tx, row)
-            if row["state"] not in ("REVIEWING", "NEEDS_INFO") or row["cancel_state"] is not None:
+            if row["state"] not in PRE_DISPATCH or row["cancel_state"] is not None:
                 raise self._invalid(row, f"a {row['state']} request cannot be linked")
+            row = self._begin_if_new(tx, row)
             token = secrets.token_urlsafe(24)
             with self._lock:
                 self._link_tokens = {k: v for k, v in self._link_tokens.items() if v[3] > tx.now}

@@ -2,7 +2,7 @@
 
 The control socket never lives under ``omp-workbench/``: ``maintenance.discover()``
 treats every directory there as a backend runtime binding. Clients read the socket
-location from ``hub.json`` only; :func:`runtime_socket_dir` is for the Hub itself.
+location from ``hub.json`` only; :func:`prepare_socket_path` is for the Hub itself.
 """
 from __future__ import annotations
 
@@ -17,6 +17,7 @@ from workbench.backend.paths import APP_DIR_NAME, MAX_SOCKET_PATH_BYTES, DataDir
 HUB_DIR_NAME = "hub"
 RUNTIME_DIR_NAME = "omp-workbench-hub"
 SOCKET_NAME = "hub.sock"
+FALLBACK_BASE = Path("/tmp")  # SPEC fixed fallback; a keyword only so tests need not touch /tmp
 
 
 @dataclass(frozen=True, slots=True)
@@ -54,23 +55,28 @@ def _user_only_dir(path: Path) -> bool:
             and stat.S_IMODE(info.st_mode) & 0o077 == 0)
 
 
-def runtime_socket_dir(environment: Mapping[str, str] | None = None) -> Path:
-    """``$XDG_RUNTIME_DIR/omp-workbench-hub`` when that base is absolute and user-only,
-    else ``/tmp/omp-workbench-hub-<uid>``."""
+def socket_dir_candidates(environment: Mapping[str, str] | None = None, *,
+                          fallback_base: Path = FALLBACK_BASE) -> list[Path]:
+    """In order: ``$XDG_RUNTIME_DIR/omp-workbench-hub`` when that base is absolute and
+    user-only, then ``/tmp/omp-workbench-hub-<uid>``."""
     environment = os.environ if environment is None else environment
     runtime = environment.get("XDG_RUNTIME_DIR", "")
+    candidates = []
     if runtime and os.path.isabs(runtime) and _user_only_dir(Path(runtime)):
-        return Path(os.path.abspath(runtime)) / RUNTIME_DIR_NAME
-    return Path("/tmp") / f"{RUNTIME_DIR_NAME}-{os.geteuid()}"
+        candidates.append(Path(os.path.abspath(runtime)) / RUNTIME_DIR_NAME)
+    candidates.append(Path(fallback_base) / f"{RUNTIME_DIR_NAME}-{os.geteuid()}")
+    return candidates
 
 
 def prepare_state_dir(layout: HubLayout) -> Path:
     return ensure_private_dir(layout.state_dir)
 
 
-def prepare_socket_path(environment: Mapping[str, str] | None = None) -> Path:
-    directory = ensure_private_dir(runtime_socket_dir(environment))
-    path = directory / SOCKET_NAME
-    if len(os.fsencode(path)) > MAX_SOCKET_PATH_BYTES:
-        raise DataDirError(f"hub socket path is too long for AF_UNIX: {path}")
-    return path
+def prepare_socket_path(environment: Mapping[str, str] | None = None, *, fallback_base: Path = FALLBACK_BASE) -> Path:
+    """Create (0700) only the first candidate whose socket path fits AF_UNIX."""
+    candidates = socket_dir_candidates(environment, fallback_base=fallback_base)
+    for directory in candidates:
+        if len(os.fsencode(directory / SOCKET_NAME)) <= MAX_SOCKET_PATH_BYTES:
+            return ensure_private_dir(directory) / SOCKET_NAME
+    raise DataDirError("hub socket path is too long for AF_UNIX: "
+                       + ", ".join(str(directory / SOCKET_NAME) for directory in candidates))

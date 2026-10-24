@@ -200,6 +200,47 @@ def hello_pid(socket_path: str) -> int:
         return json.loads(probe.makefile('rb').readline())['hub']['pid']
 
 
+class HubSocketLocationTests(unittest.TestCase):
+    """SPEC "위치": XDG socket dir first, else the fixed fallback; length is checked
+    before any directory is created. The fallback base is injected so the real /tmp
+    is never touched."""
+
+    def setUp(self):
+        sys.path.insert(0, str(REPO / 'src'))
+        self.addCleanup(sys.path.remove, str(REPO / 'src'))
+        from workbench.hub import paths
+        self.paths = paths
+        temp = tempfile.TemporaryDirectory(prefix='wb-hub-loc-')
+        self.addCleanup(temp.cleanup)
+        self.base = Path(temp.name)
+
+    def long_runtime(self) -> Path:
+        runtime = self.base / ('r' * 100)
+        runtime.mkdir(mode=0o700)
+        self.assertGreater(len(os.fsencode(runtime / 'omp-workbench-hub' / 'hub.sock')), 107)
+        return runtime
+
+    def test_too_long_xdg_socket_falls_back_without_creating_the_xdg_dir(self):
+        runtime = self.long_runtime()
+        fallback = self.base / 'tmp'
+        fallback.mkdir()
+        path = self.paths.prepare_socket_path({'XDG_RUNTIME_DIR': str(runtime)}, fallback_base=fallback)
+        expected_dir = fallback / f'omp-workbench-hub-{os.geteuid()}'
+        self.assertEqual(path, expected_dir / 'hub.sock')
+        self.assertEqual(stat.S_IMODE(expected_dir.stat().st_mode), 0o700)
+        self.assertFalse(os.path.lexists(runtime / 'omp-workbench-hub'))
+
+    def test_both_candidates_too_long_fail_and_create_nothing(self):
+        runtime = self.long_runtime()
+        fallback = self.base / ('t' * 100)
+        fallback.mkdir()
+        from workbench.backend.paths import DataDirError
+        with self.assertRaises(DataDirError):
+            self.paths.prepare_socket_path({'XDG_RUNTIME_DIR': str(runtime)}, fallback_base=fallback)
+        self.assertEqual(os.listdir(runtime), [])
+        self.assertEqual(os.listdir(fallback), [])
+
+
 class HubWatchdogTests(unittest.TestCase):
     def setUp(self):
         self.box = HubSandbox(self)
@@ -214,6 +255,17 @@ class HubWatchdogTests(unittest.TestCase):
         hub = self.box.start_hub()
         self.box.lock.unlink()
         self.assert_ends_within_four_seconds(hub)
+
+    def test_lock_lost_exit_leaves_record_and_socket_when_a_new_owner_holds_the_lock(self):
+        hub = self.box.start_hub()
+        record_bytes = self.box.record_path.read_bytes()
+        socket_path = Path(self.box.record()['socket'])
+        self.box.lock.unlink()
+        new_owner = self.box.holder(self.box.lock)  # takes the new lock inode
+        self.assert_ends_within_four_seconds(hub)
+        self.assertEqual(flock_holder(self.box.lock), new_owner.pid)
+        self.assertEqual(self.box.record_path.read_bytes(), record_bytes)
+        self.assertTrue(stat.S_ISSOCK(socket_path.lstat().st_mode))
 
     def test_lock_file_replaced_by_another_inode_ends_the_hub(self):
         hub = self.box.start_hub()
@@ -335,6 +387,19 @@ def hub_processes() -> set[int]:
             if b'_hub' in argv and alive(int(name)):
                 found.add(int(name))
     return found
+
+
+class HubPolicyArgumentTests(unittest.TestCase):
+    def setUp(self):
+        self.box = HubSandbox(self)
+
+    def test_non_positive_policy_values_are_refused_before_anything_starts(self):
+        for option in ('--idle-timeout', '--stop-token-ttl'):
+            for value in ('0', '-1'):
+                result = self.box.cli('_hub', '--foreground', option, value, timeout=20)
+                self.assertEqual(result.returncode, 2, (option, value, result))
+                self.assertFalse(self.box.state.exists(), (option, value))
+                self.assertFalse(self.box.socket_dir.exists(), (option, value))
 
 
 class HubStatusTests(unittest.TestCase):

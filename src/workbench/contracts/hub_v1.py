@@ -7,7 +7,8 @@ line is answered with ``reject``/``protocol_error`` and the connection is closed
 
 The first line is ``{"v":1,"type":"hello","client":<name>}`` answered with
 ``{"v":1,"type":"welcome","hub":{pid,start_ticks,version,started_at,mode}}`` or
-``reject``/``version_mismatch``. Requests are ``{"v":1,"id":<<=64 chars>,"type":<op>,...}``
+``reject``/``version_mismatch`` (``bad_request`` when ``client`` is not a non-empty
+string of at most :data:`MAX_CLIENT_NAME_LENGTH`). Requests are ``{"v":1,"id":<<=64 chars>,"type":<op>,...}``
 answered with ``{"v":1,"id":...,"type":"result","ok":true,...}`` or
 ``{"ok":false,"reason":<code>,"detail":<sentence>}``. Unknown and reserved ops are
 ``unsupported_type``. At most :data:`MAX_CONNECTIONS` connections are served and a
@@ -124,6 +125,11 @@ def result(request_id: str, **fields: Any) -> dict[str, Any]:
 def failure(request_id: str, reason: Reason, detail: str) -> dict[str, Any]:
     return {"v": VERSION, "id": request_id, "type": ServerType.RESULT.value, "ok": False,
             "reason": reason.value, "detail": detail}
+
+
+def valid_client_name(value: object) -> bool:
+    """hello ``client``: a non-empty string of at most :data:`MAX_CLIENT_NAME_LENGTH`."""
+    return isinstance(value, str) and 0 < len(value) <= MAX_CLIENT_NAME_LENGTH
 
 
 def valid_request_id(value: object) -> bool:

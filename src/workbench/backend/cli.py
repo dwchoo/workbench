@@ -1178,6 +1178,16 @@ def cmd_hub_stop(args: argparse.Namespace) -> int:
     return run(args)
 
 
+def _positive(kind):
+    def parse(text: str):
+        value = kind(text)
+        if not value > 0:
+            raise argparse.ArgumentTypeError(f"must be greater than 0: {text}")
+        return value
+    parse.__name__ = kind.__name__
+    return parse
+
+
 def cmd_hub_process(args: argparse.Namespace) -> int:
     from workbench.hub.server import main_hub
     return main_hub(args)
@@ -1345,8 +1355,8 @@ def parser() -> argparse.ArgumentParser:
     hub_process.add_argument("--foreground", action="store_true")
     hub_process.add_argument("--mode", choices=("spawned", "foreground", "systemd"))
     # Policy injection for tests only (SPEC defaults otherwise).
-    hub_process.add_argument("--stop-token-ttl", type=int, default=60, help=argparse.SUPPRESS)
-    hub_process.add_argument("--idle-timeout", type=float, default=60.0, help=argparse.SUPPRESS)
+    hub_process.add_argument("--stop-token-ttl", type=_positive(int), default=60, help=argparse.SUPPRESS)
+    hub_process.add_argument("--idle-timeout", type=_positive(float), default=60.0, help=argparse.SUPPRESS)
     hub_process.set_defaults(handler=cmd_hub_process)
     return root
 

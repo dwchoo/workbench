@@ -18,7 +18,7 @@ from workbench.backend.paths import (BackendLocked, DataDirError, InstanceLock, 
 from workbench.contracts import hub_v1
 
 from .paths import HubLayout, hub_layout, prepare_socket_path, prepare_state_dir
-from .process import RECORD_SCHEMA_VERSION, installed_version, start_ticks
+from .process import RECORD_SCHEMA_VERSION, installed_version, lock_holder, start_ticks
 
 
 LOCAL_PRINCIPAL = "local"
@@ -127,7 +127,7 @@ class Hub:
     async def watchdog(self) -> None:
         while True:
             await asyncio.sleep(WATCHDOG_INTERVAL)
-            reason = self.guard_broken()
+            reason = await asyncio.get_running_loop().run_in_executor(None, self.guard_broken)
             if reason is not None:
                 self.watchdog_reason = reason
                 print(f"[workbench] Hub stopping: {reason}", file=sys.stderr, flush=True)
@@ -138,12 +138,15 @@ class Hub:
         record = self.record or {}
         return {key: record.get(key) for key in ("pid", "start_ticks", "version", "started_at", "mode")}
 
-    def handle(self, principal: str, request: dict) -> dict:
-        """One hub_v1 request from ``principal``; (A) adds web/API-key principals."""
+    async def handle(self, principal: str, request: dict) -> dict:
+        """One hub_v1 request from ``principal``; (A) adds web/API-key principals.
+
+        File and ``/proc`` reads run in the default executor, never on the loop.
+        """
         request_id = request["id"]
         op = request.get("type")
         if op == hub_v1.ClientType.STATUS.value:
-            return hub_v1.result(request_id, **self.status())
+            return hub_v1.result(request_id, **await self.status())
         if op == hub_v1.ClientType.STOP_REQUEST.value:
             return hub_v1.result(request_id, **self.offer_stop())
         if op == hub_v1.ClientType.STOP_CONFIRM.value:
@@ -153,8 +156,9 @@ class Hub:
             return hub_v1.result(request_id, stopping=True)
         return hub_v1.failure(request_id, hub_v1.Reason.UNSUPPORTED_TYPE, f"unsupported request type: {op!r}")
 
-    def status(self) -> dict:
-        return {"hub": dict(self.record or {}), "registry": registry_summary(self.layout),
+    async def status(self) -> dict:
+        registry = await asyncio.get_running_loop().run_in_executor(None, registry_summary, self.layout)
+        return {"hub": dict(self.record or {}), "registry": registry,
                 "web": {"state": "not_available"}, "board_agent": None}
 
     def active(self) -> list:
@@ -168,6 +172,12 @@ class Hub:
         return {"token": token, "active": active, "expires_in": self.stop_token_ttl}
 
     def confirm_stop(self, token: object) -> bool:
+        """Accept only the latest offer's token, unexpired, with an unchanged active set.
+
+        There is a single offer and any confirm consumes it, right or wrong: a wrong
+        guess cannot be retried against the same token (fail-safe); a caller that
+        lost the race simply asks for a new ``stop_request``.
+        """
         offer, self.stop_offer = self.stop_offer, None
         if (offer is None or not isinstance(token, str) or not secrets.compare_digest(token, offer[0])
                 or time.monotonic() > offer[1] or self.active() != offer[2]):
@@ -213,8 +223,24 @@ class Hub:
             task.cancel()
         await asyncio.gather(*self.tasks, return_exceptions=True)
 
-    def cleanup(self) -> None:
-        """Remove only our own socket and record, then release the lock."""
+    def new_owner_possible(self) -> bool:
+        """After the guard broke, does another process hold a lock at ``hub.lock``?
+
+        Such a process may be a new Hub that already owns the record/socket paths.
+        Unreadable lock state counts as possible (leave the files).
+        """
+        try:
+            holder = lock_holder(self.layout.lock)
+        except (OSError, ValueError, IndexError):
+            return True
+        return holder not in (None, os.getpid())
+
+    def cleanup(self, *, remove_files: bool = True) -> None:
+        """Remove only our own socket (dev/ino) and record (pid/start_ticks), then
+        release the lock; ``remove_files=False`` leaves both paths untouched."""
+        if not remove_files:
+            self.lock.release()
+            return
         if self.socket_path is not None and self.socket_identity is not None:
             try:
                 info = self.socket_path.lstat()
@@ -280,6 +306,9 @@ class Connection:
             if frame.get("v") not in hub_v1.SUPPORTED_VERSIONS:
                 await self.send(hub_v1.reject(hub_v1.Reason.VERSION_MISMATCH))
                 return False
+            if not hub_v1.valid_client_name(frame.get("client")):
+                await self.send(hub_v1.reject(hub_v1.Reason.BAD_REQUEST))
+                return False
             self.greeted = True
             await self.send(hub_v1.welcome(self.hub.welcome_identity()))
             return True
@@ -287,7 +316,7 @@ class Connection:
         if frame.get("v") != hub_v1.VERSION or not hub_v1.valid_request_id(request_id):
             await self.send(hub_v1.reject(hub_v1.Reason.PROTOCOL_ERROR))
             return False
-        await self.send(self.hub.handle(LOCAL_PRINCIPAL, frame))
+        await self.send(await self.hub.handle(LOCAL_PRINCIPAL, frame))
         if self.hub.stop_requested:
             self.hub.request_stop()
             return False
@@ -325,5 +354,5 @@ def main_hub(args: argparse.Namespace) -> int:
     try:
         asyncio.run(hub.serve())
     finally:
-        hub.cleanup()
+        hub.cleanup(remove_files=hub.watchdog_reason is None or not hub.new_owner_possible())
     return 1 if hub.watchdog_reason else 0

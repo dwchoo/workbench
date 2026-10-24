@@ -91,6 +91,20 @@ class HubProtocolTests(unittest.TestCase):
         self.assertEqual(line.recv(), {'v': 1, 'type': 'reject', 'reason': 'version_mismatch'})
         self.assertTrue(line.closed())
 
+    def test_hello_client_must_be_a_short_string(self):
+        self.box.start_hub()
+        for client in (None, 7, '', 'c' * 65):
+            line = self.connect()
+            hello = {'v': 1, 'type': 'hello'}
+            if client is not None:
+                hello['client'] = client
+            line.send(hello)
+            self.assertEqual(line.recv(), {'v': 1, 'type': 'reject', 'reason': 'bad_request'}, client)
+            self.assertTrue(line.closed())
+        line = self.connect()
+        line.send({'v': 1, 'type': 'hello', 'client': 'c' * 64})
+        self.assertEqual(line.recv()['type'], 'welcome')
+
     def test_status_reports_the_hub_record_registry_and_unavailable_web(self):
         hub = self.box.start_hub()
         record = self.box.record()
@@ -224,13 +238,10 @@ class HubFramingTests(unittest.TestCase):
         for line in open_lines:
             self.assertEqual(line.hello()['type'], 'welcome')
         extra = self.connect()
-        try:
-            extra.send({'v': 1, 'type': 'hello', 'client': 'test'})
-            reply = extra.recv()
-        except (BrokenPipeError, ConnectionResetError):
-            reply = None
-        self.assertNotEqual((reply or {}).get('type'), 'welcome')
-        self.assertTrue(reply is None or reply == {'v': 1, 'type': 'reject', 'reason': 'connection_limit'})
+        # The Hub rejects on accept, before any hello; read without writing so the
+        # reject is never lost to a write on an already closed socket.
+        self.assertEqual(extra.recv(), {'v': 1, 'type': 'reject', 'reason': 'connection_limit'})
+        self.assertTrue(extra.closed())
         open_lines[0].close()
         time.sleep(0.2)
         self.assertTrue(wait_until(lambda: self.connect().hello()['type'] == 'welcome', 3))

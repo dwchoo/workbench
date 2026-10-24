@@ -13,6 +13,7 @@ from __future__ import annotations
 import threading
 import time
 import unittest
+from unittest import mock
 from uuid import uuid4
 
 from test_ui_server import FakeController, ServerFixture
@@ -157,6 +158,19 @@ class StopCommandRelayTests(ServerFixture):
         results = [self.next_result(client) for _ in range(16)]  # eight acks and eight finals, interleaved
         self.assertTrue(all(r["ok"] for r in results), results)
         self.assertEqual(sum(1 for r in results if r.get("final")), 8)
+
+    def test_a_thread_that_cannot_start_gives_the_slot_back_and_answers_with_an_error(self):
+        client = self.attached_client()
+        with mock.patch.object(threading.Thread, "start", side_effect=RuntimeError("can't start new thread")):
+            for _ in range(10):  # more than the in-flight bound: a leaked slot would turn these into queue_full
+                answer = client.request(ClientType.STOP_COMMAND, command_id=str(uuid4()))
+                self.assertEqual((answer["ok"], answer["reason"]), (False, "internal_error"), answer)
+        self.assertEqual(self.controller.stop_calls, [])
+        self.controller.outcome = {"status": "exited", "exit_code": 0}
+        self.controller.release.set()
+        self.send_stop(client, str(uuid4()))
+        self.assertTrue(self.next_result(client)["ok"], "a later stop is accepted again")
+        self.assertTrue(self.next_result(client)["final"])
 
     def test_a_client_that_left_before_the_final_outcome_does_not_hurt_the_server(self):
         client = self.attached_client()

@@ -1251,9 +1251,10 @@ class ProductModel:
 
     def stop_confirm_lines(self) -> list[str]:
         shown = self.stop_confirm or {}
-        owner = shown.get("owner") or "?"
+        owner = _plain(shown.get("owner")) or "?"
+        label = _plain(shown.get("label")) or "(이름 없음)"  # no control characters: wcswidth -1 would skip the clip
         return ["Workbench 명령 중지 확인", "",
-                f"{_clip(shown.get('label') or '(이름 없음)', STOP_LABEL_COLS)}  ({owner} 명령)",
+                f"{_clip(label, STOP_LABEL_COLS)}  ({_clip(owner, 20)} 명령)",
                 "SIGINT를 보내고 종료하지 않으면 10초 뒤 SIGTERM, 5초 뒤 SIGKILL로 이어집니다.",
                 "x: 중지 · Esc/다른 키: 취소"]
 

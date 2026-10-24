@@ -92,6 +92,20 @@ class OpenTests(unittest.TestCase):
             self.assertLessEqual(len(line), 100, line)
         self.assertIn("…", "\n".join(model.stop_confirm_lines()))
 
+    def test_control_characters_in_the_label_and_owner_never_widen_or_break_the_modal(self):
+        # wcswidth is -1 for a string with a control character, which would have skipped the clip
+        label = "echo \x07\x1b[31m\x00 " + "z" * 300 + "\nsecond line"
+        model, _ = make(command(label=label, owner="wor\x1bker"))
+        model.handle_input(P + b"x")
+        lines = model.stop_confirm_lines()
+        for line in lines:
+            self.assertLessEqual(len(line), 100, line)
+            self.assertTrue(line.isprintable(), repr(line))
+        joined = "\n".join(lines)
+        self.assertIn("echo", joined)
+        self.assertIn("…", joined)
+        self.assertNotIn("second line", joined.replace("…", ""), "the cut text is not shown past the clip")
+
     def test_no_running_command_shows_a_notice_and_no_modal(self):
         cases = {"null": None, "missing field": False, "not a dict": "sleep 5",
                  "no id": {"owner": "worker", "label": "x", "state": "running"},

@@ -419,8 +419,12 @@ class UiServer:
         if self._stops_in_flight >= MAX_STOPS_IN_FLIGHT:
             raise Held(Reason.QUEUE_FULL, "too many stop requests are still in progress")
         self._stops_in_flight += 1
-        threading.Thread(target=self._run_stop, args=(connection, request_id, command_id), daemon=True,
-                         name="ui-stop-command").start()
+        try:
+            threading.Thread(target=self._run_stop, args=(connection, request_id, command_id), daemon=True,
+                             name="ui-stop-command").start()
+        except Exception as exc:  # e.g. no thread can be started: the slot goes back and the user is told
+            self._stops_in_flight -= 1
+            raise Held(Reason.INTERNAL_ERROR, f"the stop could not be started: {type(exc).__name__}") from exc
         return {"command_id": command_id, "stop": {"status": "stopping"}}
 
     def _run_stop(self, connection: _Connection, request_id: str, command_id: str) -> None:

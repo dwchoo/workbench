@@ -540,6 +540,24 @@ class ClosedTaskStopTests(BackendStopFixture):
         self.assertEqual(result["task_id"], task.task_id)
         return result
 
+    def first_command_after_cancel(self, task, command):
+        """The Worker's first task-less command after the cancel, as a real Worker sends it.
+
+        CS-O01 (H-05): while the cancel notice has not reached the Worker, that first command is refused once
+        (``task_cancelled``), nothing is typed; the Worker then sends it again and it runs. When the notice was
+        already submitted it runs at once. Either way the result is the command's own."""
+        started_before = len(self.records("terminal_started"))
+        result = self.worker_terminal(command=command)
+        if (result.get("status"), result.get("reason")) == ("rejected", "task_cancelled"):
+            self.assertEqual(result["task_id"], task.task_id, result)
+            self.assertIn(task.task_id, result["detail"])
+            self.assertIn("not run", result["detail"])
+            self.assertEqual(len(self.records("terminal_started")), started_before, "the refusal typed nothing")
+            self.assertFalse(self.backend.terminal.current().get("running"), "nothing runs after the refusal")
+            result = self.worker_terminal(command=command)  # the Worker sends it again
+        self.assertNotEqual(result.get("reason"), "task_cancelled", "one refusal per cancel")
+        return result
+
     def test_the_worker_stops_a_command_of_a_cancelled_task_without_reopening_it(self):
         task = self.open_free_task()
         started = self.run_command("sleep 614.1")
@@ -556,7 +574,7 @@ class ClosedTaskStopTests(BackendStopFixture):
                           requested["task_status"]), (started["command_id"], "worker", task.task_id, "closed"))
         # a new command is a plain command again: it is not attributed to the closed Task
         self.backend.terminal._wait_seconds = 20
-        later = self.worker_terminal(command="echo after-the-stop")
+        later = self.first_command_after_cancel(task, "echo after-the-stop")
         self.assertEqual((later["status"], later["exit_code"]), ("exited", 0), later)
         starts = {r["command_id"]: r for r in self.records("terminal_started")}
         self.assertIsNone(starts[later["command_id"]]["task_id"])
@@ -570,7 +588,9 @@ class ClosedTaskStopTests(BackendStopFixture):
         first = self.run_command("sleep 614.2")
         self.assertEqual(self.manager_stop(first["command_id"])["status"], "exited")
         self.cancel(task)
-        second = self.run_command("sleep 614.3")
+        second = self.first_command_after_cancel(task, "sleep 614.3")
+        self.assertEqual(second["status"], "running", second)
+        self.addCleanup(self.end_command, second["command_id"])
         self.assertEqual(self.manager_stop(second["command_id"])["status"], "exited")
         requested = {r["command_id"]: r for r in self.records("command_stop_requested")}
         self.assertEqual((requested[first["command_id"]]["task_id"], requested[first["command_id"]]["task_status"]),

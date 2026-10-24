@@ -850,6 +850,26 @@ class RestartedWorkerTests(Cs05Fixture):
 class ClosedTaskTests(Cs05Fixture):
     """CS-AC-15 / CS-D09: stopping a cancelled Task's command does not reopen the Task or give it new powers."""
 
+    def first_command_after_cancel(self, task, command, mark=None):
+        """The Worker's first task-less command after the cancel, as a real Worker sends it.
+
+        CS-O01 (H-05): while the cancel notice has not reached the Worker, that first command is refused once
+        (``task_cancelled``) and nothing is typed; the Worker then sends it again and it runs. When the notice was
+        already submitted it runs at once. Either way the result is the command's own."""
+        started_before = len(self.records("terminal_started"))
+        result = self.worker_terminal(command=command)
+        if (result.get("status"), result.get("reason")) == ("rejected", "task_cancelled"):
+            self.assertEqual(result["task_id"], task.task_id, result)
+            self.assertIn(task.task_id, result["detail"])
+            self.assertIn("not run", result["detail"])
+            self.assertEqual(len(self.records("terminal_started")), started_before, "the refusal typed nothing")
+            self.assertFalse(self.backend.terminal.current().get("running"), "nothing runs after the refusal")
+            if mark is not None:
+                self.assertEqual(pids_with(mark), [], "the refused command never ran")
+            result = self.worker_terminal(command=command)  # the Worker sends it again
+        self.assertNotEqual(result.get("reason"), "task_cancelled", "one refusal per cancel")
+        return result
+
     def test_the_manager_and_the_worker_stop_commands_of_a_cancelled_task(self):
         task = self.open_free_task()
         mark, started, log = self.trapping("a command that survives its Task's cancel", signals="USR1")
@@ -872,7 +892,10 @@ class ClosedTaskTests(Cs05Fixture):
         later = [item["notice"]["type"] for item in self.received()[notices_before:] if item["role"] == "worker"]
         self.assertLessEqual(set(later), {"terminal_done", "terminal_check"}, later)
         # a second command of the closed Task's era, stopped by the Worker, gets the same audit fields
-        second = self.run_command(f": {self.mark('second')}; sleep 600")
+        second_mark = self.mark("second")
+        second = self.first_command_after_cancel(task, f": {second_mark}; sleep 600", mark=second_mark)
+        self.assertEqual(second["status"], "running", second)
+        self.addCleanup(self.end_command, second["command_id"])
         # (the Worker's command now belongs to no Task: the cancelled one lost its claim on new commands)
         result = self.worker_terminal(stop=second["command_id"])
         self.assertEqual((result["status"], result["requested_by"]), ("exited", "worker"), result)
@@ -896,7 +919,8 @@ class ClosedTaskTests(Cs05Fixture):
             self.cancel(task)
             self.assertEqual(self.worker_terminal(stop=running["command_id"])["exit_code"], 130)
         self.backend.terminal._wait_seconds = 20
-        later = self.worker_terminal(command=f": {self.mark('later')}; echo later")
+        later_mark = self.mark("later")
+        later = self.first_command_after_cancel(task, f": {later_mark}; echo later", mark=later_mark)
         (start,) = [r for r in self.records("terminal_started") if r["command_id"] == later["command_id"]]
         self.assertEqual(self.backend.flow.tasks[task.task_id].status, "closed")
         return later, start["task_id"]

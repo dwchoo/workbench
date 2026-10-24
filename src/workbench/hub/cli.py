@@ -1,4 +1,4 @@
-"""``wb hub status/stop/add/remove`` and ``wb init`` handlers (other ``wb hub`` commands come later)."""
+"""``wb hub status/stop/list/add/remove`` and ``wb init`` handlers (other ``wb hub`` commands come later)."""
 from __future__ import annotations
 
 import argparse
@@ -7,13 +7,14 @@ import json
 import os
 from pathlib import Path
 import sys
+import time
 
 from workbench.backend.paths import DataDirError
 
 from . import registry
 from .client import HubClient
 from .paths import hub_layout
-from .process import HubNotRunning, HubUnknown, installed_version
+from .process import HubNotRunning, HubUnknown, HubUnresponsive, installed_version
 
 EXIT_OK, EXIT_FAILURE, EXIT_REQUIREMENT, EXIT_NOT_RUNNING = 0, 1, 2, 3
 NOT_RUNNING_TEXT = "Hub 실행 중 아님"
@@ -72,6 +73,43 @@ def cmd_hub_status(args: argparse.Namespace) -> int:
     print(f"  registry: {registry.get('state')}, {registry.get('count')}개 ({registry.get('path')})")
     print("  부팅 자동 시작: unknown")
     print(f"  web: {(status['web'] or {}).get('state')}")
+    return EXIT_OK
+
+
+LIST_TIMEOUT = 30.0  # rows are observed in parallel batches, each bounded by status.OBSERVE_TIMEOUT
+
+
+def cmd_hub_list(args: argparse.Namespace) -> int:
+    """Hub ``list`` with the TUI's columns (``--json``: the hub_v1 result as is)."""
+    layout = hub_layout()
+    try:
+        with HubClient(layout, timeout=LIST_TIMEOUT) as client:
+            reply = client.request("list")
+    except HubNotRunning:
+        from .process import managed_ancestor
+        if managed_ancestor(os.getpid()) is not None:
+            print(MANAGED_TREE_TEXT, file=sys.stderr)
+            return EXIT_REQUIREMENT
+        print(f"{NOT_RUNNING_TEXT}: Hub를 시작하지 못해 목록을 볼 수 없습니다. 'wb hub start'를 실행하세요.",
+              file=sys.stderr)
+        return EXIT_FAILURE
+    except (HubUnknown, HubUnresponsive) as exc:
+        print(f"Hub에 묻지 못했습니다: {exc.reason} (lock {layout.lock})", file=sys.stderr)
+        return EXIT_FAILURE
+    if not reply.get("ok"):
+        print(f"Hub list 실패: {reply.get('reason')}: {reply.get('detail')}", file=sys.stderr)
+        return EXIT_FAILURE
+    result = {key: reply.get(key) for key in ("observed_at", "registry", "rows")}
+    registry_state = result["registry"] or {}
+    if args.json:
+        _print_json(result)
+    else:
+        from .presentation import render_table
+        print(render_table(result["rows"] or [], time.time()))
+    if registry_state.get("state") != "ok":
+        print(f"Hub registry가 손상되어 목록을 읽지 못했습니다: {registry_state.get('path')}. "
+              "파일을 고치거나 지운 뒤 다시 실행하세요.", file=sys.stderr)
+        return EXIT_FAILURE
     return EXIT_OK
 
 

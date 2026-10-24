@@ -4,7 +4,12 @@
 writes ``backend.json``/``runtime.json`` and answers ``ui_v1`` ``hello``/``snapshot``/``attach``
 with the ``backend`` identity of the running process plus the keys of ``--snapshot-json``
 laid over a ready snapshot. It prints ``ready`` once a client can connect and serves until
-it is killed. Environment (``PYTHONPATH`` to ``src``, ``XDG_RUNTIME_DIR``) comes from the
+it is killed.
+
+HB-05 options: ``--backend-json`` lays keys over ``snapshot.backend`` (a wrong identity),
+``--snapshot-delay SECONDS`` delays each ``snapshot`` answer (``hello`` is answered at once),
+``--frames-log PATH`` appends one JSON line ``{"connection": n, "header": ...}`` per received
+frame (connection numbers start at 1, so the count of connections is the largest number). Environment (``PYTHONPATH`` to ``src``, ``XDG_RUNTIME_DIR``) comes from the
 test, so the runtime root matches the one ``wb`` computes for the same project.
 Not a real backend: it starts no OMP and writes no other state.
 """
@@ -17,6 +22,7 @@ import os
 from pathlib import Path
 import socket
 import threading
+import time
 
 from workbench.backend.project import resolve_project_context
 from workbench.backend.runtime_paths import ensure_runtime_root
@@ -27,6 +33,9 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument('project_dir')
     parser.add_argument('--snapshot-json', default='{}')
+    parser.add_argument('--backend-json', default='{}')
+    parser.add_argument('--snapshot-delay', type=float, default=0.0)
+    parser.add_argument('--frames-log')
     args = parser.parse_args()
     context = resolve_project_context(Path(args.project_dir), dict(os.environ))
     data, runtime = context.data_root, context.runtime_root
@@ -46,13 +55,23 @@ def main() -> None:
     snapshot = {'phase': 'ready', 'reason': None, 'backend': dict(record, pid=os.getpid(), process=reference),
                 'panes': {}, 'omp_isolation': {'state': 'ok'}, 'attached': False}
     snapshot.update(json.loads(args.snapshot_json))
+    snapshot['backend'].update(json.loads(args.backend_json))
+    log_lock = threading.Lock()
 
-    def serve(connection: socket.socket) -> None:
+    def record_frame(number: int, header: dict) -> None:
+        if args.frames_log:
+            with log_lock, open(args.frames_log, 'a') as log:
+                log.write(json.dumps({'connection': number, 'header': header}) + '\n')
+
+    def serve(connection: socket.socket, number: int) -> None:
         with connection:
             decoder = FrameDecoder()
             while chunk := connection.recv(65536):
                 for frame in decoder.feed(chunk):
                     kind = frame.header['type']
+                    record_frame(number, frame.header)
+                    if kind == 'snapshot' and args.snapshot_delay:
+                        time.sleep(args.snapshot_delay)
                     if kind == 'hello':
                         reply = {'v': 1, 'type': 'welcome', 'version': 1}
                     else:
@@ -69,9 +88,11 @@ def main() -> None:
         temporary.chmod(0o600)
         temporary.replace(data / 'backend.json')
         print('ready', flush=True)
+        number = 0
         while True:
             connection, _ = server.accept()
-            threading.Thread(target=serve, args=(connection,), daemon=True).start()
+            number += 1
+            threading.Thread(target=serve, args=(connection, number), daemon=True).start()
 
 
 if __name__ == '__main__':

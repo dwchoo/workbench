@@ -72,17 +72,29 @@ def _running_snapshot(layout: DataLayout) -> dict | None:
         with UiClient(identity.layout.ui_socket, name="workbench-cli", timeout=5,
                       expected_process=record["processes"]["backend"]) as client:
             snapshot = client.snapshot()
-        backend = snapshot.get('backend') or {}
-        expected = record['processes']['backend']
-        if (backend.get('pid') != expected['pid'] or (backend.get('process') or {}).get('start_ticks') != expected['start_ticks']
-                or backend.get('data_dir') != record['data_dir'] or backend.get('project_dir') != record['project_dir']):
-            raise BackendIdentityError('snapshot_mismatch', layout.root)
-        if identity.project_id is not None and any(backend.get(key) != record.get(key)
-                for key in ('project_id', 'runtime_root', 'uid', 'boot_id')):
-            raise BackendIdentityError('snapshot_project_runtime_mismatch', layout.root)
+        check_snapshot_identity(identity, snapshot, layout.root)
         return snapshot
     except (NotRunning, ClientError, OSError) as exc:
         raise BackendIdentityError('live_endpoint_unavailable', layout.root) from exc
+
+
+def check_snapshot_identity(identity, snapshot: dict, root: Path) -> None:
+    """A live snapshot belongs to the ``running`` identity's backend (shared with the Hub list).
+
+    pid/start_ticks/data_dir/project_dir always; project_id/runtime_root/uid/boot_id for a
+    project. Raises ``BackendIdentityError`` ``snapshot_mismatch`` or
+    ``snapshot_project_runtime_mismatch``.
+    """
+    from workbench.backend.process_identity import BackendIdentityError
+    record = identity.record
+    backend = snapshot.get('backend') or {}
+    expected = record['processes']['backend']
+    if (backend.get('pid') != expected['pid'] or (backend.get('process') or {}).get('start_ticks') != expected['start_ticks']
+            or backend.get('data_dir') != record['data_dir'] or backend.get('project_dir') != record['project_dir']):
+        raise BackendIdentityError('snapshot_mismatch', root)
+    if identity.project_id is not None and any(backend.get(key) != record.get(key)
+            for key in ('project_id', 'runtime_root', 'uid', 'boot_id')):
+        raise BackendIdentityError('snapshot_project_runtime_mismatch', root)
 
 
 def _bootstrap_source() -> str:
@@ -1192,6 +1204,11 @@ def cmd_hub_start(args: argparse.Namespace) -> int:
     return run(args)
 
 
+def cmd_hub_list(args: argparse.Namespace) -> int:
+    from workbench.hub.cli import cmd_hub_list as run
+    return run(args)
+
+
 def cmd_hub_add(args: argparse.Namespace) -> int:
     from workbench.hub.cli import cmd_hub_add as run
     return run(args)
@@ -1372,6 +1389,9 @@ def parser() -> argparse.ArgumentParser:
     hub_stop = hub_sub.add_parser("stop", help="Hub 정지 (WB 프로젝트 backend는 계속 실행)")
     hub_stop.add_argument("--yes", action="store_true", help="확인 없이 정지")
     hub_stop.set_defaults(handler=cmd_hub_stop)
+    hub_list = hub_sub.add_parser("list", help="등록된 WB 프로젝트 목록과 상태")
+    hub_list.add_argument("--json", action="store_true", help="hub_v1 list 결과 그대로")
+    hub_list.set_defaults(handler=cmd_hub_list)
     hub_add = hub_sub.add_parser("add", help="WB 프로젝트 root를 Hub registry에 등록")
     hub_add.add_argument("path", metavar="PATH")
     hub_add.set_defaults(handler=cmd_hub_add)

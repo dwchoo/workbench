@@ -19,6 +19,7 @@ from workbench.backend.paths import (BackendLocked, DataDirError, InstanceLock, 
 from workbench.contracts import hub_v1
 
 from . import registry
+from .status import Lister
 from .paths import HubLayout, hub_layout, prepare_socket_path, prepare_state_dir
 from .process import (READY_LOST, READY_MANAGED, READY_STARTED, RECORD_SCHEMA_VERSION, UNVERIFIABLE,
                       installed_version,
@@ -69,6 +70,7 @@ class Hub:
         self.early_stop = False  # a stop signal that arrived before the event loop ran
         self.state_identity: tuple[int, int] | None = None
         self.watchdog_reason: str | None = None
+        self.lister = Lister(layout)
 
     def bind(self) -> None:
         path = prepare_socket_path()
@@ -144,6 +146,11 @@ class Hub:
         op = request.get("type")
         if op == hub_v1.ClientType.STATUS.value:
             return hub_v1.result(request_id, **await self.status())
+        if op == hub_v1.ClientType.LIST.value:
+            fresh = request.get("fresh", False)
+            if not isinstance(fresh, bool):
+                return hub_v1.failure(request_id, hub_v1.Reason.BAD_REQUEST, "fresh must be a boolean")
+            return hub_v1.result(request_id, **await self.lister.list(fresh))
         if op == hub_v1.ClientType.STOP_REQUEST.value:
             return hub_v1.result(request_id, **self.offer_stop())
         if op == hub_v1.ClientType.STOP_CONFIRM.value:
@@ -219,6 +226,7 @@ class Hub:
         for task in list(self.tasks):
             task.cancel()
         await asyncio.gather(*self.tasks, return_exceptions=True)
+        self.lister.close()
 
     def new_owner_possible(self) -> bool:
         """After the guard broke, does another process hold a lock at ``hub.lock``?

@@ -34,6 +34,7 @@
 - 이 호스트는 디스크 fsync가 20~70ms라 `/dev/shm`(tmpfs)에서 훨씬 빠르다. 위 명령은 `python3 tools/shm_tests.py -- <위 명령>`으로 감싸 실행하는 것을 기본으로 한다.
   - `/dev/shm` 여유가 8GiB 이상이면 `TMPDIR=/dev/shm/wb-tests.<rand>`를 주고, 모자라면 `/tmp`로 fallback한다. 끝나면 root를 지우고 peak 크기를 출력한다.
   - 테스트는 `tempfile` 기본값(`TMPDIR`)을 따른다. 의도적으로 `/tmp`에 남긴 것: `tests/integration`의 `test_cw16_runtime_matrix.py`(`/tmp/<한 글자>` 경로와 RLIMIT_FSIZE), `cw16_harness.py` 기본 `/tmp/wb-cw16-reports`, `live_workbench_doctor.py`·`live_workbench_update.py`·`live_workbench_update_probe.py`(제품 fence `/tmp/omp-workbench-*`), `vm_reboot_driver.py`, `tests/backend/installation`의 `live_setup.py`·`live_project_sessions.py`. 제품이 고정 `/tmp` 경로를 쓰는 expectation 문자열도 그대로 둔다.
+  - Hub·backend runtime을 만들 수 있는 sandbox는 `/tmp` 아래 짧은 private `XDG_RUNTIME_DIR`(`tempfile.mkdtemp(prefix='r')`, 0700, cleanup에서 삭제)를 쓰고 temp `HOME`/`XDG_STATE_HOME`, `WORKBENCH_HUB_AUTOSTART=0`(Hub가 필요 없을 때)을 준다. shm root 경로가 길면 socket 107 byte 한도 때문에 runtime이 실제 `/tmp/omp-workbench-<uid>`로 fallback하기 때문이다(2026-10-25 Phase 2에서 확인). 실제 backend는 설계상 OMP temp dir을 `/tmp/omp-workbench-<uid>/<ns>`에 만든다. 테스트는 자기 project의 정확한 dir 이름을 계산해 사전에 없음을 확인하고, 소유 프로세스 종료 뒤 그 dir만 지운다. 그 안의 파일은 열지 않는다. 실행 전후 `ls /tmp/omp-workbench-<uid> | wc -l`이 같아야 한다.
   - 강제 종료 등으로 남은 root는 `python3 tools/shm_tests.py --clean-stale`로 확인(dry-run)하고 `--apply`를 붙여 삭제한다.
 
 ## graphify

@@ -45,19 +45,16 @@
 
 ## `.workflow` 용량 관리
 
-과거에 `.workflow`가 60GB를 넘은 적이 있다. 기준은 `AGENTS.md` "개발 증거 용량 관리"이고, 아래는 Claude 작업에서 지킬 절차다.
+과거에 `.workflow`가 60GB를 넘은 적이 있다. 기본 규칙(상한, checkpoint·hash manifest 범위, 정리 도구 사용, 보존 대상)은 `AGENTS.md` "개발 증거 용량 관리"를 따르고, 아래는 Claude 작업에서 추가로 지킬 절차다.
 
-- 상한은 `.workflow` 10GiB, 경고선은 8GiB다. SessionStart hook이 `.workflow`·`graphify-out`·`.worktrees` 중 8GiB 이상인 것을 경고한다. 경고가 뜨면 새 격리 실행이나 worktree를 시작하기 전에 정리부터 사용자에게 제안한다.
+- 경고선은 8GiB다(상한은 AGENTS.md). SessionStart hook이 `.workflow`·`graphify-out`·`.worktrees` 중 8GiB 이상인 것을 경고한다. 경고가 뜨면 새 격리 실행이나 worktree를 시작하기 전에 정리부터 사용자에게 제안한다.
 - 새 격리 실행 전후에 `du -sh .workflow graphify-out .worktrees`를 확인하고 증감을 보고한다.
 - 용량 대부분은 다음 두 가지다.
   - 격리 실행마다 만드는 checkpoint(`*.json.gz`, 개당 약 70MB).
   - 격리 home의 `.omp/natives/*.node`(개당 약 180MB).
 - graphify가 `.workflow`에 남기는 것은 수 KB짜리 실행 메타데이터뿐이다. 하지만 checkpoint에 `graphify-out/`이 섞이면 실행마다 수십~수백 MB가 늘어난다.
-- checkpoint·hash manifest 범위에서는 `graphify-out/`, `.workflow/`, `.worktrees/`, `.venv/`, 격리 home·캐시를 제외한다. worker packet에 이 exclude를 명시한다.
-- 같은 후보의 checkpoint를 단계마다 반복해서 만들지 않는다. 복원이 필요한 변경 직전에만 만든다.
-- 실행이 끝나고 소유 process 종료를 확인하면 `python3 .agents/skills/workspace-evidence/scripts/storage_maintenance.py`를 실행한다. 처음에는 dry-run으로 후보를 확인하고, 그다음 `--apply`를 붙인다. 오래된 대형 checkpoint는 `--archive-checkpoints`로 압축한다.
+- worker packet에 checkpoint·hash manifest의 exclude를 명시한다: `graphify-out/`, `.workflow/`, `.worktrees/`, `.venv/`, 격리 home·캐시.
 - 격리 실행을 마친 worktree를 제거할 때는 내부 `.workflow/`도 같이 정리한다. `graphify-out/`의 일자별 snapshot 디렉터리는 최근 3개만 남긴다.
-- 보고서, trace, 실패 근거, DB 결과는 보존한다. 삭제·압축은 dry-run 결과를 보고하고 사용자 확인을 받은 뒤 수행한다. 실행 중인 process가 쓰는 자료는 건드리지 않는다.
 
 ## Agent skills
 

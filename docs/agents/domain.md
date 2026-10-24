@@ -20,7 +20,10 @@ Single-context repo:
 ├── CONTEXT.md
 ├── docs/adr/
 │   ├── 0001-no-external-multiplexer.md
-│   └── 0002-managed-shell-control-wait.md
+│   ├── 0002-managed-shell-control-wait.md
+│   ├── 0003-board-agent-without-sandbox.md
+│   ├── 0004-auto-execution-after-manager-review.md
+│   └── 0005-per-project-inbox-store-hub-single-writer.md
 └── src/
 ```
 

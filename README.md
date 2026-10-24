@@ -119,6 +119,19 @@ WORKBENCH_DATA_DIR=/path/to/old-data-dir wb status
 
 명시 경로가 있으면 해당 저장소를 직접 사용합니다. 예전 global 기본 경로를 자동으로 찾아 이관하거나 새 프로젝트에 연결하지 않습니다. 기존 저장소를 계속 쓸지 프로젝트로 이관할지는 사용자가 명시적으로 선택해야 합니다. `wb logs --help`는 현재 제공되는 로그 조회·관리 명령을 보여줍니다.
 
+### 고급 명령
+
+`wb shutdown`은 `wb down`으로도 실행할 수 있습니다. 로그 관련 명령은 `wb logs` 아래에 있으며 세부 옵션은 `wb logs <하위 명령> --help`로 확인하세요.
+
+| 명령 | 동작 |
+|---|---|
+| `wb logs important status\|list\|show` | 중요 로그의 상태·목록·내용 조회. `show`는 `--task` 또는 `--command`로 대상을 지정 |
+| `wb logs important archival-close` / `delete-db` | 사용자가 명시적으로 수행하는 보관 종결 표시와 선택한 archive DB 삭제 (`--yes`로 확인 생략) |
+| `wb logs raw` | 보관된 raw 원문 bytes 읽기. `--run` 또는 `--command`로 대상을 지정 |
+| `wb logs raw-status` | 기존 raw 저장과 비활성 v2 raw 저장의 사용량을 구분해 표시 |
+| `wb logs raw-rotation activate` | 검증된 로컬 product record(`--evidence`)로 raw rotation을 사용자가 명시적으로 활성화 |
+| `wb logs summary-compat status\|verify` | 중요 로그 요약의 호환 상태 표시와 명시적 scripted 검증(`verify --scripted`). 요약·raw 활성화는 하지 않음 |
+
 ## 작업 기록
 
 Manager·Worker에게 “이 내용을 기록해줘”라고 요청하면 일반 작업 메모·결정·진행 상황·실험 정리·인계는 프로젝트 `.wb/records.sqlite3`에 저장합니다. 새 세션에는 최근 기록의 제목·짧은 미리보기를 제공하며 본문은 필요할 때 조회합니다. 수정은 같은 기록의 새 revision으로 저장하고 이전 revision도 보존합니다. BRIEF·SPEC·ADR과 사용자 직접 호출용 WB 문제 보고서는 기존 문서 방식을 따릅니다.

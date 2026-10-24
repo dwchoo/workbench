@@ -820,6 +820,23 @@ class TaskFlow:
         with self._lock:
             return self._run_requests.get(request_id) if isinstance(request_id, str) else None
 
+    def running_host_command(self) -> dict[str, Any] | None:
+        """CS-O10: the running experiment command (the host terminal holds at most one), for the UI's stop key: id
+        (the run id), owner ``manager``, a label and state (running, stopping or unknown); None when none runs."""
+        with self._lock:
+            running = next((dict(item) for item in self._host_runs.values()), None)
+        if running is None:
+            return None
+        stopping = None
+        if self.command_stop is not None:
+            try:
+                stopping = self.command_stop.surface(running["command_id"])
+            except Exception:
+                stopping = None
+        return {"command_id": running["command_id"], "owner": "manager",
+                "label": f"experiment {running['command_id'][:8]}",
+                "state": stopping["state"] if stopping else "running"}
+
     def _experiment_host_commands(self, task_id: str) -> list[dict[str, Any]]:
         """CS-09: the Task's experiment command while it runs, as the ``host_commands`` item shape (owner
         ``manager``, ``command_id`` = ``run_id``); ``[]`` once the runner observed its end."""

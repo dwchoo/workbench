@@ -166,6 +166,7 @@ BUSY_DETAIL = ("Nothing was run. The host terminal runs a command only when it i
 ABORTED_DETAIL = "The call was aborted before the command started: nothing was run."
 # C-D69 (6)(c): a command too long for one host shell request runs from a script file Workbench writes
 SPILL_SCRIPT = 'printf \'[worker] $ %s\\n\' "$1"; exec "$0" "$2"'
+HOST_COMMAND_LABEL = 120  # characters of the running command's first line in the UI snapshot (CS-O10)
 SPILL_SHOWN = 200  # characters of the command's first line shown for a script-run command
 NOT_IN_TASK_DETAIL = ("Nothing was typed into the host terminal: this Task lists the exact commands to run, and this "
                       "command is not one of them (Workbench compares the text as given). Run the listed commands "
@@ -720,6 +721,19 @@ class TerminalService:
             return [{"command_id": command.command_id, "kind": "terminal", "owner": "worker",
                      "state": stopping["state"] if stopping else "running", "started_at": command.started_at,
                      "log_path": str(command.log_path), "stop": stopping["stop"] if stopping else None}]
+
+    def running_host_command(self) -> dict[str, Any] | None:
+        """CS-O10: the Worker command that has not ended (with or without a Task), for the UI's stop key: id, owner,
+        the command's first line (cut to ``HOST_COMMAND_LABEL``) and state (running, stopping or unknown); None when
+        no command runs. Limit: between a command's submit and ``_current`` being set it is not listed yet."""
+        with self._lock:
+            command = self._current
+            if command is None or command.done.is_set():
+                return None
+            stopping = self._stop_surface(command)
+            return {"command_id": command.command_id, "owner": "worker",
+                    "label": shown_command(command.command, HOST_COMMAND_LABEL),
+                    "state": stopping["state"] if stopping else "running"}
 
     def watch_state(self) -> dict[str, Any]:
         """C-D70 (1)/(6): whether a worker command runs or its completion notice is still to be sent, and the

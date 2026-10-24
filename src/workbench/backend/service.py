@@ -1249,7 +1249,21 @@ class Backend:
                 info["operated_by"] = terminal.host_operator() if terminal is not None else None
             except Exception:
                 info["operated_by"] = None
+            info["command"] = self._host_command_view()
         return info
+
+    def _host_command_view(self) -> dict[str, Any] | None:
+        """The Workbench command running in the host terminal (the Worker's, else the Manager's experiment), with or
+        without a Task, as ``{command_id, owner, label, state}``; None when none runs (the UI's stop key, CS-O10)."""
+        sources = (getattr(self, "terminal", None), getattr(self, "flow", None))
+        for source in sources:
+            try:
+                found = source.running_host_command() if source is not None else None
+            except Exception:
+                found = None
+            if found is not None:
+                return found
+        return None
 
     @staticmethod
     def _state_view(snapshot: dict[str, Any]) -> dict[str, Any]:
@@ -1620,6 +1634,15 @@ class Backend:
             return result
         finally:
             self._shell_lock.release()
+
+    def stop_command(self, command_id: str) -> dict[str, Any]:
+        """The user's stop of one Workbench command (CS-O10): ``requested_by: user``, the same escalation and the
+        same final result as the Manager's stop. Waits up to the stop call time (about 25 s), so the UI server runs
+        it off its loop; a stale id gets the service's not_found / already_exited answer and no signal."""
+        if self.command_stop is None:
+            return {"status": "refused", "reason": "command_stop_unavailable", "command_id": command_id,
+                    "requested_by": "user"}
+        return self.command_stop.stop("user", command_id, reason="user stop")
 
     # -- ports for later tickets (CW-18/CW-19) ----------------------------
     # -- CW-18 automation: one paused source for HandoffService, TaskFlow and AutomationState ----

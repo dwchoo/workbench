@@ -133,6 +133,7 @@ class NegotiationAndValidationTests(unittest.TestCase):
         extras = {"input": {"pane": "host_shell"}, "paste": {"pane": "host_shell"},
                   "resize": {"rows": 1, "cols": 1}, "focus": {"pane": "manager_omp"},
                   "restart_pane": {"pane": "worker_omp"}, "kill_pane": {"pane": "host_shell"},
+                  "stop_command": {"command_id": uid},
                   "shutdown_confirm": {"token": "t"}, "confirm_boot": {"boot_id": "b"},
                   "resume": {"reconciled": True},
                   "important_archive_close": {"subject_kind": "task", "subject_id": uid, "confirmed": True},
@@ -180,6 +181,30 @@ class NegotiationAndValidationTests(unittest.TestCase):
             self.parse({"v": 1, "type": "kill_pane", "id": "k", "pane": "host_shell"}, payload=b"x")
         self.assertEqual(ui_v1.request(ClientType.KILL_PANE, "k", pane="host_shell"),
                          {"v": 1, "type": "kill_pane", "id": "k", "pane": "host_shell"})
+
+    def test_stop_command_names_one_canonical_command_id_and_carries_no_payload(self):
+        # CS-O10: the UI sends the command_id it showed in its confirm; the backend never picks the target.
+        uid = "12345678-1234-4234-8234-123456789abc"
+        message = self.parse({"v": 1, "type": "stop_command", "id": "s", "command_id": uid})
+        self.assertEqual((message.type, message.id, message.fields), (ClientType.STOP_COMMAND, "s", {"command_id": uid}))
+        for header in ({"v": 1, "type": "stop_command", "id": "s"},
+                       {"v": 1, "type": "stop_command", "id": "s", "command_id": None},
+                       {"v": 1, "type": "stop_command", "id": "s", "command_id": ""},
+                       {"v": 1, "type": "stop_command", "id": "s", "command_id": 7},
+                       {"v": 1, "type": "stop_command", "id": "s", "command_id": uid.upper()},
+                       {"v": 1, "type": "stop_command", "id": "s", "command_id": "not-a-uuid"},
+                       {"v": 1, "type": "stop_command", "id": "s", "command_id": uid + "0"},
+                       {"v": 1, "type": "stop_command", "id": "s", "command_id": "x" * 5000},
+                       {"v": 1, "type": "stop_command", "command_id": uid},
+                       {"v": 2, "type": "stop_command", "id": "s", "command_id": uid}):
+            with self.assertRaises(ContractError, msg=header):
+                self.parse(header)
+        with self.assertRaises(ContractError):
+            self.parse({"v": 1, "type": "stop_command", "id": "s", "command_id": uid}, payload=b"x")
+        with self.assertRaises(ContractError):
+            self.parse({"v": 1, "type": "stop_command", "id": "s", "command_id": uid}, discarded=3)
+        self.assertEqual(ui_v1.request(ClientType.STOP_COMMAND, "s", command_id=uid),
+                         {"v": 1, "type": "stop_command", "id": "s", "command_id": uid})
 
     def test_restart_pane_host_shell_parses(self):
         message = self.parse({"v": 1, "type": "restart_pane", "id": "r", "pane": "host_shell"})

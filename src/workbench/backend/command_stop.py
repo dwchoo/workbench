@@ -19,7 +19,8 @@ owner later observes the command's end is the same episode corrected to ``exited
 holding the earlier ``unknown`` and its reason; no signal is sent). An ``unknown`` the owner itself declared is final.
 
 Who may stop what (CS-05, ``STOPPABLE_BY``): the request is checked against the owner role of the registered command
-before anything else. The Manager stops the Worker's and its own commands, the Worker only its own
+before anything else. The Manager stops the Worker's and its own commands, the Worker only its own, and the user
+(the UI stop key, CS-O10) the Worker's and the Manager's
 (``refused: not_owner`` otherwise, also for an ended command); the owner is a role, so a restarted Worker session, a
 paused automation, a boot-confirmation hold or a closed Task change nothing. An id the service does not hold but the
 journal remembers as started and not ended is ``refused: previous_backend_command`` (``stop_survivor``); every
@@ -327,8 +328,10 @@ ENDED_KEPT = 256
 FAILED_KEPT = 256
 _STALE_REASONS = frozenset({STALE, IDENTITY_CHANGED, DIFFERENT_UID, "identity_mismatch"})
 # who may stop a command of which owner (CS-D02): the Manager stops the Worker's and its own commands, the Worker
-# only its own. The owner is a role, never an OMP session, a Task or the requester's earlier calls.
-STOPPABLE_BY = {"worker": frozenset({"worker"}), "manager": frozenset({"worker", "manager"})}
+# only its own, and the user (the UI stop key, CS-O10) both. The owner is a role, never an OMP session, a Task or
+# the requester's earlier calls.
+STOPPABLE_BY = {"worker": frozenset({"worker"}), "manager": frozenset({"worker", "manager"}),
+                "user": frozenset({"worker", "manager"})}
 
 
 PREVIOUS_BACKEND_DETAIL = (

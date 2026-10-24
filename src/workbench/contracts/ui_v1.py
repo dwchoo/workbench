@@ -278,6 +278,7 @@ class ClientType(StrEnum):
     CONFIRM_BOOT = "confirm_boot"
     RESTART_PANE = "restart_pane"
     KILL_PANE = "kill_pane"
+    STOP_COMMAND = "stop_command"
     PAUSE = "pause"
     RESUME = "resume"
     IMPORTANT_ARCHIVE_CLOSE = "important_archive_close"
@@ -533,6 +534,8 @@ def parse_client_frame(frame: Frame, version: int | None) -> ClientMessage:
                               _dimension(size["cols"], "cols", MAX_TERMINAL_COLUMNS))
         else:
             fields["size"] = None
+    elif kind is ClientType.STOP_COMMAND:
+        fields["command_id"] = _canonical_uuid(header.get("command_id"), "command_id")
     elif kind is ClientType.SHUTDOWN_CONFIRM:
         fields["token"] = _request_id(header.get("token"))
     elif kind is ClientType.CONFIRM_BOOT:

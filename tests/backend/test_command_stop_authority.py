@@ -186,7 +186,7 @@ class AllowedMatrixTests(unittest.TestCase):
     def test_nobody_else_is_a_requester(self):
         registry = Registry()
         command_id = registry.register("worker")
-        for requester in ("user", "", "system"):
+        for requester in ("", "system"):  # "user" became a requester with the UI stop key (CS-O10)
             result = registry.service.stop(requester, command_id)
             self.assertEqual((result["status"], result["reason"]), ("refused", "not_owner"), (requester, result))
         registry.assert_no_process_was_touched(self)

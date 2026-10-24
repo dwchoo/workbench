@@ -12,10 +12,12 @@ from collections import deque
 import errno
 import os
 from pathlib import Path
+import queue
 import select
 import socket
 import stat
 import sys
+import threading
 import time
 import traceback
 from typing import Any, Iterable, Protocol
@@ -27,6 +29,7 @@ from workbench.contracts.v1 import ContractError, DisplayChunk, PaneId
 MAX_OUTBOUND_BYTES = 16 * 1024 * 1024
 RECV_BYTES = 256 * 1024
 MAX_CONNECTIONS = 16
+MAX_STOPS_IN_FLIGHT = 8  # stop_command requests answered but not yet finished (each waits on its own thread)
 
 
 class Held(Exception):
@@ -57,6 +60,7 @@ class Controller(Protocol):
     def raw_status(self) -> dict[str, Any]: ...
     def restart_pane(self, pane: PaneId) -> dict[str, Any]: ...
     def kill_pane(self, pane: PaneId) -> dict[str, Any]: ...
+    def stop_command(self, command_id: str) -> dict[str, Any]: ...
     def pause(self) -> dict[str, Any]: ...
     def resume(self, reconciled: bool) -> dict[str, Any]: ...
 
@@ -102,10 +106,15 @@ class UiServer:
         listener.listen(8)
         listener.setblocking(False)
         self.listener: socket.socket | None = listener
+        # stop_command (CS-O10): the controller waits up to ~25 s, so each request runs on its own thread; the
+        # thread only queues its outcome here and the loop thread (the only one that touches a socket) delivers it
+        self._stop_finals: queue.SimpleQueue[tuple[_Connection, str, str, dict[str, Any]]] = queue.SimpleQueue()
+        self._stops_in_flight = 0  # loop thread only
 
     # -- event loop ------------------------------------------------------
     def poll(self, timeout: float, *, extra_read: Iterable[int] = (),
              extra_write: Iterable[int] = ()) -> set[int]:
+        self._deliver_stop_finals()
         reads: list[Any] = [*extra_read]
         writes: list[Any] = [*extra_write]
         if self.listener is not None:
@@ -132,6 +141,7 @@ class UiServer:
                 self._write(item)
             else:
                 ready.add(item)
+        self._deliver_stop_finals()
         self._reap()
         return ready
 
@@ -388,6 +398,8 @@ class UiServer:
             return controller.restart_pane(fields["pane"])
         if kind is ClientType.KILL_PANE:
             return controller.kill_pane(fields["pane"])
+        if kind is ClientType.STOP_COMMAND:
+            return self._start_stop(connection, message.id, fields["command_id"])
         if kind is ClientType.TAKEOVER_REQUEST:
             return {"shell": controller.takeover_request()}
         if kind is ClientType.TAKEOVER_CONFIRM:
@@ -399,6 +411,45 @@ class UiServer:
         if kind is ClientType.RESUME:
             return controller.resume(fields["reconciled"])
         raise Held(Reason.UNSUPPORTED_TYPE, f"unsupported type {kind.value}")
+
+    # -- stop_command (CS-O10) --------------------------------------------
+    def _start_stop(self, connection: _Connection, request_id: str, command_id: str) -> dict[str, Any]:
+        """Acknowledge at once (``stop.status: stopping``) and run the controller's stop on its own thread; the final
+        outcome follows as a second ``result`` frame of the same id with ``final: true`` (``_deliver_stop_finals``)."""
+        if self._stops_in_flight >= MAX_STOPS_IN_FLIGHT:
+            raise Held(Reason.QUEUE_FULL, "too many stop requests are still in progress")
+        self._stops_in_flight += 1
+        threading.Thread(target=self._run_stop, args=(connection, request_id, command_id), daemon=True,
+                         name="ui-stop-command").start()
+        return {"command_id": command_id, "stop": {"status": "stopping"}}
+
+    def _run_stop(self, connection: _Connection, request_id: str, command_id: str) -> None:
+        try:
+            outcome = self.controller.stop_command(command_id)
+        except Exception as exc:  # the user still gets a final outcome, and it is never a success
+            traceback.print_exc(file=sys.stderr)
+            outcome = {"status": "error", "reason": "internal_error", "command_id": command_id,
+                       "detail": f"stop failed: {type(exc).__name__}"}
+        self._stop_finals.put((connection, request_id, command_id, outcome))
+
+    def _deliver_stop_finals(self) -> None:
+        delivered = False
+        while True:
+            try:
+                connection, request_id, command_id, outcome = self._stop_finals.get_nowait()
+            except queue.Empty:
+                break
+            self._stops_in_flight -= 1
+            delivered = True
+            if connection in self.connections and not connection.closing:  # a client that left misses it
+                self._header(connection, ui_v1.result(request_id, True, final=True, command_id=command_id,
+                                                      stop=outcome))
+        if delivered and self.attached is not None:
+            try:  # the command's state changed: tell the UI at once, not on the next periodic push
+                self.push_state(self.controller.snapshot())
+            except Exception:
+                self.stats["handler_errors"] += 1
+                traceback.print_exc(file=sys.stderr)
 
     # -- shutdown --------------------------------------------------------
     def stop_accepting(self) -> None:

@@ -153,15 +153,22 @@ class ReservedCommandTests(unittest.TestCase):
     def setUp(self):
         self.box = ServiceSandbox(self)
 
-    def test_passwd_and_tls_are_refused_by_name_and_start_nothing(self):
-        for name in ('passwd', 'tls'):
-            with self.subTest(name):
-                result = self.box.wb('hub', name)
-                self.assertEqual(result.returncode, 2, result.stderr)
-                self.assertIn(RESERVED_TEXT, result.stdout + result.stderr)
+    def test_tls_is_refused_by_name_and_starts_nothing(self):
+        # 'passwd' left the reserved list in TI-02 (tests/hub/test_hub_auth_cli.py).
+        result = self.box.wb('hub', 'tls')
+        self.assertEqual(result.returncode, 2, result.stderr)
+        self.assertIn(RESERVED_TEXT, result.stdout + result.stderr)
         self.assertEqual(self.box.hub_pids(), [])
         self.assertFalse(self.box.state.exists())
         self.assertEqual(self.box.calls(), [], 'a reserved name never runs systemctl')
+
+    def test_passwd_without_a_terminal_starts_nothing_and_runs_no_systemctl(self):
+        result = self.box.wb('hub', 'passwd')
+        self.assertEqual(result.returncode, 2, result.stderr)
+        self.assertNotIn(RESERVED_TEXT, result.stdout + result.stderr)
+        self.assertEqual(self.box.hub_pids(), [])
+        self.assertFalse(self.box.state.exists())
+        self.assertEqual(self.box.calls(), [])
 
 
 def unit_directives(text: str) -> dict[str, list[str]]:

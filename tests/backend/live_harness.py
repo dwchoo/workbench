@@ -275,6 +275,7 @@ class LiveBackend:
         env = sandbox_env(self.root, PATH=path or "/usr/bin:/bin", SHELL=ZSH_DEFAULT,
                           PYTHONPATH=str(SRC), PYTHONDONTWRITEBYTECODE="1")
         assert_sandboxed(env, self.root)
+        env["WORKBENCH_HUB_AUTOSTART"] = "0"  # HB-02 opt-out, set after the outer-context leak check
         self.env = env
         self.clients: list[PtyRun] = []
         self.known: dict[str, tuple[int, int]] = {}

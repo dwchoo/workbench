@@ -29,6 +29,7 @@ class RecordsCliTests(unittest.TestCase):
         environment["PYTHONDONTWRITEBYTECODE"] = "1"
         environment["WORKBENCH_OMP"] = str(self.trap)
         environment["WB_TEST_OMP_MARKER"] = str(self.marker)
+        environment["WORKBENCH_HUB_AUTOSTART"] = "0"
         return subprocess.run([sys.executable, "-m", "workbench", *arguments], cwd=cwd,
                               env=environment, text=True, capture_output=True, timeout=15)
 

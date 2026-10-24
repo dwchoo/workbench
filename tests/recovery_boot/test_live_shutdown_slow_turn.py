@@ -60,6 +60,7 @@ class LiveShutdownSlowTurnTests(unittest.TestCase):
         self.terms = self.root / "terms.jsonl"
         self.env = {"PATH": "/usr/bin:/bin", "HOME": str(home), "SHELL": "/usr/bin/bash", "LANG": "C.UTF-8",
                     "TERM": "xterm-256color", "PYTHONPATH": str(SRC), "PYTHONDONTWRITEBYTECODE": "1",
+                    "WORKBENCH_HUB_AUTOSTART": "0",
                     "XDG_CONFIG_HOME": str(home / ".config"), "XDG_STATE_HOME": str(home / ".local/state"),
                     "XDG_DATA_HOME": str(home / ".local/share"), "XDG_CACHE_HOME": str(home / ".cache"),
                     "FAKE_PANE_RECORD": str(self.root / "panes.jsonl"), "FAKE_NOTICES": str(self.root / "n.jsonl"),

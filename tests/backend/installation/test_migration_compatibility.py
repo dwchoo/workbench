@@ -57,6 +57,7 @@ class MigrationCompatibilityTests(unittest.TestCase):
             "XDG_CACHE_HOME": str(cache),
             "XDG_DATA_HOME": str(data),
             "XDG_RUNTIME_DIR": str(runtime),
+            "WORKBENCH_HUB_AUTOSTART": "0",
         }
         from workbench.backend.boot import read_boot_id
         from workbench.tasks.repository import TaskRepository

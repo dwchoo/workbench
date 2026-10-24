@@ -15,7 +15,7 @@ import select
 import signal
 import sys
 import time
-from typing import Any, Callable
+from typing import Any, Callable, Mapping
 
 from workbench.backend.paths import read_private_json
 
@@ -254,3 +254,183 @@ def stop_hub(ask: Callable[[list], bool], layout: HubLayout | None = None) -> St
     if _released(layout, record["pid"], RELEASE_TIMEOUT):
         return StopResult("stopped", record["pid"])
     return _terminate(layout, record, "release_timeout")
+
+
+# --- Spawn (SPEC "Hub 프로세스 수명" Spawn) -------------------------------------------
+
+READY_TIMEOUT = 5.0
+REPARENT_TIMEOUT = 2.0
+READY_STARTED, READY_LOST, READY_MANAGED = b"R", b"L", b"M"
+# Project/session-only variables the per-user Hub must not inherit (HB-T04).
+PROJECT_ENV = frozenset({"WORKBENCH_DATA_DIR", "WORKBENCH_AGENT_ROLES", "WORKBENCH_OMP_RUNTIME_ROOT"})
+PROJECT_ENV_PREFIXES = ("WORKBENCH_G3_",)
+
+# spawn_hub outcomes (also HubStart failure reasons)
+SPAWN_STARTED, SPAWN_LOST, SPAWN_MANAGED = "started", "lost", "managed_tree"
+SPAWN_UPDATE, SPAWN_STATE_ERROR, SPAWN_FAILED, SPAWN_TIMEOUT = (
+    "update_in_progress", "state_error", "spawn_failed", "ready_timeout")
+
+
+def hub_environment(environment: Mapping[str, str] | None = None) -> dict[str, str]:
+    """The caller's environment without project/session-only variables."""
+    environment = os.environ if environment is None else environment
+    return {key: value for key, value in environment.items()
+            if key not in PROJECT_ENV and not key.startswith(PROJECT_ENV_PREFIXES)}
+
+
+def managed_ancestor(pid: int) -> int | None:
+    """The WB-managed ancestor (backend or shell supervisor) of ``pid``, or None.
+
+    Hook only: HB-03 fills the judgement. Until then nothing counts as managed.
+    """
+    return None
+
+
+def wait_reparented(spawner_pid: int | None, timeout: float = REPARENT_TIMEOUT) -> None:
+    """Hub side: wait (bounded) until the spawn intermediate exited and we were reparented."""
+    if spawner_pid is None:
+        return
+    deadline = time.monotonic() + timeout
+    while os.getppid() == spawner_pid and time.monotonic() < deadline:
+        time.sleep(0.01)
+
+
+def send_ready(fd: int | None, code: bytes) -> None:
+    """Hub side: report ``R``/``L``/``M`` once and close the ready fd (a gone reader is fine)."""
+    if fd is None:
+        return
+    try:
+        os.write(fd, code)
+    except OSError:
+        pass
+    finally:
+        try:
+            os.close(fd)
+        except OSError:
+            pass
+
+
+def _max_fd() -> int:
+    import resource
+    soft, _hard = resource.getrlimit(resource.RLIMIT_NOFILE)
+    return max(1 << 20 if soft == resource.RLIM_INFINITY else soft, 1 << 16)
+
+
+def spawn_hub(layout: HubLayout | None = None, *, timeout: float = READY_TIMEOUT,
+              environment: Mapping[str, str] | None = None) -> str:
+    """Double-fork + ``setsid`` a ``wb _hub`` and return its ready outcome.
+
+    Holds the user update fence (shared, non-blocking) only while spawning; the Hub
+    never holds it. The Hub gets stdin ``/dev/null``, stdout/stderr ``hub.log``, cwd
+    ``/``, umask 077, no other caller fd and :func:`hub_environment`. Returns
+    ``started`` (``R``), ``lost`` (``L``: another Hub holds the lock), ``managed_tree``
+    (``M``), ``update_in_progress``, ``state_error``, ``spawn_failed`` (EOF before a
+    code) or ``ready_timeout``.
+    """
+    from workbench.backend.cli import _bootstrap_source
+    from workbench.backend.maintenance import fence
+    from workbench.backend.paths import DataDirError
+    from .paths import prepare_state_dir
+    layout = hub_layout() if layout is None else layout
+    try:
+        with fence(shared=True):
+            prepare_state_dir(layout)
+            return _spawn(layout, timeout, hub_environment(environment), _bootstrap_source())
+    except DataDirError as exc:
+        return SPAWN_UPDATE if isinstance(exc.__cause__, BlockingIOError) else SPAWN_STATE_ERROR
+    except OSError:
+        return SPAWN_STATE_ERROR
+
+
+def _spawn(layout: HubLayout, timeout: float, environment: dict[str, str], bootstrap: str) -> str:
+    import fcntl
+    read_end, write_end = os.pipe()
+    sys.stdout.flush()
+    sys.stderr.flush()
+    try:
+        intermediate = os.fork()
+    except OSError:
+        os.close(read_end)
+        os.close(write_end)
+        return SPAWN_FAILED
+    if intermediate == 0:  # pragma: no cover - child side
+        try:
+            os.close(read_end)
+            os.setsid()
+            spawner = os.getpid()
+            if os.fork() == 0:
+                ready = fcntl.fcntl(write_end, fcntl.F_DUPFD, 3)  # never 0-2
+                devnull = os.open(os.devnull, os.O_RDWR)
+                log = os.open(layout.log, os.O_WRONLY | os.O_CREAT | os.O_APPEND | os.O_NOFOLLOW, 0o600)
+                os.dup2(devnull, 0)
+                os.dup2(log, 1)
+                os.dup2(log, 2)
+                os.closerange(3, ready)
+                os.closerange(ready + 1, _max_fd())
+                os.set_inheritable(ready, True)
+                os.chdir("/")
+                os.umask(0o077)
+                argv = [sys.executable, "-I", "-c", bootstrap, "_hub",
+                        "--ready-fd", str(ready), "--spawner-pid", str(spawner)]
+                os.execve(sys.executable, argv, environment)
+            os._exit(0)
+        except BaseException:
+            os._exit(1)
+    os.close(write_end)
+    try:
+        os.waitpid(intermediate, 0)
+        if not select.select([read_end], [], [], timeout)[0]:
+            return SPAWN_TIMEOUT
+        code = os.read(read_end, 1)
+    finally:
+        os.close(read_end)
+    return {READY_STARTED: SPAWN_STARTED, READY_LOST: SPAWN_LOST,
+            READY_MANAGED: SPAWN_MANAGED}.get(code, SPAWN_FAILED)
+
+
+@dataclass(frozen=True)
+class HubStart:
+    """``ensure_hub`` result; ``ok`` means a ``running`` Hub was proven (``identity``).
+
+    ``reason`` when ok: ``already_running``, ``started``, ``joined`` (lost the lock race
+    to a Hub that became running). Otherwise: ``update_in_progress``, ``managed_tree``,
+    ``hub_unknown``, ``state_error``, ``spawn_failed``, ``ready_timeout`` or
+    ``not_running_after_ready``.
+    """
+    ok: bool
+    reason: str
+    identity: HubIdentity | None = None
+
+
+def _wait_running(layout: HubLayout, timeout: float) -> HubIdentity:
+    deadline = time.monotonic() + timeout
+    while True:
+        identity = inspect_hub(layout, timeout=max(0.5, min(2.0, deadline - time.monotonic())))
+        if identity.state == RUNNING or time.monotonic() >= deadline:
+            return identity
+        time.sleep(0.05)
+
+
+def ensure_hub(layout: HubLayout | None = None, *, timeout: float = READY_TIMEOUT) -> HubStart:
+    """Use the running Hub or spawn one; each wait is bounded by ``timeout``.
+
+    ``unknown`` (lock held, identity not yet proven, e.g. a Hub before its record)
+    is waited out and never raced with a second spawn.
+    """
+    layout = hub_layout() if layout is None else layout
+    identity = inspect_hub(layout)
+    if identity.state == UNKNOWN:
+        identity = _wait_running(layout, timeout)
+        if identity.state == UNKNOWN:
+            return HubStart(False, "hub_unknown", identity)
+    if identity.state == RUNNING:
+        return HubStart(True, "already_running", identity)
+    if managed_ancestor(os.getpid()) is not None:
+        return HubStart(False, SPAWN_MANAGED)
+    outcome = spawn_hub(layout, timeout=timeout)
+    if outcome not in (SPAWN_STARTED, SPAWN_LOST):
+        return HubStart(False, outcome)
+    identity = _wait_running(layout, timeout)
+    if identity.state != RUNNING:
+        return HubStart(False, "not_running_after_ready", identity)
+    return HubStart(True, "started" if outcome == SPAWN_STARTED else "joined", identity)

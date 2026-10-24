@@ -18,7 +18,8 @@ from workbench.backend.paths import (BackendLocked, DataDirError, InstanceLock, 
 from workbench.contracts import hub_v1
 
 from .paths import HubLayout, hub_layout, prepare_socket_path, prepare_state_dir
-from .process import RECORD_SCHEMA_VERSION, installed_version, lock_holder, start_ticks
+from .process import (READY_LOST, READY_MANAGED, READY_STARTED, RECORD_SCHEMA_VERSION, installed_version,
+                      lock_holder, managed_ancestor, send_ready, start_ticks, wait_reparented)
 
 
 LOCAL_PRINCIPAL = "local"
@@ -334,11 +335,20 @@ def main_hub(args: argparse.Namespace) -> int:
 
     for signum in STOP_SIGNALS:
         signal.signal(signum, early)
+    ready = getattr(args, "ready_fd", None)  # spawned: report R/L/M; any other exit is EOF
+    if ready is not None:
+        os.set_inheritable(ready, False)
+    wait_reparented(getattr(args, "spawner_pid", None))
+    if managed_ancestor(os.getpid()) is not None:  # self-check before the lock (HB-03)
+        send_ready(ready, READY_MANAGED)
+        print("[workbench] Hub refused: inside a WB-managed process tree", file=sys.stderr)
+        return 3
     try:
         prepare_state_dir(layout)
         hub.remember_state_dir()
         hub.lock.acquire()
     except BackendLocked:
+        send_ready(ready, READY_LOST)
         print("[workbench] another Hub already holds the lock", file=sys.stderr)
         return 0
     except (DataDirError, OSError) as exc:
@@ -351,6 +361,7 @@ def main_hub(args: argparse.Namespace) -> int:
         hub.cleanup()
         print(f"[workbench] Hub start failed: {exc}", file=sys.stderr)
         return 1
+    send_ready(ready, READY_STARTED)
     try:
         asyncio.run(hub.serve())
     finally:

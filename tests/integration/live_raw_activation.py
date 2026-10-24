@@ -115,7 +115,7 @@ def prepare_activation(work: Path, data: Path) -> dict:
     path, selected = selected_path(work)
     env = rt._environment(work)
     env.update(PATH=path, PYTHONPATH=str(runtime / "src"),
-               PYTHONDONTWRITEBYTECODE="1")
+               PYTHONDONTWRITEBYTECODE="1", WORKBENCH_HUB_AUTOSTART="0")
     def cli(*args: str, timeout: float = 180) -> subprocess.CompletedProcess:
         return subprocess.run([sys.executable, "-m", "workbench", *args, "--data-dir", str(data)],
             cwd=work / "project", env=env, stdin=subprocess.DEVNULL, capture_output=True,

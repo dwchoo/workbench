@@ -9,10 +9,10 @@ here writes a file: the cache is memory only.
 from __future__ import annotations
 
 import asyncio
-from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 import os
 from pathlib import Path
+import threading
 import time
 
 from . import registry
@@ -94,6 +94,10 @@ def observe_entry(entry: registry.Entry, timeout: float = OBSERVE_TIMEOUT) -> di
     try:
         snapshot = _snapshot(identity, time.monotonic() + timeout)
     except _SnapshotFailure as exc:
+        if exc.detail == "closing":  # the verified backend said it is shutting down
+            reference = identity.record["processes"]["backend"]
+            return _row(entry, "closing",
+                        backend={"pid": reference["pid"], "start_ticks": reference["start_ticks"]})
         return _row(entry, "unknown", exc.detail)
     reference = identity.record["processes"]["backend"]
     return _row(entry, _snapshot_power(snapshot), **_snapshot_fields(snapshot),
@@ -186,7 +190,7 @@ def _waits(snapshot: dict) -> list[dict]:
 class _SnapshotFailure(Exception):
     def __init__(self, detail: str):
         super().__init__(detail)
-        self.detail = detail  # unreachable | timeout | snapshot_mismatch
+        self.detail = detail  # unreachable | timeout | snapshot_mismatch | closing
 
 
 def _snapshot(identity, deadline: float) -> dict:
@@ -195,10 +199,10 @@ def _snapshot(identity, deadline: float) -> dict:
     The socket peer must be the recorded backend process (``expected_process``) and the
     snapshot must name it (``check_snapshot_identity``, shared with ``wb status``).
     """
-    from workbench.backend.client import UiClient
+    from workbench.backend.client import ClientError, UiClient
     from workbench.backend.cli import check_snapshot_identity
     from workbench.backend.process_identity import BackendIdentityError
-    from workbench.contracts.ui_v1 import ClientType
+    from workbench.contracts.ui_v1 import ClientType, Reason, ServerType
     record = identity.record
     try:
         with UiClient(identity.layout.ui_socket, name=CLIENT_NAME, timeout=max(0.001, deadline - time.monotonic()),
@@ -209,6 +213,12 @@ def _snapshot(identity, deadline: float) -> dict:
             reply = client.request(ClientType.SNAPSHOT, timeout=remaining)
     except TimeoutError as exc:  # socket.timeout included
         raise _SnapshotFailure("timeout") from exc
+    except ClientError as exc:
+        # A ``closing`` frame (during hello or instead of the result) from the peer-verified
+        # backend: ``backend_shutdown`` means the backend is closing; any other reason is ours.
+        closing = exc.header.get("type") == ServerType.CLOSING.value
+        shutdown = exc.header.get("reason") == Reason.BACKEND_SHUTDOWN.value
+        raise _SnapshotFailure("closing" if closing and shutdown else "unreachable") from exc
     except Exception as exc:  # refused, gone, wrong peer, closed, bad frame: never "off"
         raise _SnapshotFailure("unreachable") from exc
     snapshot = reply.get("snapshot")
@@ -230,7 +240,14 @@ def _guarded(entry: registry.Entry, timeout: float) -> dict:
 
 
 class Lister:
-    """The ``list`` op: registry re-read, parallel observation off the event loop, row cache."""
+    """The ``list`` op: registry re-read, parallel observation off the event loop, row cache.
+
+    Each observation runs in its own daemon thread; at most ``workers`` run within their
+    deadline at once. A thread still running past ``timeout`` + :data:`OBSERVE_SLACK` (a
+    hung mount, a stuck call) gives its slot back and its row reads ``unknown/timeout``;
+    no second thread starts for that root until it ends, so threads stay bounded by the
+    registry and :meth:`close` never waits for them.
+    """
 
     def __init__(self, layout: HubLayout, *, workers: int = MAX_WORKERS, timeout: float = OBSERVE_TIMEOUT,
                  cache_seconds: float = CACHE_SECONDS, clock=time.monotonic):
@@ -238,9 +255,10 @@ class Lister:
         self.timeout = timeout
         self.cache_seconds = cache_seconds
         self.clock = clock
-        self.executor = ThreadPoolExecutor(max_workers=workers, thread_name_prefix="hub-observe")
+        self.slots = asyncio.Semaphore(workers)
         self.cache: dict[registry.Entry, tuple[float, dict]] = {}  # entry -> (monotonic done, row)
-        self.inflight: dict[registry.Entry, asyncio.Future] = {}
+        self.inflight: dict[registry.Entry, asyncio.Future] = {}  # observations within their deadline
+        self.running: dict[str, asyncio.Future] = {}  # root -> result of a thread that has not ended
 
     async def list(self, fresh: bool = False) -> dict:
         """``{observed_at, registry:{state, path}, rows}``; the registry is read on every call."""
@@ -257,39 +275,52 @@ class Lister:
         return {"observed_at": time.time(), "registry": summary, "rows": list(rows)}
 
     async def row(self, entry: registry.Entry, fresh: bool) -> dict:
-        """A cached row younger than ``cache_seconds`` unless ``fresh``; one observation per entry at a time."""
+        """A cached row younger than ``cache_seconds`` unless ``fresh``; an observation in
+        progress is shared (``fresh`` included); one thread per root at a time."""
         if not fresh:
             cached = self.cache.get(entry)
             if cached is not None and self.clock() - cached[0] < self.cache_seconds:
                 return cached[1]
-            if entry in self.inflight:
-                return await asyncio.shield(self.inflight[entry])
+        current = self.inflight.get(entry)
+        if current is not None and not current.done():
+            return await asyncio.shield(current)
+        if entry.root in self.running:  # the last thread outlived its deadline and is still blocked
+            row = _row(entry, "unknown", "timeout")
+            self.cache[entry] = (self.clock(), row)
+            return row
         future = asyncio.ensure_future(self._observe(entry))
         self.inflight[entry] = future
-        try:
-            return await asyncio.shield(future)
-        finally:
-            if self.inflight.get(entry) is future and future.done():
-                del self.inflight[entry]
+        future.add_done_callback(lambda done: self.inflight.get(entry) is done and self.inflight.pop(entry))
+        return await asyncio.shield(future)
 
     async def _observe(self, entry: registry.Entry) -> dict:
         loop = asyncio.get_running_loop()
-        started = loop.create_future()
+        # Waiting for a slot is not part of a row's budget; once the thread runs it bounds
+        # itself by ``timeout`` and the slack only covers a call stuck beyond it.
+        async with self.slots:
+            result = loop.create_future()
+            root = entry.root
+            self.running[root] = result
+            result.add_done_callback(lambda done: self.running.get(root) is done and self.running.pop(root))
 
-        def run() -> dict:
-            loop.call_soon_threadsafe(lambda: started.done() or started.set_result(None))
-            return _guarded(entry, self.timeout)
+            def deliver(row: dict) -> None:
+                if not result.done():
+                    result.set_result(row)
 
-        work = loop.run_in_executor(self.executor, run)
-        # Waiting for a free worker is not part of a row's budget; once it runs, the thread
-        # bounds itself by ``timeout`` and this only covers a call stuck beyond it (e.g. a hung mount).
-        await asyncio.wait([started, work], return_when=asyncio.FIRST_COMPLETED)
-        try:
-            row = await asyncio.wait_for(asyncio.shield(work), self.timeout + OBSERVE_SLACK)
-        except asyncio.TimeoutError:
-            row = _row(entry, "unknown", "timeout")
+            def run() -> None:
+                row = _guarded(entry, self.timeout)
+                try:
+                    loop.call_soon_threadsafe(deliver, row)
+                except RuntimeError:  # the loop is closed: the Hub is stopping
+                    pass
+
+            threading.Thread(target=run, name="hub-observe", daemon=True).start()
+            try:
+                row = await asyncio.wait_for(asyncio.shield(result), self.timeout + OBSERVE_SLACK)
+            except asyncio.TimeoutError:
+                row = _row(entry, "unknown", "timeout")
         self.cache[entry] = (self.clock(), row)
         return row
 
     def close(self) -> None:
-        self.executor.shutdown(wait=False, cancel_futures=True)
+        """Observation threads are daemons: a stopping Hub never waits for a blocked one."""

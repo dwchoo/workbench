@@ -90,7 +90,7 @@ def cmd_hub_list(args: argparse.Namespace) -> int:
         if managed_ancestor(os.getpid()) is not None:
             print(MANAGED_TREE_TEXT, file=sys.stderr)
             return EXIT_REQUIREMENT
-        print(f"{NOT_RUNNING_TEXT}: Hub를 시작하지 못해 목록을 볼 수 없습니다. 'wb hub start'를 실행하세요.",
+        print(f"{NOT_RUNNING_TEXT}: Hub를 자동 시작하지 못해 목록을 볼 수 없습니다. 'wb hub start'를 실행하세요.",
               file=sys.stderr)
         return EXIT_FAILURE
     except (HubUnknown, HubUnresponsive) as exc:

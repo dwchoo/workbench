@@ -9,8 +9,12 @@ it is killed.
 HB-05 options: ``--backend-json`` lays keys over ``snapshot.backend`` (a wrong identity),
 ``--snapshot-delay SECONDS`` delays each ``snapshot`` answer (``hello`` is answered at once),
 ``--frames-log PATH`` appends one JSON line ``{"connection": n, "header": ...}`` per received
-frame (connection numbers start at 1, so the count of connections is the largest number). Environment (``PYTHONPATH`` to ``src``, ``XDG_RUNTIME_DIR``) comes from the
-test, so the runtime root matches the one ``wb`` computes for the same project.
+frame (connection numbers start at 1, so the count of connections is the largest number),
+``--closing-on-snapshot REASON`` answers ``snapshot`` with a ``closing`` frame of that reason
+and closes the connection.
+
+Environment (``PYTHONPATH`` to ``src``, ``XDG_RUNTIME_DIR``) comes from the test, so the
+runtime root matches the one ``wb`` computes for the same project.
 Not a real backend: it starts no OMP and writes no other state.
 """
 from __future__ import annotations
@@ -36,6 +40,7 @@ def main() -> None:
     parser.add_argument('--backend-json', default='{}')
     parser.add_argument('--snapshot-delay', type=float, default=0.0)
     parser.add_argument('--frames-log')
+    parser.add_argument('--closing-on-snapshot')
     args = parser.parse_args()
     context = resolve_project_context(Path(args.project_dir), dict(os.environ))
     data, runtime = context.data_root, context.runtime_root
@@ -72,6 +77,10 @@ def main() -> None:
                     record_frame(number, frame.header)
                     if kind == 'snapshot' and args.snapshot_delay:
                         time.sleep(args.snapshot_delay)
+                    if kind == 'snapshot' and args.closing_on_snapshot:
+                        connection.sendall(encode_frame({'v': 1, 'type': 'closing',
+                                                         'reason': args.closing_on_snapshot}))
+                        return
                     if kind == 'hello':
                         reply = {'v': 1, 'type': 'welcome', 'version': 1}
                     else:

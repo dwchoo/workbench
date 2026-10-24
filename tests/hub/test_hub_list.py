@@ -88,12 +88,14 @@ class ListSandbox:
         return process
 
     def backend(self, root: Path, *, snapshot: dict | None = None, backend: dict | None = None,
-                delay: float = 0.0, frames: Path | None = None) -> subprocess.Popen:
+                delay: float = 0.0, frames: Path | None = None, closing: str | None = None) -> subprocess.Popen:
         """A contract fixture backend serving ``root`` (``ready`` once connectable)."""
         argv = [sys.executable, str(FIXTURE), str(root), '--snapshot-json', json.dumps(snapshot or {}),
                 '--backend-json', json.dumps(backend or {}), '--snapshot-delay', str(delay)]
         if frames is not None:
             argv += ['--frames-log', str(frames)]
+        if closing is not None:
+            argv += ['--closing-on-snapshot', closing]
         process = self.popen(argv)
         self.case.assertEqual(process.stdout.readline().strip(), 'ready')
         return process
@@ -373,6 +375,15 @@ class SnapshotPowerTests(ListCase):
         self.assertEqual((row['power'], row['power_detail']), ('closing', None))
         self.assertEqual(row['task']['task_id'], 't-7')
         self.assertIsNotNone(row['backend'])
+
+    def test_a_backend_shutdown_closing_frame_instead_of_a_snapshot_is_closing(self):
+        root = self.box.project('alpha')
+        backend = self.box.backend(root, closing='backend_shutdown')
+        self.box.register_projects(root)
+        self.box.start_hub()
+        row = self.row(self.box.list_json(), root)
+        self.assertEqual((row['power'], row['power_detail']), ('closing', None))
+        self.assertEqual(row['backend'], {'pid': backend.pid, 'start_ticks': proc_start_ticks(backend.pid)})
 
     def test_a_starting_phase_is_starting_with_its_snapshot_fields(self):
         row = self.power({'phase': 'starting', 'task': TASK})

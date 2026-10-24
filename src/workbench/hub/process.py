@@ -280,12 +280,38 @@ def hub_environment(environment: Mapping[str, str] | None = None) -> dict[str, s
             if key not in PROJECT_ENV and not key.startswith(PROJECT_ENV_PREFIXES)}
 
 
-def managed_ancestor(pid: int) -> int | None:
-    """The WB-managed ancestor (backend or shell supervisor) of ``pid``, or None.
+PROC = Path("/proc")
+MAX_ANCESTRY = 4096
+UNVERIFIABLE = 0  # managed_ancestor result when /proc cannot prove "outside"
 
-    Hook only: HB-03 fills the judgement. Until then nothing counts as managed.
+
+def _managed_argv(argv: list[bytes]) -> bool:
+    """A backend (``maintenance.discover()``'s rule: an ``_backend`` element and an
+    element containing ``workbench``) or the shell supervisor (a ``--supervisor``
+    element and an element ending with ``shell_g2/lifecycle.py``)."""
+    if b"_backend" in argv and any(b"workbench" in value for value in argv):
+        return True
+    return b"--supervisor" in argv and any(value.endswith(b"shell_g2/lifecycle.py") for value in argv)
+
+
+def managed_ancestor(pid: int, *, proc: Path = PROC) -> int | None:
+    """The first process from ``pid`` up its ancestry that is WB-managed, or None.
+
+    Returns :data:`UNVERIFIABLE` (fail closed: "inside") when the chain cannot be read.
     """
-    return None
+    current = pid
+    for _ in range(MAX_ANCESTRY):
+        try:
+            argv = (proc / str(current) / "cmdline").read_bytes().split(b"\0")
+            parent = int((proc / str(current) / "stat").read_bytes().rsplit(b") ", 1)[1].split()[1])
+        except (OSError, IndexError, ValueError):
+            return UNVERIFIABLE
+        if _managed_argv(argv):
+            return current
+        if parent == 0:
+            return None
+        current = parent
+    return UNVERIFIABLE
 
 
 def wait_reparented(spawner_pid: int | None, timeout: float = REPARENT_TIMEOUT) -> None:

@@ -401,6 +401,17 @@ class RoleBoundaryTests(unittest.TestCase):
         self.assertRegex(work, r"(?i)split[^.]*`progress` reports")
         self.assertRegex(work, r"(?i)(log|file)[^.]*path")
 
+    def test_the_cs_o01_o02_results_are_documented_for_both_roles(self):
+        # CS-O01/O02: the worker learns the run_report_final and task_cancelled refusals; the manager learns
+        # report_seq (the result reasons and the payload field are flow_tasks/flow_terminal constants)
+        worker = " ".join(body("to-manager").split())
+        self.assertRegex(worker, r"`rejected:run_report_final`[^.]*`done` or `blocked`[^.]*already queued")
+        self.assertRegex(worker, r"`task_cancelled`[^.]*cancelled[^.]*not run")
+        self.assertRegex(worker, r"(?i)not part of it, send the same call again")
+        manager = " ".join(body("to-worker").split())
+        self.assertRegex(manager, r"`payload\.report_seq`[^.]*per Task[^.]*starts at 1")
+        self.assertRegex(manager, r"(?i)delivers a Task's worker messages in that order")
+
     def test_to_worker_message_allows_a_long_procedure(self):
         # review P2-1: the procedure goes in `message`; "Short and concrete" contradicted that.
         fields = section(body("to-worker"), "Fields")

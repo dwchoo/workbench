@@ -25,6 +25,7 @@
 
 ## Results
 - `rejected:task_not_delivered`: a report without `task_id` cannot belong to the active Task, because its TASK has not reached you yet. Do not retry in a loop; end the turn and wait for it, then report with `task_id` set.
+- `rejected:run_report_final`: this run's `done` or `blocked` report is already queued; this `progress`/`report` was not sent. Do not resend it; end your turn. You may report on this run again only after the manager follows up.
 - `rejected:no_active_task` / `rejected:unknown_task`: there is no active Task, or `task_id` is not it. Do not resend unchanged; check the Task the manager gave you.
 - `rejected:in_reply_to_required`: an `answer` needs `in_reply_to`. `rejected:no_task_message`: there is no Task message to attach the report to; set `in_reply_to` or wait for the TASK.
 - `held:no_active_run` (also `held:paused`): nothing was sent; the Task has no run yet or the user paused. Wait, then retry once.

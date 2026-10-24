@@ -107,6 +107,7 @@ class GitInstalledAssetsTests(unittest.TestCase):
             folder=cls.artifact_run/name;folder.mkdir(mode=0o700)
             cls.env[key]=str(folder)
         cls.env.update(PYTHONDONTWRITEBYTECODE='1',UV_PYTHON_DOWNLOADS='never',UV_NO_PROGRESS='1',
+                       WORKBENCH_HUB_AUTOSTART='0',  # HB-11: the installed wb must not leave a Hub behind
                        GIT_AUTHOR_NAME='Owned packaging fixture',GIT_AUTHOR_EMAIL='fixture@localhost',
                        GIT_COMMITTER_NAME='Owned packaging fixture',GIT_COMMITTER_EMAIL='fixture@localhost')
         cls.command(['git','-c','core.hooksPath=/dev/null','init',str(cls.source)])

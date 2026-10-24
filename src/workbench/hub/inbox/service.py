@@ -132,6 +132,30 @@ class _Project:
         self.store = store
         self.executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix=f"inbox-{ref.project_id[:8]}")
         self.indexed = False
+        # ``gate`` orders "is it closing?" + enqueue against the final ``store.close`` so nothing can be
+        # queued behind the close (which would reopen the store and re-take ``inbox.lock``).
+        self.gate = threading.Lock()
+        self.closing: str | None = None  # hub_stopping (service close) | project_unavailable (removed)
+
+    def schedule(self, fn: Callable[[], Any]) -> Future:
+        with self.gate:
+            if self.closing is not None:
+                raise InboxError(self.closing, f"project {self.ref.project_id} inbox is closing")
+            try:
+                return self.executor.submit(fn)
+            except RuntimeError as exc:  # executor already shut down
+                raise InboxError(self.closing or "hub_stopping", str(exc)) from None
+
+    def shutdown(self, reason: str) -> None:
+        with self.gate:
+            if self.closing is not None:
+                return
+            self.closing = reason
+            final = self.executor.submit(self.store.close)
+        try:
+            final.result()
+        finally:
+            self.executor.shutdown(wait=True)
 
 
 class _Tx:
@@ -196,7 +220,7 @@ class InboxService:
                 else:
                     current.ref = ref
         for project in removed:
-            self._shutdown(project)
+            project.shutdown("project_unavailable")
         for project in added:
             self._try_index(project)
 
@@ -205,7 +229,7 @@ class InboxService:
         with self._lock:
             projects, self._projects, self._index = list(self._projects.values()), {}, {}
         for project in projects:
-            self._shutdown(project)
+            project.shutdown("hub_stopping")
 
     def close_idle(self, *, force: bool = False) -> list[str]:
         """Close inboxes unused for ``idle_seconds`` (all with ``force``); returns the closed project ids."""
@@ -218,15 +242,13 @@ class InboxService:
                     store.close()
                     return True
                 return store.close_if_idle()
-            if self._run(project, check):
-                closed.append(project.ref.project_id)
+            try:
+                if self._run(project, check):
+                    closed.append(project.ref.project_id)
+            except InboxError as exc:
+                if exc.code not in ("hub_stopping", "project_unavailable"):
+                    raise
         return closed
-
-    def _shutdown(self, project: _Project) -> None:
-        try:
-            project.executor.submit(project.store.close).result()
-        finally:
-            project.executor.shutdown(wait=True)
 
     def _try_index(self, project: _Project) -> None:
         def scan() -> list[str]:
@@ -235,7 +257,7 @@ class InboxService:
         try:
             if project.ref.unavailable is not None:
                 return
-            ids = project.executor.submit(scan).result()
+            ids = project.schedule(scan).result()
         except InboxError:
             return
         with self._lock:
@@ -246,7 +268,7 @@ class InboxService:
 
     # -- dispatch helpers -------------------------------------------------------------------
     def _run(self, project: _Project, fn: Callable[[], Any], wait: bool = True) -> Any:
-        future: Future = project.executor.submit(fn)
+        future = project.schedule(fn)
         return future.result() if wait else future
 
     def _visible_projects(self, principal: Principal) -> list[_Project]:
@@ -688,14 +710,17 @@ class InboxService:
             if base_version is not None:
                 self._base(row, base_version)
             state = row["state"]
-            if state in PRE_DISPATCH:
+            # A REVIEWING/NEEDS_INFO request can still link a live Task (manager asked while RUNNING,
+            # P2-AC-27). Closing it at once would orphan that Task, so it takes the linked path: the
+            # active link stays and the backend cancels the Task (TI-13); the Task sync then closes it.
+            if state in PRE_DISPATCH and row["task_id"] is None:
                 told = state != "NEW" or row["delivery_state"] in ("offered", "delivered", "unknown")
                 new = self._set(tx, row, state="CLOSED", outcome="cancelled",
                                 delivery_state="pending" if told else "none", delivery_id=None)
                 tx.event(request_id, "cancelled", state, "CLOSED", {"reason": reason, "notify_manager": told},
                          version=new["version"])
                 return {"status": "cancelled", "state": "CLOSED", "version": new["version"]}
-            if state in LINKED:
+            if state != "CLOSED":
                 if row["cancel_state"] is not None:
                     raise self._invalid(row, "cancel was already requested")
                 if not self._backend_running(tx.project.ref.project_id):
@@ -764,7 +789,12 @@ class InboxService:
                 comment_id = self._comment(tx, request_id, "progress", body)
                 new = self._set(tx, row)
             elif action == "reject":
+                # SPEC: reject is the manager's REVIEWING/NEEDS_INFO → CLOSED(rejected). A link still
+                # active (asked while RUNNING) ends with the request in the link history; the Task
+                # itself belongs to the manager, who cancels it through to_worker (the Hub does not).
                 comment_id = self._comment(tx, request_id, "decision", body)
+                tx.connection.execute("UPDATE links SET state = 'closed' WHERE request_id = ? AND state = 'active'",
+                                      (request_id,))
                 new = self._set(tx, row, state="CLOSED", outcome="rejected")
             else:
                 comment_id = self._comment(tx, request_id, "decision", summary)
@@ -884,7 +914,9 @@ class InboxService:
         state stays and a ``linked_task_closed`` event is emitted once (P2-AC-09)."""
         def fn(tx: _Tx, row: sqlite3.Row) -> dict:
             state = row["state"]
-            if state not in LINKED or row["task_id"] != task_id:
+            # A REVIEWING/NEEDS_INFO request that still links the Task only follows a user cancel.
+            follows = state in LINKED or (state in PRE_DISPATCH and status == "closed" and user_cancelled)
+            if not follows or row["task_id"] != task_id:
                 return {"state": state, "version": row["version"], "changed": False}
             old_view = json.loads(row["task_view"]) if row["task_view"] else {}
             new_view = dict(view or {}, status=status)

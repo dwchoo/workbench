@@ -483,13 +483,15 @@ class ReopenAndLinkHistoryTests(ServiceCase):
         self.service.link_commit(self.manager, token, 'task-2', 1, 'dispatched')
         self.assertEqual(self.links(rid), [('task-1', 1, 'closed'), ('task-2', 1, 'active')])
 
-    def test_reopen_detaches_a_link_still_active_when_the_request_closed(self):
+    def test_reopen_after_reject_of_a_linked_request_keeps_the_closed_link_in_history(self):
+        # Orchestrator decision (review of TI-04): reject closes an active link, so no CLOSED request
+        # keeps an active one; reopen only clears the request's current Task fields.
         rid = self.make('RUNNING')
         self.service.review(self.manager, rid, 'ask', body='continue?')
         self.service.review(self.manager, rid, 'reject', body='dropping it')
-        self.assertEqual(self.links(rid), [('task-1', 1, 'active')])
+        self.assertEqual(self.links(rid), [('task-1', 1, 'closed')])
         self.service.set_state(OWNER, rid, self.version(rid), 'NEW')
-        self.assertEqual(self.links(rid), [('task-1', 1, 'detached')])
+        self.assertEqual(self.links(rid), [('task-1', 1, 'closed')])
         self.assertEqual(self.rows('SELECT task_id FROM requests WHERE request_id = ?', rid), [(None,)])
 
     def test_question_while_running_keeps_the_link_and_a_follow_up_spec_relinks(self):
@@ -582,6 +584,129 @@ class SerializationTests(ServiceCase):
         self.assertEqual(self.rows('SELECT count(*) FROM events WHERE request_id = ? AND to_state = ? '
                                    "AND from_state != 'CLOSED'",
                                    rid, 'CLOSED'), [(1,)])
+
+
+class ShutdownRaceTests(unittest.TestCase):
+    """Work scheduled on a project being removed or closed is refused as ``InboxError``, never a raw
+    ``RuntimeError``, and nothing reopens a store after it was closed."""
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory(prefix='wb-inbox-race-')
+        self.addCleanup(self.temp.cleanup)
+        base = Path(self.temp.name).resolve()
+        self.root_a, self.a = make_project(base, 'alpha')
+        self.root_b, self.b = make_project(base, 'beta')
+        self.entered, self.release = threading.Event(), threading.Event()
+        self.block = False
+
+        def on_committed(event):  # runs on the project's executor thread
+            if self.block and event.project_id == self.a:
+                self.entered.set()
+                self.release.wait(10)
+        self.service = InboxService(on_committed=on_committed)
+        self.addCleanup(self.release.set)
+        self.addCleanup(self.service.close)
+        self.refs = [ProjectRef(self.a, self.root_a, 'alpha'), ProjectRef(self.b, self.root_b, 'beta')]
+        self.service.set_projects(self.refs)
+        self.service.submit(OWNER, self.a, 'in A', 'b')
+        self.service.submit(OWNER, self.b, 'in B', 'b')
+
+    def test_a_project_removed_while_a_listing_waits_is_reported_unavailable(self):
+        self.block = True
+        blocker = threading.Thread(target=lambda: self.service.submit(OWNER, self.a, 'blocks A', 'b'))
+        blocker.start()
+        self.assertTrue(self.entered.wait(10))
+        outcome = {}
+
+        def listing():
+            try:
+                outcome['value'] = self.service.list_requests(OWNER)
+            except BaseException as exc:  # noqa: BLE001 - the test records whatever escapes
+                outcome['value'] = exc
+        lister = threading.Thread(target=listing)
+        lister.start()
+        threading.Event().wait(0.3)  # the listing has taken its project snapshot and waits on A
+        self.service.set_projects(self.refs[:1])  # B is removed and its executor shut down
+        self.release.set()
+        lister.join(10)
+        blocker.join(10)
+        value = outcome['value']
+        self.assertIsInstance(value, dict, repr(value))
+        self.assertEqual({r['title'] for r in value['requests']}, {'in A', 'blocks A'})
+        self.assertEqual(value['unavailable'], [{'project_id': self.b, 'code': 'project_unavailable'}])
+
+    def test_calls_racing_close_fail_as_inbox_errors_and_the_lock_is_released(self):
+        errors, stop = [], threading.Event()
+
+        def hammer():
+            while not stop.is_set():
+                for call in (lambda: self.service.submit(OWNER, self.a, 't', 'b'),
+                             lambda: self.service.list_requests(OWNER),
+                             lambda: self.service.close_idle(force=True)):
+                    try:
+                        call()
+                    except BaseException as exc:  # noqa: BLE001
+                        errors.append(exc)
+        threads = [threading.Thread(target=hammer) for _ in range(4)]
+        for thread in threads:
+            thread.start()
+        threading.Event().wait(0.2)
+        self.service.close()
+        threading.Event().wait(0.1)
+        stop.set()
+        for thread in threads:
+            thread.join(10)
+        bad = [e for e in errors if not isinstance(e, InboxError)
+               or e.code not in ('hub_stopping', 'not_found', 'project_unavailable')]
+        self.assertEqual(bad, [])
+        for root in (self.root_a, self.root_b):
+            descriptor = os.open(root / '.wb' / 'inbox.lock', os.O_RDWR)
+            try:
+                import fcntl
+                fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)  # raises if a store was reopened
+            finally:
+                os.close(descriptor)
+
+
+class LinkedTaskCancelTests(ServiceCase):
+    """Orchestrator decision: a NEEDS_INFO/REVIEWING request that still links a live Task (asked while
+    RUNNING) is cancelled through the linked path; a manager reject closes the active link."""
+
+    def asked_while_running(self) -> str:
+        rid = self.make('RUNNING')
+        self.service.review(self.manager, rid, 'ask', body='continue?')
+        return rid
+
+    def test_cancel_with_a_linked_task_marks_cancel_state_instead_of_closing(self):
+        for answered in (False, True):
+            with self.subTest(state='REVIEWING' if answered else 'NEEDS_INFO'):
+                rid = self.asked_while_running()
+                if answered:
+                    self.service.comment(OWNER, rid, 'yes')
+                state = self.state(rid)[0]
+                count = len(self.events)
+                result = self.service.cancel(self.req1, rid)
+                self.assertEqual((result['status'], result['state'], result['task_id']),
+                                 ('cancel_requested', state, 'task-1'))
+                self.assertEqual(self.rows('SELECT state, outcome, cancel_state, task_id FROM requests '
+                                           'WHERE request_id = ?', rid), [(state, None, 'requested', 'task-1')])
+                self.assertEqual([e.type for e in self.events[count:]], ['cancel_requested'])
+                self.assertEqual(self.rows('SELECT state FROM links WHERE request_id = ?', rid), [('active',)])
+                self.service.observe_task(rid, 'task-1', 'closed', closed_reason='user', user_cancelled=True)
+                self.assertEqual(self.state(rid)[:2], ('CLOSED', 'cancelled'))
+
+    def test_cancel_with_a_linked_task_needs_the_backend(self):
+        rid = self.asked_while_running()
+        self.backend_up = False
+        before = self.snapshot(rid)
+        self.assertEqual(self.code(self.service.cancel, OWNER, rid).code, 'backend_not_running')
+        self.assertEqual(self.snapshot(rid), before)
+
+    def test_reject_closes_the_active_link(self):
+        rid = self.asked_while_running()
+        self.service.review(self.manager, rid, 'reject', body='dropping it')
+        self.assertEqual(self.rows('SELECT state FROM links WHERE request_id = ?', rid), [('closed',)])
+        self.assertEqual(self.state(rid)[:2], ('CLOSED', 'rejected'))
 
 
 if __name__ == '__main__':

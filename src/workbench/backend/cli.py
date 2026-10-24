@@ -1168,6 +1168,21 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     return run(args)
 
 
+def cmd_hub_status(args: argparse.Namespace) -> int:
+    from workbench.hub.cli import cmd_hub_status as run
+    return run(args)
+
+
+def cmd_hub_stop(args: argparse.Namespace) -> int:
+    from workbench.hub.cli import cmd_hub_stop as run
+    return run(args)
+
+
+def cmd_hub_process(args: argparse.Namespace) -> int:
+    from workbench.hub.server import main_hub
+    return main_hub(args)
+
+
 def parser() -> argparse.ArgumentParser:
     root = argparse.ArgumentParser(prog="wb", description=__doc__.splitlines()[0])
     sub = root.add_subparsers(dest="command", required=True)
@@ -1305,6 +1320,15 @@ def parser() -> argparse.ArgumentParser:
     export_records.add_argument("--revision", type=int)
     export_records.add_argument("--output", required=True, help="explicit Markdown output path (never overwritten)")
 
+    hub = sub.add_parser("hub", help="사용자당 하나인 Workbench Hub 관리")
+    hub_sub = hub.add_subparsers(dest="hub_action", required=True)
+    hub_status = hub_sub.add_parser("status", help="Hub 상태 표시")
+    hub_status.add_argument("--json", action="store_true")
+    hub_status.set_defaults(handler=cmd_hub_status)
+    hub_stop = hub_sub.add_parser("stop", help="Hub 정지 (WB 프로젝트 backend는 계속 실행)")
+    hub_stop.add_argument("--yes", action="store_true", help="확인 없이 정지")
+    hub_stop.set_defaults(handler=cmd_hub_stop)
+
     backend = sub.add_parser("_backend", help=argparse.SUPPRESS)
     backend.add_argument("--data-dir", required=True)
     backend.add_argument("--project-dir", required=True)
@@ -1317,6 +1341,13 @@ def parser() -> argparse.ArgumentParser:
     backend.add_argument("--bridge-extension", required=True)
     backend.add_argument("--omp-arg", action="append")
     backend.set_defaults(handler=cmd_backend)
+    hub_process = sub.add_parser("_hub", help=argparse.SUPPRESS)
+    hub_process.add_argument("--foreground", action="store_true")
+    hub_process.add_argument("--mode", choices=("spawned", "foreground", "systemd"))
+    # Policy injection for tests only (SPEC defaults otherwise).
+    hub_process.add_argument("--stop-token-ttl", type=int, default=60, help=argparse.SUPPRESS)
+    hub_process.add_argument("--idle-timeout", type=float, default=60.0, help=argparse.SUPPRESS)
+    hub_process.set_defaults(handler=cmd_hub_process)
     return root
 
 

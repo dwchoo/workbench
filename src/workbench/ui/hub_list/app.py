@@ -8,13 +8,13 @@ terminated, 2 without a TTY. The list lives in curses; every action (``Attach`` 
 from __future__ import annotations
 
 import curses
-import io
 import json
 import os
 from pathlib import Path
 import queue
 import signal
 import sys
+import termios
 import threading
 import time
 from typing import Callable
@@ -25,12 +25,19 @@ from workbench.hub.paths import hub_layout
 from workbench.hub.process import HubNotRunning, HubUnknown, HubUnresponsive
 from workbench.hub.status import POLL_INTERVAL, check_entry
 from workbench.ui.hub_list.model import Attach, HubListModel, PowerOff, PowerOn, Quit, Refresh
+from workbench.ui.product.input import JAMO_KEYS
 from workbench.ui.hub_list.view import draw
 
 LIST_TIMEOUT = 30.0  # same bound as ``wb hub list``
 NO_TTY_TEXT = "Hub 목록은 terminal이 필요합니다. 'wb hub list'를 쓰세요"
 BACK_PROMPT = "Enter를 누르면 목록으로 돌아갑니다. "
 REGISTRY_BAD_TEXT = "Hub registry가 손상되어 목록을 읽지 못했습니다"
+# A get_wch that fails this fast this many times in a row is a terminal that is gone (a real 100 ms
+# timeout takes its 100 ms): the loop ends instead of spinning.
+QUICK_ERROR_SECONDS = 0.02
+MAX_QUICK_ERRORS = 30
+# The keys the list answers to, typed on a Korean 2-set keyboard (the product UI uses the same table).
+LIST_JAMO = "ㅛㅜㅐㅌㄱㅂ"
 
 
 class Terminated(Exception):
@@ -51,9 +58,11 @@ class HubPoller(threading.Thread):
         self._stopping = threading.Event()
         self._idle = threading.Event()  # set while polling is paused for an action
         self._fresh = False
+        self._lock = threading.Lock()
 
     def refresh(self, fresh: bool = True) -> None:
-        self._fresh = self._fresh or fresh
+        with self._lock:
+            self._fresh = self._fresh or fresh
         self._wake.set()
 
     def pause(self) -> None:
@@ -77,11 +86,16 @@ class HubPoller(threading.Thread):
 
     def run(self) -> None:
         while not self._stopping.is_set():
+            self._wake.clear()  # before the fetch: a refresh that comes during it wakes the next wait
             if not self._idle.is_set():
-                fresh, self._fresh = self._fresh, False
-                self.events.put(self.fetch(fresh))
+                with self._lock:
+                    fresh, self._fresh = self._fresh, False
+                try:
+                    event = self.fetch(fresh)
+                except Exception as exc:  # the banner shows; the thread keeps polling
+                    event = ("lost", type(exc).__name__)
+                self.events.put(event)
             self._wake.wait(self.interval)
-            self._wake.clear()
 
 
 def fetch_list(fresh: bool) -> tuple:
@@ -113,7 +127,9 @@ def key_name(key: object) -> str:
         return "enter"
     if key == "\x1b":
         return "esc"
-    return key if isinstance(key, str) else ""
+    if isinstance(key, str) and key in LIST_JAMO:
+        return JAMO_KEYS[key]
+    return key if isinstance(key, str) else ""  # KEY_RESIZE and the other special keys are "" = no key
 
 
 def _screen(stdscr: "curses.window", model: HubListModel, poller: HubPoller):
@@ -125,6 +141,7 @@ def _screen(stdscr: "curses.window", model: HubListModel, poller: HubPoller):
     curses.set_escdelay(25)
     stdscr.keypad(True)
     stdscr.timeout(100)
+    quick_errors = 0
     while True:
         for event in poller.drain():
             if event[0] == "rows":
@@ -134,13 +151,21 @@ def _screen(stdscr: "curses.window", model: HubListModel, poller: HubPoller):
             else:
                 model.set_disconnected()
         draw(stdscr, model, time.time())
+        asked = time.monotonic()
         try:
             key = stdscr.get_wch()
-        except curses.error:
-            continue  # the 100 ms timeout: poll the events again
+        except curses.error:  # the 100 ms timeout: poll the events again, unless the terminal is gone
+            quick_errors = quick_errors + 1 if time.monotonic() - asked < QUICK_ERROR_SECONDS else 0
+            if quick_errors >= MAX_QUICK_ERRORS:
+                raise curses.error("the terminal stopped answering")
+            continue
         except KeyboardInterrupt:
             return Quit()
-        action = model.press(key_name(key))
+        quick_errors = 0
+        name = key_name(key)
+        if not name:
+            continue  # a resize or another key the list has no use for must not cancel a question
+        action = model.press(name)
         if isinstance(action, Refresh):
             poller.refresh(fresh=True)
             continue
@@ -148,7 +173,20 @@ def _screen(stdscr: "curses.window", model: HubListModel, poller: HubPoller):
             return action
 
 
+def _flush_input() -> None:
+    """Drop what was typed ahead (keys meant for the list) before a plain-terminal question."""
+    try:
+        termios.tcflush(0, termios.TCIFLUSH)
+    except (termios.error, OSError, ValueError):
+        pass
+
+
+def _tty_ok(stdin_fd: int, stdout_fd: int) -> bool:
+    return os.isatty(stdin_fd) and os.isatty(stdout_fd)
+
+
 def _wait_enter(prompt: str = BACK_PROMPT) -> None:
+    _flush_input()
     try:
         input(prompt)
     except (EOFError, KeyboardInterrupt):
@@ -156,6 +194,7 @@ def _wait_enter(prompt: str = BACK_PROMPT) -> None:
 
 
 def _ask_stop(active: list) -> bool:
+    _flush_input()
     print("active work:" if active else "no active work reported")
     for item in active:
         print(f"  - {json.dumps(item, ensure_ascii=False, sort_keys=True)}")
@@ -192,8 +231,11 @@ def _attach(entry: registry.Entry, model: HubListModel) -> int | None:
     status = run_product(identity.layout.ui_socket, expected_process=identity.record["processes"]["backend"])
     if status == 2:
         return 2
-    model.notice = (f"{name}에서 detach했습니다. 프로젝트는 계속 실행됩니다" if status == 0 else
-                    f"{name} 연결이 끝났습니다(종료되었거나 오류). 목록을 새로 고칩니다")
+    if status == 0:
+        model.notice = f"{name}에서 detach했습니다. 프로젝트는 계속 실행됩니다"
+    else:  # run_product printed the cause on this terminal: let it be read before the list redraws
+        _wait_enter()
+        model.notice = f"{name} 연결이 끝났습니다(종료되었거나 오류). 목록을 새로 고칩니다"
     return None
 
 
@@ -201,16 +243,13 @@ def _power_on(action: PowerOn, model: HubListModel) -> int | None:
     entry = action.entry
     name = f'"{entry.name}"'
     print(f"{name} 켜는 중…", flush=True)
-    buffer = io.StringIO()
-    try:
-        outcome = projects.power_on(entry, False, out=buffer)
+    try:  # curses is ended: cmd_start's lines go to this terminal as they are written (and into data.output)
+        outcome = projects.power_on(entry, False, out=sys.stdout)
     except KeyboardInterrupt:
         model.notice = f"{name} 켜기를 중단했습니다(이미 시작된 backend는 계속 실행될 수 있습니다)"
         return None
-    output = buffer.getvalue()
+    output = outcome.data.get("output") or ""
     if not outcome.ok:
-        if output.strip():
-            print(output.rstrip())
         print(f"{name}을(를) 켜지 못했습니다: {outcome.reason}: {outcome.detail}")
         _wait_enter()
         model.notice = f"{name}을(를) 켜지 못했습니다({outcome.reason})"
@@ -272,7 +311,7 @@ def _hub_unavailable() -> int | None:
 
 
 def run_hub_list(*, stdin_fd: int = 0, stdout_fd: int = 1, poller: HubPoller | None = None) -> int:
-    if not os.isatty(stdin_fd) or not os.isatty(stdout_fd):
+    if not _tty_ok(stdin_fd, stdout_fd):
         print(NO_TTY_TEXT, file=sys.stderr)
         return 2
     if poller is None:
@@ -299,7 +338,9 @@ def run_hub_list(*, stdin_fd: int = 0, stdout_fd: int = 1, poller: HubPoller | N
                 poller.resume()
             if code is not None:
                 return code
-    except Terminated:
+            if not _tty_ok(stdin_fd, stdout_fd):  # run_product consumes SIGHUP: the terminal may be gone
+                return 1
+    except (Terminated, curses.error):
         return 1
     finally:
         poller.stop()

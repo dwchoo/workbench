@@ -100,8 +100,22 @@ class NoTty(BareCase):
         outside = self.folder('plain')
         env = dict(self.env, WORKBENCH_DATA_DIR=str(outside / 'legacy'))
         result = self.wb(cwd=outside, env=env)
+        reference = self.wb('start', cwd=outside, env=env)  # what the old bare `wb` did: the explicit start
+        self.assertEqual((result.returncode, result.stderr, result.stdout),
+                         (reference.returncode, reference.stderr, reference.stdout))
+        self.assertIn('No backend was started', result.stderr)
+        self.assertNotIn('wb hub list', result.stderr + result.stdout)
+
+    def test_an_unreadable_marker_falls_back_to_start_which_reports_it(self):
+        root = self.project('proj')
+        os.chmod(root / '.wb' / 'project.json', 0o644)  # read_project_marker refuses it
+        result = self.wb(cwd=root)
+        reference = self.wb('start', cwd=root)
+        self.assertEqual((result.returncode, result.stderr, result.stdout),
+                         (reference.returncode, reference.stderr, reference.stdout))
         self.assertNotIn('wb hub list', result.stderr + result.stdout)
         self.assertNotEqual(result.returncode, 0)
+        self.assertTrue(result.stderr.strip(), 'start must say why')
 
     def test_an_explicit_start_outside_keeps_asking_to_initialize(self):
         outside = self.folder('plain')

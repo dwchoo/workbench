@@ -215,11 +215,24 @@ Recovery (C-D70; additive)
   null). A ``restart_worker`` restarts a live worker OMP; ``restart_pane``
   still restarts only an exited pane.
 
-``pause`` (attached client, no fields) holds new automatic work. ``resume``
-(attached client, ``reconciled`` boolean) resumes only with ``reconciled:
-true``; ``false`` is refused with ``resume_not_reconciled``. Both answer with
-``automation`` at once; the pause/resume itself finishes in the background and
-the result arrives in a later ``state`` push.
+``pause`` (attached client, or a connection that did not attach, see below; no
+fields) holds new automatic work. ``resume`` (attached client, or a connection
+that did not attach, see below; ``reconciled`` boolean) resumes only with
+``reconciled: true``; ``false`` is refused with ``resume_not_reconciled``. Both
+answer with ``automation`` at once; the pause/resume itself finishes in the
+background and the result arrives in a later ``state`` push.
+
+A connection that did not attach may send ``pause`` and ``resume`` (HB-06; an
+added permission, the contract version stays 1) only when its hello ``client``
+is in :data:`NON_ATTACHED_CONTROL_CLIENTS` (``workbench-hub``) and the peer uid
+the server read from the socket (``SO_PEERCRED``) at accept is the backend's
+effective uid; any other non-attached connection is refused with
+``not_attached`` as before. Such a request calls the same backend pause/resume
+with the same result and ``reconciled`` rule, does not take the attach slot (a
+UI can still attach, and an attached UI stays attached), and after a success
+the attached UI, if any, gets the ``state`` push; the requesting connection
+gets none. Every other request that needs attaching still does. An older
+backend refuses it with ``not_attached``.
 
 Automation state (CW-18 U3; additive)
 -------------------------------------
@@ -288,6 +301,9 @@ WORKER_STATES = ("idle", "busy")
 TASK_KINDS = ("experiment", "work")
 TASK_STATUSES = ("dispatched", "starting", "running", "waiting_report", "held", "cancelling", "finished", "blocked",
                  "closed")
+# hello ``client`` names whose connection may send ``pause``/``resume`` without attaching (HB-06); the server also
+# requires the connection's server-side peer uid to equal the backend euid.
+NON_ATTACHED_CONTROL_CLIENTS = frozenset({"workbench-hub"})
 
 
 class ClientType(StrEnum):

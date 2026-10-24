@@ -238,6 +238,21 @@ class NegotiationAndValidationTests(unittest.TestCase):
             self.parse({"v": 1, "type": "pause", "id": "p"}, payload=b"x")
         self.assertFalse(hasattr(ui_v1, "APPROVAL_DECISIONS"))
 
+    def test_pause_resume_without_attach_is_a_documented_hub_only_addition(self):
+        # HB-06 (Hub SPEC "ui_v1 변경"): an added permission, so the contract version stays 1.
+        self.assertEqual(ui_v1.NON_ATTACHED_CONTROL_CLIENTS, frozenset({"workbench-hub"}))
+        self.assertIsInstance(ui_v1.NON_ATTACHED_CONTROL_CLIENTS, frozenset)
+        self.assertEqual((ui_v1.VERSION, ui_v1.SUPPORTED_VERSIONS), (1, (1,)))
+        doc = " ".join(ui_v1.__doc__.split())
+        start = doc.index("``pause`` (")
+        section = doc[start:doc.index("Automation state (CW-18 U3", start)]
+        for phrase in ("attached client, or a connection that did not attach",
+                       ":data:`NON_ATTACHED_CONTROL_CLIENTS`", "``workbench-hub``",
+                       "peer uid", "backend's effective uid", "``not_attached``",
+                       "does not take the attach slot", "``state`` push",
+                       "``resume_not_reconciled``"):
+            self.assertIn(phrase, section)
+
     def test_automation_refusal_reasons_are_contract_values_and_approval_reasons_are_gone(self):
         for name, value in (("HOST_SHELL_AUTOMATION", "host_shell_automation"),
                             ("RESUME_NOT_RECONCILED", "resume_not_reconciled")):

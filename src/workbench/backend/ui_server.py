@@ -16,6 +16,7 @@ import queue
 import select
 import socket
 import stat
+import struct
 import sys
 import threading
 import time
@@ -30,6 +31,8 @@ MAX_OUTBOUND_BYTES = 16 * 1024 * 1024
 RECV_BYTES = 256 * 1024
 MAX_CONNECTIONS = 16
 MAX_STOPS_IN_FLIGHT = 8  # stop_command requests answered but not yet finished (each waits on its own thread)
+# The only attach-requiring requests a non-attached ``NON_ATTACHED_CONTROL_CLIENTS`` connection may send (HB-06)
+_UNATTACHED_CONTROL = frozenset({ClientType.PAUSE, ClientType.RESUME})
 
 
 class Held(Exception):
@@ -66,8 +69,10 @@ class Controller(Protocol):
 
 
 class _Connection:
-    def __init__(self, sock: socket.socket):
+    def __init__(self, sock: socket.socket, peer: tuple[int, int] | None = None):
         self.sock = sock
+        # (pid, uid) of the connecting process, read by the server at accept (SO_PEERCRED); None when unreadable
+        self.peer = peer
         self.decoder = ui_v1.FrameDecoder()
         self.version: int | None = None
         self.client = ""
@@ -157,11 +162,23 @@ class UiServer:
                     return
                 raise
             sock.setblocking(False)
-            connection = _Connection(sock)
+            try:
+                peer = self.peer_identity(sock)
+            except OSError:
+                peer = None
+            connection = _Connection(sock, peer)
             self.stats["accepted"] += 1
             if len(self.connections) >= MAX_CONNECTIONS:
                 self._fail(connection, Reason.PROTOCOL_ERROR, "too many connections")
             self.connections.append(connection)
+
+    def peer_identity(self, sock: socket.socket) -> tuple[int, int]:
+        """``(pid, uid)`` of the process at the other end of an accepted connection, from the kernel (SO_PEERCRED).
+
+        Read once at accept. Tests override it in a subclass to inject another peer (HB-06, seam S5)."""
+        pid, uid, _gid = struct.unpack("iII", sock.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED,
+                                                               struct.calcsize("iII")))
+        return pid, uid
 
     def _read(self, connection: _Connection) -> None:
         try:
@@ -341,6 +358,14 @@ class UiServer:
         if self.attached is not connection:
             raise Held(Reason.NOT_ATTACHED, "attach before sending terminal or control input")
 
+    @staticmethod
+    def _may_control_unattached(connection: _Connection) -> bool:
+        """``pause``/``resume`` without attaching (HB-06): only a ``NON_ATTACHED_CONTROL_CLIENTS`` hello name whose
+        server-side peer uid is the backend's euid. The name states intent; the uid (and the 0600 socket) is the
+        boundary."""
+        return (connection.client in ui_v1.NON_ATTACHED_CONTROL_CLIENTS and connection.peer is not None
+                and connection.peer[1] == os.geteuid())
+
     def _dispatch(self, connection: _Connection, message: ui_v1.ClientMessage) -> dict[str, Any] | None:
         kind, fields, controller = message.type, message.fields, self.controller
         if kind is ClientType.SNAPSHOT:
@@ -379,7 +404,8 @@ class UiServer:
                                                    fields["offset"], fields["limit"])}
         if kind is ClientType.RAW_STATUS:
             return {"result": controller.raw_status()}
-        self._require_attached(connection)
+        if not (kind in _UNATTACHED_CONTROL and self._may_control_unattached(connection)):
+            self._require_attached(connection)
         if kind in {ClientType.INPUT, ClientType.PASTE}:
             data = message.payload
             if len(data) > ui_v1.MAX_PASTE_BYTES:

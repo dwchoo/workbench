@@ -34,6 +34,8 @@
 | 대기 사유 | WB 프로젝트가 자동 진행을 멈추고 기다리는 이유. 예: 자동화 일시정지, 재부팅 확인 전 보류, manager 입력창에 글이 있어 알림 대기. 목록과 Web Board에 표시한다. |
 | Task Inbox & Web Board / Phase 2 | 소유자·Board agent·외부 MCP client의 요청을 WB 프로젝트별로 접수·보관하고, Hub가 제공하는 웹에서 조회·작성하며, manager 검토, 승인 명세 및 실행 결과에 연결하는 선택적 부속 기능. 세부는 [Task Inbox BRIEF](docs/features/task-inbox/BRIEF.md)를 따른다. |
 | 요청 / request | 소유자·Board agent·외부 MCP client가 제출한 검토 대상 자료. 접수 자체는 실행 승인이 아니다. |
+| Hub 목록 | Hub에 등록된 WB 프로젝트를 상태·진행 중 Task·대기 사유와 함께 보여 주는 화면. WB 프로젝트 밖에서 `wb`를 실행하면 열린다. 상태를 확인하지 못한 WB 프로젝트는 꺼짐이 아니라 "연결 없음/불명"으로 표시한다. |
+| WB 관리 terminal | WB 프로젝트의 backend나 실험 shell 아래에서 실행되는 terminal. 여기서는 Hub를 자동으로 시작하지 않고 외부 terminal에서 시작하도록 안내한다. |
 | 요청 출처 | 요청을 작성한 주체: 웹의 소유자, Board agent, 또는 API key 이름으로 식별되는 소유자의 외부 agent. 요청은 외부 agent 외에도 이 출처들에서 올 수 있으며 출처는 항상 표시한다. |
 | 요청 상태 | 요청이 놓인 단계. 접수부터 manager 검토, 질문 대기, 승인 명세 연결, 연결된 Task 진행, 종료까지의 단계를 구분한다. 단계 목록은 [Task Inbox BRIEF](docs/features/task-inbox/BRIEF.md)(D-13)를 따른다. Task 상태와 별개다. |
 | 요청 revision | 실행 준비 이후 요청 내용을 고쳐 남긴 버전. 진행 중 Task를 바꾸지 않으며 새 명세 revision이 필요한지는 manager가 정한다. 명세 revision과 구분한다. |

@@ -161,8 +161,30 @@ class AuthorizationMatrixTests(unittest.TestCase):
                     self.assertEqual((registry.env.opened, registry.env.sent, registry.identity_reads), ([], [], 0))
                     self.assertEqual(registry.of("command_stop_signal", "command_stop_target"), [])
 
-    def test_nobody_but_worker_and_manager_is_a_requester(self):
-        for requester in ("user", "system", "", "Manager", "WORKER", "worker "):
+    def test_the_requester_authority_table_is_exactly_worker_manager_and_user(self):
+        """CS-O10 (user decision 2026-10-24): the user, through the UI stop key, joins the Worker and the Manager.
+
+        The table is written out here (FOLLOWUPS-BRIEF FU-D07): worker -> {worker}, manager -> {worker, manager},
+        user -> {worker, manager}. Every other requester string, including case and whitespace variants of the
+        three, is refused ``not_owner`` before an identity is read or a signal is sent.
+        """
+        table = {"worker": {"worker"}, "manager": {"worker", "manager"}, "user": {"worker", "manager"}}
+        for requester, targets in table.items():
+            for owner in OWNERS:
+                with self.subTest(requester=requester, owner=owner):
+                    registry = Registry()
+                    command_id = registry.register(owner)
+                    result = registry.service.stop(requester, command_id)
+                    self.assertEqual((result["command_id"], result["requested_by"]), (command_id, requester))
+                    if owner in targets:
+                        self.assertNotEqual((result["status"], result.get("reason")), ("refused", "not_owner"), result)
+                        (requested,) = registry.of("command_stop_requested")
+                        self.assertEqual((requested["requested_by"], requested["owner"]), (requester, owner))
+                    else:
+                        self.assertEqual((result["status"], result["reason"]), ("refused", "not_owner"), result)
+                        registry.untouched(self)
+        for requester in ("system", "", "Manager", "WORKER", "worker ", "User", "USER", " user", "user ", "user\n",
+                          "ui", "root", "admin", "workbench", None):
             with self.subTest(requester=repr(requester)):
                 registry = Registry()
                 command_id = registry.register("worker")

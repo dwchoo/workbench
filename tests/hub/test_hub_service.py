@@ -9,12 +9,14 @@ Run with ``discover -s tests/hub``.
 """
 from __future__ import annotations
 
+import json
 import os
 from pathlib import Path
 import re
 import stat
 import subprocess
 import sys
+import time
 import unittest
 
 from test_hub_process import REPO, flock_holder, wait_until
@@ -25,6 +27,9 @@ unit="$XDG_CONFIG_HOME/systemd/user/omp-workbench-hub.service"
 state=absent
 [ -e "$unit" ] && state=present
 printf 'systemctl\\t%s\\t%s\\n' "$*" "$state" >> "$FAKE_LOG"
+if [ -n "$FAKE_HANG" ]; then
+  case "$*" in *"$FAKE_HANG"*) exec sleep 15 ;; esac
+fi
 if [ -n "$FAKE_FAIL" ]; then
   case "$*" in *"$FAKE_FAIL"*) echo "fake systemctl: $FAKE_FAIL failed" >&2; exit 1 ;; esac
 fi
@@ -86,6 +91,7 @@ class ServiceSandbox(SpawnSandbox):
         if systemctl:
             self.install('systemctl', FAKE_SYSTEMCTL)
         self.install('loginctl', FAKE_LOGINCTL)
+        (self.bin / 'sleep').symlink_to('/bin/sleep')  # for FAKE_HANG
         self.env.update({'PATH': str(self.bin), 'FAKE_LOG': str(self.log)})
 
     def install(self, name: str, text: str) -> None:
@@ -195,6 +201,8 @@ class EnableTests(unittest.TestCase):
         self.assertEqual(directives['Type'], ['simple'])
         self.assertEqual(directives['Restart'], ['on-failure'])
         self.assertEqual(directives['RestartSec'], ['5'])
+        self.assertEqual(directives['RestartPreventExitStatus'], ['3'],
+                         'a Hub that refuses permanently (managed tree, exit 3) is not restarted every 5 s')
         self.assertEqual(directives['WantedBy'], ['default.target'])
         self.assertEqual(len(directives['ExecStart']), 1)
         argv = systemd_split(directives['ExecStart'][0])
@@ -269,6 +277,42 @@ class EnableRollbackTests(unittest.TestCase):
         self.assertIn('fake systemctl: daemon-reload failed', result.stderr)
         self.assertFalse(self.box.unit.exists())
         self.assertNotIn('--user enable ' + UNIT_NAME, [args for args, _ in self.box.systemctl_calls()])
+
+
+class ExistingUnitTests(unittest.TestCase):
+    def setUp(self):
+        self.box = ServiceSandbox(self)
+        self.box.unit.parent.mkdir(parents=True)
+
+    def test_unit_path_that_is_a_directory_fails_without_a_traceback(self):
+        self.box.unit.mkdir()
+        result = self.box.wb('hub', 'enable')
+        self.assertEqual(result.returncode, 1, result.stdout)
+        self.assertNotIn('Traceback', result.stderr)
+        self.assertTrue(self.box.unit.is_dir())
+        self.assertEqual(self.box.systemctl_calls(), [('--user show-environment', 'present')])
+
+    def test_unreadable_unit_fails_without_a_traceback(self):
+        self.box.unit.write_text('x')
+        self.box.unit.chmod(0)
+        self.addCleanup(self.box.unit.chmod, 0o600)
+        if os.access(self.box.unit, os.R_OK):
+            self.skipTest('permission bits are not enforced for this user')
+        result = self.box.wb('hub', 'enable')
+        self.assertEqual(result.returncode, 1, result.stdout)
+        self.assertNotIn('Traceback', result.stderr)
+        self.assertEqual(self.box.unit.stat().st_mode & 0o777, 0)
+
+    def test_failing_enable_restores_a_symlinked_unit_as_a_symlink(self):
+        target = self.box.base / 'dotfiles' / 'hub.service'
+        target.parent.mkdir()
+        target.write_bytes(b'[Service]\nExecStart=/bin/true\n')
+        self.box.unit.symlink_to(target)
+        result = self.box.wb('hub', 'enable', env=self.box.with_env(FAKE_FAIL='enable omp'))
+        self.assertEqual(result.returncode, 1, result.stdout)
+        self.assertTrue(self.box.unit.is_symlink())
+        self.assertEqual(os.readlink(self.box.unit), str(target))
+        self.assertEqual(target.read_bytes(), b'[Service]\nExecStart=/bin/true\n')
 
 
 class LingerTests(unittest.TestCase):
@@ -360,10 +404,25 @@ class StatusAutostartTests(unittest.TestCase):
         (self.box.bin / 'systemctl').unlink()
         self.assertEqual(self.status_line(), '부팅 자동 시작: unknown')
 
+    def test_no_answer_and_no_unit_file_is_disabled_not_unknown(self):
+        # systemctl prints nothing for a missing unit; with no unit file there is nothing enabled.
+        self.assertEqual(self.status_line(FAKE_FAIL='is-enabled'), '부팅 자동 시작: disabled')
+
+    def test_no_answer_with_a_unit_file_stays_unknown(self):
+        self.box.unit.parent.mkdir(parents=True)
+        self.box.unit.write_text('[Service]\n')
+        self.assertEqual(self.status_line(FAKE_FAIL='is-enabled'), '부팅 자동 시작: unknown')
+
+    def test_hanging_is_enabled_gives_up_quickly_as_unknown(self):
+        started = time.monotonic()
+        line = self.status_line(FAKE_HANG='is-enabled')
+        self.assertEqual(line, '부팅 자동 시작: unknown')
+        self.assertLess(time.monotonic() - started, 9, 'status must not wait the full command timeout')
+
     def test_status_json_carries_the_same_state(self):
         result = self.box.wb('hub', 'status', '--json', env=self.box.with_env(FAKE_IS_ENABLED='enabled'))
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(__import__('json').loads(result.stdout)['boot_autostart'], 'enabled')
+        self.assertEqual(json.loads(result.stdout)['boot_autostart'], 'enabled')
 
 
 class SystemdModeHubTests(unittest.TestCase):

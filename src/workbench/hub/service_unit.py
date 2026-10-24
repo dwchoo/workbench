@@ -15,6 +15,8 @@ from typing import Mapping, Sequence
 
 UNIT_NAME = "omp-workbench-hub.service"
 COMMAND_TIMEOUT = 20.0
+STATUS_TIMEOUT = 3.0  # `wb hub status` must stay snappy when systemd is slow
+HUB_REFUSED_EXIT = 3  # main_hub: managed_tree / proc_unreadable
 UNAVAILABLE_TEXT = "systemd 사용자 서비스 관리자를 쓸 수 없습니다. 설정은 바뀌지 않았습니다."
 
 _ESCAPES = {"\\": "\\\\", '"': '\\"', "\n": "\\n", "\t": "\\t", "%": "%%", "$": "$$"}
@@ -49,6 +51,8 @@ def render_unit(argv: Sequence[str]) -> str:
             f"ExecStart={exec_start}\n"
             "Restart=on-failure\n"
             "RestartSec=5\n"
+            # exit 3 = permanent refusal (WB-managed tree / unreadable /proc): never restart-loop on it
+            f"RestartPreventExitStatus={HUB_REFUSED_EXIT}\n"
             "\n"
             "[Install]\n"
             "WantedBy=default.target\n")
@@ -68,21 +72,21 @@ class Outcome:
     detail: str = ""
 
 
-def _run(tool: str, args: Sequence[str]) -> tuple[int, str, str]:
+def _run(tool: str, args: Sequence[str], timeout: float = COMMAND_TIMEOUT) -> tuple[int, str, str]:
     """(returncode, stdout, stderr); an unrunnable tool is rc 127 with the reason as stderr."""
     path = shutil.which(tool)
     if path is None:
         return 127, "", f"{tool}: command not found"
     try:
         done = subprocess.run([path, *args], stdin=subprocess.DEVNULL, capture_output=True, text=True,
-                              timeout=COMMAND_TIMEOUT, errors="replace")
+                              timeout=timeout, errors="replace")
     except (OSError, subprocess.SubprocessError) as exc:
         return 127, "", f"{tool}: {type(exc).__name__}: {exc}"
     return done.returncode, done.stdout, done.stderr
 
 
-def _systemctl(*args: str) -> tuple[int, str, str]:
-    return _run("systemctl", ["--user", *args])
+def _systemctl(*args: str, timeout: float = COMMAND_TIMEOUT) -> tuple[int, str, str]:
+    return _run("systemctl", ["--user", *args], timeout)
 
 
 def _failure(step: str, result: tuple[int, str, str]) -> Outcome:
@@ -90,9 +94,16 @@ def _failure(step: str, result: tuple[int, str, str]) -> Outcome:
     return Outcome("failed", f"systemctl --user {step} 실패 (exit {result[0]}): {message}")
 
 
-def _read_previous(path: Path) -> bytes | None:
+# What the unit path held before: nothing, a regular file's bytes, or a symlink's target.
+Previous = tuple[str, "bytes | str"] | None
+
+
+def _read_previous(path: Path) -> Previous:
+    """Raises OSError (not FileNotFoundError) when the path is unreadable or not a file/symlink."""
     try:
-        return path.read_bytes()
+        if path.is_symlink():
+            return ("link", os.readlink(path))
+        return ("file", path.read_bytes())
     except FileNotFoundError:
         return None
 
@@ -115,13 +126,18 @@ def _write_atomic(path: Path, payload: bytes) -> None:
         raise
 
 
-def _restore(path: Path, previous: bytes | None) -> str:
-    """Put the unit back; returns a note when even that failed."""
+def _restore(path: Path, previous: Previous) -> str:
+    """Put the unit back (file bytes, or the symlink itself); returns a note when even that failed."""
     try:
         if previous is None:
             path.unlink(missing_ok=True)
+        elif previous[0] == "link":
+            temp = path.with_name(f".{path.name}.{os.getpid()}.lnk")
+            temp.unlink(missing_ok=True)
+            os.symlink(previous[1], temp)
+            os.replace(temp, path)
         else:
-            _write_atomic(path, previous)
+            _write_atomic(path, previous[1])
     except OSError as exc:
         return f" (unit 복원 실패: {exc})"
     return ""
@@ -131,7 +147,10 @@ def enable(environment: Mapping[str, str] | None = None) -> Outcome:
     if shutil.which("systemctl") is None or _systemctl("show-environment")[0] != 0:
         return Outcome("unavailable", UNAVAILABLE_TEXT)
     path = unit_path(environment)
-    previous = _read_previous(path)
+    try:
+        previous = _read_previous(path)
+    except OSError as exc:
+        return Outcome("failed", f"기존 unit을 읽지 못해 바꾸지 않았습니다: {path}: {exc}")
     try:
         _write_atomic(path, render_unit(hub_argv()).encode("utf-8"))
     except OSError as exc:
@@ -170,12 +189,15 @@ def boot_autostart_state(environment: Mapping[str, str] | None = None) -> str:
     """``enabled``/``disabled`` from ``systemctl --user is-enabled``; ``unknown`` when it cannot say."""
     if shutil.which("systemctl") is None:
         return "unknown"
-    code, out, _err = _systemctl("is-enabled", UNIT_NAME)
+    code, out, _err = _systemctl("is-enabled", UNIT_NAME, timeout=STATUS_TIMEOUT)
     word = out.strip().splitlines()[0] if out.strip() else ""
     if word in ("enabled", "disabled"):
         return word
-    if code != 0 and not word and not os.path.lexists(unit_path(environment)):
-        return "disabled"  # no unit file: systemctl reports "not found", which is not an enabled unit
+    # systemctl exits non-zero with an empty stdout ("Failed to get unit file state ... not found")
+    # for a unit that does not exist. Nothing can be enabled without our unit file, so that is
+    # "disabled", not "unknown". rc 127 (not runnable / timed out) stays unknown: it said nothing.
+    if code not in (0, 127) and not word and not os.path.lexists(unit_path(environment)):
+        return "disabled"
     return "unknown"
 
 

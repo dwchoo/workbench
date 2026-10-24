@@ -42,7 +42,8 @@ class IndependentMigrationTests(unittest.TestCase):
         self.project = self.base / 'project'
         self.project.mkdir(mode=0o700)
         self.env = {'PATH': '/usr/bin:/bin', 'LANG': 'C.UTF-8',
-                    'PYTHONPATH': str(ROOT / 'src'), 'PYTHONDONTWRITEBYTECODE': '1'}
+                    'PYTHONPATH': str(ROOT / 'src'), 'PYTHONDONTWRITEBYTECODE': '1',
+                    'WORKBENCH_HUB_AUTOSTART': '0'}
         for variable in ('HOME', 'XDG_CONFIG_HOME', 'XDG_DATA_HOME', 'XDG_CACHE_HOME',
                          'XDG_RUNTIME_DIR', 'TMPDIR'):
             directory = self.base / variable.lower()

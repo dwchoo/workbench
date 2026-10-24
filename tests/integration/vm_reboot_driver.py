@@ -43,6 +43,7 @@ def setup_env(base: Path, fake: bool):
     home = base / "home"
     env = {"PATH": "/usr/bin:/bin", "HOME": str(home), "SHELL": "/usr/bin/bash", "LANG": "C.UTF-8",
            "TERM": "xterm-256color", "PYTHONPATH": str(SRC), "PYTHONDONTWRITEBYTECODE": "1",
+           "WORKBENCH_HUB_AUTOSTART": "0",
            "XDG_CONFIG_HOME": str(home / ".config"), "XDG_STATE_HOME": str(home / ".local/state"),
            "XDG_DATA_HOME": str(home / ".local/share"), "XDG_CACHE_HOME": str(home / ".cache"),
            **{k: BLOCKED for k in ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy", "https_proxy", "all_proxy")}}

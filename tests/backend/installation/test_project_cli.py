@@ -23,7 +23,7 @@ class ProjectCliTests(unittest.TestCase):
         runtime.mkdir(mode=0o700)
         self.env = {'PATH': '/usr/bin:/bin', 'HOME': str(home), 'LANG': 'C.UTF-8',
                     'PYTHONPATH': str(REPO / 'src'), 'PYTHONDONTWRITEBYTECODE': '1',
-                    'XDG_RUNTIME_DIR': str(runtime)}
+                    'XDG_RUNTIME_DIR': str(runtime), 'WORKBENCH_HUB_AUTOSTART': '0'}
 
     def cli(self, *args, cwd=None, env=None):
         return subprocess.run([sys.executable, '-m', 'workbench', *args],

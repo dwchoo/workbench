@@ -268,7 +268,7 @@ class LiveProductOmpProbe(unittest.TestCase):
                if not k.startswith(("TMUX", "HERDR_", "WORKBENCH_", "PYTHON"))}
         path = env.get("PATH", "/usr/bin:/bin")
         env.update(PYTHONPATH=str(SRC), PYTHONDONTWRITEBYTECODE="1", TERM="xterm-256color", LANG="C.UTF-8",
-                   PATH=f"{Path(OMP).parent}:{path}")
+                   PATH=f"{Path(OMP).parent}:{path}", WORKBENCH_HUB_AUTOSTART="0")
         self.env = env
         self.terms: list[LiveTerm] = []
         self.known: dict[str, tuple[int, int]] = {}

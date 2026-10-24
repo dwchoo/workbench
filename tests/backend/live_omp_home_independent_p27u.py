@@ -142,7 +142,8 @@ class LiveRealStore(unittest.TestCase):
                if not k.startswith(("HERDR_", "WORKBENCH_", "TMUX", "PI_", "OMP_", "PYTHON"))}
         env.update({k: BLOCKED for k in PROXY_KEYS})
         env.update({"NO_PROXY": "", "no_proxy": "", "PYTHONPATH": str(SRC), "PYTHONDONTWRITEBYTECODE": "1",
-                    "LANG": "C.UTF-8"})
+                    "LANG": "C.UTF-8",
+                    "WORKBENCH_HUB_AUTOSTART": "0"})
         self.env = env
         self.seen: dict[int, str] = {}
         self.report: dict = {"omp": self.omp, "store_kind": "xdg" if ".omp" not in str(store) else "default"}

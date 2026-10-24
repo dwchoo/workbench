@@ -122,6 +122,19 @@ class HelperTests(unittest.TestCase):
             h.assert_env_isolated({"HOME": "/home/someone", **{k: h.BLOCKED_PROXY for k in h.PROXY_KEYS}},
                                   Path("/tmp/owned-root"))
 
+    def test_only_the_hub_auto_start_opt_out_passes_the_isolation_guards(self):
+        env = h.clean_base_env(WORKBENCH_HUB_AUTOSTART="0", WORKBENCH_X="1", HOME="/tmp/owned-root/home")
+        self.assertEqual(env.get("WORKBENCH_HUB_AUTOSTART"), "0")
+        self.assertNotIn("WORKBENCH_X", env)
+        for value in ("1", "", "00"):
+            with self.subTest(value=value):
+                self.assertNotIn("WORKBENCH_HUB_AUTOSTART", h.clean_base_env(WORKBENCH_HUB_AUTOSTART=value))
+        base = {"HOME": "/tmp/owned-root/home", **{k: h.BLOCKED_PROXY for k in h.PROXY_KEYS}}
+        h.assert_env_isolated({**base, "WORKBENCH_HUB_AUTOSTART": "0"}, Path("/tmp/owned-root"))
+        for leaked in ({"WORKBENCH_HUB_AUTOSTART": "1"}, {"WORKBENCH_X": "1"}):
+            with self.subTest(leaked=leaked), self.assertRaises(AssertionError):
+                h.assert_env_isolated({**base, **leaked}, Path("/tmp/owned-root"))
+
     def test_step_runner_statuses_and_prerequisites(self):
         report = h.ScenarioReport("unit-runner", run_id="unit")
         runner = h.StepRunner(report)

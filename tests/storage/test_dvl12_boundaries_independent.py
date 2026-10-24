@@ -134,7 +134,7 @@ class Dvl12SourceBoundaries(unittest.TestCase):
         executable.chmod(0o700)
         project = Path(__file__).resolve().parents[2]
         environment = {"PATH": f"{launcher}:/usr/bin:/bin", "PYTHONPATH": str(project / "src"),
-                       "HOME": str(self.root), "LANG": "C.UTF-8"}
+                       "HOME": str(self.root), "LANG": "C.UTF-8", "WORKBENCH_HUB_AUTOSTART": "0"}
         for kind, identity, payload in (("run", self.run_id, b"DVL12-PRIVATE-RUN"),
                                         ("command", command_id, b"DVL12-PRIVATE-COMMAND")):
             query = raw_query(private, kind, identity, limit=128)

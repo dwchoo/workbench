@@ -7,6 +7,7 @@ record, live process, socket peer and ``welcome`` all agree, else ``unknown``.
 from __future__ import annotations
 
 from dataclasses import dataclass
+import enum
 import importlib.metadata
 import json
 import os
@@ -15,7 +16,7 @@ import select
 import signal
 import sys
 import time
-from typing import Any, Callable
+from typing import Any, Callable, Mapping
 
 from workbench.backend.paths import read_private_json
 
@@ -208,7 +209,9 @@ def _terminate(layout: HubLayout, record: dict[str, Any], reason: str) -> StopRe
                                            boot_id=record["boot_id"]) != "alive"):
             return StopResult("unknown", pid, "identity_changed")
         signal.pidfd_send_signal(pidfd, signal.SIGTERM)
-        exited = bool(select.select([pidfd], [], [], TERM_TIMEOUT)[0])
+        poller = select.poll()  # not select(): pidfd may be >= 1024
+        poller.register(pidfd, select.POLLIN)
+        exited = bool(poller.poll(int(TERM_TIMEOUT * 1000)))
     except OSError:
         return StopResult("failed", pid, "signal_failed")
     finally:
@@ -254,3 +257,234 @@ def stop_hub(ask: Callable[[list], bool], layout: HubLayout | None = None) -> St
     if _released(layout, record["pid"], RELEASE_TIMEOUT):
         return StopResult("stopped", record["pid"])
     return _terminate(layout, record, "release_timeout")
+
+
+# --- Spawn (SPEC "Hub 프로세스 수명" Spawn) -------------------------------------------
+
+READY_TIMEOUT = 5.0
+REPARENT_TIMEOUT = 2.0
+READY_STARTED, READY_LOST, READY_MANAGED = b"R", b"L", b"M"
+# Project/session-only variables the per-user Hub must not inherit (HB-T04).
+PROJECT_ENV = frozenset({"WORKBENCH_DATA_DIR", "WORKBENCH_AGENT_ROLES", "WORKBENCH_OMP_RUNTIME_ROOT"})
+PROJECT_ENV_PREFIXES = ("WORKBENCH_G3_",)
+
+# spawn_hub outcomes (also HubStart failure reasons)
+SPAWN_STARTED, SPAWN_LOST, SPAWN_MANAGED = "started", "lost", "managed_tree"
+SPAWN_UPDATE, SPAWN_STATE_ERROR, SPAWN_FAILED, SPAWN_TIMEOUT = (
+    "update_in_progress", "state_error", "spawn_failed", "ready_timeout")
+# Caller pre-check could not read its /proc ancestry (e.g. hidepid): held like managed_tree.
+PROC_UNREADABLE = "proc_unreadable"
+
+
+def hub_environment(environment: Mapping[str, str] | None = None) -> dict[str, str]:
+    """The caller's environment without project/session-only variables."""
+    environment = os.environ if environment is None else environment
+    return {key: value for key, value in environment.items()
+            if key not in PROJECT_ENV and not key.startswith(PROJECT_ENV_PREFIXES)}
+
+
+PROC = Path("/proc")
+MAX_ANCESTRY = 4096
+WALK_ATTEMPTS = 3  # an ancestor exiting mid-walk reparents us: walk again from the start
+WALK_RETRY_DELAY = 0.02
+
+
+class AncestryCheck(enum.IntEnum):
+    """Non-pid ``managed_ancestor`` results. ``UNVERIFIABLE`` (``/proc`` cannot prove
+    "outside", fail closed) is truthy and never a real pid; compare with ``is``."""
+
+    UNVERIFIABLE = -1
+
+
+UNVERIFIABLE = AncestryCheck.UNVERIFIABLE
+
+
+def _managed_argv(argv: list[bytes]) -> bool:
+    """A backend (``maintenance.discover()``'s rule: an ``_backend`` element and an
+    element containing ``workbench``) or the shell supervisor (a ``--supervisor``
+    element and an element ending with ``shell_g2/lifecycle.py``)."""
+    if b"_backend" in argv and any(b"workbench" in value for value in argv):
+        return True
+    return b"--supervisor" in argv and any(value.endswith(b"shell_g2/lifecycle.py") for value in argv)
+
+
+def managed_ancestor(pid: int, *, proc: Path = PROC) -> int | None:
+    """The first process from ``pid`` up its ancestry that is WB-managed, or None.
+
+    A failed ``/proc`` read restarts the walk (up to :data:`WALK_ATTEMPTS`), since an
+    exiting ancestor is a transient ENOENT. If the chain still cannot be read, or it is
+    longer than :data:`MAX_ANCESTRY`, the result is :data:`UNVERIFIABLE` ("inside").
+    """
+    for attempt in range(WALK_ATTEMPTS):
+        if attempt:
+            time.sleep(WALK_RETRY_DELAY)
+        current = pid
+        for _ in range(MAX_ANCESTRY):
+            try:
+                argv = (proc / str(current) / "cmdline").read_bytes().split(b"\0")
+                parent = int((proc / str(current) / "stat").read_bytes().rsplit(b") ", 1)[1].split()[1])
+            except (OSError, IndexError, ValueError):
+                break  # walk again from the start
+            if _managed_argv(argv):
+                return current
+            if parent == 0:
+                return None
+            current = parent
+        else:
+            return UNVERIFIABLE  # bounded: a cycle or an absurd depth never proves "outside"
+    return UNVERIFIABLE
+
+
+def wait_reparented(spawner_pid: int | None, timeout: float = REPARENT_TIMEOUT) -> None:
+    """Hub side: wait (bounded) until the spawn intermediate exited and we were reparented."""
+    if spawner_pid is None:
+        return
+    deadline = time.monotonic() + timeout
+    while os.getppid() == spawner_pid and time.monotonic() < deadline:
+        time.sleep(0.01)
+
+
+def send_ready(fd: int | None, code: bytes) -> None:
+    """Hub side: report ``R``/``L``/``M`` once and close the ready fd (a gone reader is fine)."""
+    if fd is None:
+        return
+    try:
+        os.write(fd, code)
+    except OSError:
+        pass
+    finally:
+        try:
+            os.close(fd)
+        except OSError:
+            pass
+
+
+def _max_fd() -> int:
+    import resource
+    soft, _hard = resource.getrlimit(resource.RLIMIT_NOFILE)
+    return max(1 << 20 if soft == resource.RLIM_INFINITY else soft, 1 << 16)
+
+
+def spawn_hub(layout: HubLayout | None = None, *, timeout: float = READY_TIMEOUT,
+              environment: Mapping[str, str] | None = None) -> str:
+    """Double-fork + ``setsid`` a ``wb _hub`` and return its ready outcome.
+
+    Holds the user update fence (shared, non-blocking) only while spawning; the Hub
+    never holds it. The Hub gets stdin ``/dev/null``, stdout/stderr ``hub.log``, cwd
+    ``/``, umask 077, no other caller fd and :func:`hub_environment`. Returns
+    ``started`` (``R``), ``lost`` (``L``: another Hub holds the lock), ``managed_tree``
+    (``M``), ``update_in_progress``, ``state_error``, ``spawn_failed`` (EOF before a
+    code) or ``ready_timeout``.
+    """
+    from workbench.backend.cli import _bootstrap_source
+    from workbench.backend.maintenance import fence
+    from workbench.backend.paths import DataDirError
+    from .paths import prepare_state_dir
+    layout = hub_layout() if layout is None else layout
+    try:
+        with fence(shared=True):
+            prepare_state_dir(layout)
+            return _spawn(layout, timeout, hub_environment(environment), _bootstrap_source())
+    except DataDirError as exc:
+        return SPAWN_UPDATE if isinstance(exc.__cause__, BlockingIOError) else SPAWN_STATE_ERROR
+    except OSError:
+        return SPAWN_STATE_ERROR
+
+
+def _spawn(layout: HubLayout, timeout: float, environment: dict[str, str], bootstrap: str) -> str:
+    import fcntl
+    read_end, write_end = os.pipe()
+    sys.stdout.flush()
+    sys.stderr.flush()
+    try:
+        intermediate = os.fork()
+    except OSError:
+        os.close(read_end)
+        os.close(write_end)
+        return SPAWN_FAILED
+    if intermediate == 0:  # pragma: no cover - child side
+        try:
+            os.close(read_end)
+            os.setsid()
+            spawner = os.getpid()
+            if os.fork() == 0:
+                ready = fcntl.fcntl(write_end, fcntl.F_DUPFD, 3)  # never 0-2
+                devnull = os.open(os.devnull, os.O_RDWR)
+                log = os.open(layout.log, os.O_WRONLY | os.O_CREAT | os.O_APPEND | os.O_NOFOLLOW, 0o600)
+                os.dup2(devnull, 0)
+                os.dup2(log, 1)
+                os.dup2(log, 2)
+                os.closerange(3, ready)
+                os.closerange(ready + 1, _max_fd())
+                os.set_inheritable(ready, True)
+                os.chdir("/")
+                os.umask(0o077)
+                argv = [sys.executable, "-I", "-c", bootstrap, "_hub",
+                        "--ready-fd", str(ready), "--spawner-pid", str(spawner)]
+                os.execve(sys.executable, argv, environment)
+            os._exit(0)
+        except BaseException:
+            os._exit(1)
+    os.close(write_end)
+    try:
+        os.waitpid(intermediate, 0)
+        poller = select.poll()  # not select(): the caller may already hold fds >= 1024
+        poller.register(read_end, select.POLLIN)
+        if not poller.poll(max(0, int(timeout * 1000))):
+            return SPAWN_TIMEOUT
+        code = os.read(read_end, 1)
+    finally:
+        os.close(read_end)
+    return {READY_STARTED: SPAWN_STARTED, READY_LOST: SPAWN_LOST,
+            READY_MANAGED: SPAWN_MANAGED}.get(code, SPAWN_FAILED)
+
+
+@dataclass(frozen=True)
+class HubStart:
+    """``ensure_hub`` result; ``ok`` means a ``running`` Hub was proven (``identity``).
+
+    ``reason`` when ok: ``already_running``, ``started``, ``joined`` (lost the lock race
+    to a Hub that became running). Otherwise: ``update_in_progress``, ``managed_tree``,
+    ``proc_unreadable``, ``hub_unknown``, ``state_error``, ``spawn_failed``, ``ready_timeout`` or
+    ``not_running_after_ready``.
+    """
+    ok: bool
+    reason: str
+    identity: HubIdentity | None = None
+
+
+def _wait_running(layout: HubLayout, timeout: float) -> HubIdentity:
+    deadline = time.monotonic() + timeout
+    while True:
+        identity = inspect_hub(layout, timeout=max(0.5, min(2.0, deadline - time.monotonic())))
+        if identity.state == RUNNING or time.monotonic() >= deadline:
+            return identity
+        time.sleep(0.05)
+
+
+def ensure_hub(layout: HubLayout | None = None, *, timeout: float = READY_TIMEOUT) -> HubStart:
+    """Use the running Hub or spawn one; each wait is bounded by ``timeout``.
+
+    ``unknown`` (lock held, identity not yet proven, e.g. a Hub before its record)
+    is waited out and never raced with a second spawn.
+    """
+    layout = hub_layout() if layout is None else layout
+    identity = inspect_hub(layout)
+    if identity.state == UNKNOWN:
+        identity = _wait_running(layout, timeout)
+        if identity.state == UNKNOWN:
+            return HubStart(False, "hub_unknown", identity)
+    if identity.state == RUNNING:
+        return HubStart(True, "already_running", identity)
+    ancestor = managed_ancestor(os.getpid())
+    if ancestor is UNVERIFIABLE:
+        return HubStart(False, PROC_UNREADABLE)
+    if ancestor is not None:
+        return HubStart(False, SPAWN_MANAGED)
+    outcome = spawn_hub(layout, timeout=timeout)
+    if outcome not in (SPAWN_STARTED, SPAWN_LOST):
+        return HubStart(False, outcome)
+    identity = _wait_running(layout, timeout)
+    if identity.state != RUNNING:
+        return HubStart(False, "not_running_after_ready", identity)
+    return HubStart(True, "started" if outcome == SPAWN_STARTED else "joined", identity)

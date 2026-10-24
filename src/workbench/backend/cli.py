@@ -1187,6 +1187,11 @@ def cmd_hub_stop(args: argparse.Namespace) -> int:
     return run(args)
 
 
+def cmd_hub_start(args: argparse.Namespace) -> int:
+    from workbench.hub.cli import cmd_hub_start as run
+    return run(args)
+
+
 def cmd_hub_add(args: argparse.Namespace) -> int:
     from workbench.hub.cli import cmd_hub_add as run
     return run(args)
@@ -1359,6 +1364,8 @@ def parser() -> argparse.ArgumentParser:
 
     hub = sub.add_parser("hub", help="사용자당 하나인 Workbench Hub 관리")
     hub_sub = hub.add_subparsers(dest="hub_action", required=True)
+    hub_start = hub_sub.add_parser("start", help="Hub가 없으면 background로 시작")
+    hub_start.set_defaults(handler=cmd_hub_start)
     hub_status = hub_sub.add_parser("status", help="Hub 상태 표시")
     hub_status.add_argument("--json", action="store_true")
     hub_status.set_defaults(handler=cmd_hub_status)
@@ -1390,13 +1397,24 @@ def parser() -> argparse.ArgumentParser:
     # Policy injection for tests only (SPEC defaults otherwise).
     hub_process.add_argument("--stop-token-ttl", type=_positive(int), default=60, help=argparse.SUPPRESS)
     hub_process.add_argument("--idle-timeout", type=_positive(float), default=60.0, help=argparse.SUPPRESS)
+    # Set by spawn_hub: the ready pipe (R/L/M) and the intermediate to outlive.
+    hub_process.add_argument("--ready-fd", type=int, help=argparse.SUPPRESS)
+    hub_process.add_argument("--spawner-pid", type=int, help=argparse.SUPPRESS)
     hub_process.set_defaults(handler=cmd_hub_process)
     return root
 
 
-def main(argv: list[str] | None = None) -> int:
+def main(argv: list[str] | None = None, *, autostart: bool | None = None) -> int:
+    """``autostart`` (default: only for the real entrypoint, ``argv is None``) starts
+    the Hub after argparse and before the handler (SPEC "자동 시작 규칙"). In-process
+    callers that pass ``argv`` never spawn a background Hub unless they ask."""
     values = list(sys.argv[1:] if argv is None else argv)
     args = parser().parse_args(values or ["start"])
+    if autostart is None:
+        autostart = argv is None
+    if autostart:
+        from workbench.hub.cli import autostart as start_hub
+        start_hub(args)
     try:
         return args.handler(args)
     except DataDirError as exc:

@@ -69,7 +69,7 @@ class LiveShellKillP27s(unittest.TestCase):
         tmp.mkdir()
         self.env = {"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "HOME": str(self.home), "LANG": "C.UTF-8",
                     "TERM": "xterm-256color", "SHELL": "/bin/bash", "PYTHONPATH": SRC, "PYTHONDONTWRITEBYTECODE": "1",
-                    "TMPDIR": str(tmp), "ANTHROPIC_API_KEY": FAKE_KEY}
+                    "TMPDIR": str(tmp), "ANTHROPIC_API_KEY": FAKE_KEY, "WORKBENCH_HUB_AUTOSTART": "0"}
         self.term: OuterTerminal | None = None
         self.mine: dict[int, str] = {}  # pid -> start ticks of processes this probe made the shell start
 

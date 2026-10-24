@@ -99,7 +99,8 @@ class LiveRestartP27q(unittest.TestCase):
         tmp.mkdir()
         self.env = {"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "HOME": str(self.home), "LANG": "C.UTF-8",
                     "TERM": "xterm-256color", "SHELL": "/bin/bash", "PYTHONPATH": SRC, "PYTHONDONTWRITEBYTECODE": "1",
-                    "TMPDIR": str(tmp), "ANTHROPIC_API_KEY": FAKE_KEY, "PI_AUTO_QA": "1"}
+                    "TMPDIR": str(tmp), "ANTHROPIC_API_KEY": FAKE_KEY, "PI_AUTO_QA": "1",
+                    "WORKBENCH_HUB_AUTOSTART": "0"}
         self.term: OuterTerminal | None = None
 
     def cli(self, *args: str, timeout: float = 180) -> subprocess.CompletedProcess:

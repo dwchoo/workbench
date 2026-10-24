@@ -26,7 +26,7 @@ class IndependentCliTests(unittest.TestCase):
         self.env.update(HOME=str(self.home), XDG_RUNTIME_DIR=str(self.root),
                         XDG_CONFIG_HOME=str(self.home / "config"), XDG_STATE_HOME=str(self.home / "state"),
                         PYTHONPATH=str(Path(__file__).resolve().parents[3] / "src"),
-                        PYTHONDONTWRITEBYTECODE="1", WORKBENCH_OMP=str(self.trap),
+                        PYTHONDONTWRITEBYTECODE="1", WORKBENCH_OMP=str(self.trap), WORKBENCH_HUB_AUTOSTART="0",
                         MODEL_TRAP_MARKER=str(self.marker))
 
     def project(self, path, title):

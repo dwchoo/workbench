@@ -1193,7 +1193,7 @@ while True:
     sys.stdout.write(f"[{role} got {data!r}]\\r\\n> "); sys.stdout.flush()
 '''
 ENV = {"PATH": "/usr/bin:/bin", "PYTHONPATH": SRC, "PYTHONDONTWRITEBYTECODE": "1", "LANG": "C.UTF-8",
-       "TERM": "xterm-256color"}
+       "TERM": "xterm-256color", "WORKBENCH_HUB_AUTOSTART": "0"}
 MAIN = "import sys; from workbench.backend.cli import main; raise SystemExit(main(sys.argv[1:]))"
 
 

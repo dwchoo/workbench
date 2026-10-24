@@ -58,3 +58,19 @@
 - 실행이 끝나고 소유 process 종료를 확인하면 `python3 .agents/skills/workspace-evidence/scripts/storage_maintenance.py`를 실행한다. 처음에는 dry-run으로 후보를 확인하고, 그다음 `--apply`를 붙인다. 오래된 대형 checkpoint는 `--archive-checkpoints`로 압축한다.
 - 격리 실행을 마친 worktree를 제거할 때는 내부 `.workflow/`도 같이 정리한다. `graphify-out/`의 일자별 snapshot 디렉터리는 최근 3개만 남긴다.
 - 보고서, trace, 실패 근거, DB 결과는 보존한다. 삭제·압축은 dry-run 결과를 보고하고 사용자 확인을 받은 뒤 수행한다. 실행 중인 process가 쓰는 자료는 건드리지 않는다.
+
+## Agent skills
+
+`mattpocock-skills` plugin(local scope)이 읽는 repo 설정이다. 이 repo의 `.agents/skills/` 절차·template과 충돌하면 repo 절차가 우선한다.
+
+### Issue tracker
+
+Local markdown under `docs/features/<feature>/` (BRIEF·SPEC·`tickets/<ID>.md`). See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+Default five roles, recorded as a `Triage:` line in the issue file. See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context: `CONTEXT.md` (glossary) + `docs/adr/`. See `docs/agents/domain.md`.

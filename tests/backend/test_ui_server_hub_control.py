@@ -39,6 +39,9 @@ class AutomationController(FakeController):
         self.pauses = 0
         self.resumes: list[object] = []
         self.paused = False
+        # FakeController.restart_pane/kill_pane append to these (they start empty here, so a call is visible)
+        self.restarts: list[PaneId] = []
+        self.kills: list[PaneId] = []
 
     def snapshot(self):
         return {**super().snapshot(), "automation": {"paused": self.paused}}
@@ -211,9 +214,10 @@ class NonAttachedHubPauseTests(HubControlFixture):
             with self.subTest(kind=kind.value):
                 result = hub.request(kind, payload, **fields)
                 self.assertEqual((result["ok"], result.get("reason")), (False, "not_attached"), result)
-        self.assertEqual(self.controller.frames, {pane: [] for pane in PaneId})
-        self.assertFalse(hasattr(self.controller, "restarts") or hasattr(self.controller, "kills"))
-        self.assertEqual(self.controller.focus, PaneId.MANAGER_OMP)
+        # the controller record: no input/paste delivered, no restart/kill, focus unchanged
+        self.assertEqual((self.controller.frames, self.controller.restarts, self.controller.kills,
+                          self.controller.focus),
+                         ({pane: [] for pane in PaneId}, [], [], PaneId.MANAGER_OMP))
 
     def test_a_hub_cannot_take_the_attach_slot_of_an_attached_ui(self):
         ui = self.attached_ui()

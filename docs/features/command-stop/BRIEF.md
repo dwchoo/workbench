@@ -92,6 +92,8 @@ ID는 CS-AC-nn이다. "관측"은 취소 응답, `/task`·`/terminal` 상태, �
 | CS-D16 | 사용자 결정(CS-O08 권고 수락) | 취소 없이 stop된 실험 run의 outcome은 `stopped`로, 실패·취소와 구분한다. 성공/실패 판단은 하지 않으며 stop 요청자를 기록한다. |
 | CS-D17 | 사용자 결정(CS-O09 권고 수락) | 단독 `\x03`(입력에 `\x03` 한 바이트뿐)만 우회하고, 다른 바이트와 섞인 입력은 지금처럼 거절한다. 인수·handoff 중간 상태에서도 foreground가 Workbench 실행 명령이면 단독 `\x03`을 그 명령에 전달한다. |
 
+2026-10-24 후속: [FOLLOWUPS-BRIEF.md](FOLLOWUPS-BRIEF.md)가 CS-D02의 요청자에 `user`(`prefix x`)를 더하고, CS-D10 중 H-05(task-less 취소 fencing)·H-06(보고 순서) 부분과 비목표의 "사용자용 명령 stop UI"를 해제했다. E-07/E-12(CS-O03)는 계속 보류다. 위 결정 문구는 바꾸지 않았다.
+
 ## 구현 방향과 테스트 의도
 
 아래 seam은 Root의 제안이며 사용자는 아직 확정하지 않았다. 확정 전에는 dispatch 범위로 보지 않는다.
@@ -129,10 +131,10 @@ ID는 CS-AC-nn이다. "관측"은 취소 응답, `/task`·`/terminal` 상태, �
 
 | 항목 | 영향 / 차단되는 후속 작업 |
 |---|---|
-| CS-O01 (CS-D10, E-11/H-05): 취소 뒤 Task 없는 명령의 fencing 보류 | 취소 이후 Worker가 `task_id=null`로 새 명령을 시작할 수 있어 취소 효과가 약하다. stop 기능은 이와 독립이며, fencing은 별도 BRIEF 필요. |
-| CS-O02 (CS-D10, H-06): 진행 보고 순서·지연 보류 | 종료 뒤 과거 진행 보고가 상태를 덮어쓸 수 있다. stop 상태는 command 단위 시각으로 구분하지만 보고 메시지 순서는 이번에 해결하지 않는다. |
-| CS-O03 (CS-D10, E-07/E-12): 변환 완료와 독립 검증 통과의 구분 보류 | stop 후 인계 시 완료 의미 혼동 위험은 남는다. |
-| CS-O10: 사용자용 명령 stop UI | 이번에는 Ctrl+C 전달과 Manager 요청만 제공한다. SIGINT를 무시하는 명령은 사용자가 Manager에게 요청하거나 `prefix k`(shell kill)로 대응한다. |
+| CS-O01 (CS-D10, E-11/H-05): 취소 뒤 Task 없는 명령의 fencing 보류. 2026-10-24 해소: [FOLLOWUPS-BRIEF.md](FOLLOWUPS-BRIEF.md) FU-D03~05 | 취소 이후 Worker가 `task_id=null`로 새 명령을 시작할 수 있어 취소 효과가 약하다. stop 기능은 이와 독립이며, fencing은 별도 BRIEF 필요. |
+| CS-O02 (CS-D10, H-06): 진행 보고 순서·지연 보류. 2026-10-24 해소: [FOLLOWUPS-BRIEF.md](FOLLOWUPS-BRIEF.md) FU-D01~02 | 종료 뒤 과거 진행 보고가 상태를 덮어쓸 수 있다. stop 상태는 command 단위 시각으로 구분하지만 보고 메시지 순서는 이번에 해결하지 않는다. |
+| CS-O03 (CS-D10, E-07/E-12): 변환 완료와 독립 검증 통과의 구분 보류. 2026-10-24에도 계속 보류 | stop 후 인계 시 완료 의미 혼동 위험은 남는다. |
+| CS-O10: 사용자용 명령 stop UI. 2026-10-24 해소: [FOLLOWUPS-BRIEF.md](FOLLOWUPS-BRIEF.md) FU-D06~08(`prefix x`) | 이번에는 Ctrl+C 전달과 Manager 요청만 제공한다. SIGINT를 무시하는 명령은 사용자가 Manager에게 요청하거나 `prefix k`(shell kill)로 대응한다. |
 
 ## Handoff
 

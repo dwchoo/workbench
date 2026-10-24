@@ -14,13 +14,13 @@ BRIEF의 사용자 결정(CS-D01~17)과 수락 예시(CS-AC-01~23)는 바꾸지 
 
 ## 관련 사용자 이야기
 
-- 사용자: 취소했다고 믿었는데 계속 도는 명령을 보고, Ctrl+C로 멈추고, Manager에게 멈추라고 시킬 수 있다.
+- 사용자: 취소했다고 믿었는데 계속 도는 명령을 보고, Ctrl+C로 멈추고, Manager에게 멈추라고 시킬 수 있다. (2026-10-24 후속: `prefix x`로 직접 멈출 수도 있다. 멈춘 실험은 `stopped_by: user`다. [FOLLOWUPS-BRIEF.md](FOLLOWUPS-BRIEF.md) FU-D06~08)
 - Worker: 자기 명령이 멎지 않거나 사용자가 멈추라고 하면 `terminal` 도구로 직접 멈춘다. 재시작된 새 Worker도 이전 Worker의 명령을 멈춘다.
 - Manager: 승인 절차 없이 Worker의 명령과 자기 실험 명령을 멈추고 최종 상태를 받는다. 멈춘 실험은 `stopped`로 구분된다.
 
 ## 범위와 비목표
 
-BRIEF "범위와 비목표"를 따른다. 대상은 Workbench가 `command_id`로 추적하는 host 명령(Worker `terminal` 명령, Manager 실험 host 명령)뿐이다. 비목표: Task 취소가 명령을 죽이게 하는 것, 임의 PID kill, 사용자용 stop UI, 협력적 취소 token, CS-O01~03·O10 보류 항목. 지원 환경은 core와 같은 Linux PTY persistent shell(Python 3.12, `os.pidfd_open`/`signal.pidfd_send_signal`)이고 다른 uid 프로세스에는 신호를 보내지 않는다. 이번 기능은 SQLite schema·dependency·설치 방식을 바꾸지 않는다.
+BRIEF "범위와 비목표"를 따른다. 대상은 Workbench가 `command_id`로 추적하는 host 명령(Worker `terminal` 명령, Manager 실험 host 명령)뿐이다. 비목표: Task 취소가 명령을 죽이게 하는 것, 임의 PID kill, 사용자용 stop UI, 협력적 취소 token, CS-O01~03·O10 보류 항목. (2026-10-24 후속: "사용자용 stop UI"는 해제됐다. CS-O01·O02·O10은 [FOLLOWUPS-BRIEF.md](FOLLOWUPS-BRIEF.md)가 해소했고 CS-O03만 보류다.) 지원 환경은 core와 같은 Linux PTY persistent shell(Python 3.12, `os.pidfd_open`/`signal.pidfd_send_signal`)이고 다른 uid 프로세스에는 신호를 보내지 않는다. 이번 기능은 SQLite schema·dependency·설치 방식을 바꾸지 않는다.
 
 ## 공개 인터페이스, 데이터 계약, 불변 조건
 
@@ -29,7 +29,7 @@ BRIEF "범위와 비목표"를 따른다. 대상은 Workbench가 `command_id`로
 - `command_id`: Worker `terminal` 명령은 기존 `command_id`(uuid4, `workflow/terminal/<id>.log`). Manager 실험의 host 명령은 `run_id`를 `command_id`로 쓴다(별도 id를 만들지 않는다). Manager는 `workbench_status`, 취소 응답, `/task`의 `host_commands`에서 id를 얻고, Worker는 `terminal` 결과·`terminal_check`/`terminal_done` 통지·`commands_run`(이번에 `command_id` 추가)에서 얻는다.
 - command_id 형식: Worker `terminal` stop과 Manager `stop_command`가 같은 엄격한 canonical 소문자 uuid 패턴 하나(`command_stop_owner.py`의 `COMMAND_ID`, 브리지 `UUID_PATTERN`과 같음: 버전 `[1-8]`, variant `[89ab]`)를 쓴다. 패턴 밖 값은 `invalid_arguments`로 거절하고 값은 응답에 싣지 않는다.
 - 소유자는 역할이다: `terminal` 명령 = `worker`, 실험 명령 = `manager`. OMP 인스턴스·session은 소유권에 쓰지 않는다(CS-D08).
-- 요청자: `worker`, `manager`, 그리고 Ctrl+C의 `user`. 그 밖의 요청자는 없다.
+- 요청자: `worker`, `manager`, 그리고 Ctrl+C의 `user`. 그 밖의 요청자는 없다. (2026-10-24 후속: `user`는 `prefix x`의 명령 stop 요청자이기도 하다. [FOLLOWUPS-BRIEF.md](FOLLOWUPS-BRIEF.md) FU-D07)
 
 ### Worker: `terminal` 도구의 `stop` 인자
 
@@ -58,7 +58,7 @@ BRIEF "범위와 비목표"를 따른다. 대상은 Workbench가 `command_id`로
 
 - 같은 command_id의 반복 요청은 같은 episode에 합류하거나(진행 중) 원래의 최종 결과를 돌려준다(끝난 뒤). 결과에 `repeat: true`가 붙고 신호·타이머를 새로 만들지 않는다. 정정된 결과에는 `corrected: true`와 `history`(정정 전 `unknown`과 이유)가 있다.
 - `residual`: `{checked: true, alive: [{pid,start_ticks}], left_session: [{pid,start_ticks,session}], unchecked: "host shell session 밖에서 시작된 프로세스는 확인하지 않음"}`. `unchecked`는 항상 있으며 "깨끗함"을 뜻하는 필드는 없다(CS-AC-05).
-- 명령 stop으로 끝난 `terminal` 결과·`terminal_done`·`commands_run` 항목에 `stopped_by`(`worker|manager`)와 마지막 `signal`이 붙는다(기술 보완: Manager가 멈춘 명령을 Worker가 실패로 오해해 재실행하지 않게 한다).
+- 명령 stop으로 끝난 `terminal` 결과·`terminal_done`·`commands_run` 항목에 `stopped_by`(`worker|manager`)와 마지막 `signal`이 붙는다(기술 보완: Manager가 멈춘 명령을 Worker가 실패로 오해해 재실행하지 않게 한다). (2026-10-24 후속: 사용자가 멈춘 명령은 `stopped_by: user`다.)
 
 ### 명령 상태 표면
 
@@ -102,6 +102,9 @@ BRIEF "범위와 비목표"를 따른다. 대상은 Workbench가 `command_id`로
 |---|---|---|---|---|
 | worker | 허용(owner=worker, Task 상태·세션 무관) | `refused: not_owner` | `refused: previous_backend_command` | command_id가 없으므로 `not_found` |
 | manager | 허용 | 허용 | `refused`(→ `stop_survivor`) | `not_found` |
+| user (2026-10-24 후속, `prefix x`) | 허용 | 허용 | `refused: previous_backend_command` | `not_found` |
+
+2026-10-24 후속: `user` 행은 [FOLLOWUPS-BRIEF.md](FOLLOWUPS-BRIEF.md) FU-D07이 더했다(`STOPPABLE_BY`). UI는 snapshot `host_shell.command`에 보인 `command_id`만 보낸다.
 
 인가는 command_id를 등록부에서 찾아 `owner`와 비교한다. pause·boot 확인 보류(C-D71 (3))·Task 닫힘은 stop을 막지 않는다(CS-D13, D09). Task가 닫힌 뒤의 stop은 Task를 다시 열지 않고 새 명령 권한을 주지 않으며 감사 기록에 `task_id`와 `task_status`를 남긴다.
 
@@ -111,7 +114,7 @@ BRIEF "범위와 비목표"를 따른다. 대상은 Workbench가 `command_id`로
 - 대상 검증: `PersistentShell.interrupt_run()`이 lifecycle(실행 중, unknown 아님, main 미종료, 정지 아님)과 `/proc`(child의 start ticks·ppid=supervisor·pgid=child_group·sid=parent, `tcgetpgrp(master) == child_group`)을 쓰기 직전에 다시 확인한다. 하나라도 틀리면 전달하지 않고 현행 규칙으로 되돌린다(사용자 소유 prompt/job, 불명 상태 포함, CS-AC-17).
 - 입력 owner·`takeover_requested`는 바뀌지 않는다. 경계의 `observe_*_bytes`는 호출하지 않는다(대상이 shell line이 아니다).
 - 감사: `ShellPane.interrupt_listener`가 Backend에 전달 사실을 알리고 Backend가 `command_interrupt` 기록을 남긴다(요청자 `user`).
-- 기술 보완: PTY에 바이트를 쓰므로 명령이 tty를 ISIG 끈 raw 모드로 바꿨다면 SIGINT가 되지 않고 입력 바이트가 된다. 이 경우는 사용자가 Manager에게 stop을 요청한다(BRIEF CS-O10과 같은 대응).
+- 기술 보완: PTY에 바이트를 쓰므로 명령이 tty를 ISIG 끈 raw 모드로 바꿨다면 SIGINT가 되지 않고 입력 바이트가 된다. 이 경우는 사용자가 Manager에게 stop을 요청한다(BRIEF CS-O10과 같은 대응). (2026-10-24 후속: 이제 사용자가 `prefix x`로 직접 멈출 수 있다. 실제 PTY 테스트가 ISIG를 끈 명령을 이 경로로 멈추는 것을 확인했다. [FOLLOWUPS-BRIEF.md](FOLLOWUPS-BRIEF.md))
 
 ### 실험 명령 stop과 outcome(CS-D16)
 

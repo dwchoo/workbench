@@ -278,3 +278,29 @@ CS-G12 재확인: `omp/18.11.1`, `OmpSchemaAcceptanceTests` 5개 통과. `omp_br
 | 처리됨(2026-10-23): 고정 상한을 부하에 견디는 한도로 바꿈 (12a4129) | 5절 |
 | 처리됨(2026-10-23): `registration_failed`가 등록 예외 후 남은 `_live` 항목을 지움. 이후 `stop`은 `refused`/`registration_failed`로 답하고 signal을 보내지 않음 (06602c3, `test_command_stop_p3_followups.py`) | C-T3 리뷰 |
 | 처리됨(2026-10-24): 이전 backend index 재시도 창 안에서 올리는 `OSError`를 마지막 읽기 실패에 `from`으로 연결해 `__cause__`가 원 예외임 (06602c3, `test_command_stop_p3_followups.py`가 창 안 5 s·25 s 시점의 `__cause__` 확인). 30 s 경계 테스트도 추가: +29.9 s는 연결된 오류, +30.0 s·+30.1 s는 재읽기 (88b85e9). 상속으로 중복 실행되던 기본 테스트 3개는 test 없는 fixture로 분리해 제거 | 44ef1d0 리뷰 |
+
+## 10. 후속 3건 검증 (FOLLOWUPS-BRIEF, 2026-10-24)
+
+기준은 [FOLLOWUPS-BRIEF.md](FOLLOWUPS-BRIEF.md) r0.3(FU-D01~08)이다. 위 1~9절의 승인 기준과 결과는 바꾸지 않는다. 구현 세부와 커밋 목록은 FOLLOWUPS-BRIEF "구현 결과"에 있다.
+
+| 항목 | 내용 |
+|---|---|
+| 후보 | main `ee5a312..5704482`. CS-O10 8개, CS-O01·O02 9개 커밋 |
+| 구현 | CS-O01·O02 Opus, CS-O10 Sonnet |
+| 독립 검증 | Sonnet test_designer가 결정 문구에서 시나리오를 도출해 `*_independent*`를 썼다. mutation 확인에서 주입한 결함을 모두 잡았다 |
+| 리뷰 | Sonnet. 두 묶음 모두 approve-with-nits. nit 수정: `19ffd08`(P3-1, gate 설정 시점), `8a0d4be`(P2-1, skill 문서), `d72a043`·`7c2c310`·`1f87a00`(CS-O10) |
+| 새 테스트 | `tests/backend/test_report_order*.py`, `tests/backend/test_cancel_fence*.py`, `tests/backend/test_command_stop_user*.py`, `tests/backend/test_ui_server_stop_command*.py`, `tests/contracts/test_ui_v1_stop_command_independent.py`, `tests/ui/test_product_command_stop*.py` |
+| 실제 PTY | ISIG를 끈 raw 모드 명령을 사용자 stop 경로로 멈춤(`tests/backend/test_command_stop_user.py`) |
+| 기존 테스트 변경 | 닫힌 Task stop 테스트 5개(`tests/backend/test_command_stop_authority*.py`)가 fence 거절 뒤 한 번 다시 보낸다(`53fb0cd`). refactor-equivalence suite 두 개는 새 `FlowTask` 필드 `cancel_fence`·`report_seq`만 정규화하고 나머지 비교는 그대로다(`5704482`) |
+
+통합 회귀(main `5704482`, 2026-10-24, gates 제외): 모든 suite exit 0.
+
+backend 2390(skip 36, expected failure 1), ui 1003, terminal 305, integration 85(skip 18), workflow 78, recovery_boot 188, dev_validation 134(skip 1), tasks 43, storage 147, contracts 80, lifecycle 38, observation 95, backend/installation 214(skip 3), backend/maintenance 44, ui/status_workbench 2, storage/important_log 99, policy/recovery_manager 26, policy/pause_automation 129, node bridge 217(pass 197, skip 20).
+
+예외 하나: `tests/backend/maintenance`의 `test_update_cli.UpdateCLI.test_development_checkout_is_explained_and_refused`가 backend suite와 동시에 돌 때 한 번 실패했다. 다른 테스트의 backend 시작이 사용자별 maintenance `flock`을 잡고 있었다. 단독으로는 5번 중 5번 통과해 이번 변경과 무관한 부하 flake로 분류한다. 잔여물과 남은 process는 없다.
+
+알려진 한계(기록만):
+
+- CS-O01: `delivering` 통지 직전의 짧은 구간과 pause 재시도 loop에서 fence 거절이 한 번 더 나올 수 있다. 다시 보내면 실행된다.
+- CS-O02: done/blocked 뒤 gate는 메모리에만 있어 backend 재시작으로 사라진다. outbox도 메모리에만 있다. `report_seq`에는 빈칸이 생길 수 있다.
+- CS-O10: `_current`가 설정되기 전의 짧은 구간은 snapshot `host_shell.command`에 없다. pause·boot hold 중 사용자 stop은 backend 통합 테스트가 없다.

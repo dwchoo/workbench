@@ -2,12 +2,14 @@
 
 공통 제품·작업 규칙은 `AGENTS.md`에 있다. 메인 세션에는 SessionStart hook이 Codex workflow·graphify 섹션을 제외하고 주입한다. 이 문서는 Claude Code 전용 규칙이며 subagent도 읽는다.
 
-## 역할: Opus orchestrator, Sonnet 실행
+## 역할: Opus orchestrator, Opus 핵심 구현·주요 문서, Sonnet 실행
 
 - 메인 세션(Opus)은 orchestrator다. 요구 정리, 작업 분해, assignment packet 작성, subagent 배정, 결과 판정·통합, 사용자 보고를 맡는다. 제품 코드 구현과 코드·원인 조사는 직접 하지 않는다.
-- 구현·테스트 작성·코드 조사·리뷰·재검증은 subagent에 위임한다. subagent는 항상 최신 Sonnet을 쓴다. 버전을 고정하지 않고 `sonnet` alias를 쓴다.
-  - Agent 호출에는 `model: "sonnet"`을 명시한다. `fork`는 부모 모델을 상속하므로 쓰지 않는다. Workflow의 agent도 같다.
-  - 기본 subagent 모델은 `.claude/settings.json`의 `CLAUDE_CODE_SUBAGENT_MODEL=sonnet`이다. 프로젝트 agent(`wb-worker`, `wb-explorer`, `wb-test-rerun`, `wb-delta-reviewer`)도 `model: sonnet`이다.
+- 구현·문서·테스트 작성·코드 조사·리뷰·재검증은 subagent에 위임한다. 모델은 일의 종류로 나눈다(2026-10-24 사용자 결정). 버전을 고정하지 않고 `opus`/`sonnet` alias를 쓴다.
+  - Opus(`model: "opus"`): 주요 문서(BRIEF·SPEC·PLAN 등 결정·계약을 담는 문서)와 핵심 구현(동시성, signal·process 수명, 신원, 전달 순서·보안 경계, 여러 모듈에 걸친 설계 판단이 필요한 변경).
+  - Sonnet(`model: "sonnet"`): 정형화된 구현(UI rendering, CLI, 기존 패턴을 따르는 변경), 독립 테스트 설계·재검증, 코드 조사, 리뷰, 진행 기록 같은 보조 문서.
+  - Agent 호출에는 `model`을 항상 명시한다. `fork`는 부모 모델을 상속하므로 쓰지 않는다. Workflow의 agent도 같다.
+  - 기본 subagent 모델은 `.claude/settings.json`의 `CLAUDE_CODE_SUBAGENT_MODEL=sonnet`이고, 프로젝트 agent(`wb-worker`, `wb-explorer`, `wb-test-rerun`, `wb-delta-reviewer`)의 frontmatter도 `model: sonnet`이다. Opus로 보낼 때는 호출에서 `model: "opus"`로 덮어쓴다.
 - orchestrator가 직접 해도 되는 일: 위임 판단에 필요한 최소 확인(`git status`, `du`, 파일 목록, graphify query), subagent 결과를 검증하는 짧은 테스트 재실행, 작업 규칙·설정 파일(`CLAUDE.md`, `.claude/**`) 편집.
 - subagent는 leaf다. 다른 agent를 띄우지 않는다. 막히면 근거와 함께 orchestrator에 반환한다.
 

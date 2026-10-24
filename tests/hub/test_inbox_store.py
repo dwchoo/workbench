@@ -92,7 +92,9 @@ class SubmitTests(StoreCase):
         self.assertTrue(result['created'])
         self.assertEqual(str(uuid.UUID(result['request_id'], version=4)), result['request_id'])
         self.assertEqual(result['origin']['kind'], 'owner')
-        for path in (self.db, self.root / '.wb' / 'inbox.lock'):
+        sidecars = [Path(f'{self.db}{suffix}') for suffix in ('-wal', '-shm')]
+        self.assertTrue(all(p.exists() for p in sidecars))  # the Hub keeps the WAL store open
+        for path in (self.db, self.root / '.wb' / 'inbox.lock', *sidecars):
             info = os.lstat(path)
             self.assertTrue(stat.S_ISREG(info.st_mode), path)
             self.assertEqual(stat.S_IMODE(info.st_mode), 0o600, path)
@@ -224,6 +226,227 @@ class LimitTests(StoreCase):
                 result = self.service.submit(OWNER, self.project_id, title, body, f'k{index}:{"z" * 100}')
                 self.assertEqual(self.rows('SELECT title, body FROM requests WHERE request_id = ?',
                                            result['request_id']), [(title, body)])
+
+
+LOCK_HOLDER = r'''
+import fcntl, os, sys
+descriptor = os.open(sys.argv[1], os.O_RDWR | os.O_CREAT, 0o600)
+fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+print("locked", flush=True)
+sys.stdin.read()
+'''
+
+LOCK_PROBE = r'''
+import fcntl, os, sys
+descriptor = os.open(sys.argv[1], os.O_RDWR)
+try:
+    fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+except BlockingIOError:
+    print("busy")
+else:
+    print("free")
+'''
+
+
+class LockTests(StoreCase):
+    def holder(self) -> subprocess.Popen:
+        process = subprocess.Popen([sys.executable, '-c', LOCK_HOLDER, str(self.root / '.wb' / 'inbox.lock')],
+                                   stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True)
+
+        def stop():
+            process.stdin.close()
+            process.wait(10)
+            process.stdout.close()
+        self.addCleanup(stop)
+        self.assertEqual(process.stdout.readline().strip(), 'locked')
+        return process
+
+    def probe(self) -> str:
+        return subprocess.run([sys.executable, '-c', LOCK_PROBE, str(self.root / '.wb' / 'inbox.lock')],
+                              capture_output=True, text=True, check=True, timeout=10).stdout.strip()
+
+    def test_another_process_holding_inbox_lock_makes_the_inbox_busy_and_nothing_is_written(self):
+        rid = self.service.submit(OWNER, self.project_id, 'before', 'b')['request_id']
+        self.service.close_idle(force=True)
+        before = self.db.read_bytes()
+        self.holder()
+        for call in (lambda: self.service.submit(OWNER, self.project_id, 'during', 'b'),
+                     lambda: self.service.get(OWNER, rid),
+                     lambda: self.service.review_mode(OWNER, self.project_id, set='manual')):
+            with self.assertRaises(InboxError) as caught:
+                call()
+            self.assertEqual(caught.exception.code, 'inbox_busy')
+        self.assertEqual(self.db.read_bytes(), before)
+        self.assertFalse(os.path.exists(f'{self.db}-wal'))
+
+    def test_the_hub_holds_the_lock_while_open_and_releases_it_when_idle(self):
+        clock = [1000.0]
+        service = self.make_service(clock=lambda: clock[0], idle_seconds=60.0)
+        self.service.close()
+        service.submit(OWNER, self.project_id, 'held', 'b')
+        self.assertEqual(self.probe(), 'busy')
+        clock[0] += 59.0
+        self.assertEqual(service.close_idle(), [])
+        self.assertEqual(self.probe(), 'busy')
+        clock[0] += 1.0
+        self.assertEqual(service.close_idle(), [self.project_id])
+        self.assertEqual(self.probe(), 'free')
+        self.assertEqual(len(service.list_requests(OWNER)['requests']), 1)  # reopens on demand
+
+    def test_service_close_releases_every_lock(self):
+        self.service.submit(OWNER, self.project_id, 'held', 'b')
+        self.assertEqual(self.probe(), 'busy')
+        self.service.close()
+        self.assertEqual(self.probe(), 'free')
+
+
+class RefusalTests(StoreCase):
+    def test_meta_project_id_mismatch_is_refused_and_the_file_is_not_changed(self):
+        self.service.submit(OWNER, self.project_id, 'ours', 'b')
+        self.service.close()
+        connection = sqlite3.connect(self.db)
+        connection.execute("UPDATE meta SET value = ? WHERE key = 'project_id'", (str(uuid.uuid4()),))
+        connection.commit()
+        connection.close()
+        before = self.db.read_bytes()
+        service = self.make_service()
+        for call in (lambda: service.submit(OWNER, self.project_id, 'x', 'b'),
+                     lambda: service.review_mode(OWNER, self.project_id)):
+            with self.assertRaises(InboxError) as caught:
+                call()
+            self.assertEqual(caught.exception.code, 'inbox_mismatch')
+        self.assertEqual(self.db.read_bytes(), before)
+
+    def test_a_damaged_file_is_refused_without_overwriting_and_other_projects_still_work(self):
+        root_b, id_b = make_project(self.base, 'beta')
+        garbage = b'this is not a database' * 100
+        descriptor = os.open(self.db, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        os.write(descriptor, garbage)
+        os.close(descriptor)
+        self.service.set_projects([ProjectRef(self.project_id, self.root, 'alpha'), ProjectRef(id_b, root_b, 'beta')])
+        with self.assertRaises(InboxError) as caught:
+            self.service.submit(OWNER, self.project_id, 'x', 'b')
+        self.assertEqual(caught.exception.code, 'inbox_unavailable')
+        self.assertEqual(self.db.read_bytes(), garbage)
+        self.assertIsNone(self.service.pending_requests(self.project_id))
+        self.service.submit(OWNER, id_b, 'fine', 'b')
+        listed = self.service.list_requests(OWNER)
+        self.assertEqual([r['title'] for r in listed['requests']], ['fine'])
+        self.assertEqual(listed['unavailable'], [{'project_id': self.project_id, 'code': 'inbox_unavailable'}])
+
+    def test_a_symlinked_data_dir_is_refused_and_nothing_is_created(self):
+        real = self.base / 'elsewhere'
+        os.rename(self.root / '.wb', real)
+        os.symlink(real, self.root / '.wb')
+        service = self.make_service()
+        self.service.close()
+        with self.assertRaises(InboxError) as caught:
+            service.submit(OWNER, self.project_id, 'x', 'b')
+        self.assertEqual(caught.exception.code, 'project_unavailable')
+        self.assertEqual(sorted(os.listdir(real)), ['project.json'])
+
+    def test_a_registry_mismatch_makes_the_project_unavailable(self):
+        self.service.set_projects([ProjectRef(self.project_id, self.root, 'alpha', unavailable='mismatch')])
+        with self.assertRaises(InboxError) as caught:
+            self.service.submit(OWNER, self.project_id, 'x', 'b')
+        self.assertEqual(caught.exception.code, 'project_unavailable')
+        self.assertFalse(self.db.exists())
+
+
+class ReviewModeTests(StoreCase):
+    """D-32 / P2-AC-40: ``meta.review_mode`` in ``.wb/inbox.sqlite3`` survives a new store and
+    unregistering/re-registering the project."""
+
+    def test_review_mode_is_stored_in_the_project_inbox_and_persists(self):
+        events = []
+        service = self.make_service(on_committed=events.append)
+        self.service.close()
+        self.assertEqual(service.review_mode(Principal.local(), self.project_id, set='manual'),
+                         {'review_mode': 'manual'})
+        self.assertEqual([(e.type, e.detail) for e in events],
+                         [('review_mode_changed', {'review_mode': 'manual', 'previous': 'auto'})])
+        self.assertEqual(self.rows("SELECT value FROM meta WHERE key = 'review_mode'"), [('manual',)])
+        service.close()
+        again = self.make_service()
+        self.assertEqual(again.review_mode(OWNER, self.project_id), {'review_mode': 'manual'})
+        again.set_projects([])
+        with self.assertRaises(InboxError):
+            again.review_mode(OWNER, self.project_id)
+        again.set_projects([ProjectRef(self.project_id, self.root, 'alpha')])
+        self.assertEqual(again.review_mode(OWNER, self.project_id), {'review_mode': 'manual'})
+        with self.assertRaises(InboxError) as caught:
+            again.review_mode(OWNER, self.project_id, set='sometimes')
+        self.assertEqual(caught.exception.code, 'invalid_input')
+
+
+class ListingTests(StoreCase):
+    """P2-AC-32: no automatic deletion, CLOSED hidden by default, filters, search, badge counts."""
+
+    def setUp(self):
+        super().setUp()
+        self.ids = {}
+        for title, body in (('Train model', 'GPU sweep'), ('Plot loss', 'matplotlib 그래프'),
+                            ('Fix data', 'dedupe rows'), ('Old idea', 'drop it')):
+            self.ids[title] = self.service.submit(OWNER, self.project_id, title, body)['request_id']
+        self.service.cancel(OWNER, self.ids['Old idea'])
+        manager = Principal.manager(self.project_id)
+        self.service.review(manager, self.ids['Fix data'], 'ask', body='which table?')
+
+    def titles(self, **kwargs) -> list[str]:
+        return [r['title'] for r in self.service.list_requests(OWNER, **kwargs)['requests']]
+
+    def test_closed_is_hidden_by_default_and_reachable_by_filter(self):
+        self.assertEqual(self.titles(), ['Fix data', 'Plot loss', 'Train model'])
+        self.assertEqual(self.titles(include_closed=True), ['Old idea', 'Fix data', 'Plot loss', 'Train model'])
+        self.assertEqual(self.titles(states=['CLOSED']), ['Old idea'])
+        self.assertEqual(self.titles(states=['NEW', 'NEEDS_INFO']), ['Fix data', 'Plot loss', 'Train model'])
+        summary = self.service.list_requests(OWNER, states=['CLOSED'])['requests'][0]
+        self.assertEqual(set(summary), {'request_id', 'project_id', 'seq', 'title', 'state', 'outcome', 'origin',
+                                        'created_at', 'updated_at', 'task_id'})
+        self.assertEqual((summary['seq'], summary['outcome']), (4, 'cancelled'))
+        self.assertEqual([n for n in dir(InboxService) if any(w in n for w in ('delete', 'purge', 'prune'))], [])
+
+    def test_search_paging_and_input_checks(self):
+        self.assertEqual(self.titles(query='gpu'), ['Train model'])
+        self.assertEqual(self.titles(query='그래프'), ['Plot loss'])
+        self.assertEqual(self.titles(query='drop', include_closed=True), ['Old idea'])
+        self.assertEqual(self.titles(query='%'), [])
+        first = self.service.list_requests(OWNER, limit=2)
+        self.assertEqual([r['title'] for r in first['requests']], ['Fix data', 'Plot loss'])
+        second = self.service.list_requests(OWNER, limit=2, cursor=first['next_cursor'])
+        self.assertEqual(([r['title'] for r in second['requests']], second['next_cursor']), (['Train model'], None))
+        for kwargs in ({'query': 'q' * 201}, {'limit': 0}, {'limit': 101}, {'states': ['DONE']},
+                       {'cursor': 'garbage'}):
+            with self.subTest(kwargs=kwargs):
+                with self.assertRaises(InboxError) as caught:
+                    self.service.list_requests(OWNER, **kwargs)
+                self.assertEqual(caught.exception.code, 'invalid_input')
+
+    def test_badge_and_pending_requests_counts(self):
+        self.assertEqual(self.service.badge(OWNER), {'pending': 2, 'needs_info': 1})
+        requester = Principal.requester('k9req0000', 'ext', None)
+        self.assertEqual(self.service.badge(requester), {'pending': 0, 'needs_info': 0})
+        self.service.submit(requester, self.project_id, 'mine', 'b')
+        self.assertEqual(self.service.badge(requester), {'pending': 1, 'needs_info': 0})
+        self.assertEqual(self.service.pending_requests(self.project_id),
+                         {'new': 3, 'reviewing': 0, 'needs_info': 1, 'ready': 0, 'running': 0})
+        self.assertIsNone(self.service.pending_requests(str(uuid.uuid4())))
+
+
+class BackupTests(StoreCase):
+    """TI-T08: after the Hub store is closed, ``update_backup.snapshot`` holds the committed inbox."""
+
+    def test_snapshot_contains_the_committed_inbox(self):
+        from workbench.backend.update_backup import snapshot
+        rid = self.service.submit(OWNER, self.project_id, 'backed up', 'body')['request_id']
+        self.service.review_mode(OWNER, self.project_id, set='manual')
+        self.service.close()
+        target = self.base / 'backup'
+        result = snapshot(self.root / '.wb', target)
+        self.assertIn('inbox.sqlite3', {entry['path'] for entry in result['files']})
+        copy = target / 'inbox.sqlite3'
+        self.assertEqual(self.rows('SELECT request_id, title FROM requests', db=copy), [(rid, 'backed up')])
+        self.assertEqual(self.rows("SELECT value FROM meta WHERE key = 'review_mode'", db=copy), [('manual',)])
 
 
 if __name__ == '__main__':

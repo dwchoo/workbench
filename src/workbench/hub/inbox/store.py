@@ -126,9 +126,12 @@ class InboxStore:
     def read(self, fn: Callable[[sqlite3.Connection], Any], *, missing: Any = None) -> Any:
         """``fn(connection)``; a missing or never-initialized file returns ``missing`` and creates nothing."""
         connection = self._open(create=False)
-        if connection is None or not self._initialized(connection):
-            return missing
-        return fn(connection)
+        try:
+            if connection is None or not self._initialized(connection):
+                return missing
+            return fn(connection)
+        except sqlite3.Error as exc:
+            raise _unavailable(f"read failed: {exc}") from exc
 
     def write(self, fn: Callable[[sqlite3.Connection], Any]) -> Any:
         """``BEGIN IMMEDIATE`` → ``fn(connection)`` → ``COMMIT``; any exception rolls back everything."""

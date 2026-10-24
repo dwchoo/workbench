@@ -7,6 +7,7 @@ record, live process, socket peer and ``welcome`` all agree, else ``unknown``.
 from __future__ import annotations
 
 from dataclasses import dataclass
+import enum
 import importlib.metadata
 import json
 import os
@@ -271,6 +272,8 @@ PROJECT_ENV_PREFIXES = ("WORKBENCH_G3_",)
 SPAWN_STARTED, SPAWN_LOST, SPAWN_MANAGED = "started", "lost", "managed_tree"
 SPAWN_UPDATE, SPAWN_STATE_ERROR, SPAWN_FAILED, SPAWN_TIMEOUT = (
     "update_in_progress", "state_error", "spawn_failed", "ready_timeout")
+# Caller pre-check could not read its /proc ancestry (e.g. hidepid): held like managed_tree.
+PROC_UNREADABLE = "proc_unreadable"
 
 
 def hub_environment(environment: Mapping[str, str] | None = None) -> dict[str, str]:
@@ -282,7 +285,18 @@ def hub_environment(environment: Mapping[str, str] | None = None) -> dict[str, s
 
 PROC = Path("/proc")
 MAX_ANCESTRY = 4096
-UNVERIFIABLE = 0  # managed_ancestor result when /proc cannot prove "outside"
+WALK_ATTEMPTS = 3  # an ancestor exiting mid-walk reparents us: walk again from the start
+WALK_RETRY_DELAY = 0.02
+
+
+class AncestryCheck(enum.IntEnum):
+    """Non-pid ``managed_ancestor`` results. ``UNVERIFIABLE`` (``/proc`` cannot prove
+    "outside", fail closed) is truthy and never a real pid; compare with ``is``."""
+
+    UNVERIFIABLE = -1
+
+
+UNVERIFIABLE = AncestryCheck.UNVERIFIABLE
 
 
 def _managed_argv(argv: list[bytes]) -> bool:
@@ -297,20 +311,27 @@ def _managed_argv(argv: list[bytes]) -> bool:
 def managed_ancestor(pid: int, *, proc: Path = PROC) -> int | None:
     """The first process from ``pid`` up its ancestry that is WB-managed, or None.
 
-    Returns :data:`UNVERIFIABLE` (fail closed: "inside") when the chain cannot be read.
+    A failed ``/proc`` read restarts the walk (up to :data:`WALK_ATTEMPTS`), since an
+    exiting ancestor is a transient ENOENT. If the chain still cannot be read, or it is
+    longer than :data:`MAX_ANCESTRY`, the result is :data:`UNVERIFIABLE` ("inside").
     """
-    current = pid
-    for _ in range(MAX_ANCESTRY):
-        try:
-            argv = (proc / str(current) / "cmdline").read_bytes().split(b"\0")
-            parent = int((proc / str(current) / "stat").read_bytes().rsplit(b") ", 1)[1].split()[1])
-        except (OSError, IndexError, ValueError):
-            return UNVERIFIABLE
-        if _managed_argv(argv):
-            return current
-        if parent == 0:
-            return None
-        current = parent
+    for attempt in range(WALK_ATTEMPTS):
+        if attempt:
+            time.sleep(WALK_RETRY_DELAY)
+        current = pid
+        for _ in range(MAX_ANCESTRY):
+            try:
+                argv = (proc / str(current) / "cmdline").read_bytes().split(b"\0")
+                parent = int((proc / str(current) / "stat").read_bytes().rsplit(b") ", 1)[1].split()[1])
+            except (OSError, IndexError, ValueError):
+                break  # walk again from the start
+            if _managed_argv(argv):
+                return current
+            if parent == 0:
+                return None
+            current = parent
+        else:
+            return UNVERIFIABLE  # bounded: a cycle or an absurd depth never proves "outside"
     return UNVERIFIABLE
 
 
@@ -424,7 +445,7 @@ class HubStart:
 
     ``reason`` when ok: ``already_running``, ``started``, ``joined`` (lost the lock race
     to a Hub that became running). Otherwise: ``update_in_progress``, ``managed_tree``,
-    ``hub_unknown``, ``state_error``, ``spawn_failed``, ``ready_timeout`` or
+    ``proc_unreadable``, ``hub_unknown``, ``state_error``, ``spawn_failed``, ``ready_timeout`` or
     ``not_running_after_ready``.
     """
     ok: bool
@@ -455,7 +476,10 @@ def ensure_hub(layout: HubLayout | None = None, *, timeout: float = READY_TIMEOU
             return HubStart(False, "hub_unknown", identity)
     if identity.state == RUNNING:
         return HubStart(True, "already_running", identity)
-    if managed_ancestor(os.getpid()) is not None:
+    ancestor = managed_ancestor(os.getpid())
+    if ancestor is UNVERIFIABLE:
+        return HubStart(False, PROC_UNREADABLE)
+    if ancestor is not None:
         return HubStart(False, SPAWN_MANAGED)
     outcome = spawn_hub(layout, timeout=timeout)
     if outcome not in (SPAWN_STARTED, SPAWN_LOST):

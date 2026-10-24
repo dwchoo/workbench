@@ -126,6 +126,9 @@ class HelperTests(unittest.TestCase):
         env = h.clean_base_env(WORKBENCH_HUB_AUTOSTART="0", WORKBENCH_X="1", HOME="/tmp/owned-root/home")
         self.assertEqual(env.get("WORKBENCH_HUB_AUTOSTART"), "0")
         self.assertNotIn("WORKBENCH_X", env)
+        for value in ("1", "", "00"):
+            with self.subTest(value=value):
+                self.assertNotIn("WORKBENCH_HUB_AUTOSTART", h.clean_base_env(WORKBENCH_HUB_AUTOSTART=value))
         base = {"HOME": "/tmp/owned-root/home", **{k: h.BLOCKED_PROXY for k in h.PROXY_KEYS}}
         h.assert_env_isolated({**base, "WORKBENCH_HUB_AUTOSTART": "0"}, Path("/tmp/owned-root"))
         for leaked in ({"WORKBENCH_HUB_AUTOSTART": "1"}, {"WORKBENCH_X": "1"}):

@@ -190,6 +190,17 @@ class HubStartCommandTests(unittest.TestCase):
         for fd in (1, 2):
             self.assertEqual(os.readlink(f'/proc/{pid}/fd/{fd}'), str(log))
 
+    def test_the_rotated_log_is_made_private(self):
+        old = self.seed_log(1024 * 1024 + 1)
+        (self.box.state / 'hub.log').chmod(0o644)  # e.g. a log left by an older install
+        pid = reported_pid(self.box.wb('hub', 'start'))
+        rotated = self.box.state / 'hub.log.1'
+        self.assertEqual(rotated.read_bytes(), old)
+        self.assertEqual(stat.S_IMODE(rotated.stat().st_mode), 0o600)
+        self.assertEqual(os.readlink(f'/proc/{pid}/fd/1'), str(self.box.state / 'hub.log'))
+        self.assertEqual(sorted(path.name for path in self.box.state.iterdir() if path.name.startswith('hub.log')),
+                         ['hub.log', 'hub.log.1'])
+
     def test_a_log_at_or_under_1_mib_is_kept(self):
         old = self.seed_log(1024 * 1024)
         pid = reported_pid(self.box.wb('hub', 'start'))

@@ -90,6 +90,10 @@ def _ask_active(args: argparse.Namespace):
 
 MANAGED_TREE_TEXT = ("[workbench] WB가 관리하는 terminal 안에서는 Hub를 자동으로 시작하지 않습니다. "
                      "외부 terminal에서 'wb hub start'를 실행하세요.")
+# reason proc_unreadable (e.g. a hidepid /proc): held fail-closed, reported apart from managed_tree.
+PROC_UNREADABLE_AUTOSTART_TEXT = "[workbench] 프로세스 정보를 읽을 수 없어 Hub 자동 시작을 보류했습니다."
+PROC_UNREADABLE_START_TEXT = ("[workbench] 프로세스 정보를 읽을 수 없어 Hub를 시작하지 않았습니다. "
+                              "/proc 접근(예: hidepid)을 확인하세요.")
 
 
 def _start_failure_text(reason: str) -> str:
@@ -132,9 +136,9 @@ def autostart(args: argparse.Namespace) -> None:
             if result.ok:
                 return
             reason = result.reason
-        if reason == "managed_tree":
+        if reason in ("managed_tree", "proc_unreadable"):
             if sys.stderr.isatty():
-                _report(MANAGED_TREE_TEXT)
+                _report(MANAGED_TREE_TEXT if reason == "managed_tree" else PROC_UNREADABLE_AUTOSTART_TEXT)
         elif reason == "update_in_progress":
             _report("[workbench] 업데이트가 진행 중이라 Hub를 자동으로 시작하지 않았습니다.")
         else:
@@ -163,8 +167,9 @@ def cmd_hub_start(args: argparse.Namespace) -> int:
     from .process import ensure_hub
     result = ensure_hub()
     if not result.ok:
-        if result.reason == "managed_tree":
-            print(MANAGED_TREE_TEXT, file=sys.stderr)
+        if result.reason in ("managed_tree", "proc_unreadable"):
+            print(MANAGED_TREE_TEXT if result.reason == "managed_tree" else PROC_UNREADABLE_START_TEXT,
+                  file=sys.stderr)
             return EXIT_REQUIREMENT
         print(_start_failure_text(result.reason), file=sys.stderr)
         return EXIT_FAILURE

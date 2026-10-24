@@ -148,7 +148,7 @@ def clean_base_env(**extra: str) -> dict[str, str]:
     env = {"PATH": "/usr/bin:/bin", "LANG": "C.UTF-8", "TERM": "xterm-256color", "USER": user, "LOGNAME": user}
     env.update(extra)
     for key in list(env):
-        if ((key.startswith(("TMUX", "HERDR_", "WORKBENCH_")) and key != HUB_AUTOSTART_OPT_OUT)
+        if ((key.startswith(("TMUX", "HERDR_", "WORKBENCH_")) and not (key == HUB_AUTOSTART_OPT_OUT and env[key] == "0"))
                 or key in ("DISPLAY", "WAYLAND_DISPLAY")):
             del env[key]
     return env

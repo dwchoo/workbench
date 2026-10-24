@@ -19,7 +19,8 @@ from workbench.backend.paths import (BackendLocked, DataDirError, InstanceLock, 
 from workbench.contracts import hub_v1
 
 from .paths import HubLayout, hub_layout, prepare_socket_path, prepare_state_dir
-from .process import (READY_LOST, READY_MANAGED, READY_STARTED, RECORD_SCHEMA_VERSION, installed_version,
+from .process import (READY_LOST, READY_MANAGED, READY_STARTED, RECORD_SCHEMA_VERSION, UNVERIFIABLE,
+                      installed_version,
                       lock_holder, managed_ancestor, send_ready, start_ticks, wait_reparented)
 
 
@@ -348,16 +349,40 @@ def rotate_log(layout: HubLayout) -> None:
             continue
         if (opened.st_dev, opened.st_ino) == (info.st_dev, info.st_ino):
             redirected.append(fd)
-    sys.stdout.flush()
-    sys.stderr.flush()
-    os.replace(layout.log, layout.state_dir / (layout.log.name + ".1"))
-    if redirected:
-        fresh = os.open(layout.log, os.O_WRONLY | os.O_CREAT | os.O_APPEND | os.O_NOFOLLOW | os.O_CLOEXEC, 0o600)
+    rotated = layout.state_dir / (layout.log.name + ".1")
+    staged = layout.state_dir / (layout.log.name + ".new")
+    try:
+        staged.unlink()  # left by an interrupted rotation; only a lock holder writes here
+    except FileNotFoundError:
+        pass
+    # The fresh log exists before anything moves, so a failure leaves fds 1/2 on hub.log.
+    fresh = os.open(staged, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_APPEND | os.O_NOFOLLOW | os.O_CLOEXEC,
+                    0o600)
+    try:
+        old = os.open(layout.log, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC)
         try:
-            for fd in redirected:
-                os.dup2(fresh, fd)
+            pinned = os.fstat(old)
+            if (pinned.st_dev, pinned.st_ino) != (info.st_dev, info.st_ino):
+                return
+            os.fchmod(old, 0o600)  # the rotated generation stays private
         finally:
-            os.close(fresh)
+            os.close(old)
+        sys.stdout.flush()
+        sys.stderr.flush()
+        os.replace(layout.log, rotated)
+        try:
+            os.replace(staged, layout.log)
+        except OSError:
+            os.replace(rotated, layout.log)  # roll back: hub.log is again the file fds 1/2 use
+            raise
+        for fd in redirected:
+            os.dup2(fresh, fd)
+    finally:
+        os.close(fresh)
+        try:
+            staged.unlink()
+        except FileNotFoundError:
+            pass
 
 
 def main_hub(args: argparse.Namespace) -> int:
@@ -375,9 +400,13 @@ def main_hub(args: argparse.Namespace) -> int:
     if ready is not None:
         os.set_inheritable(ready, False)
     wait_reparented(getattr(args, "spawner_pid", None))
-    if managed_ancestor(os.getpid()) is not None:  # self-check before the lock (HB-03)
+    ancestor = managed_ancestor(os.getpid())  # self-check before the lock (HB-03)
+    if ancestor is not None:
         send_ready(ready, READY_MANAGED)
-        print("[workbench] Hub refused: inside a WB-managed process tree", file=sys.stderr)
+        print("[workbench] Hub refused: " + ("process information (/proc) is unreadable (proc_unreadable)"
+                                             if ancestor is UNVERIFIABLE else
+                                             f"inside a WB-managed process tree (ancestor {ancestor})"),
+              file=sys.stderr)
         return 3
     try:
         prepare_state_dir(layout)

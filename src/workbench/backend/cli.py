@@ -405,9 +405,18 @@ def _cmd_start(args: argparse.Namespace) -> int:
     running = _wait_isolation(layout, running)
     _print_summary(running)
     _print_update_resume(layout)
+    _register_started_project(context)
     if args.no_attach:
         return 0
     return _attach(layout, args)
+
+
+def _register_started_project(context) -> None:
+    """HB-04: a successful start (or join) registers the project; failure only warns."""
+    if context.project_id is None or context.data_root != context.project_root / '.wb':
+        return
+    from workbench.hub.cli import register_quietly
+    register_quietly(context.project_root, context.project_id, 'start')
 
 
 def _print_update_resume(layout: DataLayout) -> None:
@@ -1178,6 +1187,21 @@ def cmd_hub_stop(args: argparse.Namespace) -> int:
     return run(args)
 
 
+def cmd_hub_add(args: argparse.Namespace) -> int:
+    from workbench.hub.cli import cmd_hub_add as run
+    return run(args)
+
+
+def cmd_hub_remove(args: argparse.Namespace) -> int:
+    from workbench.hub.cli import cmd_hub_remove as run
+    return run(args)
+
+
+def cmd_init(args: argparse.Namespace) -> int:
+    from workbench.hub.cli import cmd_init as run
+    return run(args)
+
+
 def _positive(kind):
     def parse(text: str):
         value = kind(text)
@@ -1225,6 +1249,9 @@ def parser() -> argparse.ArgumentParser:
     start.add_argument("--plain", action="store_true", help="attach with the minimal client instead of the product UI")
     start.add_argument("--timeout", type=float, default=START_TIMEOUT, help=argparse.SUPPRESS)
     start.set_defaults(handler=cmd_start)
+    init = sub.add_parser("init", help="폴더를 WB 프로젝트로 초기화(확인 필요)하고 Hub에 등록; backend는 시작하지 않음")
+    init.add_argument("path", nargs="?", metavar="PATH", help="초기화할 폴더 (기본: 현재 폴더)")
+    init.set_defaults(handler=cmd_init)
     attach = common(sub.add_parser("attach", help="attach to the running backend"))
     attach.add_argument("--plain", action="store_true", help="use the minimal client instead of the product UI")
     attach.set_defaults(handler=cmd_attach)
@@ -1338,6 +1365,12 @@ def parser() -> argparse.ArgumentParser:
     hub_stop = hub_sub.add_parser("stop", help="Hub 정지 (WB 프로젝트 backend는 계속 실행)")
     hub_stop.add_argument("--yes", action="store_true", help="확인 없이 정지")
     hub_stop.set_defaults(handler=cmd_hub_stop)
+    hub_add = hub_sub.add_parser("add", help="WB 프로젝트 root를 Hub registry에 등록")
+    hub_add.add_argument("path", metavar="PATH")
+    hub_add.set_defaults(handler=cmd_hub_add)
+    hub_remove = hub_sub.add_parser("remove", help="Hub registry에서 등록 해제 (.wb는 그대로)")
+    hub_remove.add_argument("path", metavar="PATH")
+    hub_remove.set_defaults(handler=cmd_hub_remove)
 
     backend = sub.add_parser("_backend", help=argparse.SUPPRESS)
     backend.add_argument("--data-dir", required=True)

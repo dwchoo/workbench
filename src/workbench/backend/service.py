@@ -525,7 +525,9 @@ class Backend:
             segmented_raw_port=self.segmented_raw_port,
             segmented_raw_port_factory=self._new_raw_port,
             repository_factory=lambda: TaskRepository(layout.tasks), command_stop=self.command_stop,
-            task_status=self._task_status, forbidden=self._omp_pane_pids)
+            task_status=self._task_status, forbidden=self._omp_pane_pids,
+            # CS-O01: one refusal of a task-less command after a free-work cancel, and the after_cancel_of mark
+            cancel_fence=self.flow.take_cancel_fence, after_cancel_of=self.flow.after_cancel_of)
         self.flow.terminal_runs = self.terminal.runs_for_task  # C-D69 (6)(d): the done report's commands run
         self.flow.host_commands = self.terminal.commands_for_task  # CS-08: cancel response and Task views
         self.watchdog = self._make_watchdog()  # C-D70: status checks, stalled/restart/recovery notices

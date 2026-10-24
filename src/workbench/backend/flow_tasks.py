@@ -372,6 +372,9 @@ class FlowTask:
     last_result: dict[str, Any] | None = None
     cancel_requested: dict[str, Any] | None = None
     worker_session: list[Any] | None = None  # C-D70 (4): [session_id, generation] of the worker that got the TASK
+    # CS-O01 (FU-D03): "armed" from the manager's cancel of this free-work Task that sent the worker a cancel
+    # notice, until the notice reached the worker, one task-less terminal command was refused or a newer Task exists
+    cancel_fence: str | None = None
     report_seq: int = 0  # CS-O02 (FU-D01): the last ``report_seq`` given to a worker to_manager message of this Task
 
     def set_status(self, status: str) -> None:
@@ -487,6 +490,8 @@ class TaskFlow:
         # CS-O02 (FU-D02, in memory like the outbox): a work Task -> the run whose done/blocked report was queued; no
         # progress/report of that run follows it until a manager follow-up
         self._final_reports: dict[str, str] = {}
+        # CS-O01 (in memory): cancelled Tasks whose cancel notice the worker lane is handing over right now
+        self._fence_inflight: set[str] = set()
         self._ledger = HandoffJournal(ledger_path)
         self.tasks: dict[str, FlowTask] = {}
         self.notices: list[dict[str, Any]] = []
@@ -781,6 +786,38 @@ class TaskFlow:
                          "task_message_id": task.task_message_id,
                          "worker_session": None if task.worker_session is None else list(task.worker_session)})
         return self._with_host_commands(view)
+
+    def take_cancel_fence(self) -> str | None:
+        """CS-O01 (FU-D03): the id of the cancelled free-work Task whose fence refuses a task-less ``terminal``
+        command now, else None. Takes only the flow lock (the terminal service calls it holding none of its own)."""
+        with self._lock:
+            task = self._fenced()
+            if task is None:
+                return None
+            self._lift_fence(task, "refused_once")  # FU-D03 (b): one refusal per cancel
+            return task.task_id
+
+    def _lift_fence(self, task: FlowTask, reason: str) -> None:
+        """Under the flow lock: the cancel fence of ``task`` ends (kept with the Task across a backend restart)."""
+        task.cancel_fence = f"lifted:{reason}"
+        self._save_task(task)
+
+    def _fenced(self) -> FlowTask | None:
+        """Under the flow lock: the newest Task when it is a cancelled free-work Task whose fence is armed."""
+        task = list(self.tasks.values())[-1] if self.tasks else None
+        if (task is None or task.kind != "work" or task.status != "closed" or task.closed_reason != "cancelled"
+                or task.cancel_fence != "armed" or task.task_id in self._fence_inflight):
+            return None
+        return task
+
+    def after_cancel_of(self) -> str | None:
+        """CS-O01 (FU-D04): the id of the newest Task when it is a cancelled free-work Task (a task-less command now
+        follows that cancel), else None; a newer Task ends it. Takes only the flow lock."""
+        with self._lock:
+            task = list(self.tasks.values())[-1] if self.tasks else None
+            if task is None or task.kind != "work" or task.status != "closed" or task.closed_reason != "cancelled":
+                return None
+            return task.task_id
 
     def worker_view(self) -> dict[str, Any]:
         """ui_v1 ``worker``: busy while a Task occupies it (C-D66)."""
@@ -1234,7 +1271,7 @@ class TaskFlow:
             self._wake.notify_all()
             return HandoffDecision({"status": "cancel_requested", "task_id": task_id, "detail": CANCEL_WAIT_DETAIL})
         task.cancel_requested = record
-        notice = self._finish_cancel(task, task.run_id)
+        notice = self._finish_cancel(task, task.run_id, fence=task.kind == "work")
         result: dict[str, Any] = {"status": "cancelled", "task_id": task_id, "worker_notified": notice == "queued"}
         if notice not in ("queued", "not_needed"):
             # CW-16 fix-02 (P2-1): the notice waits (never submitted, so no replay) and goes once the pause/hold
@@ -1253,7 +1290,7 @@ class TaskFlow:
         hold = self._held_now(ActorRole.WORKER)
         return "queued" if hold is None else f"after_hold:{hold}"
 
-    def _finish_cancel(self, task: FlowTask, run_id: str | None) -> str:
+    def _finish_cancel(self, task: FlowTask, run_id: str | None, *, fence: bool = False) -> str:
         """Cancel the current run (if any), close the Task and tell the worker; under the flow lock.
 
         Returns the worker notice state: ``not_needed`` (the worker never got the Task), ``queued``,
@@ -1276,6 +1313,9 @@ class TaskFlow:
         self._notice(kind="task_cancelled", task_id=task.task_id, run_id=run_id)
         notice = "not_needed"
         if cancelled_run is not None and not never_sent:
+            if fence:  # CS-O01 (FU-D03): only the manager's cancel of a free-work Task, and only with a notice
+                task.cancel_fence = "armed"
+                self._save_task(task)
             payload = {"handoff": "to_worker", "kind": task.kind, "task_id": task.task_id, "cancel": True,
                        "message": record.get("message") or "cancelled by the manager"}
             # CW-16 fix-02 (P2-1): the notice was never submitted, so keeping it through a pause or a CW-19 hold
@@ -1283,13 +1323,35 @@ class TaskFlow:
             outbound = OutboundMessage(
                 task.task_id, revision or cancelled_run["revision"], run_id, ActorRole.MANAGER, ActorRole.WORKER,
                 MessageKind.QUESTION, payload)
+            inner = self._fence_listener(task.task_id) if fence else None
             queued = self._handoffs.enqueue(outbound, origin=f"cancel:{task.task_id}",
-                                            listener=self._subject_listener(outbound, None), keep_across_pause=True)
+                                            listener=self._subject_listener(outbound, inner), keep_across_pause=True)
             status = queued.get("status")
             notice = self._cancel_notice_state() if status == "queued" else f"not_queued:{status}"
         if run_id is not None:
             threading.Thread(target=self._notify_lifecycle, args=("run_ended", run_id), daemon=True).start()
         return notice
+
+    def _fence_listener(self, task_id: str) -> Callable:
+        """CS-O01 (FU-D03 (a)): the cancel notice's outbox events end the fence once it is in the worker's session:
+        ``submitted`` (the worker OMP accepted it, before its turn runs), ``delivered``, or ``unknown`` (it may have
+        reached it). While a delivery attempt is under way the fence refuses nothing: the worker may have the notice
+        in its input before the bridge's acceptance reaches Workbench (the test_f45 race); an attempt that ends
+        deferred (nothing submitted) arms it again."""
+        def listener(event: str, _snapshot: Mapping[str, Any]) -> None:
+            if event == "created":
+                return  # part of the attempt under way
+            with self._lock:
+                if event == "delivering":
+                    self._fence_inflight.add(task_id)
+                    return
+                self._fence_inflight.discard(task_id)
+                if event not in ("submitted", "delivered", "unknown"):
+                    return
+                task = self.tasks.get(task_id)
+                if task is not None and task.cancel_fence == "armed":
+                    self._lift_fence(task, "notice_unknown" if event == "unknown" else "notice_delivered")
+        return listener
 
     def _end_inactive(self, task: FlowTask, reason: str) -> None:
         """A finished experiment or blocked free-work Task ends when a new Task arrives."""

@@ -35,7 +35,10 @@ through ``HandoffService.handle`` (which answers at once): this call may wait.
   Workbench is ``paused`` for a new command only (a command already running
   continues and ``command: null`` still returns its state); a new command while
   one runs is ``terminal_command_running``. No Task is needed (the journal then
-  has ``task_id: null``).
+  has ``task_id: null``). CS-O01: after the manager cancelled a free-work Task,
+  the first task-less command is refused once (``task_cancelled``) until the
+  cancel notice is in the worker's session or a newer Task exists; task-less
+  commands while that cancelled Task is the newest carry ``after_cancel_of``.
 - One command at a time. The tool call waits up to ``WAIT_SECONDS`` (120 s, fixed;
   C-D68 (9): the worker sets no wait): ``exited`` gives the exit code, a bounded output tail and
   the full log file; otherwise ``running``: the command keeps running and the
@@ -163,6 +166,9 @@ MANAGER_DONE_INSTRUCTION = ("Workbench notice (information): a terminal command 
 BUSY_DETAIL = ("Nothing was run. The host terminal runs a command only when it is free (the user's idle prompt, "
                "no job, no typed line, no experiment run). Do not work around it; try again later or tell the "
                "manager with to_manager.")
+# CS-O01 (FU-D03): the one refusal of a task-less command after a free-work Task was cancelled
+CANCEL_FENCE_DETAIL = ("Task {task_id} was cancelled by the manager; this command was not run. If it is not part of "
+                       "the cancelled Task, call again and it runs.")
 ABORTED_DETAIL = "The call was aborted before the command started: nothing was run."
 # C-D69 (6)(c): a command too long for one host shell request runs from a script file Workbench writes
 SPILL_SCRIPT = 'printf \'[worker] $ %s\\n\' "$1"; exec "$0" "$2"'
@@ -389,6 +395,7 @@ class _Command:
     raw_descriptor: dict[str, Any] | None = None
     handoff_typed: bool = False  # Workbench typed wb-handoff for this command (C-D69 (5)(a))
     submitting: bool = False  # the submit to the host shell was attempted (the shell may have the command)
+    after_cancel_of: str | None = None  # CS-O01 (FU-D04): a task-less command after this cancelled Task
     script_path: Path | None = None  # C-D69 (6)(c): the command runs from this script file (too long for one request)
     echo: bytes = b""  # the command line the child prints first, still to be skipped (as the PTY shows it)
     # C-D68 (8) notices; ``since`` is guarded by ``lock``, the rest by the service lock.
@@ -556,8 +563,14 @@ class TerminalService:
                  repository_factory: Callable[[], Any] | None = None,
                  command_stop: CommandStopService | None = None,
                  task_status: Callable[[str], str | None] | None = None,
-                 forbidden: Callable[[], frozenset[int]] = lambda: frozenset()):
+                 forbidden: Callable[[], frozenset[int]] = lambda: frozenset(),
+                 cancel_fence: Callable[[], str | None] = lambda: None,
+                 after_cancel_of: Callable[[], str | None] = lambda: None):
         self._repository_factory = repository_factory
+        # CS-O01 (FU-D03/D04): the cancel fence (consumed by one refusal; the cancelled Task's id, else None) and
+        # the cancelled Task a task-less command follows (None once a newer Task exists)
+        self._cancel_fence = cancel_fence
+        self._after_cancel_of = after_cancel_of
         self._stop_forbidden = forbidden  # pids a stop must never signal (the OMP panes'), offered with each target
         self._task_status = task_status  # a Task's status by id, for the stop audit record (CS-05)
         self._command_stop = command_stop  # the stop registry: this service is its StopTarget provider
@@ -819,15 +832,24 @@ class TerminalService:
             return rejected("environment_value", fields=findings,
                             detail="Never put environment variable values in a command; use $NAME references.")
         task = self._task_id()
-        self._journal({"type": "terminal_request", "key": key_dict, "request_id": parsed.request_id,
-                       "command": command, "wait_seconds": timeout if command is not None else 0, "task_id": task})
+        after = self._after_cancel() if task is None and command is not None else None
+        request_record = {"type": "terminal_request", "key": key_dict, "request_id": parsed.request_id,
+                          "command": command, "wait_seconds": timeout if command is not None else 0, "task_id": task}
+        if after is not None:  # CS-O01 (FU-D04): the audit mark of a task-less command after a cancel
+            request_record["after_cancel_of"] = after
+        self._journal(request_record)
         deadline = time.monotonic() + timeout
         if command is None:
             return self._fetch(key_dict, key)
+        if task is None:
+            fenced = self._fenced()
+            if fenced is not None:
+                return self._refuse(key_dict, "rejected", "task_cancelled",
+                                    CANCEL_FENCE_DETAIL.format(task_id=fenced), task_id=fenced)
         refused = self._not_in_task_commands(command, key_dict)
         if refused is not None:
             return refused
-        started = self._start(command, key_dict, task, key)
+        started = self._start(command, key_dict, task, key, after_cancel_of=after)
         if isinstance(started, dict):
             return started
         return self._await(started, deadline, key)
@@ -853,6 +875,22 @@ class TerminalService:
         listing = "\n".join(f"{index}. {shown_command(item)}" for index, item in enumerate(allowed, 1))
         return self._refuse(key_dict, "not_in_task_commands", "not_in_task_commands",
                             NOT_IN_TASK_DETAIL.format(listing=listing), allowed_commands=list(allowed))
+
+    def _fenced(self) -> str | None:
+        """CS-O01: the cancelled Task whose fence refuses this task-less command (None: the fence is not active or
+        cannot be read; a task-less command is allowed by C-D68 (7), so an unreadable fence never refuses)."""
+        try:
+            fenced = self._cancel_fence()
+        except Exception:
+            return None
+        return fenced if isinstance(fenced, str) and fenced else None
+
+    def _after_cancel(self) -> str | None:
+        try:
+            after = self._after_cancel_of()
+        except Exception:
+            return None  # the mark is audit only; it never stops a command
+        return after if isinstance(after, str) and after else None
 
     def _task_id(self) -> str | None:
         try:
@@ -1211,7 +1249,7 @@ class TerminalService:
 
     # -- starting a command -------------------------------------------------------------
     def _start(self, text: str, key_dict: dict[str, Any], task: str | None,
-               key: tuple = ()) -> _Command | dict[str, Any]:
+               key: tuple = (), *, after_cancel_of: str | None = None) -> _Command | dict[str, Any]:
         with self._lock:
             current = self._current
             if self._starting or (current is not None and not current.done.is_set()):
@@ -1223,7 +1261,7 @@ class TerminalService:
                                     **extra)
             self._starting = True
         try:
-            return self._start_unlocked(text, key_dict, task, key)
+            return self._start_unlocked(text, key_dict, task, key, after_cancel_of=after_cancel_of)
         finally:
             with self._lock:
                 self._starting = False
@@ -1242,7 +1280,7 @@ class TerminalService:
         return reason if isinstance(reason, str) and reason else None
 
     def _start_unlocked(self, text: str, key_dict: dict[str, Any], task: str | None,
-                        key: tuple = ()) -> _Command | dict[str, Any]:
+                        key: tuple = (), *, after_cancel_of: str | None = None) -> _Command | dict[str, Any]:
         if self._abandoned_now(key):  # P3-4: the bridge already answered this call: nothing is typed
             self._journal({"type": "terminal_aborted", "key": key_dict, "stage": "before_start"})
             return {"status": "aborted", "reason": "call_abandoned", "detail": ABORTED_DETAIL}
@@ -1280,6 +1318,7 @@ class TerminalService:
             if isinstance(command, dict):
                 port.release_hold(HOLD_REASON)
                 return command
+            command.after_cancel_of = after_cancel_of
             try:
                 self._dispatch(port, command, key)
             except _CallAbandoned:
@@ -1355,6 +1394,8 @@ class TerminalService:
                    **command.raw_fields()}
         if command.script_path is not None:
             started["script_path"] = str(command.script_path)
+        if command.after_cancel_of is not None:
+            started["after_cancel_of"] = command.after_cancel_of
         confirmed = self._journal(started, bound_revision=command.summary_revision)
         command.summary_started = confirmed is not None
         self._configure_summary_capture(command)

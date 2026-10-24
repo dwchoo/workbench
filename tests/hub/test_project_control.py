@@ -1,8 +1,9 @@
 """Project control library ``workbench.hub.projects`` (HB-07, seam S6).
 
 Real backends with fake OMPs (``tests/recovery_boot/fake_omp.py``: no model, no provider, no
-network) in a temp HOME/XDG sandbox with a short private ``XDG_RUNTIME_DIR``, so no runtime falls
-back to ``/tmp/omp-workbench-<uid>`` and no Hub socket to ``/tmp/omp-workbench-hub-<uid>``. Every
+network) in a temp HOME/XDG sandbox with a short private ``XDG_RUNTIME_DIR``, so the backend's UI
+runtime root lives there (not under ``/tmp/omp-workbench-<uid>``) and no Hub socket falls back to
+``/tmp/omp-workbench-hub-<uid>``; the one exception, the OMP ephemeral namespace, is below. Every
 library call runs in a driver subprocess (``fixtures/project_driver.py``) the test starts; nothing
 forks inside the test runner. Expected values come from ``/proc`` (pid, start ticks, ppid,
 session), ``backend.json``, snapshots read by the test and the SPEC/BRIEF texts. Each backend is
@@ -94,11 +95,19 @@ class ProjectSandbox:
 
     def __init__(self, case: unittest.TestCase):
         self.case = case
+        # Everything cleanup() reads exists before it is registered; it is registered right after
+        # the first temp dir, so a failure later in this constructor still removes what was made.
+        self.roots: list[Path] = []
+        self.ephemeral: list[Path] = []  # this sandbox's own namespaces under /tmp/omp-workbench-<uid>
+        self.processes: list[subprocess.Popen] = []
+        self.calls = 0
+        self.run: Path | None = None
         self.base = Path(tempfile.mkdtemp(prefix='wb-hb07-')).resolve()
+        home = self.base / 'home'
+        self.hub_state = home / '.local/state' / 'omp-workbench' / 'hub'
+        case.addCleanup(self.cleanup)
         self.run = Path(tempfile.mkdtemp(prefix='r', dir='/tmp')).resolve()
         os.chmod(self.run, 0o700)
-        case.addCleanup(self.cleanup)
-        home = self.base / 'home'
         (home / '.omp' / 'agent').mkdir(parents=True)
         (home / '.omp' / 'agent' / 'agent.db').write_bytes(b'')  # fake empty store, no credential
         self.fake = self.base / 'omp'
@@ -114,11 +123,6 @@ class ProjectSandbox:
                     'FAKE_NOTICES': str(self.base / 'notices.jsonl'), 'FAKE_FRAMES': str(self.base / 'frames.jsonl'),
                     **{key: BLOCKED_PROXY for key in ('HTTP_PROXY', 'HTTPS_PROXY', 'ALL_PROXY', 'http_proxy',
                                                       'https_proxy', 'all_proxy')}}
-        self.hub_state = home / '.local/state' / 'omp-workbench' / 'hub'
-        self.roots: list[Path] = []
-        self.ephemeral: list[Path] = []  # this sandbox's own namespaces under /tmp/omp-workbench-<uid>
-        self.processes: list[subprocess.Popen] = []
-        self.calls = 0
 
     # -- projects ----------------------------------------------------------------------------
     def folder(self, name: str) -> Path:
@@ -350,7 +354,8 @@ class ProjectSandbox:
                 if stat.S_ISDIR(info.st_mode) and info.st_uid == os.geteuid():
                     shutil.rmtree(path, ignore_errors=True)
         shutil.rmtree(self.base, ignore_errors=True)
-        shutil.rmtree(self.run, ignore_errors=True)
+        if self.run is not None:
+            shutil.rmtree(self.run, ignore_errors=True)
 
 
 class ProjectControlCase(unittest.TestCase):
@@ -438,7 +443,95 @@ class PowerOnTests(ProjectControlCase):
         snapshot = self.box.status(root)
         self.assertEqual((snapshot['phase'], snapshot['backend']['pid']), ('ready', pid))
 
+    def test_power_on_with_out_sends_the_start_lines_there_and_the_backend_never_inherits_it(self):
+        root, project_id = self.box.project('alpha')
+        out = self.box.base / 'start-out.txt'
+        outcome = self.box.drive('power_on', self.box.entry(root, project_id), out=str(out))
+        self.assertTrue(outcome['ok'], outcome)
+        self.assertEqual((self.box.last_driver.stdout, self.box.last_driver.stderr), ('', ''))
+        text = out.read_text()
+        self.assertIn('starting backend', text)
+        self.assertIn('backend pid', text)
+        self.assertEqual(outcome['data']['output'], text)
+        pid, ticks, _record = self.box.backend_ref(root)
+        log = os.path.realpath(root / '.wb' / 'backend.log')
+        self.assertEqual({os.readlink(f'/proc/{pid}/fd/{fd}') for fd in (1, 2)}, {log})
+        for other in self.box.ours():  # the backend, its OMPs and the host shell
+            for fd in os.listdir(f'/proc/{other}/fd'):
+                try:
+                    target = os.readlink(f'/proc/{other}/fd/{fd}')
+                except OSError:
+                    continue
+                self.assertNotEqual(target, str(out), (other, fd))
 
+class PowerOnStartFailureTests(ProjectControlCase):
+    """``power_on`` maps every ``cmd_start`` failure to an ``Outcome`` (in process: ``cmd_start`` and
+    ``_attach`` are replaced, so nothing forks or starts here)."""
+
+    def call(self, start, attach_result=None, *, attach: bool = False):
+        from unittest import mock
+        from workbench.backend import cli
+        from workbench.hub import projects
+        from workbench.hub.registry import Entry
+        root, project_id = self.box.project('alpha')
+        entry = Entry(str(root), project_id, 'alpha', 1.0, 'add')
+        starts, attaches = [], []
+
+        def fake_start(args):
+            starts.append(args)
+            if isinstance(start, BaseException):
+                raise start
+            return start
+
+        def fake_attach(layout, args):
+            attaches.append(args)
+            if isinstance(attach_result, BaseException):
+                raise attach_result
+            return attach_result
+
+        with mock.patch.object(cli, 'cmd_start', fake_start), mock.patch.object(cli, '_attach', fake_attach), \
+                mock.patch.object(cli, '_layout', lambda args: None):
+            outcome = projects.power_on(entry, attach)
+        for args in starts:
+            self.assertEqual((args.data_dir, args.no_attach), (str(root / '.wb'), True))
+        return outcome, starts, attaches
+
+    def test_start_exit_codes_map_to_start_requirement_and_start_failed(self):
+        for status, reason in ((2, 'start_requirement'), (1, 'start_failed')):
+            with self.subTest(status=status):
+                outcome, starts, attaches = self.call(status)
+                self.assertEqual((outcome.ok, outcome.reason), (False, reason), outcome)
+                self.assertEqual((len(starts), attaches), (1, []))
+
+    def test_os_and_value_errors_from_spawn_or_start_are_start_failed(self):
+        from workbench.backend.paths import DataDirError
+        for error in (OSError(24, 'Too many open files'), ValueError('bad backend record'), DataDirError('x')):
+            with self.subTest(error=type(error).__name__):
+                outcome, _starts, _attaches = self.call(error)
+                self.assertEqual((outcome.ok, outcome.reason), (False, 'start_failed'), outcome)
+                self.assertIn(str(error), outcome.detail)
+
+    def test_attach_true_attaches_after_a_successful_start(self):
+        from workbench.backend.client import NotRunning
+        outcome, starts, attaches = self.call(0, 0, attach=True)
+        self.assertTrue(outcome.ok, outcome)
+        self.assertEqual((len(starts), len(attaches)), (1, 1))
+        self.assertIs(attaches[0].plain, False)
+        for result in (1, NotRunning('gone')):
+            with self.subTest(result=result):
+                outcome, _starts, attaches = self.call(0, result, attach=True)
+                self.assertEqual((outcome.ok, outcome.reason), (False, 'attach_failed'), outcome)
+                self.assertEqual(len(attaches), 1)
+        outcome, _starts, attaches = self.call(1, 0, attach=True)
+        self.assertEqual((outcome.reason, attaches), ('start_failed', []))
+
+    def test_a_missing_omp_is_start_requirement_and_starts_nothing(self):
+        root, project_id = self.box.project('beta')
+        self.box.env['WORKBENCH_OMP'] = str(self.box.base / 'no-such-omp')
+        outcome = self.box.drive('power_on', self.box.entry(root, project_id))
+        self.assertEqual((outcome['ok'], outcome['reason']), (False, 'start_requirement'), outcome)
+        self.assertEqual(self.box.ours(), {})
+        self.assertFalse(os.path.lexists(root / '.wb' / 'backend.json'))
 
 
 class HubEndTests(ProjectControlCase):
@@ -567,7 +660,6 @@ class PowerOffTests(ProjectControlCase):
         self.assertEqual(self.box.status(root)['phase'], 'ready')
 
 
-
 class AutomationControlTests(ProjectControlCase):
     """HB-T02 (real backend): ``pause``/``resume``/``confirm_boot`` without taking the attach slot."""
 
@@ -639,6 +731,28 @@ class FixtureBackendTests(ProjectControlCase):
         self.assertEqual((outcome['ok'], outcome['reason']), (False, 'no_result'), outcome)
         self.assertIn('no result within', outcome['detail'])
         self.assertLess(time.monotonic() - started, 30)
+
+    def test_only_verified_true_is_a_success(self):
+        for name, verified in (('one', 1), ('text', 'true'), ('list', [True])):
+            with self.subTest(verified=name):
+                root, project_id = self.fixture(f'p-{name}', replies_json={**self.PENDING, 'shutdown_confirm': {
+                    'shutting_down': True, 'result_deadline': 5}}, close_after='shutdown_confirm', closing_json={
+                    'v': 1, 'type': 'closing', 'reason': 'backend_shutdown', 'result': {'verified': verified}})
+                outcome = self.box.drive('power_off', self.box.entry(root, project_id), answers=[True])
+                self.assertEqual((outcome['ok'], outcome['reason']), (False, 'unverified'), outcome)
+
+    def test_each_refused_confirm_names_its_cause_and_the_last_one_promises_no_new_list(self):
+        stale = 'shutdown token is stale or unknown; request again'  # an expired token, not changed work
+        root, project_id = self.fixture('alpha', replies_json={**self.PENDING, 'shutdown_confirm': {
+            'ok': False, 'reason': 'shutdown_token_mismatch', 'detail': stale}})
+        out = self.box.base / 'out.txt'
+        outcome = self.box.drive('power_off', self.box.entry(root, project_id), answers=[True] * 10, out=str(out))
+        self.assertEqual((outcome['ok'], outcome['reason'], outcome['detail']), (False, 'work_kept_changing', stale))
+        lines = out.read_text().splitlines()
+        changed = [line for line in lines if '작업이 바뀌었습니다' in line]
+        self.assertEqual(len(changed), 5, lines)  # six refusals; after the last no new list follows
+        self.assertTrue(all(stale in line for line in changed), lines)
+        self.assertEqual(lines[-1], '작업이 계속 바뀌어 끄지 않았습니다')
 
     def test_an_older_backends_not_attached_is_reported_as_backend_too_old(self):
         refused = {'ok': False, 'reason': 'not_attached', 'detail': 'attach before sending terminal or control input'}

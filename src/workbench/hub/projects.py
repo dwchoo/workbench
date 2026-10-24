@@ -7,7 +7,9 @@ backend, and no process is started (HB-AC-13). Every function returns an :class:
 """
 from __future__ import annotations
 
+import contextlib
 from dataclasses import dataclass, field
+import io
 from pathlib import Path
 from typing import Any, Callable, TextIO
 
@@ -28,7 +30,8 @@ BACKEND_TOO_OLD = "backend_too_old"  # pause/resume answered ``not_attached``: a
 BOOT_ID_UNAVAILABLE = "boot_id_unavailable"  # the snapshot has no current ``boot.boot_id`` to confirm
 # SPEC "상태 전이": after a changed work list power_off asks again with the new list at most this often.
 MAX_WORK_CHANGE_RETRIES = 5
-WORK_CHANGED_TEXT = "작업이 바뀌었습니다. 새 목록을 다시 확인하세요."
+WORK_CHANGED_TEXT = "작업이 바뀌었습니다"  # + " (<backend detail>)"
+RE_ASK_TEXT = "새 목록을 다시 확인하세요."  # only when another ask follows
 WORK_KEPT_CHANGING_TEXT = "작업이 계속 바뀌어 끄지 않았습니다"
 REQUEST_TIMEOUT = 10.0
 
@@ -68,14 +71,37 @@ def _backend_reference(entry: registry.Entry) -> dict | None:
     return {"pid": reference["pid"], "start_ticks": reference["start_ticks"]}
 
 
-def power_on(entry: registry.Entry, attach: bool) -> Outcome:
+class _Tee(io.TextIOBase):
+    """``out`` plus a copy of everything written (``Outcome.data["output"]``)."""
+
+    def __init__(self, out: TextIO):
+        self.out, self.copy = out, io.StringIO()
+
+    def writable(self) -> bool:
+        return True
+
+    def write(self, text: str) -> int:
+        self.copy.write(text)
+        self.out.write(text)
+        return len(text)
+
+    def flush(self) -> None:
+        self.out.flush()
+
+
+def power_on(entry: registry.Entry, attach: bool, out: TextIO | None = None) -> Outcome:
     """``cmd_start`` with ``--no-attach --data-dir <root>/.wb`` (update fence, start requirements,
     ``project_initialization_lock``, ``spawn_backend``, ``_wait_started``); an already running
     backend is joined, never duplicated. The backend is an orphan in its own session, not a child
     of the caller. ``attach`` then attaches this process's terminal like ``wb start`` does.
 
-    ``cmd_start`` prints its usual lines to this process's stdout/stderr. ``data.backend`` is
-    the backend's ``{pid, start_ticks}``.
+    ``cmd_start`` prints its usual lines to this process's stdout/stderr; with ``out`` they go to
+    ``out`` instead (``contextlib.redirect_stdout``/``redirect_stderr`` around the start only, not
+    the attach) and ``data.output`` holds that text. The backend never inherits ``out``: it is
+    detached onto ``backend.log``. The redirect swaps the process-wide ``sys.stdout``/``sys.stderr``,
+    so a threaded caller (the (A) web, TI-08) runs this in a driver subprocess or passes streams
+    another way. ``data.backend`` is the backend's ``{pid, start_ticks}``. ``KeyboardInterrupt``
+    is the caller's to handle.
     """
     refused = _mismatch(entry)
     if refused is not None:
@@ -83,14 +109,23 @@ def power_on(entry: registry.Entry, attach: bool) -> Outcome:
     from workbench.backend import cli
     from workbench.backend.paths import DataDirError
     args = cli.parser().parse_args(["start", "--no-attach", "--data-dir", str(_data_dir(entry))])
+    tee = None if out is None else _Tee(out)
     try:
-        status = cli.cmd_start(args)
+        with contextlib.ExitStack() as stack:
+            if tee is not None:
+                stack.enter_context(contextlib.redirect_stdout(tee))
+                stack.enter_context(contextlib.redirect_stderr(tee))
+            status = cli.cmd_start(args)
     except DataDirError as exc:
         return Outcome(False, START_FAILED, f"data dir error: {exc}")
+    except (OSError, ValueError) as exc:  # spawn (fork, pipes, the log) or the start-up records
+        return Outcome(False, START_FAILED, f"{type(exc).__name__}: {exc}")
     if status != 0:
         return Outcome(False, START_REQUIREMENT if status == cli.EXIT_REQUIREMENT else START_FAILED,
                        f"wb start exit {status}")
     data = {"backend": _backend_reference(entry)}
+    if tee is not None:
+        data["output"] = tee.copy.getvalue()
     if attach:
         try:
             status = cli._attach(cli._layout(args), args)
@@ -135,11 +170,15 @@ def power_off(entry: registry.Entry, ask: Callable[[list], bool], out: TextIO) -
     → the ``closing`` result, ``cli.confirm_shutdown``, shared with ``wb shutdown``).
 
     ``ask`` gets the ``active`` list of that request; False stops nothing (``declined``). When the
-    work changed before the confirm (``shutdown_token_mismatch``) ``out`` is told and a new request
-    asks again with the new list, at most :data:`MAX_WORK_CHANGE_RETRIES` times
-    (``work_kept_changing``, nothing stopped). Only a ``verified`` result is ``ok``
-    (``data.result``); no result (``no_result``, ``data.backend`` = ``ended``/``alive``/``unknown``)
-    and an unverified one (``unverified``) are not. Progress lines while waiting go to ``out``.
+    confirm is refused with ``shutdown_token_mismatch`` (the work changed, or the token expired or
+    was replaced: the backend's detail tells which) ``out`` gets that detail and a new request asks
+    again with the new list, at most :data:`MAX_WORK_CHANGE_RETRIES` times; after the last refusal
+    nothing more is asked (``work_kept_changing``, detail = the last refusal's, ``data.refusals``
+    all of them; nothing stopped). Only ``verified is True`` is ``ok`` (``data.result``); no
+    result (``no_result``, ``data.backend`` = ``ended``/``alive``/``unknown``) and anything else
+    (``unverified``) are not. Progress lines while waiting go to ``out``. A ``KeyboardInterrupt``
+    raised by ``ask`` or before the ``shutdown_request`` is the caller's to handle (nothing was
+    confirmed then); one while waiting for the result ends as ``no_result``.
     """
     refused = _mismatch(entry)
     if refused is not None:
@@ -150,8 +189,9 @@ def power_off(entry: registry.Entry, ask: Callable[[list], bool], out: TextIO) -
     client, failed = _connect(entry)
     if failed is not None:
         return failed
+    refusals: list = []  # each refused confirm's backend detail (expired token vs changed work)
     with client:
-        for _attempt in range(1 + MAX_WORK_CHANGE_RETRIES):
+        for attempt in range(1 + MAX_WORK_CHANGE_RETRIES):
             try:
                 pending = client.request(ClientType.SHUTDOWN_REQUEST)
             except (OSError, TimeoutError, ClientError) as exc:
@@ -168,14 +208,18 @@ def power_off(entry: registry.Entry, ask: Callable[[list], bool], out: TextIO) -
                 break
             if wait.refused.get("reason") != Reason.SHUTDOWN_TOKEN_MISMATCH.value:
                 return Outcome(False, wait.refused.get("reason") or UNREACHABLE, wait.refused.get("detail"))
-            print(WORK_CHANGED_TEXT, file=out, flush=True)
+            detail = wait.refused.get("detail")
+            refusals.append(detail)
+            if attempt < MAX_WORK_CHANGE_RETRIES:  # a new list follows only while asks remain
+                cause = f" ({detail})" if isinstance(detail, str) and detail else ""
+                print(f"{WORK_CHANGED_TEXT}{cause}. {RE_ASK_TEXT}", file=out, flush=True)
         else:
             print(WORK_KEPT_CHANGING_TEXT, file=out, flush=True)
-            return Outcome(False, WORK_KEPT_CHANGING, data={"active": active})
+            return Outcome(False, WORK_KEPT_CHANGING, refusals[-1], {"active": active, "refusals": refusals})
     if wait.result is None:
         backend = cli._backend_state(backend_ref, cli.BACKEND_GONE_WAIT)
         return Outcome(False, NO_RESULT, wait.lost or "the backend sent no result", {"backend": backend})
-    if not wait.result.get("verified"):
+    if wait.result.get("verified") is not True:
         return Outcome(False, UNVERIFIED, ", ".join(wait.result.get("problems") or ["result unknown"]),
                        {"result": wait.result})
     return Outcome(True, data={"result": wait.result})

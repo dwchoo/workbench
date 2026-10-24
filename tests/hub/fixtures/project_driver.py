@@ -9,7 +9,8 @@ test runner. ``SPEC_JSON`` keys:
 - ``power_off`` only: ``answers`` (the ``ask`` replies in call order; missing ones are ``false``),
   ``asks`` (path; one JSON line ``{"call": n, "active": [...]}`` per ``ask`` call, written before it
   answers), ``gate`` (path prefix: call ``n`` answers only once ``<gate>.<n>`` exists, ≤ 120 s),
-  ``out`` (path of the ``out`` stream).
+  ``out`` (path of the ``out`` stream);
+- ``power_on`` only: ``out`` (path; passed as ``out=`` when given).
 
 The environment (HOME, XDG dirs, ``WORKBENCH_OMP``) comes from the test.
 """
@@ -47,7 +48,10 @@ def main() -> int:
         return answers.pop(0) if answers else False
 
     op = spec['op']
-    if op == 'power_on':
+    if op == 'power_on' and spec.get('out'):
+        with open(spec['out'], 'w') as out:
+            outcome = projects.power_on(entry, attach=False, out=out)
+    elif op == 'power_on':
         outcome = projects.power_on(entry, attach=False)
     elif op == 'power_off':
         with open(spec.get('out') or os.devnull, 'w') as out:

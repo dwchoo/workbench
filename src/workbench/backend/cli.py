@@ -186,8 +186,9 @@ def _wait_started(layout: DataLayout, pid: int, timeout: float) -> dict | None:
 
 
 def _wait_isolation(layout: DataLayout, snapshot: dict, timeout: float = ISOLATION_WAIT,
-                    stream=sys.stdout) -> dict:
+                    stream=None) -> dict:
     """Wait (bounded) for the start-up isolation check so the summary shows its result."""
+    stream = sys.stdout if stream is None else stream  # resolved per call (redirect_stdout)
     deadline = time.monotonic() + timeout
     announced = False
     while (snapshot.get("omp_isolation") or {}).get("state") == "pending" and time.monotonic() < deadline:
@@ -202,7 +203,8 @@ def _wait_isolation(layout: DataLayout, snapshot: dict, timeout: float = ISOLATI
     return snapshot
 
 
-def _print_summary(snapshot: dict, stream=sys.stdout) -> None:
+def _print_summary(snapshot: dict, stream=None) -> None:
+    stream = sys.stdout if stream is None else stream  # resolved per call (redirect_stdout)
     backend, panes = snapshot["backend"], snapshot["panes"]
     shell = panes.get("host_shell", {}).get("shell", {})
     print(f"backend pid {backend['pid']} phase {snapshot['phase']}"
@@ -241,7 +243,8 @@ def _print_summary(snapshot: dict, stream=sys.stdout) -> None:
             print(f"  note: {note}", file=stream)
 
 
-def _print_important_warning(snapshot: dict, stream=sys.stdout) -> None:
+def _print_important_warning(snapshot: dict, stream=None) -> None:
+    stream = sys.stdout if stream is None else stream  # resolved per call (redirect_stdout)
     important = snapshot.get("important_logs")
     if not isinstance(important, dict):
         return

@@ -103,7 +103,12 @@ class PublicProjectCliIndependentTests(unittest.TestCase):
                 self.assertEqual(list(self.project.iterdir()), [], result.stdout + result.stderr)
                 for key in ('XDG_RUNTIME_DIR', 'XDG_DATA_HOME', 'XDG_CONFIG_HOME', 'XDG_CACHE_HOME'):
                     self.assertEqual(list(Path(self.env[key]).iterdir()), [], (args, key))
-                if args in ((), ('start', '--no-attach')):
+                if args == ():
+                    # HB-D08: a bare `wb` outside a WB project is the Hub list; without a terminal it refuses with
+                    # exit 2 and the `wb hub list` guidance (it does not start, so there is no setup requirement).
+                    self.assertEqual(result.returncode, 2, result.stderr)
+                    self.assertIn("'wb hub list'", result.stderr)
+                elif args == ('start', '--no-attach'):
                     self.assertEqual(result.returncode, 2, result.stderr)
                     self.assertIn('wb setup', result.stderr)
                 elif args == ('--help',):

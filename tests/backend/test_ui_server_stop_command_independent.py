@@ -188,24 +188,21 @@ class ProtocolTests(Fixture):
         self.assertEqual((answer["ok"], answer["reason"]), (False, "invalid_message"), answer)
         self.assertEqual(self.controller.calls, [])
 
-    @unittest.expectedFailure  # OPEN (Root to adjudicate): the parser ignores extra header fields, as it does for every ui_v1 type
-    def test_extra_header_fields_are_refused(self):
-        """Packet: command_id is the only field; anything else (pane, reason, signal ...) is not part of the request."""
+    def test_unknown_header_fields_are_ignored_and_the_controller_receives_only_the_command_id(self):
+        """Root decision: ui_v1 requests ignore unknown header fields (like kill_pane, pause); stop_command too."""
         client = self.client()
-        for extra in ({"pane": "host_shell"}, {"reason": "because"}, {"signal": "SIGKILL"}, {"force": True},
-                      {"pid": 123}):
+        extras = ({"pane": "host_shell"}, {"reason": "because"}, {"signal": "SIGKILL"}, {"force": True},
+                  {"pid": 123}, {"command_id_2": OTHER}, {"requested_by": "worker"})
+        for extra in extras:
             with self.subTest(extra=extra):
-                answer = self.refused(client, command_id=CID, **extra)
-                self.assertEqual((answer["ok"], answer["reason"]), (False, "invalid_message"), answer)
-        self.assertEqual(self.controller.calls, [], "a request with unknown fields reached the controller")
-
-    def test_extra_header_fields_never_change_what_is_stopped(self):
-        """Whatever the parser does with unknown fields, the controller sees the command_id and nothing else."""
-        client = self.client()
-        for extra in ({"pane": "host_shell"}, {"reason": "because"}, {"signal": "SIGKILL"}, {"pid": 123}):
-            request_id = self.send_stop(client, CID, **extra)
-            self.result_frames(client, request_id, 2)
-        self.assertEqual(self.controller.calls, [CID] * 4)
+                request_id = self.send_stop(client, CID, **extra)
+                ack, final = self.result_frames(client, request_id, 2)
+                self.assertEqual((ack["ok"], ack["stop"]), (True, {"status": "stopping"}), ack)
+                self.assertIs(final["final"], True)
+                for frame in (ack, final):
+                    for key in extra:
+                        self.assertNotIn(key, frame, "an unknown request field was echoed or acted upon")
+        self.assertEqual(self.controller.calls, [CID] * len(extras), "the controller was asked about another id")
 
     def test_stop_requires_an_attached_client(self):
         client = self.client(attach=False)
@@ -369,18 +366,26 @@ class ControllerFailureTests(Fixture):
                 self.assertIn("focus", client.snapshot())
         self.assertEqual(self.errors, [])
 
-    @unittest.expectedFailure  # DEFECT (low): _deliver_stop_finals lets a ContractError out of poll(); see the report
-    def test_an_outcome_that_cannot_be_encoded_does_not_end_the_server_loop(self):
-        self.controller.outcome = {"status": "exited", "oops": object()}
-        self.addCleanup(self.errors.clear)  # runs before _teardown: the failing assertion below is this test's verdict
+    def test_an_outcome_that_cannot_be_encoded_ends_as_an_error_final_without_leaking_it(self):
+        self.controller.outcome = {"status": "exited", "exit_code": 130, "secret": "LEAK-7731", "oops": object()}
         client = self.client()
         request_id = self.send_stop(client)
-        time.sleep(0.8)
-        self.assertEqual(self.errors, [], "an unencodable outcome raised out of poll() and ends the backend loop")
+        ack, final = self.result_frames(client, request_id, 2)
+        self.assertEqual(ack["stop"], {"status": "stopping"})
+        self.assertIs(final["final"], True)
+        self.assertEqual(final["command_id"], CID)
+        self.assertEqual(final["stop"]["status"], "error", final)
+        self.assertEqual(final["stop"]["reason"], "unencodable_outcome", final)
+        self.assertNotEqual(final["stop"]["status"], "exited")
+        self.assertNotIn("LEAK-7731", str(final), "the outcome's content leaked into the error frame")
+        self.assertNotIn("exit_code", final["stop"])
+        self.assertEqual(self.errors, [], "an unencodable outcome raised out of poll()")
         self.assertTrue(self.thread.is_alive(), "the serving thread died")
-        other = self.client(attach=False)
-        self.assertIn("focus", other.snapshot())
-        self.assertIsNotNone(request_id)
+        self.assertIn("focus", client.snapshot())
+        self.controller.outcome = dict(EXITED)  # and the slot was released: the next stop completes normally
+        again = self.send_stop(client)
+        _, final = self.result_frames(client, again, 2)
+        self.assertEqual(final["stop"], EXITED)
 
     def test_a_controller_without_the_method_still_gives_a_final_that_is_not_a_success(self):
         class Bare(Controller):

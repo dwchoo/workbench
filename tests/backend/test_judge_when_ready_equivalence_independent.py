@@ -851,7 +851,8 @@ class FlowDifferential(NoLeak):
                 with self.subTest(scenario=name, run=label):
                     before = run_flow_with(run_class, BASE_TASKS, scenario)
                     after = run_flow_with(run_class, current_tasks, scenario)
-                    self.assertEqual(after, before)
+                    # CS-O01/CS-O02 added two ``task`` record fields on purpose; nothing else may differ
+                    fx.assert_identical_but_for_intentional_deltas(self, after, before)
 
     def test_the_scenarios_repeat_exactly_on_the_same_version(self):
         for name in ("judge_deferred_then_ready", "deferred_then_paused_then_ready", "held_without_a_request"):
@@ -1282,32 +1283,60 @@ class AccessorPins(unittest.TestCase):
                 result = run_direct(current_tasks, spec)
                 self.assertNotEqual(result["outcome"], ("returned", "JUDGE_AGAIN_LEAKED"))
 
-    @needs_baseline
-    def test_only_judge_when_ready_changed_in_flow_tasks_and_only_the_helpers_were_added(self):
+    # CS-O01 (0075cd4: one refusal of a task-less command after a free-work cancel; FlowTask.cancel_fence) and CS-O02
+    # (01ac223: worker reports in send order; FlowTask.report_seq, _final_reports) changed flow_tasks.py on purpose
+    # after the refactors under test. Exactly these methods differ from the pre-refactor baseline because of them:
+    CS_O01_O02_CHANGED = {"TaskFlow.__init__", "TaskFlow._cancel", "TaskFlow._finish_cancel", "TaskFlow._to_manager",
+                          "TaskFlow._work_follow_up"}
+    CS_O01_O02_ADDED = {"TaskFlow.take_cancel_fence", "TaskFlow.after_cancel_of", "TaskFlow._fenced",
+                        "TaskFlow._lift_fence", "TaskFlow._fence_listener", "TaskFlow._fence_listener.listener",
+                        "TaskFlow._to_manager.on_not_queued"}
+    JUDGE_REFACTOR_ADDED = {"_AnalysisWait", "_AnalysisWait.__init__", "_AnalysisWait.reset", "_worker_analysis_request",
+                            "TaskFlow._wait_out_hold", "TaskFlow._busy_past_limit", "TaskFlow._judge_once",
+                            "TaskFlow._analysis_held"}
+    PRE_CS_REV = "ee5a312"  # main HEAD just before 01ac223 (the first CS-O01/CS-O02 commit)
+
+    @staticmethod
+    def _functions(source: str) -> dict[str, str]:
         import ast
 
-        def functions(source: str) -> dict[str, str]:
-            found: dict[str, str] = {}
+        found: dict[str, str] = {}
 
-            def visit(node, prefix):
-                for child in ast.iter_child_nodes(node):
-                    if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
-                        qualified = prefix + child.name
-                        found[qualified] = ast.dump(child) if not isinstance(child, ast.ClassDef) else ""
-                        visit(child, qualified + ".")
-                    else:
-                        visit(child, prefix)
+        def visit(node, prefix):
+            for child in ast.iter_child_nodes(node):
+                if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                    qualified = prefix + child.name
+                    found[qualified] = ast.dump(child) if not isinstance(child, ast.ClassDef) else ""
+                    visit(child, qualified + ".")
+                else:
+                    visit(child, prefix)
 
-            visit(ast.parse(source), "")
-            return found
+        visit(ast.parse(source), "")
+        return found
 
-        before = functions(_git_show("src/workbench/backend/flow_tasks.py"))
-        after = functions((REPO / "src/workbench/backend/flow_tasks.py").read_text())
+    @needs_baseline
+    def test_only_judge_when_ready_changed_in_flow_tasks_and_only_the_helpers_were_added(self):
+        before = self._functions(_git_show("src/workbench/backend/flow_tasks.py"))
+        after = self._functions((REPO / "src/workbench/backend/flow_tasks.py").read_text())
         self.assertEqual(set(before) - set(after), set())
-        self.assertEqual({name for name in before if before[name] != after[name]}, {"TaskFlow._judge_when_ready"})
-        self.assertEqual(set(after) - set(before), {
-            "_AnalysisWait", "_AnalysisWait.__init__", "_AnalysisWait.reset", "_worker_analysis_request",
-            "TaskFlow._wait_out_hold", "TaskFlow._busy_past_limit", "TaskFlow._judge_once", "TaskFlow._analysis_held"})
+        self.assertEqual({name for name in before if before[name] != after[name]},
+                         {"TaskFlow._judge_when_ready"} | self.CS_O01_O02_CHANGED)
+        self.assertEqual(set(after) - set(before), self.JUDGE_REFACTOR_ADDED | self.CS_O01_O02_ADDED)
+
+    @needs_baseline
+    def test_the_cs_o01_o02_commits_did_not_touch_the_judge_split(self):
+        """The methods the refactor changed or added are identical before and after the CS-O01/CS-O02 commits."""
+        try:
+            pre_cs = subprocess.run(["git", "-C", str(REPO), "show", f"{self.PRE_CS_REV}:src/workbench/backend/flow_tasks.py"],
+                                    capture_output=True, text=True, check=True, timeout=30).stdout
+        except (OSError, subprocess.SubprocessError):
+            self.skipTest(f"git cannot provide {self.PRE_CS_REV}")
+        before = self._functions(pre_cs)
+        after = self._functions((REPO / "src/workbench/backend/flow_tasks.py").read_text())
+        judge = {"TaskFlow._judge_when_ready"} | self.JUDGE_REFACTOR_ADDED
+        self.assertEqual({name for name in judge if before.get(name) != after.get(name)}, set())
+        self.assertEqual({name for name in before if before[name] != after[name]}, self.CS_O01_O02_CHANGED)
+        self.assertEqual(set(after) - set(before), self.CS_O01_O02_ADDED)
 
 
 if __name__ == "__main__":

@@ -699,7 +699,12 @@ class SessionTests(HubCase):
         self.assertEqual(replies['static'].status, 200)
         for label in ('login page', 'home', 'settings'):
             html = replies[label].text
-            self.assertNotRegex(html, r'(?i)<script|<style|\sstyle=|\son[a-z]+=|javascript:', label)
+            self.assertNotRegex(html, r'(?i)<style|\sstyle=|\son[a-z]+=|javascript:', label)
+            for script in re.findall(r'(?is)<script\b[^>]*>', html):  # only external same-origin /static/ scripts
+                source = re.search(r'(?i)\ssrc="([^"]*)"', script)
+                self.assertIsNotNone(source, f'{label}: inline script {script}')
+                self.assertRegex(source.group(1), r'^/static/[^/\s][^\s]*$', f'{label}: {script}')
+            self.assertFalse(re.search(r'(?is)<script\b[^>]*>\s*[^\s<]', html), f'{label}: script with a body')
             self.assertEqual(replies[label].headers['Content-Type'].split(';')[0], 'text/html')
         # The 413 is only a refusal: the Hub still answers and the session still works.
         self.assertEqual((await owner.req('GET', '/settings')).status, 200)

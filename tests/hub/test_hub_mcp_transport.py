@@ -23,6 +23,7 @@ sys.path.insert(0, str(REPO / 'src'))
 from fixtures.web_sandbox import tcp_listening  # noqa: E402
 from support.mcp_client import McpClient  # noqa: E402
 from support.mcp_hub import PASSWORD, McpHub  # noqa: E402
+from aiohttp import web  # noqa: E402
 from workbench.hub import mcp  # noqa: E402
 
 
@@ -246,7 +247,8 @@ class SessionCapTests(TransportCase):
 class ExecutorTests(TransportCase):
     """Security review fix 2: ``/mcp`` work (key checks and tool calls) runs on its own bounded executor, never on
     the loop's shared default executor that logins and session checks use; one key has at most 4 calls in flight and
-    the next one is the JSON-RPC error ``busy`` at once. No request-count limit (D-41)."""
+    further calls wait for a slot; only a call that waited ``busy_wait`` (30 s, shortened here) is the JSON-RPC
+    error ``busy``. No request is refused at once and nothing counts requests (no rate limit, D-41/P2-AC-19)."""
 
     def setUp(self):
         super().setUp()
@@ -260,10 +262,19 @@ class ExecutorTests(TransportCase):
         self.entered = []
         original = self.hub.inbox.list_requests
 
+        self.running, self.peak, self.count_lock = 0, 0, threading.Lock()
+
         def blocked(*args, **kwargs):
+            with self.count_lock:
+                self.running += 1
+                self.peak = max(self.peak, self.running)
             self.entered.append(1)
-            self.release.wait(20)
-            return original(*args, **kwargs)
+            try:
+                self.release.wait(20)
+                return original(*args, **kwargs)
+            finally:
+                with self.count_lock:
+                    self.running -= 1
         patcher = mock.patch.object(self.hub.inbox, 'list_requests', side_effect=blocked)
         patcher.start()
         self.addCleanup(patcher.stop)
@@ -338,12 +349,30 @@ class ExecutorTests(TransportCase):
         self.assertTrue(all(box['reply'].status == 200 and 'result' in box['reply'].json for box in boxes),
                         [box.get('reply') and box['reply'].body[:200] for box in boxes])
 
-    def test_a_fifth_call_of_one_key_is_busy_at_once_and_other_keys_still_work(self):
+    def test_eight_parallel_calls_of_one_key_all_complete_four_at_a_time_and_login_answers(self):
         import time
+        self.assertEqual(self.hub.server.busy_wait, 30.0)
+        boxes = [self.call_in_background(self.key) for _ in range(8)]
+        self.wait_entered(4)
+        time.sleep(0.5)  # the other four wait for a slot; none is refused
+        self.assertEqual((len(self.entered), self.peak), (4, 4))
+        self.assertTrue(all('reply' not in box for box in boxes), 'a waiting call was answered')
+        self.assertLess(self.login_and_session_page(), 8, 'login waited for /mcp work')
+        self.release.set()
+        for thread in self.threads:
+            thread.join(30)
+        self.assertTrue(all(box['reply'].status == 200 and 'result' in box['reply'].json for box in boxes),
+                        [box.get('reply') and box['reply'].body[:200] for box in boxes])
+        self.assertEqual((len(self.entered), self.peak), (8, 4))
+
+    def test_a_call_waiting_longer_than_the_bounded_wait_is_busy_and_other_keys_still_work(self):
+        import time
+        self.hub.server.busy_wait = 0.5  # injectable (30 s in the Hub)
         boxes = [self.call_in_background(self.key) for _ in range(4)]
         self.wait_entered(4)
         started = time.monotonic()
         reply = self.hub.client(self.key).request('tools/call', {'name': 'inbox_list', 'arguments': {}})
+        self.assertGreaterEqual(time.monotonic() - started, 0.45, 'refused without waiting')
         self.assertLess(time.monotonic() - started, 3)
         self.assertEqual(reply.status, 200, reply.body)
         self.assertEqual(reply.json['error']['message'], 'busy', reply.json)
@@ -356,6 +385,51 @@ class ExecutorTests(TransportCase):
         self.assertTrue(all('result' in box['reply'].json for box in boxes))
         again = self.hub.client(self.key).request('ping')  # the slots are free again
         self.assertEqual(again.json.get('result'), {})
+
+
+class PoolShutdownTests(unittest.TestCase):
+    """Hub stop shuts the /mcp pool and an app's result-read pool down: queued work cancelled, nothing waited for."""
+
+    def test_close_cancels_queued_mcp_work_and_refuses_new_work(self):
+        import threading
+        from workbench.hub.inbox.service import InboxService
+        inbox = InboxService()
+        self.addCleanup(inbox.close)
+        server = mcp.McpServer(inbox, version='test')
+        release = threading.Event()
+        self.addCleanup(release.set)
+        started = threading.Semaphore(0)
+
+        def hold():
+            started.release()
+            return release.wait(10)
+        running = [server.executor.submit(hold) for _ in range(mcp.MCP_WORKERS)]
+        for _ in running:
+            self.assertTrue(started.acquire(timeout=10))
+        queued = server.executor.submit(lambda: 'never')
+        server.close()  # returns at once although every worker is busy
+        self.assertTrue(queued.cancelled())
+        with self.assertRaises(RuntimeError):
+            server.executor.submit(lambda: None)
+        release.set()
+        self.assertTrue(all(future.result(10) for future in running))
+
+    def test_app_cleanup_shuts_the_result_read_pool(self):
+        from workbench.hub.inbox.service import InboxService
+        from workbench.hub.web.pages import requests as request_pages
+        inbox = InboxService()
+        self.addCleanup(inbox.close)
+        app = web.Application()
+        request_pages.routes(inbox, lambda: [])(app)
+        reads = app[request_pages.PORT].reads
+
+        async def cycle():
+            runner = web.AppRunner(app)
+            await runner.setup()
+            await runner.cleanup()
+        asyncio.run(cycle())
+        with self.assertRaises(RuntimeError):
+            reads.submit(lambda: None)
 
 
 class InternalListenerTests(TransportCase):

@@ -498,6 +498,7 @@ class Hub:
             task.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
         self.lister.close()
+        self.mcp.close()  # the /mcp pool: queued calls cancelled, no wait (security review fix 2)
         await loop.run_in_executor(None, self.dispatcher.close)  # before the inbox closes under it
         await loop.run_in_executor(None, self.inbox.close)  # releases every inbox.lock
 

@@ -809,6 +809,11 @@ async def get_badge(request: web.Request) -> web.Response:
     return web.json_response(await _call(request, request.app[PORT].inbox.badge, principal_of(request)))
 
 
+async def _close_reads(app: web.Application) -> None:
+    """App cleanup (listener stop, Hub stop): the result-read pool's queued reads are cancelled, no wait."""
+    app[PORT].reads.shutdown(wait=False, cancel_futures=True)
+
+
 def routes(inbox, projects: Callable[[], Iterable[ProjectRef]], *, results=None) -> Callable[[web.Application], None]:
     """``create_app(..., routes=[routes(inbox, projects)])``: the request pages over ``inbox``.
 
@@ -818,6 +823,7 @@ def routes(inbox, projects: Callable[[], Iterable[ProjectRef]], *, results=None)
     """
     def register(app: web.Application) -> None:
         app[PORT] = RequestsPort(inbox, projects, results=results if results is not None else Results(inbox))
+        app.on_cleanup.append(_close_reads)
         app.router.add_get("/requests", get_list)
         app.router.add_get("/api/badge", get_badge)
         app.router.add_get("/requests/new", get_new)

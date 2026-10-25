@@ -52,10 +52,12 @@ CANCEL_TOKEN_TTL = 60.0  # SPEC 기술 보완 17
 SESSIONS_PER_KEY = 64  # one key cannot push the other keys' sessions out
 TOKENS_PER_KEY = 32  # live cancel tokens per key (the oldest is dropped)
 # Security review fix 2: /mcp work (key checks, tool calls, result reads) runs on its own bounded pool, never on the
-# loop's default executor that logins and session checks use; one key has at most CALLS_PER_KEY calls in flight and
-# the next is the JSON-RPC error ``busy`` at once. Nothing counts requests over time (no rate limit, D-41).
+# loop's default executor that logins and session checks use; one key has at most CALLS_PER_KEY calls answered at
+# once and its further calls wait for a slot (never refused at once: no rate limit, D-41/P2-AC-19). Only a call that
+# waited BUSY_WAIT seconds without a slot is the JSON-RPC error ``busy``.
 MCP_WORKERS = 8
 CALLS_PER_KEY = 4
+BUSY_WAIT = 30.0
 BUSY = -32000
 
 
@@ -355,7 +357,7 @@ class McpServer:
 
     def __init__(self, inbox, *, projects: Callable[[], Awaitable[list[dict]]] | None = None,
                  monotonic: Callable[[], float] = time.monotonic, token_ttl: float = CANCEL_TOKEN_TTL,
-                 version: str | None = None, results=None):
+                 version: str | None = None, results=None, busy_wait: float = BUSY_WAIT):
         from .inbox.results import Results
         self.inbox = inbox
         self.projects = projects
@@ -368,7 +370,9 @@ class McpServer:
         self._tokens: dict[str, _CancelToken] = {}  # sha256(token) -> binding
         from .web_control import DaemonExecutor
         self.executor = DaemonExecutor(MCP_WORKERS, "hub-mcp")
-        self._in_flight: dict[str, int] = {}  # key_id -> calls being answered (loop thread only)
+        self.busy_wait = busy_wait
+        # key_id -> [slots semaphore, calls holding or waiting for a slot] (loop thread only; dropped at zero)
+        self._slots: dict[str, list] = {}
 
     # -- sessions ---------------------------------------------------------------------------
     def _new_session(self, principal: Principal) -> str:
@@ -628,16 +632,25 @@ class McpServer:
         if notification:
             return web.Response(status=202)  # notifications (initialized, cancelled, ...) change nothing
         key = principal.key_id or ""
-        if self._in_flight.get(key, 0) >= CALLS_PER_KEY:
-            return rpc_error(BUSY, "busy", request_id)
-        self._in_flight[key] = self._in_flight.get(key, 0) + 1
+        entry = self._slots.setdefault(key, [asyncio.Semaphore(CALLS_PER_KEY), 0])
+        entry[1] += 1
         try:
-            return await self._answer(principal, method, message, request_id, session_id)
+            try:
+                await asyncio.wait_for(entry[0].acquire(), self.busy_wait)
+            except asyncio.TimeoutError:
+                return rpc_error(BUSY, "busy", request_id)
+            try:
+                return await self._answer(principal, method, message, request_id, session_id)
+            finally:
+                entry[0].release()
         finally:
-            if self._in_flight[key] <= 1:
-                del self._in_flight[key]
-            else:
-                self._in_flight[key] -= 1
+            entry[1] -= 1
+            if entry[1] == 0 and self._slots.get(key) is entry:
+                del self._slots[key]
+
+    def close(self) -> None:
+        """Hub stop: queued work is cancelled, running work is not waited for (daemon workers)."""
+        self.executor.shutdown(wait=False, cancel_futures=True)
 
     async def _answer(self, principal: Principal, method: str, message: dict, request_id: object,
                       session_id: str | None) -> web.StreamResponse:

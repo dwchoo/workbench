@@ -20,6 +20,7 @@ from .. import auth
 from . import middleware
 from .middleware import (PRINCIPAL, SERVICES, SESSION, api, own_auth, principal_of, public,  # noqa: F401
                          session_of)
+from .pages import board as board_page
 from .pages import control, login, settings
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
@@ -104,7 +105,8 @@ def board_routes(board: Callable[[], object | None]) -> Callable[[web.Applicatio
     ``GET /ws/board``, the Board terminal WebSocket (TI-17).
 
     Session and CSRF are the ``session_check`` middleware's (a page route, unsafe method); API keys cannot reach
-    it. ``board()`` returns the Hub's ``BoardSet`` or None (``hub.toml`` invalid). The confirm page is TI-18's.
+    it. ``board()`` returns the Hub's ``BoardSet`` or None (``hub.toml`` invalid). The Board page and the restart
+    confirm page (``GET /board``, ``GET /board/restart``) are TI-18's (``pages/board.py``).
     The set's one :class:`~workbench.hub.board.ws.BoardTerminal` (its lease and epochs) outlives a listener
     reopen: it is kept here, per set.
     """
@@ -134,6 +136,7 @@ def board_routes(board: Callable[[], object | None]) -> Callable[[web.Applicatio
     def register(app: web.Application) -> None:
         app.router.add_post("/board/restart", post_restart)
         board_ws.routes(lambda: terminal_for(app))(app)
+        board_page.make_register(board)(app)
     return register
 
 

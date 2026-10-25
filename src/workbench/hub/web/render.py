@@ -61,11 +61,14 @@ def csrf_field(csrf: str | None) -> Markup:
 
 
 def layout(title: str, body: object, *, insecure_warning: bool = False, csrf: str | None = None,
-           stylesheets: tuple = (), scripts: tuple = (), refresh: int | None = None) -> Markup:
+           stylesheets: tuple = (), scripts: tuple = (), refresh: int | None = None,
+           module_scripts: tuple = (), metas: dict | None = None) -> Markup:
     """The page frame: plain-HTTP banner, header with the badge slot and (when logged in) logout.
 
     ``stylesheets``/``scripts`` are extra ``/static/...`` URLs a page asks for (never inline); ``refresh`` is a
-    ``<meta http-equiv="refresh">`` interval in seconds (the status board's 10 s, no JavaScript)."""
+    ``<meta http-equiv="refresh">`` interval in seconds (the status board's 10 s, no JavaScript). ``module_scripts``
+    are ``<script type="module" src>`` (run after the plain deferred ones, in order); ``metas`` is ``{name: content}``
+    for data a script reads (the Board page's CSRF token)."""
     banner = tag("div", INSECURE_WARNING_TEXT, class_="banner insecure", role="alert") if insecure_warning else ""
     logout = (tag("form", html_join([csrf_field(csrf), tag("button", "로그아웃", type="submit")]),
                   method="post", action="/logout", class_="logout") if csrf else "")
@@ -74,17 +77,20 @@ def layout(title: str, body: object, *, insecure_warning: bool = False, csrf: st
     head = html_join([void("meta", charset="utf-8"),
                       void("meta", name="viewport", content="width=device-width, initial-scale=1"),
                       *([void("meta", http_equiv="refresh", content=str(int(refresh)))] if refresh else []),
+                      *(void("meta", name=name, content=content) for name, content in (metas or {}).items()),
                       tag("title", f"{title} - {TITLE}" if title else TITLE),
                       void("link", rel="stylesheet", href="/static/base.css"),
                       *(void("link", rel="stylesheet", href=href) for href in stylesheets),
-                      *(tag("script", "", src=src, defer=True) for src in scripts)])
+                      *(tag("script", "", src=src, defer=True) for src in scripts),
+                      *(tag("script", "", src=src, type="module") for src in module_scripts)])
     return Markup("<!doctype html>" + tag("html", html_join([tag("head", head), tag(
         "body", html_join([banner, header, tag("main", body)]))]), lang="ko"))
 
 
 def page(title: str, body: object, *, status: int = 200, insecure_warning: bool = False,
          csrf: str | None = None, stylesheets: tuple = (), scripts: tuple = (),
-         refresh: int | None = None) -> web.Response:
+         refresh: int | None = None, module_scripts: tuple = (), metas: dict | None = None) -> web.Response:
     return web.Response(status=status, text=layout(title, body, insecure_warning=insecure_warning, csrf=csrf,
-                                                   stylesheets=stylesheets, scripts=scripts, refresh=refresh),
+                                                   stylesheets=stylesheets, scripts=scripts, refresh=refresh,
+                                                   module_scripts=module_scripts, metas=metas),
                         content_type="text/html", charset="utf-8")

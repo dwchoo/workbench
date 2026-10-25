@@ -109,6 +109,7 @@ CSRF·출처:
 | `password_changed` | 웹·CLI(`source`) | 무효화한 세션 수 |
 | `api_key_issued`, `api_key_revoked` | key 관리 | key_id, name, grade, scope, expires_at |
 | `terminal_attach`, `terminal_takeover`, `terminal_release`, `terminal_timeout`, `terminal_closed` | WebSocket | epoch, 이전 epoch |
+| `terminal_denied` (2026-10-25 추가) | WebSocket hello 실패·`taken_elsewhere`·세션 무효 4401 | epoch, reason(내용 없음) |
 | `board_restart`, `board_start`, `board_stop` | Board agent 세트 | channel, pid, 이유 |
 | `web_control` | 켜기/끄기·pause·resume·confirm-boot·검토 방식 변경·검토 시작 | project_id, action, 결과 |
 

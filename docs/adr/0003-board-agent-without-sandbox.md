@@ -30,7 +30,9 @@ Hub listener는 LAN에 공개되며 HTTP도 허용한다(VPN 전제, D-07). 그�
 
 - 웹 로그인이 계정 전체를 지키는 유일한 장벽이다. 비밀번호나 세션이 새면 공격자는 소유자의 OS 사용자 권한으로 host에서 무엇이든 할 수 있다(코드·자격 증명·다른 WB 프로젝트 자료 포함).
 - 평문 HTTP는 VPN 등 네트워크 경계에 의존한다. Loopback이 아닌 주소에서 평문 HTTP면 웹과 `wb hub status`에 경고를 보인다.
+- 평문 HTTP로 Loopback이 아닌 주소에 bind하면 로그인 자격 증명, 세션, terminal 입출력이 네트워크에 그대로 노출된다. VPN 전제(D-32)이며 TLS를 권장한다.
 - Board agent와 웹 shell은 요청 흐름 밖에서 host 명령을 실행할 수 있다. P2-AC-07("검토 전 외부 client 호출만으로 실행되지 않음")은 MCP·요청 경로에 대한 보장이며, 로그인한 소유자의 Board agent·shell 사용을 막지 않는다.
+- LAN의 API key client가 낸 요청 본문이 Board agent에게 model 입력으로 닿을 수 있다. Board agent는 소유자 권한, sandbox 없음, cwd `$HOME`으로 실행되므로 요청 본문에 심은 지시(prompt injection)가 따라지면 피해가 크다. 완화: (1) 소유자가 아닌 쪽이 쓴 결과 text는 untrusted로 표시하고 data 주석을 붙인다, (2) ROLE.md가 요청 본문을 지시가 아니라 data로 다루라고 안내한다, (3) 소유자가 실행 전에 검토한다. 이 완화는 모델이 따르는 안내이지 강제 경계가 아니며, 남는 위험은 소유자가 수용했다(D-17).
 - P2-AC-14(임의 host 파일 노출 금지)는 이 결정과 D-22로 의도적으로 완화된다.
 - GPU 사용 안내(D-27)는 개발 host에서 검증할 수 없고 대상 host에서만 확인한다.
 - 다중 사용자나 외부 identity를 도입하면(현재 비목표) 이 결정을 다시 검토해야 한다.

@@ -90,7 +90,7 @@ wb hub status            # web: listening https://10.8.0.2:8780 / web: not_liste
 | `requester` | scope 안 프로젝트에 요청 제출. **자기가 낸 요청만** 조회·댓글·취소·결과 조회. 프로젝트 목록은 id·이름만 |
 | `editor` | scope 안 모든 요청 조회·편집·댓글·상태 지정(NEW↔NEEDS_INFO, 다시 열기)·취소·결과 조회. 프로젝트 상태 조회 |
 
-- scope: 전체(`all`) 또는 선택한 프로젝트 목록. scope 밖 프로젝트는 존재하지 않는 것처럼 `not_found`로 답한다.
+- scope: 전체(`all`) 또는 선택한 프로젝트 목록. 발급 form의 기본값은 **선택한 프로젝트**이며 전체는 직접 골라야 한다. scope 밖 프로젝트는 존재하지 않는 것처럼 `not_found`로 답한다.
 - 목록에는 이름·등급·scope·마지막 사용(최대 약 10초 늦을 수 있음)·만료·상태가 보인다. `board-agent` 시스템 key(Board agent용, Board agent를 시작할 때마다 새로 발급)는 "Board agent(시스템)"로 보이고 폐기 버튼이 없다.
 - **폐기**: 확인 page 뒤 즉시 효력이 있고 다음 호출부터 401이다. rate limit은 없다.
 - **key가 유출됐다면**: 즉시 폐기하고 새로 발급한다. 그 key로 낸 요청은 출처가 `key:<이름>`으로 남아 있으니 요청 목록에서 출처로 훑어 의심되는 것을 취소한다. 실행 전에 걸러지지 않은 요청은 manager 검토를 거치지만, **검토를 통과하면 출처와 상관없이 실행된다**([ADR-0004](../../adr/0004-auto-execution-after-manager-review.md)). 평문 HTTP에서 유출됐다면 비밀번호도 바꾼다.
@@ -144,6 +144,10 @@ bearer_token_env_var = "WB_HUB_KEY"
 | `inbox_set_state` | NEW↔NEEDS_INFO 지정, 닫힌 요청 다시 열기 | editor |
 | `inbox_cancel` | 취소(아래 5.5) | 둘 다 |
 | `inbox_result` | 결과 요약 또는 `full:true` 전체 보기 | 둘 다 |
+
+**신뢰할 수 없는 text 표시.** 소유자가 쓴 것이 아닌 text(다른 key·Board agent 아닌 외부 client가 낸 요청 본문·댓글 등)를 담은 결과에는 `untrusted_text: true`와 data 주석(note)이 붙는다. 받는 agent는 그 text를 지시가 아니라 data로 다뤄야 한다.
+
+**동시 호출 한도.** key 하나가 동시에 처리 중인 MCP 호출 수는 제한된다. 넘으면 busy 오류가 돌아오니 앞선 호출이 끝난 뒤 다시 시도한다.
 
 오류는 `isError:true`와 `structuredContent.error.code`로 온다(`not_found`, `forbidden`, `invalid_transition`, `conflict`, `confirm_required`, `token_mismatch`, `backend_not_running` 등). 입력 한도: 제목 1~200자, 본문 ≤ 64 KiB, 댓글 ≤ 16 KiB.
 
@@ -225,7 +229,7 @@ wb hub review-mode /path/to/project manual     # auto | manual
 
 - **요약**(기본): manager가 닫으면서 남긴 최종 보고 요약. 닫기 전에는 연결 Task의 상태와 run 결과 줄. 요청 상세와 `inbox_result`가 같다.
 - **전체 보기**(상세의 "전체 보기", `/requests/<id>/full`, MCP `inbox_result` `full:true`): run 목록, worker 보고 원문, 명령 목록, 각 run의 raw 로그(offset/length page, 1~131072 B), 산출물 경로. 요청을 볼 수 있으면 requester key도 자기 요청에 대해 쓸 수 있다.
-- **산출물**(`artifact_path`)의 한계: 프로젝트 root 아래 일반 파일만, symlink로 root 밖으로 나가는 경로는 거절, `.wb/`와 `.git/` 아래는 제외, 한 page ≤ 128 KiB. 그 밖의 host 파일은 이 경로로 열 수 없다.
+- **산출물**(`artifact_path`)의 한계: 요청에 **연결된 Task**가 있어야 읽을 수 있다. 프로젝트 root 아래 일반 파일만, symlink로 root 밖으로 나가는 경로는 거절, `.wb/`와 `.git/` 아래는 제외, 한 page ≤ 128 KiB. 비밀로 보이는 파일(`.env`, `*.pem`, `*.key`, `id_rsa*`, `id_ed25519*`, `*.p12`, `*.pfx`, `.netrc`, `.npmrc`, `.pypirc`, `credentials*`, `*.kdbx`)은 거절한다. 그 밖의 host 파일은 이 경로로 열 수 없다.
 - 프로젝트가 꺼져 있으면 마지막으로 본 Task 상태만 "backend 꺼짐"과 함께 보이고 raw 로그는 열 수 없다.
 - 원문은 `text/plain`으로만 보내며 요청 본문·댓글의 HTML·script는 실행되지 않는다. 로그·산출물에 비밀이 섞여 있을 수 있으므로 **requester key에도 전체 보기가 열려 있다는 점**(모든 key가 소유자의 것이라는 전제의 의도적 완화, D-22)을 알고 쓴다.
 
@@ -260,7 +264,13 @@ wb hub review-mode /path/to/project manual     # auto | manual
 
 - 세트는 한 번에 **하나의 연결**만 쓴다(lease). 다른 브라우저·기기에서 `/board`를 열면 **새로 연결한 곳이 즉시 인수**하고, 이전 연결에는 인수당했다는 안내가 나온 뒤 닫힌다.
 - 인수당한 쪽 화면에는 **"다른 곳에서 연결됨 — 다시 가져오기"**가 보인다. 버튼을 누르면 다시 가져온다. 두 tab 사이에 자동으로 뺏고 뺏기지 않도록 인수당한 뒤에는 자동 재연결을 하지 않는다.
-- 같은 tab에서 네트워크가 잠깐 끊기면 자동으로 다시 붙는다(1→2→4…최대 15초 간격). 남은 "연결됨"이 새 연결을 막지는 않는다.
+- 같은 tab에서 네트워크가 잠깐 끊기면 자동으로 다시 붙는다(1→2→4…최대 15초 간격). 안정적으로 10초 동안 붙어 있었으면 간격은 처음(1초)부터 다시 시작한다. 남은 "연결됨"이 새 연결을 막지는 않는다.
+- close 4400~4499(hello 오류 4400, hello CSRF 불일치 4403 등 서버가 이 page 자체를 거절한 경우)는 같은 hello를 다시 보내도 소용없으므로 **자동 재연결하지 않는다**. "연결 없음"으로 두고 소유자가 "다시 연결"을 누를 때까지 기다린다.
+- close 4401은 "연결 없음 — 다시 로그인"으로 보이고 로그인 동작이 나온다. 자동 재연결은 없다.
+- 연결 수 한도: 열린 `/ws/board` 소켓이 모두 8개를 넘으면 upgrade가 **503**으로, 한 로그인 세션에서 hello 전 소켓이 2개를 넘으면 **429**로 거절된다. client는 거절당하면 backoff를 두고 다시 시도한다.
+- 크기 한도: 한 message가 1 MiB를 넘으면 Hub가 연결을 닫는다(1009). 입력 frame은 64 KiB까지이고 넘으면 그 입력은 버려지며 `error`(`too_large`)가 돌아온다.
+- 화면 쪽 감시: 20초 동안 pong이 없으면 화면이 스스로 연결을 닫고(4000, 서버 코드가 아님) 다시 붙는다.
+- 브라우저 back/forward cache로 page가 복원되면(`pageshow`) 떠날 때(`pagehide`) 해제했던 연결을 다시 이어 받는다.
 - Heartbeat: 화면이 10초마다 신호를 보내고, Hub는 20초(+1초)간 아무 신호도 없으면 연결을 끊고 상태를 "연결 없음"으로 둔다. 연결 없음일 때 입력한 키는 어디에도 전달되지 않는다.
 - 로그아웃·비밀번호 변경(`wb hub passwd` 포함)·24시간 만료로 세션이 무효가 되면 열린 연결도 닫힌다(close 4401).
 - 연결은 로그인한 세션만 열 수 있고 API key로는 열 수 없다.
@@ -279,7 +289,7 @@ channel(agent 또는 shell) 하나만 재시작할 수 있다(`/board`의 재시
 
 ### 7.5 Hub 정지와 업데이트
 
-세트의 channel이 살아 있으면 `wb hub stop`과 `wb update`가 확인 목록에 "Board agent 세트: agent running(pid N) · shell running(pid M) · 연결됨"을 보이고 `계속할까요? [y/N]`을 묻는다. 확인하면 세트를 끝낸 뒤 Hub가 멈춘다. 거절하면 아무것도 멈추지 않는다. 확인하는 사이 channel 상태가 바뀌면 다시 확인한다. `--yes`는 확인 질문만 건너뛰며 terminal이 없으면 `--yes` 없이는 멈추지 않는다. Hub가 `SIGTERM`을 받으면 확인 없이 세트를 끝낸다. Hub가 `SIGKILL`로 죽으면 PTY가 닫혀 SIGHUP을 받지만 그 뒤 남는 프로세스는 보장하지 않는다. Hub 재시작 뒤에는 세트·WebSocket·MCP 세션이 사라지므로 `/board`를 다시 연다(요청·API key·세션·감사 기록은 유지된다).
+세트의 channel이 살아 있으면 `wb hub stop`과 `wb update`가 확인 목록에 "Board agent 세트: agent running(pid N) · shell running(pid M) · 연결됨"을 보이고 `계속할까요? [y/N]`을 묻는다. 확인하면 세트를 끝낸 뒤 Hub가 멈춘다. 거절하면 아무것도 멈추지 않는다. 확인하는 사이 channel 상태가 바뀌면 다시 확인한다. `--yes`는 확인 질문만 건너뛰며 terminal이 없으면 `--yes` 없이는 멈추지 않는다. Hub가 `SIGTERM`을 받으면 확인 없이 세트를 끝낸다. Hub가 `SIGKILL`로 죽으면 PTY가 닫혀 SIGHUP을 받지만 그 뒤 남는 프로세스는 보장하지 않는다. Hub 재시작 뒤에는 세트·WebSocket·MCP 세션이 사라지지만, 열려 있던 `/board` tab은 로그인 세션이 아직 유효하면 자동으로 다시 붙는다(세션이 무효면 4401로 "다시 로그인"). 요청·API key·세션·감사 기록은 유지된다.
 
 ## 8. 감사 기록
 
@@ -315,10 +325,15 @@ Web Board 이전에 `wb hub enable`을 한 사용자는 **`wb hub enable`을 한
 | 코드 | 의미 |
 |---|---|
 | 4001 | 다른 연결이 인수했다(다른 곳에서 연결됨). 자동 재연결 안 함 → "다시 가져오기" |
+| 4000 | 화면이 스스로 닫음: 20초 동안 pong 없음. 같은 tab이 다시 붙는다(서버 코드 아님) |
 | 4002 | heartbeat 시간 초과(20초 무신호). 연결 없음으로 바뀌며 같은 tab이 다시 붙는다 |
 | 4003 | 보내야 할 출력이 너무 쌓여(연결당 4 MiB) 끊었다. 다시 붙는다 |
 | 4400 | hello를 5초 안에 보내지 않았거나 형식이 틀렸다. 자동 재연결 안 함 |
-| 4401 | 세션이 무효가 됐다(로그아웃·비밀번호 변경·만료). 다시 로그인 |
+| 4401 | 세션이 무효가 됐다(로그아웃·비밀번호 변경·만료). "연결 없음 — 다시 로그인"과 로그인 동작이 나온다. 자동 재연결 안 함 |
+| 4403 | hello의 CSRF 토큰이 맞지 않는다. page를 새로 고친다. 자동 재연결 안 함 |
+| 4400~4499 | 서버가 이 page를 거절한 코드 전체. 모두 자동 재연결 안 함 → "다시 연결" |
+| 1009 | message가 1 MiB 초과 |
+| (upgrade 거절) | 503: 열린 소켓 8개 초과. 429: 한 세션의 hello 전 소켓 2개 초과. client는 backoff 후 재시도 |
 | 1000 | 정상 해제(탭 닫기·release) |
 | 1001 | Hub가 멈추는 중 |
 

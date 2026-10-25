@@ -116,6 +116,7 @@ function main() {
     connection.dataset.phase = state.phase;
     byId("board-banner").hidden = !view.banner;
     byId("board-reconnect").hidden = view.action !== "reconnect";
+    byId("board-login").hidden = view.action !== "login";
     for (const name of CHANNELS) {
       const info = view.channels[name];
       if (info) byId(`state-${name}`).textContent = channelLabel(info);

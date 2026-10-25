@@ -365,6 +365,45 @@ test("a manual reconnect from 연결 없음 resumes at once and cancels the pend
   assert.deepEqual(tab.send({ type: "reconnect" }), [], "only from disconnected");
 });
 
+test("4401 (the login session ended) shows 연결 없음 — 다시 로그인 with a login action and never reconnects", () => {
+  const tab = boot();
+  attach(tab);
+  const closed = tab.send({ type: "closed", conn: 1, code: 4401 });
+  assert.equal(tab.state.phase, "disconnected");
+  assert.equal(effect(closed, "set_timer"), undefined);
+  const view = board.describe(tab.state);
+  assert.equal(view.connection, "연결 없음 — 다시 로그인");
+  assert.equal(view.action, "login");
+  assert.equal(view.canInput, false);
+  assert.deepEqual(tab.send({ type: "reconnect" }), [], "a reconnect cannot help without a new login");
+  assert.deepEqual(tab.send({ type: "timer", name: "reconnect" }), []);
+  // other 44xx refusals keep the plain label and the manual reconnect
+  const other = boot();
+  attach(other);
+  other.send({ type: "closed", conn: 1, code: 4403 });
+  assert.equal(board.describe(other.state).connection, "연결 없음");
+  assert.equal(board.describe(other.state).action, "reconnect");
+});
+
+test("upgrade refused with 429/503 (the browser reports it as a close 1006 before open) backs off and never hammers", () => {
+  const tab = boot();
+  tab.send({ type: "start", sizes: SIZES });
+  const delays = [];
+  for (let conn = 1; conn <= 6; conn += 1) {
+    // no `opened` event: the handshake itself was answered with an HTTP error
+    const refused = tab.send({ type: "closed", conn, code: 1006 });
+    assert.equal(tab.state.phase, "disconnected");
+    assert.equal(board.describe(tab.state).connection, "연결 없음");
+    delays.push(effect(refused, "set_timer").ms);
+    tab.send({ type: "timer", name: "reconnect" });
+  }
+  assert.deepEqual(delays, [1000, 2000, 4000, 8000, 15000, 15000]);
+  // the same delays apply when the refusal comes right after a short-lived attach (capacity flapping)
+  tab.send({ type: "opened", conn: 7 });
+  tab.send({ type: "message", conn: 7, message: ATTACHED });
+  assert.equal(effect(tab.send({ type: "closed", conn: 7, code: 1006 }), "set_timer").ms, 15000);
+});
+
 test("encodeFrame lays out channel byte, uint32 big-endian epoch, payload", () => {
   const bytes = board.encodeFrame("shell", 0x01020304, new Uint8Array([0x61, 0x62]));
   assert.deepEqual(Array.from(bytes), [1, 1, 2, 3, 4, 0x61, 0x62]);

@@ -81,7 +81,9 @@ def board_page(request: web.Request, board) -> web.Response:
     status = board.status() or {}
     bar = render.tag("div", render.html_join([
         render.tag("span", "연결 중", id="board-connection", class_="connection", role="status"),
-        render.tag("button", "다시 연결", type="button", id="board-reconnect", hidden=True)]), class_="board-bar")
+        render.tag("button", "다시 연결", type="button", id="board-reconnect", hidden=True),
+        render.tag("a", "다시 로그인", href="/login", id="board-login", class_="button", hidden=True)]),
+        class_="board-bar")
     banner = render.tag("div", render.html_join([
         render.tag("span", BANNER_PREFIX),
         render.tag("button", "다시 가져오기", type="button", id="board-retake")]),

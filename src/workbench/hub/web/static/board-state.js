@@ -22,6 +22,8 @@ const CLIENT_TIMEOUT_CODE = 4000; // our own close when no pong came (not a serv
 // 4400-4499: the server refused this page itself (4400 bad hello, 4403 csrf mismatch, any later client error).
 // Retrying the same hello cannot succeed, so the tab shows 연결 없음 and waits for the owner's 다시 연결.
 const isClientRefusal = (code) => code >= 4400 && code <= 4499;
+export const SESSION_ENDED_CODE = 4401; // the login session ended: only a new login helps
+export const SESSION_ENDED_TEXT = "연결 없음 — 다시 로그인";
 export const STABLE_MS = 10000; // an attach must hold this long before the reconnect delay starts over
 const CHANNEL_IDS = { agent: 0, shell: 1 };
 const CHANNEL_NAMES = ["agent", "shell"];
@@ -32,7 +34,7 @@ const CLEAR_HEARTBEAT = [
 
 export function initialState({ csrf }) {
   return {
-    phase: "idle", csrf, conn: 0, sizes: {}, resume: null, epoch: null, channels: {}, attempt: 0, pings: 0,
+    phase: "idle", closeCode: null, csrf, conn: 0, sizes: {}, resume: null, epoch: null, channels: {}, attempt: 0, pings: 0,
   };
 }
 
@@ -57,12 +59,15 @@ const CONNECTION_LABELS = {
 
 // What the page shows for a state: the connection label, the takeover banner, the one action offered
 // ("retake" = 다시 가져오기, resume null; "reconnect" = 다시 연결, resume) and whether input is sent at all.
+const sessionEnded = (state) => state.phase === "disconnected" && state.closeCode === SESSION_ENDED_CODE;
+
 export function describe(state) {
   return {
-    connection: CONNECTION_LABELS[state.phase] || "",
+    connection: sessionEnded(state) ? SESSION_ENDED_TEXT : CONNECTION_LABELS[state.phase] || "",
     banner: state.phase === "taken_elsewhere",
     bannerText: BANNER_TEXT,
-    action: state.phase === "taken_elsewhere" ? "retake" : state.phase === "disconnected" ? "reconnect" : null,
+    action: state.phase === "taken_elsewhere" ? "retake"
+      : sessionEnded(state) ? "login" : state.phase === "disconnected" ? "reconnect" : null,
     canInput: state.phase === "attached",
     channels: state.channels,
   };
@@ -92,7 +97,7 @@ export function step(state, event) {
     case "retake":
       return state.phase === "taken_elsewhere" ? connect(state, null) : NONE(state);
     case "reconnect":
-      return state.phase === "disconnected"
+      return state.phase === "disconnected" && !sessionEnded(state)
         ? withEffects(connect(state, state.resume), [{ type: "clear_timer", name: "reconnect" }]) : NONE(state);
     case "input": return onInput(state, event);
     case "resize": return onResize(state, event);
@@ -129,12 +134,12 @@ function withEffects(result, before) {
 
 function connect(state, resume) {
   const conn = state.conn + 1;
-  return { state: { ...state, phase: "connecting", conn, resume }, effects: [{ type: "open", conn }] };
+  return { state: { ...state, phase: "connecting", conn, resume, closeCode: null }, effects: [{ type: "open", conn }] };
 }
 
 function onClosed(state, code) {
   if (state.phase !== "connecting" && state.phase !== "attached") return NONE(state);
-  const next = { ...state, phase: "disconnected", epoch: null };
+  const next = { ...state, phase: "disconnected", epoch: null, closeCode: code };
   if (isClientRefusal(code)) return { state: next, effects: [...CLEAR_HEARTBEAT] };
   return disconnected(next, [...CLEAR_HEARTBEAT]);
 }
@@ -149,7 +154,9 @@ function disconnected(state, effects) {
 }
 
 function onTimer(state, name) {
-  if (name === "reconnect" && state.phase === "disconnected") return connect(state, state.resume);
+  if (name === "reconnect" && state.phase === "disconnected" && !sessionEnded(state)) {
+    return connect(state, state.resume);
+  }
   if (state.phase !== "attached") return NONE(state);
   if (name === "stable") return { state: { ...state, attempt: 0 }, effects: [] };
   if (name === "ping") {

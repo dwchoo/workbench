@@ -102,6 +102,11 @@ class PageStructureTests(BoardPageCase):
         reconnect = dom.by_id('board-reconnect')
         self.assertIsNotNone(reconnect)
         self.assertIn('hidden', reconnect)
+        login = dom.by_id('board-login')
+        self.assertIsNotNone(login, 'shown by the client after close 4401 (the login session ended)')
+        self.assertEqual(login.get('href'), '/login')
+        self.assertIn('hidden', login)
+        self.assertIn('다시 로그인', dom.body_text)
 
     async def test_csrf_token_is_in_a_meta_tag_and_equals_the_session_token(self):
         _, dom = await self.page()

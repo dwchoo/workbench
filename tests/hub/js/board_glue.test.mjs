@@ -9,7 +9,7 @@ function element(id) {
   if (!elements.has(id)) {
     const classes = new Set(id === "panel-agent" ? ["panel", "active"] : []); // the server renders the agent tab first
     elements.set(id, {
-      id, textContent: "", hidden: false, dataset: {}, listeners: {}, attrs: {},
+      id, textContent: "", hidden: ["board-login", "board-reconnect", "board-banner", "board-notice"].includes(id), dataset: {}, listeners: {}, attrs: {},
       classList: { toggle: (name, on) => (on ? classes.add(name) : classes.delete(name)), contains: (name) => classes.has(name) },
       setAttribute(name, value) { this.attrs[name] = value; },
       addEventListener(type, handler) { this.listeners[type] = handler; },
@@ -127,4 +127,18 @@ test("a network drop shows 연결 없음 and the reconnect button; pagehide rele
   sockets[2].onclose({ code: 1006 });
   assert.equal(element("board-connection").textContent, "연결 없음");
   assert.equal(element("board-reconnect").hidden, false);
+});
+
+test("close 4401 shows 연결 없음 — 다시 로그인 with the login link and no reconnect button or timer", () => {
+  const [id, pending] = [...timers.entries()].find(([, timer]) => timer.ms === 1000); // the backoff of the last test
+  timers.delete(id);
+  pending.callback();
+  const socket = sockets.at(-1);
+  socket.onopen();
+  message(socket, { t: "attached", v: 1, run: "r", epoch: 11, heartbeat: 10, channels: {} });
+  socket.onclose({ code: 4401 });
+  assert.equal(element("board-connection").textContent, "연결 없음 — 다시 로그인");
+  assert.equal(element("board-login").hidden, false);
+  assert.equal(element("board-reconnect").hidden, true);
+  assert.equal([...timers.values()].filter((timer) => timer.ms === 1000).length, 0, "no reconnect timer");
 });

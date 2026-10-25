@@ -35,6 +35,7 @@ PAGE_SIZE = 50
 STYLESHEETS = ("/static/app.css",)
 SCRIPTS = ("/static/badge.js",)  # header badge + tab title (D-24); no inline script
 CANCEL_TOKEN_TTL = 60.0  # SPEC 취소: token 60 s
+MAX_CANCEL_TOKENS = 64  # live tokens are capped; the oldest goes first
 UTC_FORMAT = "%Y-%m-%d %H:%M:%S"
 
 
@@ -103,10 +104,15 @@ ERROR_TEXT = {"not_found": "찾을 수 없습니다", "forbidden": "이 동작�
               "inbox_unavailable": "요청 저장소를 읽을 수 없습니다", "internal_error": "저장하지 못했습니다"}
 
 
+# Only errors caused by what the user typed may show the service's detail; storage and internal errors
+# carry paths and sqlite messages, so they get the fixed text alone.
+DETAIL_CODES = frozenset({"invalid_input", "too_large", "invalid_transition", "idempotency_conflict"})
+
+
 def _error_block(error: InboxError) -> render.Markup:
     text = ERROR_TEXT.get(error.code, error.code)
     parts = [render.tag("strong", text)]
-    if error.detail and error.code not in ("conflict", "not_found"):
+    if error.detail and error.code in DETAIL_CODES:
         parts.append(render.tag("span", f" ({error.detail})"))
     return render.tag("p", render.html_join(parts), class_="error", role="alert")
 
@@ -131,8 +137,18 @@ def _select(name: str, options: Iterable[tuple[str, str]], current: str | None, 
     return render.tag("select", render.html_join(items), name=name)
 
 
-def _page_number(text: object) -> int:
-    return int(text) if isinstance(text, str) and text.isdigit() and 0 < int(text) < 100000 else 1
+NUMBER_MAX_DIGITS = 9
+
+
+def number_field(text: object, what: str = "숫자") -> int:
+    """A non-negative decimal from a form or query field; anything else is ``invalid_input``.
+
+    ``str.isdigit`` alone accepts ``'²'`` (``int`` then raises) and huge digit strings, so ASCII and a
+    length cap are checked first.
+    """
+    if not (isinstance(text, str) and text.isascii() and text.isdigit() and len(text) <= NUMBER_MAX_DIGITS):
+        raise InboxError("invalid_input", f"{what}이(가) 올바른 숫자가 아닙니다")
+    return int(text)
 
 
 async def get_list(request: web.Request) -> web.Response:
@@ -143,11 +159,14 @@ async def get_list(request: web.Request) -> web.Response:
     state = query.get("state") or None
     archive = bool(query.get("archive"))
     text = query.get("q") or None
-    page = _page_number(query.get("page"))
-    cursor = f"o{(page - 1) * PAGE_SIZE}" if page > 1 else None
-    error = None
+    page, error = 1, None
     result = {"requests": [], "next_cursor": None}
     try:
+        if "page" in query:
+            page = number_field(query["page"], "page")
+            if page < 1:
+                raise InboxError("invalid_input", "page는 1부터입니다")
+        cursor = f"o{(page - 1) * PAGE_SIZE}" if page > 1 else None
         if state is not None and state not in STATES:
             raise InboxError("invalid_input", "알 수 없는 상태 filter")
         result = await _call(request, port.inbox.list_requests, principal_of(request), project_id=project_id,
@@ -399,7 +418,8 @@ async def get_detail(request: web.Request) -> web.Response:
 
 # -- edit -------------------------------------------------------------------------------------------
 def edit_form(request: web.Request, detail: dict, *, title: str | None = None, body: str | None = None,
-              error: InboxError | None = None, latest: bool = False) -> render.Markup:
+              error: InboxError | None = None, latest: bool = False,
+              base_version: int | None = None) -> render.Markup:
     rid = detail["request_id"]
     parts = [render.tag("h1", render.html_join([f"#{detail['seq']} ", render.tag("bdi", detail["title"]), " 편집"]))]
     if error is not None:
@@ -409,7 +429,7 @@ def edit_form(request: web.Request, detail: dict, *, title: str | None = None, b
             render.tag("h2", "지금 저장된 내용"), render.tag("p", render.tag("bdi", detail["title"])),
             render.pre(detail["body"])]), id="latest"))
         parts.append(render.tag("p", "입력하던 내용은 아래 양식에 그대로 두었습니다. 확인하고 다시 저장하세요."))
-    parts.append(_post_form(request, request_url(rid, "/edit"), {"base_version": detail["version"]}, "저장", extra=render.html_join([
+    parts.append(_post_form(request, request_url(rid, "/edit"), {"base_version": detail["version"] if base_version is None else base_version}, "저장", extra=render.html_join([
         _field_row("제목", render.void("input", type="text", name="title", value=detail["title"] if title is None else title,
                                       maxlength=200, required=True)),
         _field_row("본문", _textarea("body", detail["body"] if body is None else body, rows=12, required=True))]),
@@ -432,11 +452,11 @@ async def get_edit(request: web.Request) -> web.Response:
 async def post_edit(request: web.Request) -> web.Response:
     port, rid, form = request.app[PORT], request.match_info["rid"], await request.post()
     title, body, base = _form_text(form, "title"), _form_text(form, "body"), _form_text(form, "base_version")
+    posted = None
     try:
         detail = await _detail(request, rid)
-        if not base.isdigit():
-            raise InboxError("invalid_input", "base_version", state=detail["state"], version=detail["version"])
-        done = await _call(request, port.inbox.update, principal_of(request), rid, int(base), title=title, body=body)
+        posted = number_field(base, "base_version")
+        done = await _call(request, port.inbox.update, principal_of(request), rid, posted, title=title, body=body)
     except InboxError as exc:
         try:
             detail = await _detail(request, rid)
@@ -444,8 +464,13 @@ async def post_edit(request: web.Request) -> web.Response:
             return error_page(request, exc)
         if exc.code in ("invalid_transition",) or detail["state"] == "CLOSED":
             return error_page(request, exc, back=request_url(rid))
+        # A rejected edit built on an out-of-date version keeps that version, and the page shows what is
+        # saved now: resubmitting then conflicts openly instead of overwriting a change nobody saw.
+        stale = posted is not None and posted != detail["version"]
         return _frame(request, "편집", edit_form(request, detail, title=title, body=body, error=exc,
-                                                 latest=exc.code == "conflict"), status=_error_status(exc))
+                                                 latest=stale or exc.code == "conflict",
+                                                 base_version=posted if stale and exc.code != "conflict" else None),
+                      status=_error_status(exc))
     notice = "revised" if done["mode"] == "new_revision" else "edited"
     return see_other(_query_url(request_url(rid), notice=notice))
 
@@ -470,10 +495,9 @@ async def post_state(request: web.Request) -> web.Response:
     port, rid, form = request.app[PORT], request.match_info["rid"], await request.post()
     target, base = _form_text(form, "to"), _form_text(form, "base_version")
     try:
-        if not base.isdigit():
-            raise InboxError("invalid_input", "base_version")
+        version = number_field(base, "base_version")
         before = await _detail(request, rid)
-        await _call(request, port.inbox.set_state, principal_of(request), rid, int(base), target)
+        await _call(request, port.inbox.set_state, principal_of(request), rid, version, target)
     except InboxError as exc:
         return error_page(request, exc, back=request_url(rid))
     return see_other(_query_url(request_url(rid), notice="reopened" if before["state"] == "CLOSED" else "state_set"))
@@ -484,18 +508,22 @@ def _is_linked(detail: dict) -> bool:
     return detail["state"] != "CLOSED" and detail["task"]["task_id"] is not None
 
 
-def _binding(principal: Principal, detail: dict) -> tuple:
-    """What a cancel token is tied to: who, which request and version, the Task status and its command."""
-    view = detail["task"]["view"] or {}
-    return (principal.kind, principal.key_id, detail["request_id"], detail["version"], view.get("status"),
-            view.get("command_id"))
+def _binding(request: web.Request, detail: dict) -> tuple:
+    """What a cancel token is tied to: the session (its csrf), who, which request and version, the Task
+    status and its command."""
+    principal, view = principal_of(request), detail["task"]["view"] or {}
+    return (session_of(request).csrf, principal.kind, principal.key_id, detail["request_id"], detail["version"],
+            view.get("status"), view.get("command_id"))
 
 
 def issue_cancel_token(request: web.Request, detail: dict) -> str:
     port, now = request.app[PORT], float(request.app[SERVICES].clock())
-    port.cancel_tokens = {token: entry for token, entry in port.cancel_tokens.items() if entry[1] > now}
+    live = {token: entry for token, entry in port.cancel_tokens.items() if entry[1] > now}
+    while len(live) >= MAX_CANCEL_TOKENS:  # dicts keep insertion order: drop the oldest
+        del live[next(iter(live))]
     token = secrets.token_urlsafe(24)
-    port.cancel_tokens[token] = (_binding(principal_of(request), detail), now + CANCEL_TOKEN_TTL)
+    live[token] = (_binding(request, detail), now + CANCEL_TOKEN_TTL)
+    port.cancel_tokens = live
     return token
 
 
@@ -504,7 +532,7 @@ def take_cancel_token(request: web.Request, token: str, detail: dict) -> bool:
     port = request.app[PORT]
     entry = port.cancel_tokens.pop(token, None) if token else None
     return (entry is not None and entry[1] > float(request.app[SERVICES].clock())
-            and entry[0] == _binding(principal_of(request), detail))
+            and entry[0] == _binding(request, detail))
 
 
 async def get_cancel(request: web.Request) -> web.Response:
@@ -537,11 +565,10 @@ async def post_cancel(request: web.Request) -> web.Response:
     base, token = _form_text(form, "base_version"), _form_text(form, "token")
     try:
         detail = await _detail(request, rid)
-        if not base.isdigit():
-            raise InboxError("invalid_input", "base_version")
+        version = number_field(base, "base_version")
         if _is_linked(detail) and not take_cancel_token(request, token, detail):
             raise InboxError("token_mismatch", "", state=detail["state"], version=detail["version"])
-        done = await _call(request, port.inbox.cancel, principal_of(request), rid, base_version=int(base))
+        done = await _call(request, port.inbox.cancel, principal_of(request), rid, base_version=version)
     except InboxError as exc:
         return error_page(request, exc, back=request_url(rid))
     return see_other(_query_url(request_url(rid), notice="cancelled" if done["status"] == "cancelled" else "cancel_requested"))

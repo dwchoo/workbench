@@ -994,5 +994,83 @@ class BadgeAndAssetTests(RequestsCase):
         self.assertIn('wb-badge', [a.get('id') for _, a in page.elements])
 
 
+class ReviewFixTests(RequestsCase):
+    BAD_NUMBERS = ('\u00b2', '\u0663', '5' * 5000, '1' * 10, '-1', ' 1', '')
+
+    async def test_odd_numbers_are_invalid_input_never_a_server_error(self):
+        request_id = self.add('T', 'b')
+        for bad in self.BAD_NUMBERS:
+            for path, extra in ((f'/requests/{request_id}/edit', {'title': 'n', 'body': 'b'}),
+                                (f'/requests/{request_id}/state', {'to': 'NEEDS_INFO'}),
+                                (f'/requests/{request_id}/cancel', {})):
+                response = await self.submit(path, {'base_version': bad, **extra})
+                self.assertEqual(response.status, 400, (path, bad[:10]))
+            response, page = await self.page('/requests?' + urlencode({'page': bad}))
+            self.assertEqual(response.status, 400, bad[:10])
+            self.assertIn('입력이 올바르지 않습니다', page.body_text)
+        self.assertEqual(self.db_rows('SELECT state, version FROM requests')[0], ('NEW', 1))
+
+    async def test_error_detail_is_shown_only_for_user_input_errors(self):
+        shown = request_pages._error_block(InboxError('invalid_input', 'title is empty')).__str__()
+        self.assertIn('title is empty', shown)
+        for code in ('inbox_unavailable', 'inbox_busy', 'internal_error', 'project_unavailable', 'some_new_code'):
+            shown = request_pages._error_block(InboxError(code, '/home/u/.wb/inbox.sqlite3: disk I/O error'))
+            self.assertNotIn('/home/u', shown, code)
+            self.assertNotIn('sqlite', shown, code)
+        for code in ('invalid_input', 'too_large', 'invalid_transition', 'idempotency_conflict'):
+            self.assertIn('why', request_pages._error_block(InboxError(code, 'why')), code)
+
+    async def test_invalid_edit_against_a_stale_base_shows_the_latest_and_keeps_the_posted_version(self):
+        request_id = self.add('T', 'b')
+        _, page = await self.page(f'/requests/{request_id}/edit')
+        form = page.form(f'/requests/{request_id}/edit')
+        self.inbox.update(OWNER, request_id, 1, title='Elsewhere', body='elsewhere body')
+        response = await self.post(f'/requests/{request_id}/edit', {
+            'csrf': form['fields']['csrf'], 'base_version': '1', 'title': 'x' * 201, 'body': 'b'},
+            cookies=self.cookies)
+        page = Page(response.body_text)
+        self.assertEqual(response.status, 400)
+        self.assertIn('elsewhere body', page.pre)
+        self.assertEqual(page.form(f'/requests/{request_id}/edit')['fields']['base_version'], '1')
+
+    async def test_cancel_tokens_are_capped_and_tied_to_the_session_csrf(self):
+        ids = []
+        for number in range(request_pages.MAX_CANCEL_TOKENS + 5):
+            request_id = self.add(f'job {number}')
+            self.link(request_id, 'running')
+            ids.append(request_id)
+        self.backend_up = True
+        forms = []
+        for request_id in ids:
+            _, page = await self.page(f'/requests/{request_id}/cancel')
+            forms.append(page.form(f'/requests/{request_id}/cancel'))
+        self.assertLessEqual(len(self.app_port().cancel_tokens), request_pages.MAX_CANCEL_TOKENS)
+        newest = forms[-1]
+        response = await self.post(f'/requests/{ids[-1]}/cancel', dict(newest['fields']), cookies=self.cookies)
+        self.assertEqual(response.status, 303)  # the newest token survived the cap
+        oldest = await self.post(f'/requests/{ids[0]}/cancel', dict(forms[0]['fields']), cookies=self.cookies)
+        self.assertEqual(oldest.status, 409)  # the oldest was evicted
+
+    async def test_a_token_from_another_session_does_not_work(self):
+        request_id = self.add('job')
+        self.link(request_id, 'running')
+        self.backend_up = True
+        _, page = await self.page(f'/requests/{request_id}/cancel')
+        token = page.form(f'/requests/{request_id}/cancel')['fields']['token']
+        other = {'wb_hub_session': await self.session_cookie()}
+        _, other_page = await self.page('/requests/new')
+        other_csrf = None
+        response = await self.get('/requests/new', cookies=other)
+        other_csrf = Page(response.body_text).form('/requests')['fields']['csrf']
+        base = page.form(f'/requests/{request_id}/cancel')['fields']['base_version']
+        response = await self.post(f'/requests/{request_id}/cancel',
+                                   {'csrf': other_csrf, 'base_version': base, 'token': token}, cookies=other)
+        self.assertEqual(response.status, 409)
+        self.assertIsNone(self.db_rows('SELECT cancel_state FROM requests')[0][0])
+
+    def app_port(self):
+        return self.server.app[request_pages.PORT]
+
+
 if __name__ == '__main__':
     unittest.main()

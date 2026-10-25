@@ -7,9 +7,12 @@ Run with ``discover -s tests/hub -p 'test_board_hangul.py'``.
 """
 from __future__ import annotations
 
+import shutil
 import unittest
 
 import test_board_ws as board_case  # module import: its test classes stay uncollected here
+import test_board_launch as launch_case
+import test_board_set as set_case
 
 from workbench.hub.board.set import Ring
 
@@ -89,6 +92,76 @@ class ReplayBoundaryTests(unittest.TestCase):
         binary = Ring(limit=8)
         binary.append(b'\x00' + b'\x80' * 12)  # no lead byte anywhere: not UTF-8, keep the newest bytes
         self.assertEqual(len(binary.snapshot()), 8)
+
+
+LOCALE_KEYS = ('LANG', 'LC_ALL', 'LC_CTYPE')
+
+
+class BoardLocaleTests(launch_case.LauncherCase):
+    """Both channels get a UTF-8 character type (the browser terminal is UTF-8), keeping the user's own."""
+
+    def environments(self, **locale) -> list[dict]:
+        for key in LOCALE_KEYS:
+            self.box.env.pop(key, None)
+        self.box.env.update(locale)
+        launcher = self.make_launcher(self.config)
+        return [launcher.prepare_shell().env, self.prepare(launcher).env]
+
+    def test_no_locale_at_all_gets_lang_c_utf8(self):
+        for env in self.environments():
+            self.assertEqual(env.get('LANG'), 'C.UTF-8')
+            self.assertNotIn('LC_ALL', env)
+
+    def test_a_non_utf8_locale_in_effect_is_replaced_where_it_is_set(self):
+        cases = [({'LANG': 'C'}, {'LANG': 'C.UTF-8'}),
+                 ({'LANG': 'POSIX', 'LC_ALL': ''}, {'LANG': 'C.UTF-8', 'LC_ALL': ''}),
+                 ({'LANG': 'ko_KR.UTF-8', 'LC_ALL': 'C'}, {'LANG': 'ko_KR.UTF-8', 'LC_ALL': 'C.UTF-8'}),
+                 ({'LANG': 'ko_KR.UTF-8', 'LC_CTYPE': 'C'}, {'LANG': 'ko_KR.UTF-8', 'LC_CTYPE': 'C.UTF-8'})]
+        for given, expected in cases:
+            with self.subTest(given=given):
+                for env in self.environments(**given):
+                    self.assertEqual({key: env[key] for key in LOCALE_KEYS if key in env}, expected)
+
+    def test_the_users_utf8_locale_is_kept(self):
+        for given in ({'LANG': 'ko_KR.UTF-8'}, {'LANG': 'en_US.utf8'}, {'LANG': 'C', 'LC_ALL': 'ko_KR.UTF-8'},
+                      {'LC_CTYPE': 'C.UTF-8'}):
+            with self.subTest(given=given):
+                for env in self.environments(**given):
+                    self.assertEqual({key: env[key] for key in LOCALE_KEYS if key in env}, given)
+
+
+class BoardShellHangulTests(set_case.SetCase):
+    """A real shell channel started from a Hub environment without any locale (a minimal or systemd env)."""
+
+    def setUp(self):
+        super().setUp()
+        for key in LOCALE_KEYS:
+            self.box.env.pop(key, None)
+
+    def run_shell(self, shell: str, typed: bytes, needle: bytes) -> bytes:
+        self.box.env['SHELL'] = shell
+        self.launcher = self.make_launcher(self.config)
+        self.board = self.make_board()
+        self.start()
+        self.assertTrue(self.board.write('shell', typed))
+        self.assertTrue(self.wait(lambda: needle in self.board.replay('shell')), self.board.replay('shell')[-300:])
+        return self.board.replay('shell')
+
+    def test_the_shell_reports_a_utf8_charmap(self):
+        replay = self.run_shell('/bin/sh', b'echo "map=$(locale charmap)."\r', b'map=')
+        self.assertIn(b'map=UTF-8.', replay)
+
+    @unittest.skipUnless(shutil.which('bash'), 'bash is not installed')
+    def test_readline_backspace_over_a_hangul_syllable_deletes_the_whole_character(self):
+        typed = 'printf "[%s]\\n" "X한글'.encode() + b'\x7f' + b'Y"\r'
+        replay = self.run_shell(shutil.which('bash'), typed, b']')
+        self.assertIn('[X한Y]'.encode(), replay, replay[-300:])
+
+    def test_a_cooked_mode_line_erases_a_whole_hangul_syllable(self):
+        # /bin/sh ``read`` has no line editor: the PTY line discipline does the erase (it needs IUTF8).
+        typed = 'read v\rX한글'.encode() + b'\x7f' + b'Y\rprintf "<%s>\\n" "$v"\r'
+        replay = self.run_shell('/bin/sh', typed, b'>\r')
+        self.assertIn('<X한Y>'.encode(), replay, replay[-300:])
 
 
 if __name__ == '__main__':

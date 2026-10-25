@@ -9,6 +9,7 @@ from dataclasses import dataclass, field
 import json
 import os
 from pathlib import Path
+import re
 import threading
 import time
 from typing import Any, Callable, Mapping
@@ -35,6 +36,9 @@ KEY_ENV = "WB_BOARD_MCP_KEY"
 CHECK_ROLE = "board"
 DEFAULT_SHELL = "/bin/sh"
 REASON_LIMIT = 256  # the audit ``reason`` limit
+FALLBACK_LOCALE = "C.UTF-8"
+LOCALE_KEYS = ("LC_ALL", "LC_CTYPE", "LANG")  # the C library's precedence for the character type
+_UTF8_LOCALE = re.compile(r"\.utf-?8(@|$)", re.IGNORECASE)
 # The isolation list without ``native``: the only provider that reads ``<agent dir>/mcp.json`` (TI-15).
 BOARD_PROVIDER_IDS = tuple(item for item in ISOLATION_PROVIDER_IDS if item != "native")
 
@@ -182,9 +186,23 @@ def isolation_failure(result: Mapping[str, Any]) -> str | None:
     return ("leak:" + ",".join(leaks))[:REASON_LIMIT]
 
 
+def utf8_locale(env: dict[str, str]) -> dict[str, str]:
+    """``env`` with a UTF-8 character type: the browser terminal sends and shows UTF-8 (Hangul input, readline
+    erase). The user's UTF-8 locale stays; a non-UTF-8 one in effect (``LC_ALL`` > ``LC_CTYPE`` > ``LANG``, the
+    first non-empty) becomes :data:`FALLBACK_LOCALE` in that variable, and no locale at all sets ``LANG``."""
+    for key in LOCALE_KEYS:
+        if env.get(key):
+            if not _UTF8_LOCALE.search(env[key]):
+                env[key] = FALLBACK_LOCALE
+            return env
+    env["LANG"] = FALLBACK_LOCALE
+    return env
+
+
 def board_environment(base: Mapping[str, str], home: omp_home.OmpHome, key: str) -> dict[str, str]:
-    """``hub_environment()`` with the Board home values, ``TERM`` and the system key (HOME stays the user's)."""
-    env = omp_home.home_environment(hub_environment(base), home.environment())
+    """``hub_environment()`` with the Board home values, ``TERM``, a UTF-8 locale and the system key (HOME stays
+    the user's)."""
+    env = utf8_locale(omp_home.home_environment(hub_environment(base), home.environment()))
     env["TERM"] = DISPLAY_TERM
     env[KEY_ENV] = key
     return env
@@ -252,11 +270,12 @@ class BoardLauncher:
         return AgentLaunch(board_argv(omp, overlay, prompt, resume=resume, model=model), env, cwd, issued.key_id)
 
     def prepare_shell(self) -> ShellLaunch:
-        """``board_agent.shell`` / ``$SHELL`` / ``/bin/sh`` in ``$HOME`` with ``hub_environment()`` + ``TERM``."""
+        """``board_agent.shell`` / ``$SHELL`` / ``/bin/sh`` in ``$HOME`` with ``hub_environment()`` + ``TERM`` and a
+        UTF-8 locale (:func:`utf8_locale`)."""
         shell = self.config.shell or self.environment.get("SHELL") or DEFAULT_SHELL
         if not os.path.isabs(shell) or not os.access(shell, os.X_OK):
             raise BoardLaunchError("shell_unavailable", shell)
-        env = hub_environment(self.environment)
+        env = utf8_locale(hub_environment(self.environment))
         env["TERM"] = DISPLAY_TERM
         return ShellLaunch([shell], env, str(omp_home.environment_home(self.environment)))
 

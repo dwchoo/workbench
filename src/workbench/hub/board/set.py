@@ -21,6 +21,7 @@ import pty
 import select
 import signal
 import sys
+import termios
 import threading
 import time
 import warnings
@@ -47,6 +48,23 @@ Audit = Callable[[str, str, "str | None", dict], None]
 
 def _log(text: str) -> None:
     print(f"[workbench] board: {text}", file=sys.stderr, flush=True)
+
+
+# Python's termios has no IUTF8; Linux's c_iflag bit (asm-generic/termbits.h) is 0o40000.
+IUTF8 = getattr(termios, "IUTF8", 0o40000 if sys.platform.startswith("linux") else 0)
+
+
+def _set_iutf8(fd: int) -> None:
+    """The browser terminal is UTF-8: the line discipline's erase (cooked mode, e.g. ``sh``'s ``read``) then
+    removes a whole multi-byte character such as a Hangul syllable, not its last byte."""
+    if not IUTF8:
+        return
+    try:
+        attributes = termios.tcgetattr(fd)
+        attributes[0] |= IUTF8
+        termios.tcsetattr(fd, termios.TCSANOW, attributes)
+    except termios.error:
+        pass
 
 
 class Ring:
@@ -89,6 +107,7 @@ class Channel(_OwnedSession):
             try:
                 os.chdir(cwd)
                 _set_winsize(0, rows, cols)
+                _set_iutf8(0)
                 signal.signal(signal.SIGPIPE, signal.SIG_DFL)
                 signal.signal(signal.SIGXFSZ, signal.SIG_DFL)
                 signal.signal(signal.SIGHUP, signal.SIG_DFL)

@@ -58,7 +58,17 @@ def password_problem(password: str) -> str | None:
         return "password_too_short"
     if len(password) > PASSWORD_MAX:
         return "password_too_long"
+    if not _encodable(password):
+        return "password_invalid"
     return None
+
+
+def _encodable(text: str) -> bool:
+    try:
+        text.encode("utf-8")
+    except UnicodeEncodeError:  # lone surrogates
+        return False
+    return True
 
 
 def _scrypt(password: str, salt: bytes) -> bytes:
@@ -185,7 +195,8 @@ class PasswordStore:
         session to the returned generation never mixes an old password with a new generation.
         """
         record = self.load()
-        if record is None or not isinstance(password, str) or len(password) > PASSWORD_MAX:
+        if (record is None or not isinstance(password, str) or len(password) > PASSWORD_MAX
+                or not _encodable(password)):
             return None
         if hmac.compare_digest(_scrypt(password, record.salt), record.digest):
             return record.generation
@@ -236,6 +247,9 @@ CREATE TABLE audit (
     id INTEGER PRIMARY KEY AUTOINCREMENT, at REAL NOT NULL, event TEXT NOT NULL, actor TEXT NOT NULL,
     client_addr TEXT, detail_json TEXT NOT NULL);
 """
+# ``login_state`` also holds the one meta row ``meta:audited_generation`` (``failures`` = the last
+# audited password generation): the SPEC fixes the four tables, and login keys are ``addr:``/``global``.
+AUDITED_GENERATION_KEY = "meta:audited_generation"
 
 
 class HubDbError(RuntimeError):
@@ -313,10 +327,11 @@ class HubDb:
             connection.execute("BEGIN IMMEDIATE")
             try:
                 result = steps(lambda sql, args=(): connection.execute(sql, args))
+                connection.execute("COMMIT")
             except BaseException:
-                connection.execute("ROLLBACK")
+                if connection.in_transaction:
+                    connection.execute("ROLLBACK")
                 raise
-            connection.execute("COMMIT")
             return result
 
 
@@ -352,9 +367,12 @@ class SessionStore:
         """``generation`` is the value :meth:`PasswordStore.verify` returned for this login."""
         token, csrf = _token(), _token()
         expires_at = now + SESSION_TTL
-        self.db.write(lambda execute: execute(
-            "INSERT INTO sessions VALUES (?, ?, ?, ?, ?, ?, ?)",
-            (_token_hash(token), now, expires_at, generation, csrf, client_addr, user_agent)))
+
+        def steps(execute):
+            execute("DELETE FROM sessions WHERE expires_at <= ?", (now,))  # expired logins never verify again
+            execute("INSERT INTO sessions VALUES (?, ?, ?, ?, ?, ?, ?)",
+                    (_token_hash(token), now, expires_at, generation, csrf, client_addr, user_agent))
+        self.db.write(steps)
         return IssuedSession(token, csrf, expires_at)
 
     def _row(self, token: object) -> Session | None:
@@ -387,27 +405,48 @@ class SessionStore:
         return self.db.write(lambda execute: execute(
             "DELETE FROM sessions WHERE token_hash != ?", (keep,)).rowcount)
 
-    def reissue(self, token: str, now: float) -> "Reissued | None":
+    def reissue(self, token: str, now: float, *, expected_generation: int | None = None) -> "Reissued | None":
         """After a web password change: replace this unexpired login with one bound to the
-        current generation (same expiry, new token and CSRF) and delete every other session."""
-        try:
-            generation = self.passwords.generation()
-        except AuthInvalid:
+        current generation (same expiry, new token and CSRF) and delete every other session.
+
+        Web flow: ``g = passwords.verify(current)``; ``passwords.set_password(new)``;
+        ``reissue(token, now, expected_generation=g)``. The session must carry exactly
+        ``expected_generation`` and the current generation must be exactly the one change after
+        it (``expected + 1``), so a session an earlier change invalidated is never revived and a
+        change slipped in between (e.g. ``wb hub passwd``) refuses the reissue. ``None`` means
+        "the generation just before the current one". The generation is read while holding
+        ``auth.lock`` inside the DB transaction, so no password write can interleave.
+        """
+        if self._row(token) is None:
             return None
-        old = self._row(token)
-        if generation is None or old is None or not now < old.expires_at:
-            return None
-        fresh = IssuedSession(_token(), _token(), old.expires_at)
+        fresh_token, fresh_csrf = _token(), _token()
 
         def steps(execute):
-            if not execute("DELETE FROM sessions WHERE token_hash = ?", (old.token_hash,)).rowcount:
+            try:
+                generation = self.passwords.generation()
+            except AuthInvalid:
                 return None
+            rows = execute("SELECT token_hash, created_at, expires_at, password_generation, csrf_token, "
+                           "client_addr, user_agent FROM sessions WHERE token_hash = ?",
+                           (_token_hash(token),)).fetchall()
+            if generation is None or not rows:
+                return None
+            old = Session(*rows[0])
+            expected = generation - 1 if expected_generation is None else expected_generation
+            if (not now < old.expires_at or old.password_generation != expected
+                    or type(expected) is not int or generation != expected + 1):
+                return None
+            execute("DELETE FROM sessions WHERE token_hash = ?", (old.token_hash,))
             invalidated = execute("DELETE FROM sessions").rowcount
             execute("INSERT INTO sessions VALUES (?, ?, ?, ?, ?, ?, ?)",
-                    (_token_hash(fresh.token), old.created_at, old.expires_at, generation, fresh.csrf,
+                    (_token_hash(fresh_token), old.created_at, old.expires_at, generation, fresh_csrf,
                      old.client_addr, old.user_agent))
-            return Reissued(fresh, invalidated)
-        return self.db.write(steps)
+            return Reissued(IssuedSession(fresh_token, fresh_csrf, old.expires_at), invalidated)
+        try:
+            with _FileLock(self.passwords.lock_path):
+                return self.db.write(steps)
+        except (AuthInvalid, OSError):
+            return None
 
 
 @dataclass(frozen=True, slots=True)
@@ -420,6 +459,8 @@ class Reissued:
 
 DELAY_CAP = 30
 GLOBAL_KEY = "global"
+LOGIN_PENDING_LIMIT = 8
+LOGIN_STATE_TTL = 24 * 3600.0
 
 
 def delay_seconds(failures: int) -> int:
@@ -430,15 +471,53 @@ def delay_seconds(failures: int) -> int:
 class LoginThrottle:
     """Consecutive login failures per client address and Hub-wide (``login_state``, kept across restarts).
 
-    The wait before the next verification is ``max(f(addr), f(global // 3))``.
+    The wait before the next verification is ``max(f(addr), f(global // 3))`` counted from the
+    last failure of that counter. Intended use by the web login handler (TI-03), so that a LAN
+    attacker can never make the owner wait behind a sleeping lock holder:
+
+    1. ``if not throttle.try_enter():`` answer 429 at once (at most :data:`LOGIN_PENDING_LIMIT`
+       logins may be in flight); otherwise ``try: ... finally: throttle.leave()``.
+    2. ``retry_after = throttle.check(addr, now)``; when ``> 0`` answer 429 with
+       ``Retry-After: ceil(retry_after)`` without verifying and without sleeping.
+    3. Verify the password (in an executor), then ``record_failure``/``record_success``.
+
+    Address rows idle for :data:`LOGIN_STATE_TTL` are pruned on each failure.
     """
 
-    def __init__(self, db: HubDb, *, clock=time.time):
+    def __init__(self, db: HubDb, *, clock=time.time, pending_limit: int | None = None):
         self.db, self._clock = db, clock
+        self._pending_limit = LOGIN_PENDING_LIMIT if pending_limit is None else pending_limit
+        self._pending = 0
+        self._pending_lock = threading.Lock()
+
+    def try_enter(self) -> bool:
+        """Take one of the bounded in-flight login slots; ``False`` when all are taken."""
+        with self._pending_lock:
+            if self._pending >= self._pending_limit:
+                return False
+            self._pending += 1
+            return True
+
+    def leave(self) -> None:
+        with self._pending_lock:
+            if self._pending <= 0:
+                raise RuntimeError("leave() without try_enter()")
+            self._pending -= 1
 
     @staticmethod
     def _key(addr: str | None) -> str:
         return f"addr:{addr or ''}"
+
+    def _state(self, key: str) -> tuple[int, float]:
+        rows = self.db.query("SELECT failures, updated_at FROM login_state WHERE key = ?", (key,))
+        return (rows[0][0], rows[0][1]) if rows else (0, 0.0)
+
+    def check(self, addr: str | None, now: float) -> float:
+        """Seconds the next attempt from ``addr`` must still wait (0 = verify now). Never sleeps."""
+        own_failures, own_at = self._state(self._key(addr))
+        all_failures, all_at = self._state(GLOBAL_KEY)
+        return max(0.0, own_at + delay_seconds(own_failures) - now,
+                   all_at + delay_seconds(all_failures // 3) - now)
 
     def _failures(self, key: str) -> int:
         rows = self.db.query("SELECT failures FROM login_state WHERE key = ?", (key,))
@@ -448,10 +527,11 @@ class LoginThrottle:
         return max(delay_seconds(self._failures(self._key(addr))),
                    delay_seconds(self._failures(GLOBAL_KEY) // 3))
 
-    def record_failure(self, addr: str | None) -> None:
-        now = float(self._clock())
+    def record_failure(self, addr: str | None, now: float | None = None) -> None:
+        now = float(self._clock() if now is None else now)
 
         def steps(execute):
+            execute("DELETE FROM login_state WHERE key LIKE 'addr:%' AND updated_at < ?", (now - LOGIN_STATE_TTL,))
             for key in (self._key(addr), GLOBAL_KEY):
                 execute("INSERT INTO login_state VALUES (?, 1, ?) ON CONFLICT(key) DO UPDATE "
                         "SET failures = failures + 1, updated_at = excluded.updated_at", (key, now))
@@ -468,6 +548,7 @@ KEY_PREFIX = "wbk_"
 KEY_ID_ALPHABET = "abcdefghijklmnopqrstuvwxyz234567"  # RFC 4648 base32, lower case
 KEY_ID_LENGTH, KEY_SECRET_LENGTH = 10, 43
 KEY_LENGTH = len(KEY_PREFIX) + KEY_ID_LENGTH + 1 + KEY_SECRET_LENGTH
+KEY_ID_ATTEMPTS = 8
 _BASE64URL = frozenset("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_")
 GRADES = ("requester", "editor")
 SYSTEM_KEY_NAME = "board-agent"
@@ -475,6 +556,7 @@ KEY_NAME_MAX = 64
 _KEY_NAME_CHARS = frozenset("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789 ._-")
 KEY_EXPIRY_DAYS_MAX = 3650
 PROJECT_ID_MAX = 128
+SCOPE_PROJECTS_MAX = 1000
 _DUMMY_HASH = hashlib.sha256(b"").hexdigest()
 
 
@@ -545,7 +627,8 @@ def _check_scope(scope: object) -> dict:
         return {"all": True}
     if isinstance(scope, dict) and set(scope) == {"projects"} and isinstance(scope["projects"], list):
         projects = scope["projects"]
-        if (projects and all(isinstance(item, str) and 0 < len(item) <= PROJECT_ID_MAX for item in projects)
+        if (0 < len(projects) <= SCOPE_PROJECTS_MAX
+                and all(isinstance(item, str) and 0 < len(item) <= PROJECT_ID_MAX for item in projects)
                 and len(set(projects)) == len(projects)):
             return {"projects": list(projects)}
     raise ApiKeyRejected("scope_invalid")
@@ -590,7 +673,7 @@ class ApiKeyStore:
 
     def _insert(self, name: str, grade: str, scope: dict, expires_at: float | None, now: float,
                 system: bool, replace_system: bool = False) -> IssuedKey:
-        while True:
+        for _ in range(KEY_ID_ATTEMPTS):
             key_id = "".join(secrets.choice(KEY_ID_ALPHABET) for _ in range(KEY_ID_LENGTH))
             secret = base64.urlsafe_b64encode(secrets.token_bytes(32)).rstrip(b"=").decode("ascii")
 
@@ -608,6 +691,7 @@ class ApiKeyStore:
                     raise ApiKeyRejected("name_taken") from None
                 continue  # key_id collision: draw again
             return IssuedKey(f"{KEY_PREFIX}{key_id}_{secret}", key_id)
+        raise HubDbError("could not draw an unused API key id")
 
     def issue(self, name: str, grade: str, scope: dict, expires_days: int | None, *, now: float) -> IssuedKey:
         """Owner-issued key; ``scope`` project ids must already be checked against the registry."""
@@ -679,6 +763,7 @@ class ApiKeyStore:
 
 AUDIT_LIMIT = 50_000
 AUDIT_PAGE_SIZE = 100
+AUDIT_PAGE_SIZE_MAX = 1000
 AUDIT_TEXT_LIMIT = 256
 _KEY_DETAIL = frozenset({"key_id", "name", "grade", "scope", "expires_at"})
 _TERMINAL_DETAIL = frozenset({"epoch", "previous_epoch"})
@@ -724,21 +809,40 @@ class AuditPage:
     total: int
 
 
-def _check_value(value: object, depth: int = 0) -> None:
-    if value is None or type(value) in (bool, int, float):
-        return
-    if isinstance(value, str):
-        if len(value) > AUDIT_TEXT_LIMIT:
-            raise AuditRejected("detail value too long")
-        return
-    if depth == 0 and isinstance(value, (list, dict)):  # e.g. an API key scope
-        items = value.values() if isinstance(value, dict) else value
-        if len(value) > 64 or (isinstance(value, dict) and not all(isinstance(k, str) for k in value)):
-            raise AuditRejected("detail value too large")
-        for item in items:
-            _check_value(item, depth + 1)
-        return
-    raise AuditRejected("unsupported detail value")
+def _number(value: object) -> bool:
+    return type(value) in (int, float) and value == value and abs(value) != float("inf")
+
+
+def _text(limit: int):
+    return lambda value: isinstance(value, str) and len(value) <= limit
+
+
+def _scope_ok(value: object) -> bool:
+    try:
+        return _check_scope(value) == value
+    except ApiKeyRejected:
+        return False
+
+
+# One check per SPEC detail field: the value type is fixed, not only the key name.
+_DETAIL_CHECKS = {
+    "delay_seconds": lambda value: _number(value) and value >= 0,
+    "source": lambda value: value in ("cli", "web"),
+    "invalidated_sessions": lambda value: type(value) is int and value >= 0,
+    "key_id": _text(KEY_ID_LENGTH),
+    "name": _text(KEY_NAME_MAX),
+    "grade": lambda value: value in GRADES,
+    "scope": _scope_ok,
+    "expires_at": lambda value: value is None or _number(value),
+    "epoch": lambda value: value is None or type(value) is int,
+    "previous_epoch": lambda value: value is None or type(value) is int,
+    "channel": _text(32),
+    "pid": lambda value: value is None or type(value) is int,
+    "reason": _text(AUDIT_TEXT_LIMIT),
+    "project_id": _text(PROJECT_ID_MAX),
+    "action": _text(64),
+    "result": _text(AUDIT_TEXT_LIMIT),
+}
 
 
 class AuditLog:
@@ -747,30 +851,72 @@ class AuditLog:
     def __init__(self, db: HubDb, *, limit: int = AUDIT_LIMIT):
         self.db, self.limit = db, limit
 
-    def record(self, event: str, actor: str, client_addr: str | None, detail: dict, *, now: float) -> None:
+    @staticmethod
+    def _payload(event: str, actor: str, client_addr: str | None, detail: dict) -> str:
         allowed = AUDIT_EVENTS.get(event)
         if allowed is None:
             raise AuditRejected(f"unknown audit event {event!r}")
         if not isinstance(detail, dict) or not set(detail) <= allowed:
             raise AuditRejected(f"detail fields not allowed for {event}")
-        for value in detail.values():
-            _check_value(value)
+        for field, value in detail.items():
+            if not _DETAIL_CHECKS[field](value):
+                raise AuditRejected(f"detail field {field} has an unsupported value")
         for text in (actor, client_addr):
             if text is not None and (not isinstance(text, str) or len(text) > AUDIT_TEXT_LIMIT):
                 raise AuditRejected("actor/client_addr must be short text")
-        payload = json.dumps(detail, sort_keys=True, ensure_ascii=False)
+        return json.dumps(detail, sort_keys=True, ensure_ascii=False)
+
+    def _insert(self, execute, now: float, event: str, actor: str, client_addr: str | None, payload: str) -> None:
+        execute("INSERT INTO audit (at, event, actor, client_addr, detail_json) VALUES (?, ?, ?, ?, ?)",
+                (now, event, actor, client_addr, payload))
+        execute("DELETE FROM audit WHERE id IN (SELECT id FROM audit ORDER BY id DESC LIMIT -1 OFFSET ?)",
+                (self.limit,))
+
+    def record(self, event: str, actor: str, client_addr: str | None, detail: dict, *, now: float) -> None:
+        payload = self._payload(event, actor, client_addr, detail)
+        self.db.write(lambda execute: self._insert(execute, now, event, actor, client_addr, payload))
+
+    def note_password_generation(self, generation: int, source: str, *, now: float,
+                                 invalidated: int | None = None, client_addr: str | None = None) -> bool:
+        """Record ``password_changed{source}`` once per password generation; ``True`` when recorded.
+
+        The last audited generation is kept in the ``login_state`` row ``meta:audited_generation``,
+        so a ``wb hub passwd``
+        made while the Hub was down is audited when the Hub next starts (or its watchdog sees
+        the new ``auth.json``). Sessions bound to another generation are deleted (they can never
+        verify again) and counted, unless the caller passes its own count (the web change,
+        after :meth:`SessionStore.reissue`). Any generation other than the audited one counts
+        as new: a recreated ``auth.json`` starts at a random generation.
+        """
+        if type(generation) is not int or source not in ("cli", "web"):
+            raise AuditRejected("generation must be an int and source cli|web")
+        actor = "cli" if source == "cli" else "owner"
 
         def steps(execute):
-            execute("INSERT INTO audit (at, event, actor, client_addr, detail_json) VALUES (?, ?, ?, ?, ?)",
-                    (now, event, actor, client_addr, payload))
-            execute("DELETE FROM audit WHERE id IN (SELECT id FROM audit ORDER BY id DESC LIMIT -1 OFFSET ?)",
-                    (self.limit,))
-        self.db.write(steps)
+            rows = execute("SELECT failures FROM login_state WHERE key = ?", (AUDITED_GENERATION_KEY,)).fetchall()
+            if rows and rows[0][0] == generation:
+                return False
+            dropped = execute("DELETE FROM sessions WHERE password_generation != ?", (generation,)).rowcount
+            count = dropped if invalidated is None else invalidated
+            payload = self._payload("password_changed", actor, client_addr,
+                                    {"source": source, "invalidated_sessions": count})
+            self._insert(execute, now, "password_changed", actor, client_addr, payload)
+            execute("INSERT INTO login_state VALUES (?, ?, ?) ON CONFLICT(key) DO UPDATE "
+                    "SET failures = excluded.failures, updated_at = excluded.updated_at",
+                    (AUDITED_GENERATION_KEY, generation, now))
+            return True
+        return self.db.write(steps)
 
-    def list_audit(self, page: int = 1, *, page_size: int = AUDIT_PAGE_SIZE) -> AuditPage:
-        """Newest first; ``page`` starts at 1."""
-        page = max(1, int(page))
+    def list_audit(self, page: object = 1, *, page_size: int = AUDIT_PAGE_SIZE) -> AuditPage:
+        """Newest first; ``page`` starts at 1 (junk means 1) and is clamped to ``last page + 1``."""
+        size = page_size if type(page_size) is int else AUDIT_PAGE_SIZE
+        size = min(max(size, 1), AUDIT_PAGE_SIZE_MAX)
+        try:
+            wanted = int(page) if type(page) in (int, float) else 1
+        except (OverflowError, ValueError):
+            wanted = 1
         total = self.db.query("SELECT count(*) FROM audit")[0][0]
+        page = min(max(wanted, 1), -(-total // size) + 1)  # past the last page: one empty page
         rows = self.db.query("SELECT id, at, event, actor, client_addr, detail_json FROM audit "
-                             "ORDER BY id DESC LIMIT ? OFFSET ?", (page_size, (page - 1) * page_size))
+                             "ORDER BY id DESC LIMIT ? OFFSET ?", (size, (page - 1) * size))
         return AuditPage([AuditEntry(*row[:5], json.loads(row[5])) for row in rows], page, total)

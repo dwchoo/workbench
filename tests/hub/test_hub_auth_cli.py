@@ -44,16 +44,16 @@ class PasswdSandbox(SpawnSandbox):
         return subprocess.run(self.wb_argv('hub', 'passwd', '--stdin', *extra), env=self.env, cwd=self.base,
                               input=data, capture_output=True, timeout=40)
 
-    def passwd_tty(self, answers: list[str], timeout: float = 40) -> tuple[int, bytes]:
+    def passwd_tty(self, answers: list[str], timeout: float = 40, *extra: str) -> tuple[int, bytes]:
         """Run ``wb hub passwd`` on a PTY, answering each prompt in turn; returns (exit code, output)."""
         child, master = pty.fork()
         if child == 0:  # pragma: no cover - exec'd immediately
             try:
                 os.chdir(self.base)
-                os.execve(self.wb_argv()[0], self.wb_argv('hub', 'passwd'), self.env)
+                os.execve(self.wb_argv()[0], self.wb_argv('hub', 'passwd', *extra), self.env)
             finally:
                 os._exit(127)
-        output, pending = b'', list(answers)
+        output, pending, answered_at = b'', list(answers), 0
         deadline = time.monotonic() + timeout
         try:
             while time.monotonic() < deadline:
@@ -66,13 +66,21 @@ class PasswdSandbox(SpawnSandbox):
                 if not chunk:
                     break
                 output += chunk
-                if pending and output.rstrip().endswith(b':'):
+                # Answer only a prompt printed after the previous answer: the newline getpass writes
+                # after an answer is not a prompt, and an early answer is flushed away by termios.
+                if pending and output[answered_at:].strip().endswith(b':'):
                     os.write(master, pending.pop(0).encode() + b'\n')
+                    answered_at = len(output)
         finally:
             os.close(master)
-        if time.monotonic() >= deadline:
-            os.kill(child, signal.SIGKILL)
-        _, status = os.waitpid(child, 0)
+            timed_out = time.monotonic() >= deadline
+            if timed_out:
+                try:
+                    os.kill(child, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+            _, status = os.waitpid(child, 0)
+        self.case.assertFalse(timed_out, f'passwd on a tty did not finish: {output!r}')
         return (os.WEXITSTATUS(status) if os.WIFEXITED(status) else -1), output
 
 
@@ -157,6 +165,12 @@ class PasswdTtyTests(unittest.TestCase):
         code, output = self.box.passwd_tty(['another password', 'another passworD'])
         self.assertEqual(code, 1, output)
         self.assertEqual(self.box.auth_path.read_bytes(), before)
+
+    def test_stdin_flag_on_a_terminal_is_refused_without_reading(self):
+        code, output = self.box.passwd_tty([], 40, '--stdin')
+        self.assertEqual(code, 2, output)
+        self.assertIn(b'--stdin', output)
+        self.assertFalse(self.box.auth_path.exists())
 
     def test_a_short_tty_password_is_refused(self):
         code, output = self.box.passwd_tty(['short', 'short'])

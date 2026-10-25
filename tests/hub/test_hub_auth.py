@@ -262,7 +262,7 @@ class GenerationTests(DbCase):
         current = sessions.create('10.0.0.1', 'Firefox', T0, generation=self.generation)
         other = sessions.create('10.0.0.2', 'Chromium', T0 + 5, generation=self.generation)
         new_generation = self.passwords.set_password('the new web password')
-        reissued = sessions.reissue(current.token, T0 + 60)
+        reissued = sessions.reissue(current.token, T0 + 60, expected_generation=self.generation)
         self.assertEqual(reissued.invalidated, 1)
         self.assertNotEqual(reissued.session.token, current.token)
         self.assertNotEqual(reissued.session.csrf, current.csrf)
@@ -275,6 +275,24 @@ class GenerationTests(DbCase):
         self.assertEqual(self.rows('SELECT count(*) FROM sessions'), [(1,)])
         self.assertIsNone(sessions.reissue(current.token, T0 + 62), 'the old token is gone')
         self.assertIsNone(sessions.reissue(reissued.session.token, T0 + DAY), 'an expired login is not reissued')
+
+    def test_reissue_never_revives_a_session_an_earlier_change_already_invalidated(self):
+        sessions = auth.SessionStore(self.db, self.passwords)
+        stale = sessions.create('10.0.0.1', 'ua', T0, generation=self.generation)
+        self.passwords.set_password('cli reset number one')       # stale is invalid from here on
+        self.passwords.set_password('web change number two')
+        self.assertIsNone(sessions.reissue(stale.token, T0 + 1), 'two changes since its login')
+        self.assertIsNone(sessions.reissue(stale.token, T0 + 1, expected_generation=self.generation),
+                          'another change slipped in between the web change and the reissue')
+        self.assertEqual(self.rows('SELECT count(*) FROM sessions'), [(1,)], 'a refusal deletes nothing')
+
+    def test_reissue_requires_the_session_to_carry_the_expected_generation(self):
+        sessions = auth.SessionStore(self.db, self.passwords)
+        current = sessions.create('10.0.0.1', 'ua', T0, generation=self.generation)
+        new_generation = self.passwords.set_password('the new web password')
+        self.assertIsNone(sessions.reissue(current.token, T0 + 1, expected_generation=new_generation))
+        reissued = sessions.reissue(current.token, T0 + 1, expected_generation=self.generation)
+        self.assertEqual(sessions.verify(reissued.session.token, T0 + 2).password_generation, new_generation)
 
 
 class LoginDelayTests(DbCase):
@@ -302,6 +320,35 @@ class LoginDelayTests(DbCase):
         for _ in range(20):
             again.record_failure('10.0.0.2')
         self.assertEqual(again.delay_for('10.0.0.2'), 30)
+
+    def test_check_returns_the_remaining_wait_without_sleeping(self):
+        import time as real_time
+        throttle = auth.LoginThrottle(self.db)
+        self.assertEqual(throttle.check('10.0.0.1', T0), 0)
+        for _ in range(5):
+            throttle.record_failure('10.0.0.1', now=T0)       # f(5) = 2 s from the last failure
+        started = real_time.monotonic()
+        self.assertEqual(throttle.check('10.0.0.1', T0), 2)
+        self.assertEqual(throttle.check('10.0.0.1', T0 + 0.5), 1.5)
+        self.assertEqual(throttle.check('10.0.0.1', T0 + 2), 0)
+        self.assertEqual(throttle.check('10.0.0.9', T0), 0, 'global 5 // 3 = 1: no wait elsewhere')
+        for _ in range(20):
+            throttle.record_failure('10.0.0.1', now=T0 + 10)
+        self.assertEqual(throttle.check('10.0.0.1', T0 + 10), 30)
+        self.assertEqual(throttle.check('10.0.0.9', T0 + 10), 16, 'global 25 // 3 = 8 -> f(8) = 16 s')
+        self.assertLess(real_time.monotonic() - started, 1.0, 'check never sleeps')
+
+    def test_at_most_a_bounded_number_of_logins_wait_for_verification(self):
+        throttle = auth.LoginThrottle(self.db)
+        admitted = [throttle.try_enter() for _ in range(auth.LOGIN_PENDING_LIMIT)]
+        self.assertTrue(all(admitted))
+        self.assertFalse(throttle.try_enter(), 'the queue is full: answer at once instead of waiting')
+        throttle.leave()
+        self.assertTrue(throttle.try_enter())
+        for _ in range(auth.LOGIN_PENDING_LIMIT):
+            throttle.leave()
+        with self.assertRaises(RuntimeError):
+            throttle.leave()
 
 
 KEY_PATTERN = r'wbk_[a-z2-7]{10}_[A-Za-z0-9_-]{43}'
@@ -497,6 +544,64 @@ class AuditTests(DbCase):
             audit.record(event, 'owner', None, {}, now=T0)
         self.assertEqual(self.rows('SELECT count(*) FROM audit'), [(15,)])
 
+    def test_detail_values_are_checked_per_field_and_accept_the_spec_scope_shapes(self):
+        audit = auth.AuditLog(self.db)
+        key = {'key_id': 'abcdefghij', 'name': 'codex', 'grade': 'editor', 'expires_at': T0 + DAY}
+        audit.record('api_key_issued', 'owner', 'a', dict(key, scope={'projects': ['p-1', 'p-2']}), now=T0)
+        audit.record('api_key_revoked', 'owner', 'a', dict(key, scope={'all': True}, expires_at=None), now=T0)
+        self.assertEqual(json.loads(self.rows('SELECT detail_json FROM audit ORDER BY id')[0][0])['scope'],
+                         {'projects': ['p-1', 'p-2']})
+        refused = [
+            ('api_key_issued', dict(key, name=12345)),
+            ('api_key_issued', dict(key, name='x' * 65)),
+            ('api_key_issued', dict(key, grade='owner')),
+            ('api_key_issued', dict(key, scope={'projects': []})),
+            ('api_key_issued', dict(key, scope={'projects': [{'nested': 'x'}]})),
+            ('api_key_issued', dict(key, scope={'all': True, 'note': 'x'})),
+            ('api_key_issued', dict(key, expires_at='tomorrow')),
+            ('password_changed', {'source': 'cli', 'invalidated_sessions': 'many'}),
+            ('password_changed', {'source': 'somewhere'}),
+            ('terminal_attach', {'epoch': 'one'}),
+            ('login_failure', {'delay_seconds': True}),
+            ('board_start', {'pid': '123'}),
+            ('web_control', {'project_id': ['p']}),
+        ]
+        for event, detail in refused:
+            with self.subTest(event=event, detail=detail):
+                with self.assertRaises(auth.AuditRejected):
+                    audit.record(event, 'owner', 'a', detail, now=T0)
+        self.assertEqual(self.rows('SELECT count(*) FROM audit'), [(2,)])
+
+    def test_a_new_password_generation_is_audited_once_even_across_a_hub_restart(self):
+        sessions = auth.SessionStore(self.db, self.passwords)
+        for i in range(2):
+            sessions.create(str(i), 'ua', T0, generation=self.generation)
+        audit = auth.AuditLog(self.db)
+        self.assertTrue(audit.note_password_generation(self.generation, 'cli', now=T0))
+        self.assertFalse(audit.note_password_generation(self.generation, 'cli', now=T0 + 1), 'already audited')
+        new = self.passwords.set_password('changed while the hub was down')  # 'wb hub passwd'
+        self.db.close()
+        reopened = auth.HubDb.open(self.state)
+        self.addCleanup(reopened.close)
+        later = auth.AuditLog(reopened)
+        self.assertTrue(later.note_password_generation(new, 'cli', now=T0 + 2))
+        self.assertFalse(later.note_password_generation(new, 'cli', now=T0 + 3))
+        rows = self.rows("SELECT at, event, actor, detail_json FROM audit ORDER BY id")
+        self.assertEqual([(at, event, actor, json.loads(detail)) for at, event, actor, detail in rows],
+                         [(T0, 'password_changed', 'cli', {'source': 'cli', 'invalidated_sessions': 0}),
+                          (T0 + 2, 'password_changed', 'cli', {'source': 'cli', 'invalidated_sessions': 2})])
+        self.assertEqual(self.rows("SELECT failures FROM login_state WHERE key = 'meta:audited_generation'"), [(new,)])
+        self.assertEqual(self.rows('SELECT count(*) FROM sessions'), [(0,)], 'stale sessions are dropped')
+
+    def test_a_web_change_is_audited_with_its_own_source_and_count(self):
+        audit = auth.AuditLog(self.db)
+        audit.note_password_generation(self.generation, 'cli', now=T0)
+        new = self.passwords.set_password('the new web password')
+        self.assertTrue(audit.note_password_generation(new, 'web', invalidated=3, now=T0 + 1))
+        self.assertFalse(audit.note_password_generation(new, 'cli', now=T0 + 2), 'the watchdog sees nothing new')
+        last = self.rows("SELECT actor, detail_json FROM audit ORDER BY id DESC LIMIT 1")[0]
+        self.assertEqual((last[0], json.loads(last[1])), ('owner', {'source': 'web', 'invalidated_sessions': 3}))
+
     def test_the_log_keeps_the_newest_50000_rows(self):
         import sqlite3
         connection = sqlite3.connect(self.db_path)
@@ -509,6 +614,55 @@ class AuditTests(DbCase):
         self.assertEqual(self.rows('SELECT count(*), min(at), max(at) FROM audit'), [(50_000, T0 + 1, T0 + 60_000)])
         page = audit.list_audit(1)
         self.assertEqual((page.total, page.entries[0].event), (50_000, 'login_success'))
+
+
+class HardeningTests(DbCase):
+    def test_unencodable_passwords_are_refused_not_raised(self):
+        lone = '\ud800' * 12
+        self.assertIsNone(self.passwords.verify(lone))
+        with self.assertRaises(auth.PasswordRejected) as caught:
+            self.passwords.set_password(lone)
+        self.assertEqual(caught.exception.reason, 'password_invalid')
+        self.assertEqual(self.passwords.verify(PASSWORD), self.generation, 'nothing was written')
+
+    def test_creating_a_session_prunes_expired_ones(self):
+        sessions = auth.SessionStore(self.db, self.passwords)
+        old = sessions.create('a', 'ua', T0, generation=self.generation)
+        live = sessions.create('b', 'ua', T0 + DAY - 10, generation=self.generation)
+        sessions.create('c', 'ua', T0 + DAY, generation=self.generation)
+        self.assertEqual(self.rows('SELECT count(*) FROM sessions'), [(2,)])
+        self.assertIsNone(sessions.verify(old.token, T0 + DAY))
+        self.assertIsNotNone(sessions.verify(live.token, T0 + DAY))
+
+    def test_idle_address_rows_are_pruned_but_the_global_count_is_kept(self):
+        throttle = auth.LoginThrottle(self.db)
+        for _ in range(5):
+            throttle.record_failure('10.0.0.1', now=T0)
+        throttle.record_failure('10.0.0.2', now=T0 + auth.LOGIN_STATE_TTL + 1)
+        keys = {key for (key,) in self.rows('SELECT key FROM login_state')}
+        self.assertEqual(keys, {'addr:10.0.0.2', 'global'})
+        self.assertEqual(self.rows("SELECT failures FROM login_state WHERE key = 'global'"), [(6,)])
+
+    def test_list_audit_clamps_the_page(self):
+        audit = auth.AuditLog(self.db)
+        for i in range(250):
+            audit.record('logout', 'owner', None, {}, now=T0 + i)
+        self.assertEqual((audit.list_audit(3).page, len(audit.list_audit(3).entries)), (3, 50))
+        beyond = audit.list_audit(10 ** 12)
+        self.assertEqual((beyond.page, beyond.entries, beyond.total), (4, [], 250), 'no huge OFFSET')
+        for bad in (0, -5, 'x', None, 2.5, True):
+            with self.subTest(bad=bad):
+                page = audit.list_audit(bad)
+                self.assertEqual(page.page, 2 if bad == 2.5 else 1)
+        self.assertEqual(len(audit.list_audit(1, page_size=10 ** 9).entries), 250)
+        self.assertEqual(len(audit.list_audit(1, page_size=0).entries), 1)
+        empty = auth.AuditLog(auth.HubDb.open(self.base_empty()))
+        self.assertEqual((empty.list_audit(7).page, empty.list_audit(7).entries), (1, []))
+        self.assertEqual(empty.list_audit(10 ** 30).entries, [])
+        empty.db.close()
+
+    def base_empty(self) -> Path:
+        return Path(self.temp.name).resolve() / 'other-state'
 
 
 if __name__ == '__main__':

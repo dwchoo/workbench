@@ -168,6 +168,9 @@ def cmd_hub_passwd(args: argparse.Namespace) -> int:
     """
     from .auth import AuthInvalid, PASSWORD_MAX, PASSWORD_MIN, PasswordRejected, PasswordStore
     if args.stdin:
+        if sys.stdin.isatty():
+            return _fail("'--stdin'은 파이프·파일 입력용입니다. terminal에서는 'wb hub passwd'만 실행하세요. "
+                         + PASSWD_UNCHANGED, EXIT_REQUIREMENT)
         password = _read_stdin_password()
         if password is None:
             return _fail(f"stdin이 UTF-8이 아닙니다. {PASSWD_UNCHANGED}")

@@ -220,11 +220,11 @@ class StaticOverlayContractTests(unittest.TestCase):
         self.assertEqual(launcher.default_skills_dir(), SKILLS_DIR)
         self.assertEqual(launcher.default_isolation_overlay(), STATIC_OVERLAY)
         self.assertEqual(sorted(p.name for p in SKILLS_DIR.iterdir() if (p / "SKILL.md").exists()),
-                         ["important-log-summary", "to-manager", "to-worker", "workbench-recovery",
+                         ["important-log-summary", "to-manager", "to-worker", "workbench-inbox", "workbench-recovery",
                           "workbench-report"],
                          "exactly two role assets, recovery, the manager report skill, and the LG-D22 host summary asset")
         self.assertEqual(launcher.workbench_skill_names(SKILLS_DIR),
-                         ("important-log-summary", "to-manager", "to-worker", "workbench-recovery",
+                         ("important-log-summary", "to-manager", "to-worker", "workbench-inbox", "workbench-recovery",
                           "workbench-report"),
                          "front matter names must equal the directory names")
         self.assertTrue((SKILLS_DIR / "README.md").is_file())
@@ -385,7 +385,7 @@ class RoleOverlayContractTests(unittest.TestCase):
         # CW-18: the default role filter is exact (manager only to-worker, worker only to-manager); C-D70 (5): the
         # manager also gets workbench-recovery, the worker never (p27-cd70-test-01 edit); 810cf72: the manager also
         # gets workbench-report.
-        self.assertEqual(default["skills"]["includeSkills"], ["to-worker", "workbench-recovery", "workbench-report"])
+        self.assertEqual(default["skills"]["includeSkills"], ["to-worker", "workbench-inbox", "workbench-recovery", "workbench-report"])
         self.assertEqual(launcher.role_overlay("worker", project_dir=self.project, home=self.home)["skills"]
                          ["includeSkills"], ["to-manager"])
         filters = {"manager": ("order-manager", "wb-*"), "worker": ("order-worker",)}
@@ -411,7 +411,7 @@ class RoleOverlayContractTests(unittest.TestCase):
         self.assertEqual(launcher.workbench_skill_names(self.root / "absent"), ())
         # C-D70 (5): the manager also loads workbench-recovery (p27-cd70-test-01 edit); 810cf72: and workbench-report
         self.assertEqual(launcher.role_skill_allowlist("manager", SKILLS_DIR),
-                         ("to-worker", "workbench-recovery", "workbench-report"))
+                         ("to-worker", "workbench-inbox", "workbench-recovery", "workbench-report"))
         self.assertEqual(launcher.role_skill_allowlist("worker", SKILLS_DIR), ("to-manager",))
         # The role filter is exact: look-alike or other skills in the directory are never allowed.
         crowded = self.root / "crowded"
@@ -693,14 +693,15 @@ class CheckIsolationContractTests(unittest.TestCase):
         # CW-18: manager ('to-worker',), worker ('to-manager',); the other role's skill or any other skill is a leak.
         # C-D70 (5): the manager also has workbench-recovery, which is a leak for the worker (p27-cd70-test-01 edit);
         # 810cf72: the same for workbench-report.
-        owned = {"manager": ("to-worker", "workbench-recovery", "workbench-report"), "worker": ("to-manager",)}
+        owned = {"manager": ("to-worker", "workbench-inbox", "workbench-recovery", "workbench-report"), "worker": ("to-manager",)}
         def shapes(*names):
             return {"prompt_extra": "<skills>\n" + "".join(f"- {n}: d\n" for n in names) + "</skills>\n",
                     "commands": [{"name": "init", "source": "builtin"}]
                     + [{"name": f"skill:{n}", "source": "skill"} for n in names]}
         for role, own, other in (("manager", "to-worker", "to-manager"), ("worker", "to-manager", "to-worker"),
                                  ("worker", "to-manager", "workbench-recovery"),
-                                 ("worker", "to-manager", "workbench-report")):
+                                 ("worker", "to-manager", "workbench-report"),
+                                 ("worker", "to-manager", "workbench-inbox")):  # TI-11: a leak for the worker
             allowed = launcher.role_skill_allowlist(role)
             self.assertEqual(allowed, owned[role])
             with self.subTest(role=role, case="own"):

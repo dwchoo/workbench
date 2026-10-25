@@ -14,7 +14,7 @@ from pathlib import Path
 import sqlite3
 import sys
 import time
-from typing import Callable
+from typing import Callable, Iterable
 
 from aiohttp import WSCloseCode, web
 
@@ -88,6 +88,7 @@ class WebListener:
         self.passwords = auth.PasswordStore(self.state_dir)
         self.clock, self.monotonic, self.bind_retry = clock, monotonic, bind_retry
         self.routes = tuple(routes)
+        self.projects: Callable[[], Iterable[tuple[str, str]]] = lambda: ()  # registry view; the Hub sets it
         self.keepalive_timeout, self.max_connections = keepalive_timeout, max_connections
         self._state: dict = {"state": "password_not_set"}
         self._signature: tuple | None = None
@@ -198,7 +199,8 @@ class WebListener:
         warn = insecure_warning(web_config.bind, tls=tls)
         if self.services is None:
             self.services = WebServices(self.passwords, db, OriginPolicy(web_config.bind, tls, web_config.server_names),
-                                        insecure_warning=warn, clock=self.clock)
+                                        insecure_warning=warn, clock=self.clock,
+                                        projects=lambda: self.projects())
         runner = web.AppRunner(create_app(self.services, routes=self.routes), access_log=None,
                                handle_signals=False, shutdown_timeout=SHUTDOWN_TIMEOUT,
                                keepalive_timeout=self.keepalive_timeout)

@@ -206,8 +206,8 @@ class DisabledAgentsRulesTests(unittest.TestCase):
             self.assertEqual(overlay["skills"]["includeSkills"], list(patterns))
             self.assertEqual(overlay["skills"]["ignoredSkills"], [], "the user's ignoredSkills must not hide Workbench skills")
         # CW-18: without an explicit filter each role gets exactly its own Workbench skills (C-D70 (5): the manager
-        # also workbench-recovery; p27-cd70-test-01 edit; 810cf72: and workbench-report).
-        for role, own in (("manager", ["to-worker", "workbench-recovery", "workbench-report"]),
+        # also workbench-recovery; p27-cd70-test-01 edit; 810cf72: and workbench-report; TI-11: and workbench-inbox).
+        for role, own in (("manager", ["to-worker", "workbench-inbox", "workbench-recovery", "workbench-report"]),
                           ("worker", ["to-manager"])):
             default = launcher.role_overlay(role, project_dir=self.project, home=self.home)
             self.assertEqual(default["skills"]["includeSkills"], own)

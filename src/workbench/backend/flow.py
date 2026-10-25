@@ -136,7 +136,9 @@ ENV_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 SECRET_NAME = re.compile(r"(?i)(token|secret|passw(?:or)?d|api_?key|access_?key|private_?key|credential"
                          r"|(?:^|_)auth(?:$|_))")
 _ASSIGNMENT = re.compile(r"(?<![A-Za-z0-9_$])([A-Za-z_][A-Za-z0-9_]*)=(\S+)")
-_TO_WORKER_KEYS = frozenset({"task_id", "kind", "message", "spec", "run", "cancel", "analysis", "commands"})
+# Task Inbox (TI-11): ``request_id`` links the Task to the reviewed request before anything reaches the worker.
+_TO_WORKER_KEYS = frozenset({"task_id", "kind", "message", "spec", "run", "cancel", "analysis", "commands",
+                             "request_id"})
 # C-D69 (6): the exact shell commands of a work Task, written by the manager (alternatives are more entries)
 COMMANDS_MAX = 32
 _TO_MANAGER_KEYS = frozenset({"kind", "message", "task_id", "in_reply_to", "requires_code_change", "reason",
@@ -535,6 +537,11 @@ def validate_arguments(tool: str, args: object) -> list[str]:
                 errors.append("cancel: must be true (cancel the Task), false or null")
             elif args["cancel"] and ("spec" in args or args.get("run") is True):
                 errors.append("cancel: with cancel true, spec and run must be null")
+            elif args["cancel"] and "request_id" in args:
+                errors.append("request_id: with cancel true, request_id must be null")
+        if "request_id" in args and not _is_uuid(args["request_id"]):
+            errors.append("request_id: must be the canonical UUID of a Task Inbox request (from workbench_inbox), "
+                          "or null")
         if "spec" in args:
             spec = args["spec"]
             if not isinstance(spec, dict):

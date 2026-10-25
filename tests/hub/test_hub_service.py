@@ -153,11 +153,13 @@ class ReservedCommandTests(unittest.TestCase):
     def setUp(self):
         self.box = ServiceSandbox(self)
 
-    def test_tls_is_refused_by_name_and_starts_nothing(self):
-        # 'passwd' left the reserved list in TI-02 (tests/hub/test_hub_auth_cli.py).
+    def test_tls_without_self_signed_is_refused_and_starts_nothing(self):
+        # 'passwd' left the reserved list in TI-02 (tests/hub/test_hub_auth_cli.py), 'tls' in TI-07
+        # (tests/hub/test_hub_tls_cli.py); a bare 'wb hub tls' still does nothing and exits 2.
         result = self.box.wb('hub', 'tls')
         self.assertEqual(result.returncode, 2, result.stderr)
-        self.assertIn(RESERVED_TEXT, result.stdout + result.stderr)
+        self.assertIn('--self-signed', result.stdout + result.stderr)
+        self.assertNotIn(RESERVED_TEXT, result.stdout + result.stderr)
         self.assertEqual(self.box.hub_pids(), [])
         self.assertFalse(self.box.state.exists())
         self.assertEqual(self.box.calls(), [], 'a reserved name never runs systemctl')

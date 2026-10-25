@@ -90,6 +90,8 @@ def cmd_hub_status(args: argparse.Namespace) -> int:
         print(f"  {OUTDATED_UNIT_TEXT}")
     for line in web_status_lines(status["web"] or {}):
         print(f"  {line}")
+    if status["board_agent"] is None:  # the Board agent set (TI-16) draws its own line once it exists
+        print("  board_agent: 없음")
     return EXIT_OK
 
 
@@ -257,10 +259,34 @@ def cmd_hub_passwd(args: argparse.Namespace) -> int:
     return EXIT_OK
 
 
-def cmd_hub_reserved(args: argparse.Namespace) -> int:
-    """``wb hub tls``: the name is reserved for the Web Board; nothing runs."""
-    print(f"'wb hub {args.hub_action}'은(는) Web Board 기능에서 제공 예정입니다.", file=sys.stderr)
-    return EXIT_REQUIREMENT
+def cmd_hub_tls(args: argparse.Namespace) -> int:
+    """``wb hub tls --self-signed [--force]``: cert and key for the web listener with the host ``openssl``.
+
+    Reads ``hub.toml`` (bind, ``server_names``, TLS paths) and never starts or asks the Hub: it
+    keeps serving what it loaded until it is restarted.
+    """
+    from . import tls
+    from .config import ConfigInvalid, config_path, load_config, tls_paths
+    if not args.self_signed:
+        print("'wb hub tls'에는 '--self-signed'가 필요합니다. 예: wb hub tls --self-signed", file=sys.stderr)
+        return EXIT_REQUIREMENT
+    try:
+        web = load_config(config_path()).web
+    except ConfigInvalid as exc:
+        return _fail(f"hub.toml을 읽지 못했습니다: {exc.reason}. 고친 뒤 다시 실행하세요.")
+    cert, key = tls_paths(web)
+    try:
+        made = tls.self_signed(web, cert, key, force=args.force)
+    except tls.TlsError as exc:
+        return _fail(exc.text, exc.exit_code)
+    print(f"자체 서명 인증서를 만들었습니다 (유효 {tls.DAYS}일).")
+    print(f"  cert: {made.cert}")
+    print(f"  key: {made.key} (본인만 읽기)")
+    print(f"  SAN: {', '.join(made.san)}")
+    print(f"  SHA-256 지문: {made.fingerprint}")
+    print("브라우저에서 처음 열 때 위 지문과 같은지 확인하세요.")
+    print("Hub를 다시 시작하면 HTTPS로 열립니다.")
+    return EXIT_OK
 
 
 def cmd_hub_enable(args: argparse.Namespace) -> int:

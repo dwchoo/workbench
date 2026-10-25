@@ -33,7 +33,9 @@ the `to_manager` tool and answer staged deliveries), and (C-D70 (7))
 recovery notice with `workbench_status`, a follow-up, cancel or
 `restart_worker`). These tool instructions match the schemas in
 `omp_bridge/g3/bridge.ts`. `workbench-report` is a separate Manager-only,
-user-only skill with its own report contract.
+user-only skill with its own report contract. `workbench-inbox` (Task Inbox
+TI-11, manager only, agent-only) covers the `inbox_request` notice, the
+`workbench_inbox` tool and `to_worker` with `request_id`.
 
 OMP 18.11.1 (measured by the invocation probe) has no per-skill
 frontmatter that hides a skill from the user's `/skill:` menu while the model

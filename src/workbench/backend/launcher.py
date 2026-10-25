@@ -131,9 +131,10 @@ ISOLATION_PROVIDER_IDS = (
 # Role skill filter (skills.includeSkills globs) applied to omp_bridge/skills
 # (C-D65 (3), CW-18 U6): the manager loads only to-worker and (C-D70 (7)) its
 # agent-only recovery skill workbench-recovery and user-only workbench-report;
-# the worker loads only to-manager.
+# the worker loads only to-manager. Task Inbox (TI-11): the manager also loads workbench-inbox (review requests).
 # These are the Workbench skills the isolation check expects.
-ROLE_SKILL_PATTERNS: dict[str, tuple[str, ...]] = {"manager": ("to-worker", "workbench-recovery", "workbench-report"),
+ROLE_SKILL_PATTERNS: dict[str, tuple[str, ...]] = {"manager": ("to-worker", "workbench-inbox", "workbench-recovery",
+                                                               "workbench-report"),
                                                    "worker": ("to-manager",)}
 OMP_ROLE_NAMES = ("manager", "worker")
 # What an isolated OMP 18.4.4 still shows: bundled task agents and bundled

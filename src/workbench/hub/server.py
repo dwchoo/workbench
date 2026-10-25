@@ -25,6 +25,7 @@ from .inbox.service import OPEN_STATES, InboxService, Principal, ProjectRef
 from .status import Lister, check_entry
 from .paths import HubLayout, hub_layout, prepare_socket_path, prepare_state_dir
 from .web.listener import WebListener
+from .web.pages import requests as request_pages
 from .process import (READY_LOST, READY_MANAGED, READY_STARTED, RECORD_SCHEMA_VERSION, UNVERIFIABLE,
                       installed_version,
                       lock_holder, managed_ancestor, send_ready, start_ticks, wait_reparented)
@@ -115,17 +116,31 @@ class Hub:
         self.backend_tasks: dict[str, asyncio.Task] = {}
         self.web: WebListener | None = None
 
+    def project_pairs(self) -> list[tuple[str, str]]:
+        """``(project_id, name)`` of the registered projects for the web settings pages; executor only."""
+        try:
+            return [(entry.project_id, entry.name) for entry in registry.read(self.layout)]
+        except registry.RegistryError:
+            return []
+
+    def web_routes(self) -> list:
+        """Route registrations the web app adds to its defaults: the request pages over this Hub's inbox."""
+        return [request_pages.routes(self.inbox, self._dispatch_targets)]
+
     def load_web(self, environment=None) -> None:
         """Read ``hub.toml`` and decide TLS once, at start (changes need a Hub restart)."""
         try:
             loaded = hub_config.load_config(hub_config.config_path(environment))
         except hub_config.ConfigInvalid as exc:
             print(f"[workbench] hub.toml invalid: {exc.reason}; web listener stays closed", file=sys.stderr, flush=True)
-            self.web = WebListener(self.layout.state_dir, config=None, config_error=exc, tls=None)
+            self.web = WebListener(self.layout.state_dir, config=None, config_error=exc, tls=None,
+                                   routes=self.web_routes())
             return
         cert, key = hub_config.tls_paths(loaded.web, environment)
         tls = hub_config.decide_tls(loaded.web, cert, key)
-        self.web = WebListener(self.layout.state_dir, config=loaded, config_error=None, tls=tls)
+        self.web = WebListener(self.layout.state_dir, config=loaded, config_error=None, tls=tls,
+                               routes=self.web_routes())
+        self.web.projects = self.project_pairs
 
     def bind(self) -> None:
         path = prepare_socket_path()

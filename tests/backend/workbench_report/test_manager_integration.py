@@ -20,7 +20,7 @@ class ManagerReportIntegrationTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             for role, expected in (
-                ("manager", {"to-worker", "workbench-recovery", "workbench-report"}),
+                ("manager", {"to-worker", "workbench-inbox", "workbench-recovery", "workbench-report"}),
                 ("worker", {"to-manager"}),
             ):
                 with self.subTest(role=role):

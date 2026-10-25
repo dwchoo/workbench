@@ -1241,8 +1241,8 @@ def cmd_hub_disable(args: argparse.Namespace) -> int:
     return run(args)
 
 
-def cmd_hub_reserved(args: argparse.Namespace) -> int:
-    from workbench.hub.cli import cmd_hub_reserved as run
+def cmd_hub_tls(args: argparse.Namespace) -> int:
+    from workbench.hub.cli import cmd_hub_tls as run
     return run(args)
 
 
@@ -1459,7 +1459,10 @@ def parser() -> argparse.ArgumentParser:
     hub_passwd = hub_sub.add_parser("passwd", help="Web Board 로그인 비밀번호 설정 (terminal에서 두 번 입력)")
     hub_passwd.add_argument("--stdin", action="store_true", help="stdin 첫 줄을 비밀번호로 읽음 (스크립트용)")
     hub_passwd.set_defaults(handler=cmd_hub_passwd)
-    hub_sub.add_parser("tls", help="예약 (Web Board 기능에서 제공 예정)").set_defaults(handler=cmd_hub_reserved)
+    hub_tls = hub_sub.add_parser("tls", help="Web Board 용 자체 서명 TLS 인증서·key 생성 (host openssl)")
+    hub_tls.add_argument("--self-signed", action="store_true", help="자체 서명 인증서를 hub.toml의 TLS 경로에 만듦")
+    hub_tls.add_argument("--force", action="store_true", help="이미 있는 cert·key를 새로 만든 것으로 바꿈")
+    hub_tls.set_defaults(handler=cmd_hub_tls)
     hub_add = hub_sub.add_parser("add", help="WB 프로젝트 root를 Hub registry에 등록")
     hub_add.add_argument("path", metavar="PATH")
     hub_add.set_defaults(handler=cmd_hub_add)

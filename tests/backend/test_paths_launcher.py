@@ -305,9 +305,10 @@ class IsolationLaunchTests(unittest.TestCase):
         # Role allow-lists exclude the internal summary skill; the Manager also
         # offers the user-only report command (absent from model discovery).
         self.assertEqual(launcher.workbench_skill_names(launcher.default_skills_dir()),
-                         ("important-log-summary", "to-manager", "to-worker", "workbench-recovery", "workbench-report"))
+                         ("important-log-summary", "to-manager", "to-worker", "workbench-inbox", "workbench-recovery",
+                          "workbench-report"))
         self.assertEqual(launcher.role_skill_allowlist("manager"),
-                         ("to-worker", "workbench-recovery", "workbench-report"))
+                         ("to-worker", "workbench-inbox", "workbench-recovery", "workbench-report"))
         self.assertEqual(launcher.role_skill_allowlist("worker"), ("to-manager",))
 
     def test_user_disabled_providers_read_via_omp_config_get(self):

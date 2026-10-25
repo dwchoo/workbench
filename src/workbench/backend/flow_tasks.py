@@ -228,6 +228,41 @@ def _commands_fields(commands: list[str] | None) -> dict[str, Any]:
 
 MANAGER_RULE = ("The worker does this Task; do not do it yourself (no commands, edits or checks for it). End "
                 "your turn and wait for the worker's to_manager report.")
+# Task Inbox (TI-11, SPEC "Manager 도구"): each link step's own wait; both fit in the bridge's 10 s result limit.
+INBOX_LINK_TIMEOUT = 3.0
+INBOX_SPEC_KEY = "inbox_request_id"  # additive in the Task spec document of a linked revision
+INBOX_LINK_DETAILS = {
+    "inbox_link_refused": "The Hub refused the link (the request changed, was cancelled or closed, or is not this "
+                          "project's); nothing was sent to the worker. Read it with workbench_inbox show.",
+    "inbox_link_unconfirmed": "Workbench could not confirm the link with the Hub; nothing was sent to the worker. "
+                              "Read the request with workbench_inbox show before you send it again.",
+    "inbox_unavailable": "The Hub is not running, so the request could not be linked; nothing was sent to the "
+                         "worker. Call again later.",
+}
+TASK_CHANGED_DETAIL = ("The Hub linked the request, but the Task closed or changed before Workbench could dispatch "
+                       "it; nothing was sent to the worker. Check workbench_status and the request (workbench_inbox "
+                       "show), then decide.")
+
+
+def _spec_core(spec: Mapping[str, Any] | None) -> dict[str, Any] | None:
+    """A Task spec document without its inbox link (two specs that differ only in it are the same work)."""
+    return None if spec is None else {key: value for key, value in spec.items() if key != INBOX_SPEC_KEY}
+
+
+@dataclass
+class _LinkPlan:
+    """A ``to_worker`` with ``request_id`` prepared under the flow lock: the Task (and spec revision) the Hub is
+    asked to link, and ``finish`` (run under the flow lock only after the Hub committed the link) that delegates or
+    builds the worker message. ``created``: the Task was made for this call (closed when the link fails)."""
+    task: "FlowTask | None" = None
+    revision: int | None = None
+    task_status: str | None = None
+    created: bool = False
+    finish: Callable[[], HandoffDecision] | None = None
+    # what ``finish`` needs to hold again after the commit: ``new`` (the Task made for this call is still the active,
+    # unscheduled one), ``rerun`` (the Task is idle again for a new run) or ``follow_up`` (the same run still goes on)
+    mode: str = "new"
+    run_id: str | None = None
 CANCEL_WAIT_DETAIL = ("The experiment's host command is still running; a cancel never kills it. Stop it with "
                       "stop_command (command_id = the run_id listed in host_commands); the user can also stop it in "
                       "the host shell. The Task closes as cancelled when the command exits; no judgment is made.")
@@ -481,6 +516,9 @@ class TaskFlow:
         # C-D70 (Q2, p27-cd70-02): told when a manager follow-up of a Task was submitted to the worker (the watchdog
         # starts its status checks and the worker_stalled notice over: a new instruction is a new chance)
         self.follow_up_submitted: Callable[[str], None] | None = None
+        # Task Inbox (TI-11): ``inbox_call(op, call_timeout=..., **fields)`` -> ``inbox_link.LinkResult`` over the
+        # backend's hub_v1 link (set by the backend); None means no Hub link (``inbox_unavailable``).
+        self.inbox_call: Callable[..., Any] | None = None
         # R1/R2 (in memory): Tasks whose report the lane/runner is submitting right now, and each free-work
         # Task's TASK message state (queued | delivering | sent | not_sent).
         self._report_inflight: set[str] = set()
@@ -885,18 +923,121 @@ class TaskFlow:
     def _decide(self, request: HandoffRequest) -> HandoffDecision:
         # the host shell is asked before the flow lock (its port takes the pane lock)
         size_error = self._host_shell_size_error(request.args) if request.tool == "to_worker" else None
+        if (request.tool == "to_worker" and size_error is None and request.args.get("request_id") is not None
+                and request.args.get("cancel") is not True):
+            return self._linked_to_worker(request)
         with self._lock:
             if request.tool == "to_worker":
                 decision = (HandoffDecision(rejected("invalid_arguments", errors=[size_error]))
                             if size_error is not None else self._to_worker(request))
-                notices = self._take_notices()
-                if notices:
-                    decision = replace(decision, result={**decision.result, "notices": notices})
-                return (replace(decision, listener=self._subject_listener(decision.message, decision.listener))
-                        if decision.message is not None else decision)
+                return self._to_worker_decision(decision)
             decision = self._to_manager(request)
             return (replace(decision, listener=self._subject_listener(decision.message, decision.listener))
                     if decision.message is not None else decision)
+
+    def _to_worker_decision(self, decision: HandoffDecision) -> HandoffDecision:
+        """Under the flow lock: a ``to_worker`` decision with the waiting notices and the subject listener."""
+        notices = self._take_notices()
+        if notices:
+            decision = replace(decision, result={**decision.result, "notices": notices})
+        return (replace(decision, listener=self._subject_listener(decision.message, decision.listener))
+                if decision.message is not None else decision)
+
+    # -- Task Inbox link (TI-11, SPEC "Manager 도구") ----------------------------------------------
+    def _inbox(self, op: str, **fields: Any) -> Any:
+        """One hub_v1 call over the backend's link; ``unavailable`` without a link. Called without the flow lock."""
+        from workbench.backend.inbox_link import LinkResult
+        call = self.inbox_call
+        if call is None:
+            return LinkResult("unavailable", "no_link")
+        try:
+            return call(op, call_timeout=INBOX_LINK_TIMEOUT, **fields)
+        except Exception as exc:  # a broken port never dispatches; the outcome of a send is not known
+            return LinkResult("unknown", f"link_error:{type(exc).__name__}")
+
+    def _linked_to_worker(self, request: HandoffRequest) -> HandoffDecision:
+        """``to_worker`` with ``request_id`` (D-35, ADR-0004): (1) the Hub's link check, (2) the Task or its new spec
+        revision as usual, (3) the link commit, (4) only then the standing-delegation dispatch or the worker
+        message. Nothing reaches the worker unless the Hub committed the link; a cancel committed after the check
+        invalidates its token. The Hub calls run without the flow lock (the UI reads Task views under it), so the
+        Task is checked again under the lock after the commit (``_plan_changed``) before anything is dispatched.
+        The HandoffService lock stays held for the whole round-trip (``HandoffService.handle`` decides one tool call
+        at a time): no other handoff (to_worker, to_manager) is decided meanwhile, for at most two link waits."""
+        request_id = request.args["request_id"]
+        check = self._inbox("inbox_link_check", request_id=request_id)
+        if check.status != "ok" or not isinstance(check.value.get("link_token"), str):
+            with self._lock:
+                self._record({"type": "inbox_link_failed", "request_id": request_id, "step": "check",
+                              "status": check.status, "reason": check.reason})
+                return self._to_worker_decision(HandoffDecision(self._link_failure(check, None)))
+        plan = _LinkPlan()
+        with self._lock:
+            decision = self._to_worker(request, plan)
+            if plan.task is None or plan.finish is None:  # refused before any Task (busy, invalid, held): unused token
+                return self._to_worker_decision(decision)
+        commit = self._inbox("inbox_link_commit", link_token=check.value["link_token"], task_id=plan.task.task_id,
+                             spec_revision=plan.revision, task_status=plan.task_status)
+        with self._lock:
+            task = plan.task
+            if commit.status == "ok":
+                state = commit.value.get("state")
+                self._record({"type": "inbox_linked", "request_id": request_id, "task_id": task.task_id,
+                              "spec_revision": plan.revision, "state": state, **self._standing(request)})
+                changed = self._plan_changed(plan)
+                if changed is not None:  # closed, cancelled or moved on while the lock was free: nothing goes out
+                    self._record({"type": "inbox_link_not_dispatched", "request_id": request_id,
+                                  "task_id": task.task_id, "why": changed})
+                    if plan.created and task.status != "closed":
+                        self._close(task, "inbox_link_task_changed")
+                    answer = rejected("task_changed_before_dispatch", detail=TASK_CHANGED_DETAIL, dispatched=False,
+                                      why=changed, task_id=task.task_id, task_status=task.status,
+                                      closed_reason=task.closed_reason,
+                                      inbox={"request_id": request_id, "state": state})
+                    return self._to_worker_decision(HandoffDecision(answer))
+                decision = plan.finish()
+                if decision.result.get("status") in ("dispatched", "queued"):
+                    decision = replace(decision, result={**decision.result,
+                                                         "inbox": {"request_id": request_id, "state": state}})
+                return self._to_worker_decision(decision)
+            reason = "inbox_link_refused" if commit.status == "rejected" else "inbox_link_unconfirmed"
+            self._record({"type": "inbox_link_failed", "request_id": request_id, "step": "commit",
+                          "task_id": task.task_id, "status": commit.status, "reason": commit.reason})
+            if plan.created and task.status != "closed":
+                self._close(task, reason)  # never delegated: nothing went to the worker
+            return self._to_worker_decision(HandoffDecision(self._link_failure(commit, task)))
+
+    def _plan_changed(self, plan: _LinkPlan) -> str | None:
+        """Under the flow lock after the commit: why the prepared dispatch no longer applies, else None."""
+        task = plan.task
+        if self.tasks.get(task.task_id) is not task or task.status == "closed":
+            return "task_closed"
+        if task.cancel_requested is not None:
+            return "cancel_requested"
+        if plan.mode == "new":
+            if self.active() is not task or task.pending_start is not None or task.run_id is not None:
+                return "task_changed"
+        elif plan.mode == "rerun":
+            if task.busy():
+                return "worker_busy"
+        elif task.run_id != plan.run_id or self.active() is not task:
+            return "task_changed"
+        return None
+
+    @staticmethod
+    def _link_failure(result: Any, task: "FlowTask | None") -> dict[str, Any]:
+        """The ``to_worker`` result of a link step that did not commit; nothing was sent to the worker."""
+        if result.status == "unavailable":
+            reason, answer = "inbox_unavailable", {"status": "rejected"}
+        elif result.status == "rejected":
+            reason, answer = "inbox_link_refused", {"status": "rejected", "hub_reason": result.reason}
+            answer.update({key: result.value[key] for key in ("state", "version") if key in result.value})
+        else:
+            reason, answer = "inbox_link_unconfirmed", {"status": "unknown"}
+        answer.update({"reason": reason, "detail": INBOX_LINK_DETAILS[reason], "dispatched": False})
+        if task is not None:
+            answer.update({"task_id": task.task_id, "task_status": task.status,
+                           "closed_reason": task.closed_reason})
+        return answer
 
     def _host_shell_size_error(self, args: Mapping[str, Any]) -> str | None:
         """C-D69 (5)(b) (stuck-review-01 P3-1): an experiment command checked with the current host shell's path
@@ -948,6 +1089,8 @@ class TaskFlow:
         if args.get("commands"):  # C-D69 (6): part of the delegated spec/scope
             document["commands"] = list(args["commands"])
         document["source"] = "manager_to_worker"
+        if args.get("request_id") is not None:  # TI-11: the reviewed request this revision carries out (additive)
+            document[INBOX_SPEC_KEY] = args["request_id"]
         return document, errors
 
     @staticmethod
@@ -972,11 +1115,14 @@ class TaskFlow:
         for name in ("execution", "instructions", "analysis", "commands"):
             if name in spec:
                 scope[name] = spec[name]
+        # TI-11: the Task Inbox request the Hub linked before this dispatch (additive; origin of the work)
+        inbox = {INBOX_SPEC_KEY: request.args["request_id"]} if request.args.get("request_id") else {}
         with self._repository() as repository:
-            scope_id = repository.approve_scope(task.task_id, revision, scope, retry_count_used=task.runs_started)
+            scope_id = repository.approve_scope(task.task_id, revision, {**scope, **inbox},
+                                                retry_count_used=task.runs_started)
             proceed_id = repository.proceed(task.task_id, revision, {
                 "source": "manager_to_worker", "instruction": request.args["message"][:SUMMARY_MAX],
-                **self._standing(request)}, retry_count_used=task.runs_started)
+                **self._standing(request), **inbox}, retry_count_used=task.runs_started)
         task.revision, task.spec, task.scope_decision_id = revision, dict(spec), scope_id
         self._record({"type": "delegated", "task_id": task.task_id, "revision": revision,
                       "scope_decision_id": scope_id, "proceed_decision_id": proceed_id,
@@ -984,7 +1130,9 @@ class TaskFlow:
         task.set_status("dispatched")
         self._schedule(task, revision, f"tool_call:{request.tool_call_id}")
 
-    def _to_worker(self, request: HandoffRequest) -> HandoffDecision:
+    def _to_worker(self, request: HandoffRequest, plan: _LinkPlan | None = None) -> HandoffDecision:
+        """``plan`` (TI-11, a call with ``request_id``): the Task and its spec revision are made as usual but nothing is
+        delegated or sent; ``plan.finish`` does that once the Hub committed the link."""
         args = request.args
         if args.get("cancel") is True:
             return self._cancel(request)
@@ -1003,7 +1151,7 @@ class TaskFlow:
             spec, path_errors = self._spec_document(args)
             if path_errors:
                 return self._invalid_paths(path_errors)
-            if active is not None:  # a finished or blocked Task is ended by a new Task
+            if active is not None and plan is None:  # a finished or blocked Task is ended by a new Task
                 self._end_inactive(active, "superseded_by_new_task")
             with self._repository() as repository:
                 new_id = repository.create_task(spec)
@@ -1012,11 +1160,20 @@ class TaskFlow:
             task.set_status("dispatched")
             self.tasks[new_id] = task
             self._record({"type": "task_created", "task_id": new_id, "request_key": request.key_dict()})
-            self._delegate(task, request, 1, spec)
-            return HandoffDecision({"status": "dispatched", "task_id": new_id, "kind": task.kind, "revision": 1,
-                                    "detail": "dispatched to the worker under the user's standing delegation "
-                                              "(C-D66); it reports back with to_manager",
-                                    "manager_rule": MANAGER_RULE})
+
+            def dispatch() -> HandoffDecision:
+                if plan is not None and active is not None and active.status != "closed":
+                    self._end_inactive(active, "superseded_by_new_task")  # TI-11: only once the link committed
+                self._delegate(task, request, 1, spec)
+                return HandoffDecision({"status": "dispatched", "task_id": new_id, "kind": task.kind, "revision": 1,
+                                        "detail": "dispatched to the worker under the user's standing delegation "
+                                                  "(C-D66); it reports back with to_manager",
+                                        "manager_rule": MANAGER_RULE})
+            if plan is None:
+                return dispatch()
+            self._save_task(task)  # known across a restart before the link (an undelegated Task is closed then)
+            plan.task, plan.revision, plan.task_status, plan.created, plan.finish = task, 1, "dispatched", True, dispatch
+            return HandoffDecision({"status": "link_pending", "task_id": new_id})
         task = self.tasks.get(task_id)
         if task is None:
             return HandoffDecision(rejected("unknown_task", detail=UNKNOWN_TASK_DETAIL))
@@ -1033,20 +1190,33 @@ class TaskFlow:
             if path_errors:
                 return self._invalid_paths(path_errors)
         if task.kind == "experiment":
-            return self._experiment_follow_up(task, request, spec)
-        return self._work_follow_up(task, request, spec)
+            return self._experiment_follow_up(task, request, spec, plan)
+        return self._work_follow_up(task, request, spec, plan)
+
+    @staticmethod
+    def _plan(plan: _LinkPlan | None, task: FlowTask, revision: int, status: str,
+              finish: Callable[[], HandoffDecision], mode: str) -> HandoffDecision:
+        """``finish()`` now, or (TI-11) after the Hub committed the link of ``task`` at ``revision``."""
+        if plan is None:
+            return finish()
+        plan.task, plan.revision, plan.task_status, plan.finish = task, revision, status, finish
+        plan.mode, plan.run_id = mode, task.run_id
+        return HandoffDecision({"status": "link_pending", "task_id": task.task_id})
 
     def _experiment_follow_up(self, task: FlowTask, request: HandoffRequest,
-                              spec: dict[str, Any] | None) -> HandoffDecision:
-        wants_run = request.args.get("run") is True or (spec is not None and spec != task.spec)
+                              spec: dict[str, Any] | None, plan: _LinkPlan | None = None) -> HandoffDecision:
+        wants_run = request.args.get("run") is True or (spec is not None and _spec_core(spec) != _spec_core(task.spec))
         if not wants_run:
             if task.run_id is None:
                 return HandoffDecision(held("no_active_run") | {
                     "task_id": task.task_id, "detail": "no run is in progress; send run: true to re-run this "
                                                        "experiment or a new Task without task_id"})
-            self._record({"type": "follow_up", "task_id": task.task_id, "run_id": task.run_id,
-                          **self._standing(request)})
-            return self._question(task, request, None)
+
+            def ask() -> HandoffDecision:
+                self._record({"type": "follow_up", "task_id": task.task_id, "run_id": task.run_id,
+                              **self._standing(request)})
+                return self._question(task, request, None)
+            return self._plan(plan, task, task.revision, task.status, ask, "follow_up")
         if task.busy():
             return self._worker_busy(task)
         if task.runs_started > RETRY_LIMIT:
@@ -1054,28 +1224,36 @@ class TaskFlow:
                 "task_id": task.task_id, "retry_limit": RETRY_LIMIT, "runs_started": task.runs_started,
                 "detail": RETRY_LIMIT_DETAIL})
         base = dict(spec) if spec is not None else dict(task.spec)
-        if base == task.spec:
-            revision = task.revision  # the same delegated spec runs again on its revision
+        if _spec_core(base) == _spec_core(task.spec):
+            revision, base = task.revision, dict(task.spec)  # the same delegated spec runs again on its revision
         else:
             with self._repository() as repository:
                 revision = repository.revise_task(task.task_id, base)
-        self._delegate(task, request, revision, base)
-        return HandoffDecision({"status": "dispatched", "task_id": task.task_id, "kind": task.kind,
-                                "revision": revision, "retry": task.runs_started, "retry_limit": RETRY_LIMIT,
-                                "manager_rule": MANAGER_RULE})
+
+        def rerun() -> HandoffDecision:
+            self._delegate(task, request, revision, base)
+            return HandoffDecision({"status": "dispatched", "task_id": task.task_id, "kind": task.kind,
+                                    "revision": revision, "retry": task.runs_started, "retry_limit": RETRY_LIMIT,
+                                    "manager_rule": MANAGER_RULE})
+        return self._plan(plan, task, revision, "dispatched", rerun, "rerun")
 
     def _work_follow_up(self, task: FlowTask, request: HandoffRequest,
-                        spec: dict[str, Any] | None) -> HandoffDecision:
+                        spec: dict[str, Any] | None, plan: _LinkPlan | None = None) -> HandoffDecision:
         if task.run_id is None:
             return HandoffDecision(held("run_starting") | {"task_id": task.task_id})
-        self._record({"type": "follow_up", "task_id": task.task_id, "run_id": task.run_id,
-                      **self._standing(request)})
-        if task.status == "blocked":
-            task.held_reason = None
-            task.set_status("running")
-            self._save_task(task)
-        self._final_reports.pop(task.task_id, None)  # FU-D02: a new instruction; the worker may report again
-        return self._question(task, request, spec)
+
+        def follow_up() -> HandoffDecision:
+            self._record({"type": "follow_up", "task_id": task.task_id, "run_id": task.run_id,
+                          **self._standing(request)})
+            if task.status == "blocked":
+                task.held_reason = None
+                task.set_status("running")
+                self._save_task(task)
+            self._final_reports.pop(task.task_id, None)  # FU-D02: a new instruction; the worker may report again
+            return self._question(task, request, spec)
+        # TI-11: a work follow-up keeps the Task's delegated revision (no new spec revision; the link is recorded in
+        # the flow ledger and the Hub's links history)
+        return self._plan(plan, task, task.revision, task.status, follow_up, "follow_up")
 
     def _current_worker_session(self) -> list[Any] | None:
         try:

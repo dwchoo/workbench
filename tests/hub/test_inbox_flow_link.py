@@ -317,6 +317,20 @@ class RaceTests(LinkSeamCase):
         self.assertEqual((request['state'], request['task']['task_id']), ('REVIEWING', None), 'link voided')
         self.assertIn('Task 연결이 확인되지 않아', [c['body'] for c in request['comments'] if c['kind'] == 'system'][-1])
 
+    def test_a_linked_request_is_never_linked_to_a_second_task(self):
+        first = self.to_worker()
+        self.assertEqual(first['inbox']['state'], 'READY', first)
+        cancelled = self.fixture.to_worker({'kind': 'work', 'message': 'stop', 'task_id': first['task_id'],
+                                            'cancel': True})
+        self.assertIn(cancelled['status'], ('cancelled', 'cancel_requested'), cancelled)
+        created = len(self.fixture.mailbox.created)
+        second = self.to_worker()
+        self.assertEqual((second['status'], second['reason'], second['state']),
+                         ('rejected', 'inbox_link_refused', 'READY'), second)
+        self.assertNotIn('task_id', second, 'refused at the check: no second Task')
+        self.assertEqual(len(self.fixture.mailbox.created), created)
+        self.assertEqual(self.request()['task']['task_id'], first['task_id'])
+
     def test_without_a_hub_link_nothing_is_created(self):
         self.flow.inbox_call = None
         answer = self.to_worker()

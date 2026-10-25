@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 import json
+import sys
 from typing import Callable, Iterable
 
 from aiohttp import web
@@ -172,13 +173,28 @@ class KeyPages:
         info = next(item for item in await services.blocking(services.api_keys.list) if item.key_id == issued.key_id)
         detail = {"key_id": info.key_id, "name": info.name, "grade": info.grade, "scope": info.scope,
                   "expires_at": info.expires_at}
-        await services.blocking(lambda: services.audit.record("api_key_issued", "owner", request.remote, detail, now=now))
+        audited = await self._audit(services, "api_key_issued", request.remote, detail, now)
+        warning = [] if audited else [render.tag(
+            "p", "감사 기록을 남기지 못했습니다. key는 발급되었습니다. 원인은 Hub log를 보세요.", class_="error", role="alert")]
         body = render.html_join([
             render.tag("h2", "API key를 발급했습니다"),
+            *warning,
             render.tag("p", "이 key는 지금 한 번만 보입니다. 지금 복사해 안전한 곳에 두세요.", class_="notice"),
             render.tag("p", render.tag("code", issued.raw, class_="raw-key")),
             render.tag("p", render.tag("a", "API key 목록으로", href="/settings/keys"))])
         return _page(request, "API key 발급", body)
+
+    @staticmethod
+    async def _audit(services, event: str, address: str | None, detail: dict, now: float) -> bool:
+        """Record the audit row after the key change already happened. A failure is logged (event and
+        error type only, never key material) and reported, not raised: the owner must still get
+        the one-time raw key, and a revoked key stays revoked."""
+        try:
+            await services.blocking(lambda: services.audit.record(event, "owner", address, detail, now=now))
+        except Exception as exc:  # noqa: BLE001 - sqlite3, HubDbError, AuditRejected, ...
+            print(f"[workbench] audit write failed for {event}: {type(exc).__name__}", file=sys.stderr, flush=True)
+            return False
+        return True
 
     # --- revoke -----------------------------------------------------------------------------
 
@@ -229,8 +245,7 @@ class KeyPages:
             return self._plain(status, rejected.reason)
         detail = {"key_id": info.key_id, "name": info.name, "grade": info.grade, "scope": info.scope,
                   "expires_at": info.expires_at}
-        await services.blocking(lambda: services.audit.record("api_key_revoked", "owner", request.remote, detail,
-                                                              now=now))
+        await self._audit(services, "api_key_revoked", request.remote, detail, now)
         return see_other("/settings/keys")
 
 
@@ -241,7 +256,7 @@ def audit_detail(detail: dict) -> str:
 async def get_audit(request: web.Request) -> web.Response:
     services = request.app[SERVICES]
     page = request.query.get("page", "1")
-    number = int(page) if page.isascii() and page.lstrip("-").isdigit() and len(page) < 10 else 1
+    number = int(page) if page.isascii() and page.isdigit() and len(page) < 10 else 1  # plain digits only
     result = await services.blocking(lambda: services.audit.list_audit(number, page_size=AUDIT_PAGE_SIZE))
     head = render.tag("tr", render.html_join([render.tag("th", title) for title in (
         "시각", "event", "주체", "주소", "detail")]))

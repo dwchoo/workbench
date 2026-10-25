@@ -11,6 +11,7 @@ from pathlib import Path
 import re
 import sys
 import unittest
+import unittest.mock
 
 REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO / 'src'))
@@ -276,7 +277,10 @@ class AuditPageTests(SettingsCase):
         for number in range(120):
             self.record('login_failure', {'delay_seconds': number}, actor='anonymous')
         counts = {}
-        for query in ('', '?page=1', '?page=2', '?page=3', '?page=9', '?page=0', '?page=-4', '?page=x', '?page=1e9'):
+        junk = ('?page=--5', '?page=+2', '?page=%202', '?page=2%20', '?page=%EF%BC%92', '?page=%D9%A3', '?page=2.0',
+                '?page=', '?page=99999999999999999999')
+        for query in ('', '?page=1', '?page=2', '?page=3', '?page=9', '?page=0', '?page=-4', '?page=x', '?page=1e9',
+                      *junk):
             page = await self.get('/settings/audit' + query, cookies=self.cookies)
             self.assertEqual(page.status, 200, query)
             counts[query] = len(table_rows(page.body_text)) - 1
@@ -284,6 +288,8 @@ class AuditPageTests(SettingsCase):
         self.assertEqual((counts['?page=0'], counts['?page=-4'], counts['?page=x'], counts['?page=1e9']),
                          (50, 50, 50, 50))
         self.assertEqual(counts['?page=9'], 0)
+        for query in junk:  # never a 500: anything but plain ASCII digits means page 1
+            self.assertEqual(counts[query], 50, query)
         first = (await self.get('/settings/audit', cookies=self.cookies)).body_text
         self.assertIn('href="/settings/audit?page=2"', first)
         self.assertNotIn('page=0', first)
@@ -307,6 +313,41 @@ class AuditPageTests(SettingsCase):
         text = (await self.get('/settings/audit', cookies=self.cookies)).body_text
         self.assertNotIn('<img src=x', text)
         self.assertIn('&lt;img src=x', text)
+
+
+class AuditFailureTests(SettingsCase):
+    async def broken_audit(self):
+        def broken(*args, **kwargs):
+            raise auth.HubDbError('disk full')
+        return unittest.mock.patch.object(self.services.audit, 'record', broken)
+
+    async def test_a_failed_audit_write_still_shows_the_raw_key_once_and_logs_the_failure(self):
+        import io
+        from contextlib import redirect_stderr
+        stderr = io.StringIO()
+        with redirect_stderr(stderr), await self.broken_audit():
+            response = await self.issue()
+        self.assertEqual(response.status, 200, response.body_text)
+        raw = RAW_KEY.search(response.body_text).group(0)
+        self.assertEqual(len(RAW_KEY.findall(response.body_text)), 1)
+        self.services.api_keys.verify(raw, self.now[0])  # the key exists and works
+        self.assertIn('api_key_issued', stderr.getvalue())
+        self.assertNotIn(raw[15:], stderr.getvalue())
+        self.assertIn('감사', response.body_text)  # the page says the audit row is missing
+
+    async def test_a_failed_audit_write_on_revoke_still_revokes(self):
+        import io
+        from contextlib import redirect_stderr
+        raw = RAW_KEY.search((await self.issue()).body_text).group(0)
+        key_id = raw.split('_')[1]
+        csrf = await self.csrf()
+        stderr = io.StringIO()
+        with redirect_stderr(stderr), await self.broken_audit():
+            response = await self.post(f'/settings/keys/{key_id}/revoke', {'csrf': csrf}, cookies=self.cookies)
+        self.assertEqual(response.status, 303)
+        with self.assertRaises(auth.ApiKeyRefused):
+            self.services.api_keys.verify(raw, self.now[0])
+        self.assertIn('api_key_revoked', stderr.getvalue())
 
 
 class NoRawKeyLeakTests(SettingsCase):

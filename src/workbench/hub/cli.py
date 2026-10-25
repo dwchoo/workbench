@@ -153,8 +153,82 @@ def cmd_hub_review_mode(args: argparse.Namespace) -> int:
     return EXIT_OK
 
 
+PASSWD_STDIN_LIMIT = 4 * 1024 + 2  # 1024 characters of up to 4 UTF-8 bytes, plus the line end
+PASSWD_UNCHANGED = "비밀번호를 바꾸지 않았습니다."
+
+
+def _read_stdin_password() -> str | None:
+    """The first stdin line without its line end; ``None`` when it is not UTF-8."""
+    line = sys.stdin.buffer.readline(PASSWD_STDIN_LIMIT)
+    if line.endswith(b"\n"):
+        line = line[:-1]
+        if line.endswith(b"\r"):
+            line = line[:-1]
+    try:
+        return line.decode("utf-8")
+    except UnicodeDecodeError:
+        return None
+
+
+class _NoTerminal(Exception):
+    pass
+
+
+def _read_tty_password() -> tuple[str, str]:
+    """Two ``getpass`` entries on the controlling terminal; never falls back to echoing stdin."""
+    import getpass
+    import warnings
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", getpass.GetPassWarning)
+        try:
+            first = getpass.getpass("새 비밀번호: ")
+            second = getpass.getpass("새 비밀번호 확인: ")
+        except getpass.GetPassWarning as exc:
+            raise _NoTerminal() from exc
+    return first, second
+
+
+def cmd_hub_passwd(args: argparse.Namespace) -> int:
+    """``wb hub passwd [--stdin]``: write ``auth.json`` (generation + 1) without starting or asking the Hub.
+
+    The password comes only from the terminal (twice) or the first stdin line, never argv or env.
+    The Hub records the ``password_changed`` audit row when it next sees the new generation.
+    """
+    from .auth import AuthInvalid, PASSWORD_MAX, PASSWORD_MIN, PasswordRejected, PasswordStore
+    if args.stdin:
+        if sys.stdin.isatty():
+            return _fail("'--stdin'은 파이프·파일 입력용입니다. terminal에서는 'wb hub passwd'만 실행하세요. "
+                         + PASSWD_UNCHANGED, EXIT_REQUIREMENT)
+        password = _read_stdin_password()
+        if password is None:
+            return _fail(f"stdin이 UTF-8이 아닙니다. {PASSWD_UNCHANGED}")
+    else:
+        if not sys.stdin.isatty():
+            return _fail("비밀번호 입력에는 terminal이 필요합니다. 스크립트에서는 'wb hub passwd --stdin'을 쓰세요. "
+                         + PASSWD_UNCHANGED, EXIT_REQUIREMENT)
+        try:
+            password, again = _read_tty_password()
+        except _NoTerminal:
+            return _fail("비밀번호 입력에는 terminal이 필요합니다. 스크립트에서는 'wb hub passwd --stdin'을 쓰세요. "
+                         + PASSWD_UNCHANGED, EXIT_REQUIREMENT)
+        except (EOFError, KeyboardInterrupt):
+            print(file=sys.stderr)
+            return _fail(f"취소했습니다. {PASSWD_UNCHANGED}")
+        if password != again:
+            return _fail(f"두 입력이 같지 않습니다. {PASSWD_UNCHANGED}")
+    try:
+        PasswordStore(hub_layout().state_dir).set_password(password)
+    except PasswordRejected:
+        return _fail(f"비밀번호는 {PASSWORD_MIN}자 이상 {PASSWORD_MAX}자 이하여야 합니다. {PASSWD_UNCHANGED}")
+    except (AuthInvalid, DataDirError, OSError) as exc:
+        return _fail(f"비밀번호 파일을 쓰지 못했습니다: {exc}. {PASSWD_UNCHANGED}")
+    print("비밀번호를 정했습니다. 기존 웹 로그인 세션은 모두 무효가 됩니다.")
+    print("Hub가 실행 중이면 재시작 없이 웹 listener가 열립니다.")
+    return EXIT_OK
+
+
 def cmd_hub_reserved(args: argparse.Namespace) -> int:
-    """``wb hub passwd|tls``: names are reserved for the Web Board; nothing runs."""
+    """``wb hub tls``: the name is reserved for the Web Board; nothing runs."""
     print(f"'wb hub {args.hub_action}'은(는) Web Board 기능에서 제공 예정입니다.", file=sys.stderr)
     return EXIT_REQUIREMENT
 

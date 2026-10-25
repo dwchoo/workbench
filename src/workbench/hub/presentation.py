@@ -16,6 +16,7 @@ WAIT_LABELS = {"paused": "일시정지",
                "boot_confirmation_required": "재부팅 확인 전 보류",
                "manager_editor_not_empty": "manager 입력창에 글이 있어 알림 대기",
                "manager_session_not_connected": "manager 세션 연결 없음(알림 대기)",
+               "manager_busy": "manager 작업 중이라 요청 전달 대기",
                "metadata_unavailable": "metadata 저장 장애로 보류",
                "model_hold": "모델 오류로 보류",
                "task_held": "Task 보류"}
@@ -60,10 +61,22 @@ def waits_text(row: dict) -> str:
     return ", ".join(labels) if labels else EMPTY
 
 
+def _count(value: object) -> int | None:
+    return value if isinstance(value, int) and not isinstance(value, bool) and value >= 0 else None
+
+
 def requests_text(row: dict) -> str:
-    """``pending_requests`` is ``null`` until (A); it shows ``—``, never 0 (HB-AC-19)."""
-    count = row.get("pending_requests")
-    return EMPTY if not isinstance(count, int) or isinstance(count, bool) else str(count)
+    """Task Inbox (TI-10): ``대기 N · 질문 M`` from ``pending_requests`` (NEW and NEEDS_INFO counts), ``0`` when
+    both are 0, ``—`` when the inbox could not be read (``null``, HB-AC-19: never 0 then)."""
+    counts = row.get("pending_requests")
+    if _count(counts) is not None:  # a bare number (older Hub)
+        return str(counts)
+    if not isinstance(counts, dict):
+        return EMPTY
+    new, needs_info = _count(counts.get("new")), _count(counts.get("needs_info"))
+    if new is None or needs_info is None:
+        return EMPTY
+    return "0" if new == needs_info == 0 else f"대기 {new} · 질문 {needs_info}"
 
 
 def relative_time(moment: object, now: float) -> str:

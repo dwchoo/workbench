@@ -9,7 +9,10 @@ deliveries, which it always defers: nothing is ever submitted) to $FAKE_FRAMES. 
   killed), like OMP 18.8.0's daemon broker; its pid goes to $FAKE_BROKERS;
 - ``survive``: ignore SIGHUP and keep running after the PTY hangs up (an OMP that outlives a backend crash);
 - ``slow-term <seconds>``: on SIGTERM record the time (to $FAKE_TERMS) and exit only after that long, like an OMP
-  aborting a model turn in flight (CW-16 O4).
+  aborting a model turn in flight (CW-16 O4);
+- ``editor <text>`` / ``editor-clear``: the composer holds that text / is empty again; ``busy`` / ``idle``: the OMP
+  is in a turn / idle again (Task Inbox TI-10). Like the bridge, a notice is deferred (not recorded) unless the
+  OMP is idle with an empty composer; the probe answers the current state.
 """
 import json
 import os
@@ -57,6 +60,9 @@ def serve():
         frame = json.loads(line)
         if frame.get("kind") == "probe":
             send({"kind": "api_ack", "requestId": frame["requestId"], "status": "state", "state": state})
+        elif frame.get("kind") == "notice" and not (state["idle"] and state["editorEmpty"]):
+            send({"kind": "api_ack", "requestId": frame["requestId"], "status": "deferred",
+                  "reason": "OMP is busy, has pending work/approval, or composer state is unsafe"})
         elif frame.get("kind") == "notice":
             with open(os.environ["FAKE_NOTICES"], "a") as stream:
                 stream.write(json.dumps({"role": role, "session": session, "notice": frame["notice"]}) + "\n")
@@ -101,6 +107,13 @@ def commands():
             signal.signal(signal.SIGHUP, signal.SIG_IGN)
             survive = True
             print("surviving a hangup", flush=True)
+            continue
+        if command.startswith("editor ") or command in ("editor-clear", "busy", "idle"):
+            if command == "busy" or command == "idle":
+                state["idle"] = command == "idle"
+            else:
+                state["editorEmpty"] = command == "editor-clear"
+            print("state", command, flush=True)
             continue
         if command.startswith("slow-term "):
             delay = float(command.split(" ", 1)[1])

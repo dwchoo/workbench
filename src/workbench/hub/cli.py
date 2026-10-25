@@ -125,6 +125,34 @@ def cmd_hub_list(args: argparse.Namespace) -> int:
     return EXIT_OK
 
 
+REVIEW_MODE_TIMEOUT = 15.0
+
+
+def cmd_hub_review_mode(args: argparse.Namespace) -> int:
+    """``wb hub review-mode <PATH> [auto|manual]`` (D-32): the project's review mode through the Hub (its
+    ``review_mode`` op stores it in ``<root>/.wb/inbox.sqlite3``); without a value, the current one."""
+    root = os.path.abspath(args.path)
+    fields = {"root": root} if args.mode is None else {"root": root, "set": args.mode}
+    layout = hub_layout()
+    try:
+        with HubClient(layout, timeout=REVIEW_MODE_TIMEOUT) as client:
+            reply = client.request("review_mode", **fields)
+    except HubNotRunning:
+        print(f"{NOT_RUNNING_TEXT}: 검토 방식을 읽거나 바꾸려면 'wb hub start'로 Hub를 시작하세요.", file=sys.stderr)
+        return EXIT_FAILURE
+    except (HubUnknown, HubUnresponsive) as exc:
+        print(f"Hub에 묻지 못했습니다: {exc.reason} (lock {layout.lock})", file=sys.stderr)
+        return EXIT_FAILURE
+    if not reply.get("ok"):
+        if reply.get("reason") == "not_found":
+            print(f"Hub에 등록되지 않은 WB 프로젝트입니다: {root} ('wb hub add {root}'로 등록하세요)", file=sys.stderr)
+        else:
+            print(f"검토 방식 요청 실패: {reply.get('reason')}: {reply.get('detail')}", file=sys.stderr)
+        return EXIT_FAILURE
+    print(f"검토 방식: {reply.get('review_mode')}")
+    return EXIT_OK
+
+
 PASSWD_STDIN_LIMIT = 4 * 1024 + 2  # 1024 characters of up to 4 UTF-8 bytes, plus the line end
 PASSWD_UNCHANGED = "비밀번호를 바꾸지 않았습니다."
 

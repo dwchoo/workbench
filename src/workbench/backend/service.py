@@ -145,6 +145,8 @@ def _log(message: str) -> None:
     print(f"{time.strftime('%Y-%m-%dT%H:%M:%S')} backend[{os.getpid()}] {message}", flush=True)
 
 
+INBOX_NOTICES_KEPT = 256  # TI-10: delivery ids remembered so the same notice is never queued twice
+
 class Backend:
     """ui_v1 controller plus the backend-owned ports CW-06/CW-18/CW-19 consume."""
 
@@ -229,6 +231,8 @@ class Backend:
         self.lifecycle_journal: LifecycleJournal | None = None
         self.ui: UiServer | None = None
         self.inbox_link: Any = None  # Task Inbox (TI-09): workbench.backend.inbox_link.InboxLink once _open ran
+        self._inbox_notices: dict[str, str] = {}  # TI-10: delivery id -> notice id (oldest first)
+        self._inbox_notice_lock = threading.Lock()
         self._lock = InstanceLock(layout.lock)
         self._stop_signal: int | None = None
         self._shutdown_token: tuple[str, float] | None = None
@@ -956,6 +960,7 @@ class Backend:
                 "usage": self._usage_view(task, automation),
                 "omp_isolation": self.omp_isolation,
                 "recovery": self._recovery_view(),
+                "inbox": self._inbox_view(),  # TI-10: request notices waiting for the manager
                 "boot": dict(self.boot), "shutdown": {"pending": self._shutdown_token is not None},
                 # CW-19 (additive): the start-up reconcile, the admission hold and the fault display
                 "startup": self._startup_view(), "holds": self.hold.view(), "faults": self._faults_view(),
@@ -2282,7 +2287,43 @@ class Backend:
 
     # -- Task Inbox (TI-09): Hub-only ui_v1 requests ----------------------------
     def inbox_notice(self, request_id: str, delivery_id: str, event: str, fields: dict[str, Any]) -> dict[str, Any]:
-        raise Held(Reason.UNSUPPORTED_TYPE, "inbox_notice is not served by this backend yet")  # TI-10
+        """ui_v1 ``inbox_notice`` (TI-10): queue one ``inbox_request`` notice for the manager behind the waiting
+        notices (the watchdog sends it only into an idle manager with an empty composer, P2-AC-10). The final
+        outcome goes to the Hub as hub_v1 ``inbox_delivery`` (kept in memory until the Hub takes it). The same
+        ``delivery_id`` again answers the notice already queued for it; nothing is queued twice. It runs on the
+        UI loop thread and only queues."""
+        from workbench.backend.flow_recovery import INBOX_NOTICE_TYPE
+        from workbench.backend.inbox_link import manager_notice_content
+        watchdog = getattr(self, "watchdog", None)
+        if watchdog is None:
+            raise Held(Reason.UNSUPPORTED_TYPE, "this backend has no notice queue")
+        with self._inbox_notice_lock:
+            known = self._inbox_notices
+            if delivery_id in known:
+                return {"queued": True, "notice_id": known[delivery_id]}
+            content = manager_notice_content(event, fields)
+
+            def on_result(outcome: str) -> None:
+                link = self.inbox_link
+                if link is not None:
+                    link.report_delivery(request_id, delivery_id, outcome)
+                _log(f"inbox notice for request {request_id}: {outcome}")
+            notice_id = watchdog.enqueue_notice(ActorRole.MANAGER, INBOX_NOTICE_TYPE, content, on_result=on_result,
+                                                first=False)
+            known[delivery_id] = notice_id
+            while len(known) > INBOX_NOTICES_KEPT:
+                known.pop(next(iter(known)))
+        return {"queued": True, "notice_id": notice_id}
+
+    def _inbox_view(self) -> dict[str, Any] | None:
+        """ui_v1 snapshot ``inbox`` (TI-10, additive): the request notices waiting for the manager."""
+        watchdog = getattr(self, "watchdog", None)
+        if watchdog is None:
+            return None
+        try:
+            return watchdog.inbox_view()
+        except Exception:
+            return None
 
     def cancel_task(self, task_id: str, request_id: str, expect: dict[str, Any], reason: str | None) -> dict[str, Any]:
         raise Held(Reason.UNSUPPORTED_TYPE, "cancel_task is not served by this backend yet")  # TI-13

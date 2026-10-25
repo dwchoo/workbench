@@ -70,6 +70,9 @@ WORKER_NOTICE_TYPES = ("terminal_check", "terminal_done", "status_check")
 MANAGER_NOTICE_TYPES = ("worker_stalled", "report_delivery_unknown", "worker_restarted", "manager_recovery",
                         "worker_terminal_done",  # p27-cd70-02 Q3: a previous worker session's command ended
                         "backend_restarted")  # C-D71 (2): the backend restarted with an open Task
+# Task Inbox (TI-10): a request for the manager to review (Hub ``inbox_notice``). Kept apart from the recovery
+# notices above (the workbench-recovery skill documents those); the bridge's manager NOTICE_TYPES has both.
+INBOX_NOTICE_TYPE = "inbox_request"
 SURVIVOR_ID_MAX = 16
 
 STATUS_CHECK_INSTRUCTION = (
@@ -224,6 +227,10 @@ class _Queued:
     # p27-cw19-fix-01 (VM F1): the notice's fields built again right before each attempt (the current state);
     # None from it means the notice no longer applies and it is dropped unsent
     build: Callable[[], Mapping[str, Any] | None] | None = None
+    # Task Inbox (TI-10): called once with the final outcome (delivered, unknown, rejected or dropped)
+    on_result: Callable[[str], None] | None = None
+    queued_at: float = 0.0  # wall time it was queued
+    wait: str | None = None  # why the last attempt was deferred (``inbox_view``)
 
 
 @dataclass
@@ -264,6 +271,10 @@ class Watchdog:
         self._watch: _TaskWatch | None = None
         self._sessions: dict[ActorRole, tuple[str, int]] = {}
         self._queue: list[_Queued] = []
+        # TI-10: notices queued from other threads (the UI loop) wait here under a short lock and join the queue
+        # at the next send pass, so queueing never waits for a tick (whose send may take seconds)
+        self._incoming: list[tuple[_Queued, bool]] = []
+        self._incoming_lock = threading.Lock()
         self._noticed_unknown: set[str] = set()
         self._cursor = 0
         self._stop = threading.Event()
@@ -368,10 +379,14 @@ class Watchdog:
 
     def _enqueue(self, role: ActorRole, notice_type: str, fields: Mapping[str, Any], *, first: bool = False,
                  handoff_id: str | None = None,
-                 build: Callable[[], Mapping[str, Any] | None] | None = None) -> str:
+                 build: Callable[[], Mapping[str, Any] | None] | None = None,
+                 on_result: Callable[[str], None] | None = None, incoming: bool = False) -> str:
         notice = {"notice_id": str(uuid4()), "type": notice_type, **fields}
-        item = _Queued(role, notice, handoff_id=handoff_id, build=build)
-        if first:
+        item = _Queued(role, notice, handoff_id=handoff_id, build=build, on_result=on_result, queued_at=self._wall())
+        if incoming:
+            with self._incoming_lock:
+                self._incoming.append((item, first))
+        elif first:
             self._queue.insert(0, item)
         else:
             self._queue.append(item)
@@ -563,7 +578,30 @@ class Watchdog:
                           "outcome": {"delivered": "sent"}.get(outcome, outcome)})
         return outcome
 
+    def _absorb(self) -> None:
+        """Move the notices queued from other threads into the queue (tick thread, under the tick lock)."""
+        with self._incoming_lock:
+            incoming, self._incoming = self._incoming, []
+        for item, first in incoming:
+            if first:
+                self._queue.insert(0, item)
+            else:
+                self._queue.append(item)
+
+    def _all_queued(self) -> list[_Queued]:
+        """The queue as it will be once the incoming notices joined it (views)."""
+        queue = list(self._queue)
+        with self._incoming_lock:
+            incoming = list(self._incoming)
+        for item, first in incoming:
+            if first:
+                queue.insert(0, item)
+            else:
+                queue.append(item)
+        return queue
+
     def _send_queue(self, now: float) -> None:
+        self._absorb()
         while self._queue:
             item = self._queue[0]
             if now < item.retry_at:
@@ -578,29 +616,63 @@ class Watchdog:
                     self._record({"type": "workbench_notice", "role": item.role.value,
                                   "notice_id": item.notice.get("notice_id"), "notice_type": item.notice.get("type"),
                                   "task_id": item.notice.get("task_id"), "outcome": "dropped_not_applicable"})
+                    self._finished(item, "dropped")
                     continue
                 item.notice = {**dict(fields), "notice_id": item.notice["notice_id"], "type": item.notice["type"]}
             outcome = self._send(item.role, item.notice, retry=item.attempts > 0)
             item.attempts += 1
             if outcome in ("deferred", "paused", "not_connected"):
                 item.retry_at = now + self.notice_retry
+                if item.notice.get("type") == INBOX_NOTICE_TYPE:
+                    item.wait = self._wait_reason(item.role, outcome)
                 return  # notices to one OMP keep their order
             self._queue.pop(0)
+            self._finished(item, outcome)
+
+    def _wait_reason(self, role: ActorRole, outcome: str) -> str:
+        """SPEC "Notice 전달 결과": why a deferred attempt waits, read right after it (one probe)."""
+        if outcome == "not_connected":
+            return "manager_session_not_connected"
+        if outcome == "paused":
+            return "paused"
+        state = self._call(self._ports.probe, role, default=None)
+        if isinstance(state, Mapping) and state.get("editorKnown") is True and state.get("editorEmpty") is False:
+            return "manager_editor_not_empty"
+        return "manager_busy"
+
+    def inbox_view(self) -> dict[str, Any]:
+        """ui_v1 snapshot ``inbox`` (TI-10, additive): the inbox notices still queued, oldest first."""
+        items = [item for item in self._all_queued() if item.notice.get("type") == INBOX_NOTICE_TYPE]
+        return {"notices": [{"request_id": item.notice.get("request_id"), "event": item.notice.get("event"),
+                             "queued_at": item.queued_at, "attempts": item.attempts, "wait": item.wait}
+                            for item in items]}
+
+    def _finished(self, item: _Queued, outcome: str) -> None:
+        """The notice left the queue for good: its ``on_result`` hears the final outcome once."""
+        if item.on_result is None:
+            return
+        try:
+            item.on_result(outcome)
+        except Exception:
+            pass  # a failing listener changes nothing here
 
     def enqueue_notice(self, role: ActorRole, notice_type: str, fields: Mapping[str, Any], *,
-                       build: Callable[[], Mapping[str, Any] | None] | None = None) -> str:
+                       build: Callable[[], Mapping[str, Any] | None] | None = None,
+                       on_result: Callable[[str], None] | None = None, first: bool = True) -> str:
         """A backend notice sent once through this queue (C-D71 (2): ``backend_restarted``); like the others it
         waits while the target OMP is paused, held or not connected and is never sent twice. Returns its id.
 
-        ``build`` (VM F1) makes the fields again right before each attempt; None drops the notice unsent."""
-        with self._tick_lock:
-            return self._enqueue(role, notice_type, fields, first=True, build=build)
+        ``build`` (VM F1) makes the fields again right before each attempt; None drops the notice unsent.
+        ``on_result`` (TI-10) hears the final outcome once: ``delivered``, ``unknown``, ``rejected`` or ``dropped``
+        (not applicable any more). ``first``: ahead of the waiting notices (the default) or behind them."""
+        # TI-10: never under the tick lock (the UI loop thread calls this): the notice joins at the next send pass
+        return self._enqueue(role, notice_type, fields, first=first, build=build, on_result=on_result, incoming=True)
 
     def queued(self) -> list[dict[str, Any]]:
         """The notices waiting for a deliverable OMP (tests and workbench_status)."""
-        return [{"role": item.role.value, **item.notice} for item in self._queue]
+        return [{"role": item.role.value, **item.notice} for item in self._all_queued()]
 
 
-__all__ = ["BACKEND_RESTARTED_HINT", "STOP_COMMAND_TOOL", "STOP_SURVIVOR_TOOL", "validate_stop_command_arguments", "validate_stop_survivor_arguments", "EDITOR_WAIT", "IDLE_LIMIT", "MANAGER_NOTICE_TYPES", "MANAGER_TOOLS", "MAX_CHECKS", "PROBE_INTERVAL",
+__all__ = ["BACKEND_RESTARTED_HINT", "INBOX_NOTICE_TYPE", "STOP_COMMAND_TOOL", "STOP_SURVIVOR_TOOL", "validate_stop_command_arguments", "validate_stop_survivor_arguments", "EDITOR_WAIT", "IDLE_LIMIT", "MANAGER_NOTICE_TYPES", "MANAGER_TOOLS", "MAX_CHECKS", "PROBE_INTERVAL",
            "RESTART_DETAIL", "RESTART_NO_TASK_DETAIL", "RESTART_NO_TASK_PENDING_DETAIL", "RESTART_PENDING_DETAIL", "restart_detail", "RESTART_WORKER_TOOL", "STATUS_TOOL", "WORKER_NOTICE_TYPES", "WatchPorts", "Watchdog",
            "bounded", "validate_restart_arguments", "validate_status_arguments"]

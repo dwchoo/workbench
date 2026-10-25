@@ -216,8 +216,7 @@ class PowerOnTests(WebControlCase):
         status, body = await self.control_call(session, project_id, 'power-on')
         self.assertLess(time.monotonic() - started, 10)
         self.assertEqual((status, body['ok'], body['reason']), (200, False, 'start_failed'), body)
-        self.assertIn('unknown', body['detail'])
-        self.assertIn('recheck', body['detail'])
+        self.assertIn('상태를 확인', body['detail'])  # fixed text (fix 7): check the project state
         def sleepers() -> list[int]:
             found = []
             for pid in self.box.ours():
@@ -237,8 +236,10 @@ class PowerOnTests(WebControlCase):
         session = await self.login()
         status, body = await self.control_call(session, project_id, 'power-on')
         self.assertEqual((status, body['ok'], body['reason']), (200, False, 'start_failed'), body)
-        self.assertLessEqual(len(body['detail']), 1000)
-        self.assertTrue(body['detail'].endswith('END-OF-OUTPUT'), body['detail'][-80:])
+        # Security review fix 7: the JSON detail is the reason's fixed text, never the driver's output.
+        self.assertNotIn('END-OF-OUTPUT', json.dumps(body))
+        self.assertNotIn('xxxx', json.dumps(body))
+        self.assertLessEqual(len(body['detail']), 200)
 
     async def test_an_unregistered_project_id_is_unknown_and_starts_nothing(self):
         root, project_id = self.box.project('alpha')  # initialized, not registered
@@ -401,11 +402,30 @@ class AutomationControlTests(WebControlCase):
             status, body = await self.control_call(session, project_id, 'pause')
         self.assertEqual((status, body['ok'], body['action'], body['reason']),
                          (200, False, 'pause', 'internal_error'), body)
-        self.assertIn('RuntimeError', body['detail'])
+        self.assertNotIn('RuntimeError', json.dumps(body))
+        self.assertNotIn('boom', json.dumps(body))
         self.assertEqual(self.audit()[-1][2], {'project_id': project_id, 'action': 'pause',
                                                'result': 'internal_error'})
         status, body = await self.control_call(session, project_id, 'pause')  # the slot was released
         self.assertEqual((status, body['reason']), (200, 'not_running'), body)
+
+    async def test_json_detail_is_fixed_text_never_exception_or_path_text(self):
+        """Security review fix 7: ``/api/projects/..`` ``detail`` is one fixed sentence per reason."""
+        from unittest import mock
+        from workbench.hub import projects
+        _root, project_id = self.registered()
+        session = await self.login()
+        secret = '/home/someone/.ssh/id_rsa: Permission denied'
+        details = set()
+        for error in (RuntimeError(secret), OSError(13, secret), ValueError(secret)):
+            with mock.patch.object(projects, 'resume', side_effect=error):
+                _status, body = await self.control_call(session, project_id, 'resume')
+            self.assertEqual(body['reason'], 'internal_error', body)
+            self.assertNotIn('.ssh', json.dumps(body))
+            self.assertNotIn(type(error).__name__, json.dumps(body))
+            details.add(body['detail'])
+        self.assertEqual(len(details), 1, details)
+        self.assertTrue(next(iter(details)))
 
     async def test_a_project_that_is_off_is_not_running_for_every_backend_call(self):
         root, project_id = self.registered()

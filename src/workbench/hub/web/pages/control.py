@@ -8,7 +8,8 @@ Actions: ``power-on``, ``power-off`` (the first step: ``confirm_required`` with 
 ``data.active``), ``power-off-confirm`` (form field ``token``), ``pause``, ``resume``,
 ``confirm-boot``. The reply is ``Result.as_dict()``; HTTP 200 for every finished call (ok or not),
 404 ``unknown_project``/unknown action, 409 ``control_in_progress``/``confirm_token_invalid``,
-503 ``control_busy`` (every control worker is busy). Calls run on the control's own workers.
+503 ``control_busy`` (every control worker is busy). Calls run on the control's own workers. ``detail`` is a
+fixed sentence per reason (:func:`fixed_detail`): no exception, path or backend text reaches the reply.
 """
 from __future__ import annotations
 
@@ -46,7 +47,18 @@ async def post_control(request: web.Request) -> web.Response:
     else:
         return web.json_response({"ok": False, "reason": "unknown_action"}, status=404)
     status = 403 if result.reason == web_control.FORBIDDEN else STATUS.get(result.reason, 200)
-    return web.json_response(result.as_dict(), status=status)
+    return web.json_response({**result.as_dict(), "detail": fixed_detail(result)}, status=status)
+
+
+def fixed_detail(result: web_control.Result) -> str | None:
+    """The reply's ``detail``: the reason's fixed sentence (the project pages' text), never the library's detail,
+    which can carry exception text, paths, socket names or driver output (security review fix 7)."""
+    if result.ok or result.detail is None:
+        return None
+    from .projects import GENERIC_FAILURE, REASON_TEXT, WORK_CHANGED_NOTICE  # the pages import this module
+    if result.reason == web_control.WORK_CHANGED:
+        return WORK_CHANGED_NOTICE
+    return REASON_TEXT.get(result.reason, GENERIC_FAILURE)[0]
 
 
 def register(app: web.Application) -> None:

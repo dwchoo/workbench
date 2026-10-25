@@ -92,9 +92,10 @@ class ProjectsCase(web_auth.WebAppCase):
         self.registry_state = 'ok'
         self.list_error: Exception | None = None
         self.list_calls: list[bool] = []
+        self.one_calls: list[str] = []
         self.control = FakeControl()
         self.addAsyncCleanup(self.control.close)
-        self.routes = (control_pages.use(self.control), project_pages.routes(self.hub_list, self.inbox))
+        self.routes = (control_pages.use(self.control), project_pages.routes(self.hub_list, self.inbox, self.hub_one))
         await super().asyncSetUp()
         self.cookie = await self.session_cookie()
         self.cookies = {'wb_hub_session': self.cookie}
@@ -105,6 +106,12 @@ class ProjectsCase(web_auth.WebAppCase):
             raise self.list_error
         return {'observed_at': 1_000_000.0, 'registry': {'state': self.registry_state, 'path': '/x/registry.json'},
                 'rows': list(self.rows)}
+
+    async def hub_one(self, project_id: str, fresh: bool = True) -> dict:
+        self.one_calls.append(project_id)
+        listing = await self.hub_list(True)
+        self.list_calls.pop()  # the single-project read is counted on its own
+        return {**listing, 'rows': [row for row in listing['rows'] if row['project_id'] == project_id]}
 
     async def page(self, path: str, **kwargs) -> tuple:
         response = await self.get(path, cookies=self.cookies, **kwargs)
@@ -238,6 +245,15 @@ class ProjectPageTests(ProjectsCase):
         self.assertEqual(self.controls(page, self.a), [])
         self.assertIn('다른 제어가 진행 중입니다', response.body_text)
 
+    async def test_the_project_page_reads_the_cached_list_and_observes_nothing_afresh(self):
+        await self.open(self.a, power='on')
+        self.assertEqual((self.list_calls, self.one_calls), ([False], []))
+
+    async def test_the_requests_link_quotes_the_project_id(self):
+        self.rows = [hub_row('alpha', 'a b&c=d', power='on')]
+        _, page = await self.page('/projects/a%20b%26c%3Dd')
+        self.assertIn('/requests?project=a%20b%26c%3Dd', page.links())
+
     async def test_unknown_project_is_404(self):
         response, _ = await self.page('/projects/nope')
         self.assertEqual(response.status, 404)
@@ -284,6 +300,11 @@ class ConfirmPageTests(ProjectsCase):
                 expected = [('power_off_request', self.a)] if action == 'power-off' else []
                 self.assertEqual(self.control.calls, expected)  # opening a confirm page runs no control
 
+    async def test_a_confirm_page_observes_only_its_project_afresh(self):
+        self.set_state('pause')
+        await self.page(f'/projects/{self.a}/pause')
+        self.assertEqual((self.list_calls, self.one_calls), ([], [self.a]))
+
     async def test_power_off_page_lists_the_active_work_and_carries_the_token(self):
         self.set_state('power-off')
         self.control.replies['power_off_request'] = confirm_required(self.a, 'tok-77', SHELL_JOBS)
@@ -325,7 +346,7 @@ class ConfirmPageTests(ProjectsCase):
         self.control.replies['power_off_request'] = web_control.Result(
             False, 'power_off', self.a, 'unreachable', 'ConnectionError: /run/user/1000/wb/secret.sock refused')
         response, page = await self.page(f'/projects/{self.a}/power-off')
-        self.assertEqual(response.status, 200)
+        self.assertEqual(response.status, 502)
         self.assertEqual([f for f in page.forms if f['attrs'].get('action') == f'/projects/{self.a}/power-off'], [])
         self.assertNotIn('secret.sock', response.body_text)
         self.assertIn('프로젝트에 연결하지 못했습니다', response.body_text)
@@ -364,7 +385,7 @@ class StartReviewTests(ProjectsCase):
         self.request_routes = request_pages.routes(self.inbox, lambda: list(self.refs))
         # the base case builds the app once; rebuild it with both route sets
         await self.server.close()
-        self.routes = (control_pages.use(self.control), project_pages.routes(self.hub_list, self.inbox),
+        self.routes = (control_pages.use(self.control), project_pages.routes(self.hub_list, self.inbox, self.hub_one),
                        self.request_routes)
         self.server = test_utils.TestServer(create_app(self.services, routes=self.routes), host='127.0.0.1', port=0)
         await self.server.start_server()
@@ -556,7 +577,7 @@ class ControlPostTests(ProjectsCase):
                 self.control.replies['power_on'] = web_control.Result(False, 'power_on', self.a, reason, detail,
                                                                        {'output': '/home/secret/out'})
                 response = await self.submit('power-on')
-                self.assertEqual(response.status, 200)
+                self.assertEqual(response.status, 502)
                 self.assertIn(text, response.body_text)
                 self.assertNotIn('secret', response.body_text)
                 self.assertNotIn('Traceback', response.body_text)
@@ -577,6 +598,21 @@ class ControlPostTests(ProjectsCase):
         response = await self.submit('confirm-boot')
         self.assertIn('재부팅 정보가 바뀌었습니다', response.body_text)
         self.assertNotIn('old=1', response.body_text)
+        self.assertEqual(response.status, 409)
+
+    async def test_failed_controls_use_409_for_conflicts_503_for_unavailable_and_502_for_backend_failures(self):
+        expected = {'confirm_token_invalid': 409, 'control_in_progress': 409, 'not_running': 409, 'mismatch': 409,
+                    'boot_confirmation_not_required': 409, 'boot_id_mismatch': 409, 'work_kept_changing': 409,
+                    'control_busy': 503, 'registry_invalid': 503, 'boot_id_unavailable': 503,
+                    'unreachable': 502, 'start_failed': 502, 'start_requirement': 502, 'no_result': 502,
+                    'unverified': 502, 'backend_too_old': 502, 'a_reason_nobody_listed': 502,
+                    'unknown_project': 404, 'forbidden': 403, 'internal_error': 500}
+        for reason, status in expected.items():
+            with self.subTest(reason=reason):
+                self.control.replies['pause'] = web_control.Result(False, 'pause', self.a, reason, 'detail')
+                response = await self.submit('pause')
+                self.assertEqual(response.status, status)
+                self.assertNotIn('detail', response.body_text)
 
     async def test_power_off_confirm_runs_with_the_page_token_and_succeeds_only_when_verified(self):
         self.control.replies['power_off_confirm'] = web_control.Result(
@@ -596,7 +632,7 @@ class ControlPostTests(ProjectsCase):
             with self.subTest(reason=result.reason, ok=result.ok):
                 self.control.replies['power_off_confirm'] = result
                 response = await self.submit('power-off', {'token': 'tok-9'})
-                self.assertEqual(response.status, 200)
+                self.assertEqual(response.status, 502)
                 self.assertIn(text, response.body_text)
                 self.assertNotIn('꺼졌습니다', response.body_text)
                 self.assertNotIn('/run/x', response.body_text)

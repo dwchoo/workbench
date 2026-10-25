@@ -32,6 +32,7 @@ class StatusPort:
 
     rows: Callable[..., Awaitable[dict]]
     inbox: object
+    one: Callable[..., Awaitable[dict]] | None = None  # ``one(project_id)``: one project's row, observed afresh
 
 
 PORT: web.AppKey = web.AppKey("status_port", StatusPort)
@@ -59,10 +60,18 @@ def review_mode_text(mode: object) -> str:
     return REVIEW_MODE_LABELS.get(mode, presentation.EMPTY)
 
 
-async def fetch(request: web.Request, *, fresh: bool = False) -> tuple[list[dict], str | None]:
-    """``(rows, problem)``: the Hub list rows and a fixed problem text when it could not be read."""
+async def fetch(request: web.Request, *, fresh: bool = False,
+                project_id: str | None = None) -> tuple[list[dict], str | None]:
+    """``(rows, problem)``: the Hub list rows and a fixed problem text when it could not be read.
+
+    ``fresh`` with a ``project_id`` observes that one project afresh (the others stay cached); ``fresh`` alone
+    observes every project."""
+    port = request.app[PORT]
     try:
-        listing = await request.app[PORT].rows(fresh)
+        if fresh and project_id is not None and port.one is not None:
+            listing = await port.one(project_id)
+        else:
+            listing = await port.rows(fresh)
     except Exception:  # noqa: BLE001 - a broken list is a page problem, never a 500 or a "꺼짐" row
         return [], UNREADABLE_TEXT
     if not isinstance(listing, dict):

@@ -9,6 +9,7 @@ reach a page: a failed control shows a fixed text for its ``reason`` code.
 from __future__ import annotations
 
 from typing import Awaitable, Callable
+from urllib.parse import quote
 
 from aiohttp import web
 
@@ -52,8 +53,8 @@ def available_controls(row: dict) -> list[str]:
     return controls
 
 
-async def find_row(request: web.Request, project_id: str, *, fresh: bool = True) -> tuple[dict | None, str | None]:
-    rows, problem = await fetch(request, fresh=fresh)
+async def find_row(request: web.Request, project_id: str, *, fresh: bool) -> tuple[dict | None, str | None]:
+    rows, problem = await fetch(request, fresh=fresh, project_id=project_id)
     return next((row for row in rows if row.get("project_id") == project_id), None), problem
 
 
@@ -109,7 +110,7 @@ async def post_review_mode(request: web.Request) -> web.Response:
 
 async def get_project(request: web.Request) -> web.Response:
     project_id = request.match_info["project_id"]
-    row, problem = await find_row(request, project_id)
+    row, problem = await find_row(request, project_id, fresh=False)
     if row is None and problem is None:
         return not_found(request)
     body = []
@@ -138,7 +139,7 @@ async def get_project(request: web.Request) -> web.Response:
     elif row.get("power") in UNCONTROLLABLE_TEXT:
         body.append(render.tag("p", UNCONTROLLABLE_TEXT[row["power"]], class_="notice", role="status"))
     body.append(review_mode_form(request, project_id, mode))
-    body.append(render.tag("p", render.tag("a", "이 프로젝트의 요청", href=f"/requests?project={project_id}")))
+    body.append(render.tag("p", render.tag("a", "이 프로젝트의 요청", href=f"/requests?project={quote(project_id, safe='')}")))
     body.append(render.tag("p", render.tag("a", "프로젝트 상태", href="/")))
     return frame(request, cells["이름"], render.html_join(body))
 
@@ -166,21 +167,21 @@ REASON_TEXT = {
     web_control.CONFIRM_TOKEN_INVALID: ("확인 화면이 만료되었거나 이미 사용되었습니다. 확인 화면을 다시 여세요", 409),
     web_control.INTERNAL_ERROR: ("제어하지 못했습니다. 프로젝트 상태를 확인하세요", 500),
     web_control.REGISTRY_INVALID: (REGISTRY_TEXT, 503),
-    project_library.MISMATCH: ("등록 정보가 맞지 않아 제어할 수 없습니다. 프로젝트 폴더를 확인하세요", 200),
-    project_library.NOT_RUNNING: ("프로젝트가 켜져 있지 않습니다", 200),
-    project_library.UNREACHABLE: ("프로젝트에 연결하지 못했습니다. 아무것도 바뀌지 않았습니다", 200),
-    project_library.START_FAILED: ("프로젝트를 켜지 못했습니다. 상태를 확인한 뒤 다시 시도하세요", 200),
-    project_library.START_REQUIREMENT: ("시작에 필요한 조건이 맞지 않아 켜지 못했습니다", 200),
-    project_library.WORK_KEPT_CHANGING: (project_library.WORK_KEPT_CHANGING_TEXT, 200),
-    project_library.NO_RESULT: ("끄기를 요청했지만 종료 결과를 확인하지 못했습니다. 프로젝트 상태를 확인하세요", 200),
-    project_library.UNVERIFIED: ("종료가 확인되지 않았습니다. 프로젝트 상태를 확인하세요", 200),
-    project_library.BACKEND_TOO_OLD: ("이 backend는 이 제어를 지원하지 않습니다. 프로젝트를 다시 시작하세요", 200),
-    project_library.BOOT_ID_UNAVAILABLE: ("재부팅 정보를 읽지 못했습니다. 잠시 뒤 다시 시도하세요", 200),
-    "boot_confirmation_not_required": ("재부팅 확인이 필요하지 않습니다", 200),
-    "boot_id_mismatch": ("재부팅 정보가 바뀌었습니다. 프로젝트 화면을 다시 여세요", 200),
+    project_library.MISMATCH: ("등록 정보가 맞지 않아 제어할 수 없습니다. 프로젝트 폴더를 확인하세요", 409),
+    project_library.NOT_RUNNING: ("프로젝트가 켜져 있지 않습니다", 409),
+    project_library.UNREACHABLE: ("프로젝트에 연결하지 못했습니다. 아무것도 바뀌지 않았습니다", 502),
+    project_library.START_FAILED: ("프로젝트를 켜지 못했습니다. 상태를 확인한 뒤 다시 시도하세요", 502),
+    project_library.START_REQUIREMENT: ("시작에 필요한 조건이 맞지 않아 켜지 못했습니다", 502),
+    project_library.WORK_KEPT_CHANGING: (project_library.WORK_KEPT_CHANGING_TEXT, 409),
+    project_library.NO_RESULT: ("끄기를 요청했지만 종료 결과를 확인하지 못했습니다. 프로젝트 상태를 확인하세요", 502),
+    project_library.UNVERIFIED: ("종료가 확인되지 않았습니다. 프로젝트 상태를 확인하세요", 502),
+    project_library.BACKEND_TOO_OLD: ("이 backend는 이 제어를 지원하지 않습니다. 프로젝트를 다시 시작하세요", 502),
+    project_library.BOOT_ID_UNAVAILABLE: ("재부팅 정보를 읽지 못했습니다. 잠시 뒤 다시 시도하세요", 503),
+    "boot_confirmation_not_required": ("재부팅 확인이 필요하지 않습니다", 409),
+    "boot_id_mismatch": ("재부팅 정보가 바뀌었습니다. 프로젝트 화면을 다시 여세요", 409),
 }
 WORK_CHANGED_NOTICE = f"{project_library.WORK_CHANGED_TEXT}. {project_library.RE_ASK_TEXT} 아무것도 끄지 않았습니다."
-GENERIC_FAILURE =("처리하지 못했습니다. 프로젝트 상태를 확인하세요", 200)
+GENERIC_FAILURE = ("처리하지 못했습니다. 프로젝트 상태를 확인하세요", 502)
 METHODS = {"power-on": "power_on", "pause": "pause", "resume": "resume", "confirm-boot": "confirm_boot"}
 
 
@@ -251,7 +252,7 @@ async def get_confirm(request: web.Request) -> web.Response:
     project_id, action = request.match_info["project_id"], request.match_info["action"]
     if action not in CONTROL_LABELS:
         return not_found(request)
-    row, problem = await find_row(request, project_id)
+    row, problem = await find_row(request, project_id, fresh=True)
     if row is None:
         return frame(request, "오류", render.tag("p", problem, class_="error", role="alert")) if problem \
             else not_found(request)
@@ -309,17 +310,19 @@ async def post_control(request: web.Request) -> web.Response:
         else:
             return see_other(f"{project_url(project_id)}?notice={notice}")
     if result.reason == web_control.WORK_CHANGED and isinstance(result.data.get("token"), str):
-        row, _problem = await find_row(request, project_id)
+        row, _problem = await find_row(request, project_id, fresh=True)
         if row is not None:  # HB-AC-09: the work changed since the page was shown; ask again with the new list
             return confirm_page(request, project_id, row, action, token=result.data["token"],
                                 active=result.data.get("active"), notice=WORK_CHANGED_NOTICE)
     return result_page(request, project_id, action, result)
 
 
-def routes(rows: Callable[..., Awaitable[dict]], inbox) -> Callable[[web.Application], None]:
-    """``create_app(..., routes=[routes(lister.list, inbox)])``: the status board and the project pages."""
+def routes(rows: Callable[..., Awaitable[dict]], inbox, one: Callable[..., Awaitable[dict]] | None = None
+           ) -> Callable[[web.Application], None]:
+    """``create_app(..., routes=[routes(lister.list, inbox, lister.list_one)])``: the status board and the project
+    pages. ``one(project_id)`` observes a single project afresh (confirm pages); without it the whole list is."""
     def register(app: web.Application) -> None:
-        board_status.register(app, board_status.StatusPort(rows, inbox))
+        board_status.register(app, board_status.StatusPort(rows, inbox, one))
         app.router.add_get("/projects/{project_id}", get_project)
         app.router.add_get("/projects/{project_id}/{action}", get_confirm)
         app.router.add_post("/projects/{project_id}/review-mode", post_review_mode)

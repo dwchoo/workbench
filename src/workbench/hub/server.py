@@ -130,7 +130,7 @@ class Hub:
     def web_routes(self) -> list:
         """Route registrations the web app adds to its defaults: the status board and project pages over this
         Hub's list, the request pages over its inbox, and ``/mcp``."""
-        return [project_pages.routes(self.lister.list, self.inbox),
+        return [project_pages.routes(self.lister.list, self.inbox, self.lister.list_one),
                 request_pages.routes(self.inbox, self._dispatch_targets), mcp.routes(self.mcp)]
 
     async def _mcp_projects(self) -> list[dict]:

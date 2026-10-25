@@ -177,5 +177,40 @@ class InflightTests(ListerCase):
         self.assertEqual(hook.calls['slow'], 1)
 
 
+class ListOneTests(ListerCase):
+    """``Lister.list_one`` (TI-12): one project's fresh row; the other projects are not observed."""
+
+    def test_only_the_named_project_is_observed_afresh_even_when_cached(self):
+        write_registry(self.state, ['alpha', 'beta'])
+        hook = Hook(self)
+        lister = self.lister()
+        self.run_loop(lister.list())  # both cached
+        self.assertEqual(hook.calls, {'alpha': 1, 'beta': 1})
+        result = self.run_loop(lister.list_one(IDS[1]))
+        self.assertEqual([row['name'] for row in result['rows']], ['beta'])
+        self.assertEqual(result['registry']['state'], 'ok')
+        self.assertEqual(hook.calls, {'alpha': 1, 'beta': 2})
+
+    def test_an_unregistered_project_has_no_row_and_nothing_is_observed(self):
+        write_registry(self.state, ['alpha'])
+        hook = Hook(self)
+        result = self.run_loop(self.lister().list_one(IDS[5]))
+        self.assertEqual(result['rows'], [])
+        self.assertEqual(hook.calls, {})
+
+    def test_a_stuck_project_does_not_block_the_one_asked_for(self):
+        write_registry(self.state, ['alpha', 'beta'])
+        Hook(self, stuck=['alpha'])
+        result = self.run_loop(self.lister().list_one(IDS[1]))
+        self.assertEqual(self.powers(result), {'beta': ('on', None)})
+
+    def test_an_unreadable_registry_is_invalid_not_empty_ok(self):
+        self.state.mkdir(parents=True, mode=0o700)
+        (self.state / 'registry.json').write_text('not json')
+        os.chmod(self.state / 'registry.json', 0o600)
+        result = self.run_loop(self.lister().list_one(IDS[0]))
+        self.assertEqual((result['registry']['state'], result['rows']), ('invalid', []))
+
+
 if __name__ == '__main__':
     unittest.main()

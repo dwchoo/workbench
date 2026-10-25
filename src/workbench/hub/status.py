@@ -285,13 +285,32 @@ class Lister:
         for stale in set(self.cache) - set(entries):
             del self.cache[stale]
         rows = await asyncio.gather(*(self.row(entry, fresh) for entry in entries))
-        if self.requests is not None:
-            try:
-                extra = await loop.run_in_executor(None, self.requests, entries)
-            except Exception:  # an inbox problem leaves the counts unknown, never the list
-                extra = {}
-            rows = [{**row, **extra.get(row["root"], {})} for row in rows]
+        rows = await self._with_requests(entries, rows)
         return {"observed_at": time.time(), "registry": summary, "rows": list(rows)}
+
+    async def _with_requests(self, entries: list, rows: list) -> list:
+        if self.requests is None:
+            return list(rows)
+        try:
+            extra = await asyncio.get_running_loop().run_in_executor(None, self.requests, entries)
+        except Exception:  # an inbox problem leaves the counts unknown, never the list
+            extra = {}
+        return [{**row, **extra.get(row["root"], {})} for row in rows]
+
+    async def list_one(self, project_id: str, fresh: bool = True) -> dict:
+        """``list`` for one registered project: ``{observed_at, registry, rows}`` with at most that project's row,
+        observed afresh (sharing an observation in progress) while the other projects are not touched."""
+        loop = asyncio.get_running_loop()
+        summary = {"state": "ok", "path": str(self.layout.registry)}
+        try:
+            entries = await loop.run_in_executor(None, registry.read, self.layout)
+        except (registry.RegistryError, OSError):
+            self.cache.clear()
+            return {"observed_at": time.time(), "registry": {**summary, "state": "invalid"}, "rows": []}
+        wanted = [entry for entry in entries if entry.project_id == project_id]
+        rows = await asyncio.gather(*(self.row(entry, fresh) for entry in wanted))
+        rows = await self._with_requests(wanted, rows)
+        return {"observed_at": time.time(), "registry": summary, "rows": rows}
 
     async def row(self, entry: registry.Entry, fresh: bool) -> dict:
         """A cached row younger than ``cache_seconds`` unless ``fresh``; an observation in

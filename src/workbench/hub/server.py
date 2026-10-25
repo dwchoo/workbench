@@ -26,6 +26,7 @@ from .status import Lister, check_entry
 from .paths import HubLayout, hub_layout, prepare_socket_path, prepare_state_dir
 from .web.app import board_routes
 from .web.listener import WebListener
+from .web.pages import projects as project_pages
 from .web.pages import requests as request_pages
 from .process import (READY_LOST, READY_MANAGED, READY_STARTED, RECORD_SCHEMA_VERSION, UNVERIFIABLE,
                       installed_version,
@@ -131,8 +132,10 @@ class Hub:
             return []
 
     def web_routes(self) -> list:
-        """Route registrations the web app adds to its defaults: the request pages over this Hub's inbox."""
-        return [request_pages.routes(self.inbox, self._dispatch_targets), mcp.routes(self.mcp),
+        """Route registrations the web app adds to its defaults: the status board and project pages over this
+        Hub's list, the request pages over its inbox, ``/mcp`` and the Board restart endpoint."""
+        return [project_pages.routes(self.lister.list, self.inbox, self.lister.list_one),
+                request_pages.routes(self.inbox, self._dispatch_targets), mcp.routes(self.mcp),
                 board_routes(lambda: self.board)]
 
     # --- Board agent set (TI-16) -----------------------------------------------------------------

@@ -160,8 +160,14 @@ async def post_logout(request: web.Request) -> web.Response:
     return response
 
 
+# ``GET /`` handler installed by the status board (TI-12); without it the page is the bare placeholder.
+HOME: web.AppKey = web.AppKey("home", object)
+
+
 async def get_home(request: web.Request) -> web.Response:
-    """Placeholder status board (TI-12 draws the real one)."""
+    handler = request.app.get(HOME)
+    if handler is not None:
+        return await handler(request)
     services = request.app[SERVICES]
     return render.page("", render.tag("h1", "WB Hub"), insecure_warning=services.insecure_warning,
                        csrf=session_of(request).csrf)

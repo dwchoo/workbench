@@ -349,12 +349,36 @@ def _post_form(request: web.Request, action: str, fields: dict, button: str, *, 
 NOTICES = {"created": "요청을 접수했습니다", "edited": "내용을 바꿨습니다", "revised": "새 revision으로 저장했습니다",
            "commented": "댓글을 남겼습니다", "answered": "답변을 남기고 검토로 돌려보냈습니다",
            "state_set": "상태를 바꿨습니다", "reopened": "요청을 다시 열었습니다", "cancelled": "요청을 취소했습니다",
-           "cancel_requested": "실행 중인 작업의 취소를 요청했습니다"}
+           "cancel_requested": "실행 중인 작업의 취소를 요청했습니다",
+           "review_started": "검토를 시작했습니다. manager에게 알립니다"}
+
+
+def start_review_label(principal: Principal, detail: dict, review_mode: object) -> str | None:
+    """The owner's review button for this request, or None (SPEC 상세: 검토 시작은 수동·``pending``일 때, unknown 뒤에는
+    "다시 전달"). The service still decides on the POST."""
+    if principal.kind != "owner" or detail["state"] not in ("NEW", "REVIEWING"):
+        return None
+    if detail["delivery_state"] == "unknown":
+        return "다시 전달"
+    if detail["delivery_state"] == "pending" and review_mode == "manual":
+        return "검토 시작"
+    return None
+
+
+async def _review_mode(request: web.Request, detail: dict) -> object:
+    """The project's review mode when the page may need it (an open round waiting to be sent), else None."""
+    if detail["state"] not in ("NEW", "REVIEWING") or detail["delivery_state"] != "pending":
+        return None
+    port, principal = request.app[PORT], principal_of(request)
+    try:
+        return (await _call(request, port.inbox.review_mode, principal, detail["project_id"]))["review_mode"]
+    except InboxError:
+        return None
 
 
 def detail_page(request: web.Request, detail: dict, *, notice: str | None = None, comment_error: InboxError | None = None,
                 comment_draft: str = "", projects: list[ProjectRef] | None = None,
-                status: int = 200) -> web.Response:
+                status: int = 200, review_mode: object = None) -> web.Response:
     principal = principal_of(request)
     allowed = allowed_actions(principal, detail)
     rid = detail["request_id"]
@@ -379,6 +403,9 @@ def detail_page(request: web.Request, detail: dict, *, notice: str | None = None
                          "CLOSED": ("NEW", "다시 열기")}[detail["state"]]
         buttons.append(_post_form(request, request_url(rid, "/state"),
                                   {"to": target, "base_version": detail["version"]}, label, class_="inline"))
+    review_label = start_review_label(principal, detail, review_mode)
+    if review_label is not None:
+        buttons.append(_post_form(request, request_url(rid, "/start-review"), {}, review_label, class_="inline"))
     if "cancel" in allowed:
         buttons.append(render.tag("a", "취소", href=request_url(rid, "/cancel"), class_="button danger"))
     body = [summary]
@@ -414,7 +441,8 @@ async def get_detail(request: web.Request) -> web.Response:
         detail = await _detail(request, request.match_info["rid"])
     except InboxError as exc:
         return error_page(request, exc)
-    return detail_page(request, detail, notice=request.query.get("notice"), projects=await _projects(request))
+    return detail_page(request, detail, notice=request.query.get("notice"), projects=await _projects(request),
+                       review_mode=await _review_mode(request, detail))
 
 # -- edit -------------------------------------------------------------------------------------------
 def edit_form(request: web.Request, detail: dict, *, title: str | None = None, body: str | None = None,
@@ -487,7 +515,7 @@ async def post_comment(request: web.Request) -> web.Response:
         except InboxError:
             return error_page(request, exc)
         return detail_page(request, detail, comment_error=exc, comment_draft=body, projects=await _projects(request),
-                           status=_error_status(exc))
+                           status=_error_status(exc), review_mode=await _review_mode(request, detail))
     return see_other(_query_url(request_url(rid), notice="answered" if done["state"] != before["state"] else "commented"))
 
 
@@ -574,6 +602,21 @@ async def post_cancel(request: web.Request) -> web.Response:
     return see_other(_query_url(request_url(rid), notice="cancelled" if done["status"] == "cancelled" else "cancel_requested"))
 
 
+async def post_start_review(request: web.Request) -> web.Response:
+    """The owner's manual "검토 시작" / "다시 전달" (D-31, P2-AC-39). A pending round of an auto project is the
+    dispatcher's own to send, so the web refuses to start it by hand."""
+    port, rid = request.app[PORT], request.match_info["rid"]
+    try:
+        detail = await _detail(request, rid)
+        if detail["delivery_state"] == "pending" and await _review_mode(request, detail) != "manual":
+            raise InboxError("invalid_transition", "이 프로젝트는 자동 검토라 직접 시작하지 않습니다",
+                             state=detail["state"], version=detail["version"])
+        await _call(request, port.inbox.start_review, principal_of(request), rid)
+    except InboxError as exc:
+        return error_page(request, exc, back=request_url(rid))
+    return see_other(_query_url(request_url(rid), notice="review_started"))
+
+
 @api
 async def get_badge(request: web.Request) -> web.Response:
     """``{pending: NEW 수, needs_info: NEEDS_INFO 수}`` over everything the session may see (D-24)."""
@@ -598,4 +641,5 @@ def routes(inbox, projects: Callable[[], Iterable[ProjectRef]]) -> Callable[[web
         app.router.add_post("/requests/{rid}/state", post_state)
         app.router.add_get("/requests/{rid}/cancel", get_cancel)
         app.router.add_post("/requests/{rid}/cancel", post_cancel)
+        app.router.add_post("/requests/{rid}/start-review", post_start_review)
     return register

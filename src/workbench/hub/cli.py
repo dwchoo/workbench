@@ -209,6 +209,10 @@ class _NoTerminal(Exception):
     pass
 
 
+NON_ASCII_PASSWORD_WARNING = ("웹 브라우저의 비밀번호 칸은 한글 입력(IME)을 끄는 경우가 많아 "
+                              "로그인하지 못할 수 있습니다.")
+
+
 def _read_tty_password() -> tuple[str, str]:
     """Two ``getpass`` entries on the controlling terminal; never falls back to echoing stdin."""
     import getpass
@@ -237,6 +241,8 @@ def cmd_hub_passwd(args: argparse.Namespace) -> int:
         password = _read_stdin_password()
         if password is None:
             return _fail(f"stdin이 UTF-8이 아닙니다. {PASSWD_UNCHANGED}")
+        if not password.isascii():  # nobody to ask: say it and go on
+            print(NON_ASCII_PASSWORD_WARNING, file=sys.stderr)
     else:
         if not sys.stdin.isatty():
             return _fail("비밀번호 입력에는 terminal이 필요합니다. 스크립트에서는 'wb hub passwd --stdin'을 쓰세요. "
@@ -251,6 +257,14 @@ def cmd_hub_passwd(args: argparse.Namespace) -> int:
             return _fail(f"취소했습니다. {PASSWD_UNCHANGED}")
         if password != again:
             return _fail(f"두 입력이 같지 않습니다. {PASSWD_UNCHANGED}")
+        if not password.isascii():
+            try:
+                answer = input(f"{NON_ASCII_PASSWORD_WARNING} 계속할까요? [y/N]: ")
+            except (EOFError, KeyboardInterrupt):
+                print(file=sys.stderr)
+                answer = ""
+            if answer.strip().lower() not in ("y", "yes"):
+                return _fail(f"취소했습니다. {PASSWD_UNCHANGED}")
     try:
         PasswordStore(hub_layout().state_dir).set_password(password)
     except PasswordRejected:

@@ -1067,6 +1067,19 @@ class InboxService:
             return {"review_mode": mode[0] if mode else "auto", "requests": requests}
         return self._run(project, lambda: project.store.read(fn, missing={"review_mode": "auto", "requests": []}))
 
+    def linked_view(self, project_id: str) -> list[dict]:
+        """Task sync read (TI-11): the open requests that link a Task, in ``seq`` order, each
+        ``{request_id, task_id, state}``. A missing inbox has none."""
+        project = self._project(Principal("hub"), project_id)
+
+        def fn(connection: sqlite3.Connection) -> list[dict]:
+            self._remember(project, connection)
+            rows = connection.execute(
+                "SELECT request_id, task_id, state FROM requests WHERE task_id IS NOT NULL AND state != 'CLOSED' "
+                "ORDER BY seq").fetchall()
+            return [{"request_id": row[0], "task_id": row[1], "state": row[2]} for row in rows]
+        return self._run(project, lambda: project.store.read(fn, missing=[]))
+
     def observe_task(self, request_id: str, task_id: str, status: str, *, closed_reason: str | None = None,
                      user_cancelled: bool = False, view: dict | None = None, wait: bool = True) -> Any:
         """Task sync for a READY/RUNNING request: READY → RUNNING when the Task starts, CLOSED(cancelled)

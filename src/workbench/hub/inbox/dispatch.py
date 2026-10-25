@@ -18,6 +18,13 @@ not kept open (the store closes it after its idle time).
 - An ``offered`` round whose backend identity changed (the backend restarted; its queue was memory) is pending
   again with a system comment and sent to the new backend (P2-AC-12).
 
+Task sync (TI-11, SPEC "Task 동기화"): on every pass each running project whose open requests link a Task is asked
+``task_status`` for those Tasks (read only, no model call) and :meth:`InboxService.observe_task` records the view:
+``dispatched``/``starting`` stay READY, a started Task makes READY → RUNNING, a user cancel closes the request, a Task
+closed as ``inbox_link_unconfirmed`` voids a READY link (→ REVIEWING) and any other close leaves the state and sends
+``linked_task_closed`` once. The linked set is read from the inbox only after a commit on the project (or once at
+first sight), so polling does not keep an idle inbox open.
+
 The dispatcher never touches a running Task: the backend sends a notice only into an idle manager with an empty
 composer (P2-AC-10). It runs on its own thread; ``committed`` (the inbox ``on_committed`` port) only marks work.
 """
@@ -67,6 +74,11 @@ class _DefaultPort:
         from . import backend_port
         return backend_port.inbox_notice(root, request_id, delivery_id, event, fields, **kwargs)
 
+    @staticmethod
+    def task_status(root: Path, task_ids: list[str], **kwargs: Any) -> list[dict]:
+        from . import backend_port
+        return backend_port.task_status(root, task_ids, **kwargs)
+
 
 def notice_fields(request: dict) -> dict:
     """ui_v1 ``inbox_notice`` ``fields`` of one :meth:`InboxService.delivery_view` request."""
@@ -88,6 +100,8 @@ class Dispatcher:
         self._seen: dict[str, str] = {}  # project id -> backend identity at the last read
         self._due: dict[str, float] = {}  # project id -> clock time of a retry that needs a read
         self._failures: dict[str, tuple[int, float]] = {}  # request id -> (rejected/dropped count, retry at)
+        self._sync_dirty: set[str] = set()  # TI-11: projects whose linked set must be read again
+        self._linked: dict[str, list[dict]] = {}  # project id -> open requests that link a Task (last read)
         self._wake = threading.Event()
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
@@ -118,6 +132,7 @@ class Dispatcher:
         """The inbox ``on_committed`` port (runs on a project thread): mark the project, wake the dispatcher."""
         with self._lock:
             self._dirty.add(event.project_id)
+            self._sync_dirty.add(event.project_id)
             if event.request_id is not None and event.type == "delivery":
                 outcome = event.detail.get("outcome")
                 if outcome in ("rejected", "dropped"):
@@ -139,15 +154,16 @@ class Dispatcher:
                 return
             if ref.unavailable is not None:
                 continue
-            try:
-                self._project(ref)
-            except InboxError as exc:
-                if exc.code not in ("hub_stopping", "project_unavailable", "not_found"):
-                    _log(f"project {ref.project_id}: {exc.code}")
+            backend = self.port.identity(ref.root)
+            for step in (self._project, self._sync):
+                try:
+                    step(ref, backend)
+                except InboxError as exc:
+                    if exc.code not in ("hub_stopping", "project_unavailable", "not_found"):
+                        _log(f"project {ref.project_id}: {exc.code}")
 
-    def _project(self, ref: ProjectRef) -> None:
+    def _project(self, ref: ProjectRef, backend: str | None) -> None:
         project_id = ref.project_id
-        backend = self.port.identity(ref.root)
         if backend is None:  # off (or not verifiable): nothing is sent; its next identity reads again
             with self._lock:
                 self._seen.pop(project_id, None)
@@ -191,6 +207,56 @@ class Dispatcher:
         if item["state"] not in REVIEW_STATES:
             return False
         return mode != "manual" or item["marked"]
+
+    # -- Task sync (TI-11) -------------------------------------------------------------------
+    def _sync(self, ref: ProjectRef, backend: str | None) -> None:
+        """One Task sync pass for ``ref`` (SPEC "Task 동기화"); an off project keeps its last ``task_view``."""
+        project_id = ref.project_id
+        if backend is None or getattr(self.port, "task_status", None) is None:  # a port without it: no sync
+            return
+        with self._lock:
+            stale = project_id in self._sync_dirty or project_id not in self._linked
+            self._sync_dirty.discard(project_id)
+        if stale:
+            linked = self.inbox.linked_view(project_id)
+            with self._lock:
+                self._linked[project_id] = linked
+        else:
+            with self._lock:
+                linked = list(self._linked.get(project_id) or ())
+        if not linked:
+            return
+        from .backend_port import BackendPortError
+        task_ids = list(dict.fromkeys(item["task_id"] for item in linked))
+        try:
+            tasks = self.port.task_status(ref.root, task_ids)
+        except BackendPortError as exc:
+            _log(f"project {project_id}: task_status failed ({exc.reason})")
+            return
+        known = {item.get("task_id"): item for item in tasks if isinstance(item, dict)}
+        for item in linked:
+            task = known.get(item["task_id"])
+            if task is None or task.get("timeout") or task.get("exists") is not True:
+                continue  # not read this time (or unknown to this backend): the view stays as it was
+            self._observe(item, task)
+
+    def _observe(self, item: dict, task: dict) -> None:
+        status, closed_reason = task.get("status"), task.get("closed_reason")
+        if not isinstance(status, str) or not status:
+            return
+        runs = [{"run_id": run.get("run_id"), "status": run.get("status"), "exit_code": run.get("exit_code")}
+                for run in task.get("runs") or () if isinstance(run, dict)]
+        view = {"revision": task.get("revision"), "runs": runs,
+                "cancel_requested_by": task.get("cancel_requested_by")}
+        user_cancelled = status == "closed" and task.get("cancel_requested_by") == "user"
+        try:
+            self.inbox.observe_task(item["request_id"], item["task_id"], status,
+                                    closed_reason=closed_reason if isinstance(closed_reason, str) else None,
+                                    user_cancelled=user_cancelled, view=view)
+        except InboxError as exc:
+            if exc.code not in ("invalid_transition", "not_found", "invalid_input"):
+                raise
+            _log(f"request {item['request_id']}: task view not recorded ({exc.code})")
 
     def _requeue(self, item: dict, backend: str) -> None:
         try:

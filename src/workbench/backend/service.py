@@ -515,6 +515,7 @@ class Backend:
         self.command_stop = CommandStopService(journal=self.handoffs.record,
                                                previous_backend=self._journaled_unfinished_command)
         self.flow.command_stop = self.command_stop  # CS-09: a running experiment's host command is stoppable
+        self.flow.inbox_call = self._inbox_call  # TI-11: to_worker request_id link check/commit over the Hub link
         self.flow.stop_forbidden = self._omp_pane_pids  # a stop never signals an OMP pane (explicit forbidden set)
         self.terminal = TerminalService(
             handoffs=self.handoffs, host_shell=self._host_shell_port, gate=host_gate,
@@ -1743,6 +1744,14 @@ class Backend:
                 return terminal.abandon(peer.role, request)
             return terminal.handle(peer.role, request)
         return self.handoffs.handle(peer.role, request)
+
+    def _inbox_call(self, op: str, **fields: Any) -> Any:
+        """One hub_v1 call over this backend's Hub link (``unavailable`` while there is none)."""
+        from workbench.backend.inbox_link import LinkResult
+        link = getattr(self, "inbox_link", None)
+        if link is None:
+            return LinkResult("unavailable", "no_link")
+        return link.call(op, **fields)
 
     def _workbench_inbox_tool(self, peer: Any, request: dict[str, Any]) -> dict[str, Any]:
         """Task Inbox (TI-11): the manager's ``workbench_inbox`` over this backend's hub_v1 link (this project only).

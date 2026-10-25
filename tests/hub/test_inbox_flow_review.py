@@ -58,6 +58,19 @@ class ReviewCase(FlowCase):
         self.wait_linked(project_id)
         return root, project_id, ids, ui
 
+    def answer_while_stopped(self, root: Path, project_id: str, rid: str, principal, body: str) -> None:
+        """The answer comes from a non-manager principal through the Hub's InboxService (no web/MCP yet)."""
+        done = self.box.wb('hub', 'stop', '--yes', timeout=60)
+        self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+        from workbench.hub.inbox.service import InboxService, ProjectRef
+        service = InboxService()
+        try:
+            service.set_projects([ProjectRef(project_id, root, root.name)])
+            self.assertEqual(service.comment(principal, rid, body)['state'], 'REVIEWING')
+        finally:
+            service.close()
+        self.box.start_hub()
+
     def grants(self, project_id: str) -> int:
         """How many backend principals the Hub granted for ``project_id`` (``hub.log``)."""
         log = self.box.hub_state / 'hub.log'
@@ -124,19 +137,6 @@ class ReadTests(ReviewCase):
 class ReviewResultTests(ReviewCase):
     def comments_of(self, root: Path, rid: str) -> list[tuple[str, str]]:
         return [(kind, body) for kind, body in self.comments(root, rid) if kind != 'system']
-
-    def answer_while_stopped(self, root: Path, project_id: str, rid: str, principal, body: str) -> None:
-        """The answer comes from a non-manager principal through the Hub's InboxService (no web/MCP yet)."""
-        done = self.box.wb('hub', 'stop', '--yes', timeout=60)
-        self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
-        from workbench.hub.inbox.service import InboxService, ProjectRef
-        service = InboxService()
-        try:
-            service.set_projects([ProjectRef(project_id, root, root.name)])
-            self.assertEqual(service.comment(principal, rid, body)['state'], 'REVIEWING')
-        finally:
-            service.close()
-        self.box.start_hub()
 
     def test_begin_review_moves_a_new_request_to_reviewing_once(self):
         root, project_id = self.box.project('alpha')

@@ -227,8 +227,9 @@ class InboxLink:
         self._sock, self._pending, self._decoder = None, [], hub_v1.LineDecoder()
         self.state = "disconnected"
 
-    def _connect(self) -> None:
+    def _connect(self, timeout: float | None = None) -> None:
         """Verified like ``HubClient``: record → lock holder → live process → peer pid/uid → welcome identity."""
+        timeout = self.timeout if timeout is None else timeout
         from workbench.hub.process import HubNotRunning, HubUnknown, verified_record
         if self.root is not None and not self._registered():
             raise self._unavailable("not_registered")
@@ -243,13 +244,13 @@ class InboxLink:
         sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         self._sock = sock
         try:
-            sock.settimeout(self.timeout)
+            sock.settimeout(timeout)
             sock.connect(record["socket"])
             pid, uid, _gid = struct.unpack("iII", sock.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, 12))
             if pid != record["pid"] or uid != os.geteuid() or uid != record["uid"]:
                 raise _Unavailable("peer_mismatch")
             sock.sendall(hub_v1.encode_line(hub_v1.hello(hub_v1.BACKEND_CLIENT, project_id=self.project_id)))
-            frame = self._next(time.monotonic() + self.timeout)
+            frame = self._next(time.monotonic() + timeout)
             if frame is None:
                 raise _Unavailable("no_welcome")
             if frame.get("type") != hub_v1.ServerType.WELCOME.value:
@@ -306,7 +307,9 @@ class InboxLink:
             self._drop()
 
     # -- calls -----------------------------------------------------------------------------
-    def call(self, op: str, **fields: Any) -> LinkResult:
+    def call(self, op: str, *, call_timeout: float | None = None, **fields: Any) -> LinkResult:
+        """``call_timeout`` (default ``timeout``) bounds a connect and the answer wait of this call."""
+        timeout = self.timeout if call_timeout is None else call_timeout
         with self._lock:
             for attempt in (1, 2):
                 if self._sock is None:
@@ -314,7 +317,7 @@ class InboxLink:
                             and time.monotonic() - self._failed_at < self.reconnect_interval):
                         return LinkResult("unavailable", "backoff", self.last_reason)  # no new attempt yet
                     try:
-                        self._connect()
+                        self._connect(timeout)
                     except _Unavailable as exc:
                         return LinkResult("unavailable", exc.reason)
                 self._sequence += 1
@@ -324,7 +327,7 @@ class InboxLink:
                 except (hub_v1.ProtocolError, TypeError, ValueError) as exc:
                     return LinkResult("rejected", "invalid_input", str(exc))
                 try:
-                    self._sock.settimeout(self.timeout)
+                    self._sock.settimeout(timeout)
                     self._sock.sendall(line)
                 except OSError:
                     # the whole line (its newline last) did not go out, so the Hub cannot have acted on it
@@ -332,11 +335,11 @@ class InboxLink:
                     if attempt == 1:
                         continue
                     return LinkResult("unavailable", "send_failed")
-                return self._answer(request_id)
+                return self._answer(request_id, timeout)
             return LinkResult("unavailable", "send_failed")
 
-    def _answer(self, request_id: str) -> LinkResult:
-        deadline = time.monotonic() + self.timeout
+    def _answer(self, request_id: str, timeout: float) -> LinkResult:
+        deadline = time.monotonic() + timeout
         while True:
             try:
                 frame = self._next(deadline)

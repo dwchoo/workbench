@@ -54,38 +54,40 @@ staged.write_text(json.dumps(record))
 staged.chmod(0o600)
 staged.replace(data / 'backend.json')
 print(json.dumps({'ready': True, 'pid': os.getpid(), 'start_ticks': ticks}), flush=True)
-sock, buffer, link = None, b'', None
+conns, link = {}, None  # name -> [socket, buffer]; every connection stays open until the Hub closes it
 
-def reply():
-    global buffer
-    while b'\n' not in buffer:
+def reply(conn):
+    sock = conns[conn][0]
+    while b'\n' not in conns[conn][1]:
         chunk = sock.recv(65536)
         if not chunk:
             return {'eof': True}
-        buffer += chunk
-    line, buffer = buffer.split(b'\n', 1)
+        conns[conn][1] += chunk
+    line, conns[conn][1] = conns[conn][1].split(b'\n', 1)
     return json.loads(line)
 
 for line in sys.stdin:
     command = json.loads(line)
+    conn = command.get('conn', 'a')
     if command['op'] == 'hello':
         state = Path(os.environ['XDG_STATE_HOME']) / 'omp-workbench' / 'hub' / 'hub.json'
         sock = socket.socket(socket.AF_UNIX)
         sock.settimeout(10)
         sock.connect(json.loads(state.read_text())['socket'])
-        buffer = b''
+        conns[conn] = [sock, b'']
         sock.sendall(json.dumps(command['hello']).encode() + b'\n')
-        answer = reply()
+        answer = reply(conn)
     elif command['op'] == 'send':
         try:
-            sock.sendall(json.dumps(command['frame']).encode() + b'\n')
-            answer = reply()
+            conns[conn][0].sendall(json.dumps(command['frame']).encode() + b'\n')
+            answer = reply(conn)
         except OSError:  # the Hub closed the connection
             answer = {'eof': True}
     elif command['op'] == 'link':
         from workbench.backend.inbox_link import InboxLink
         if link is None:
-            link = InboxLink(marker['project_id'], environment=dict(os.environ), timeout=command.get('timeout', 5.0))
+            link = InboxLink(marker['project_id'], environment=dict(os.environ), timeout=command.get('timeout', 5.0),
+                             reconnect_interval=command.get('reconnect_interval', 5.0))
         outcome = link.call(command['call'], **command.get('fields', {}))
         answer = {'status': outcome.status, 'reason': outcome.reason, 'value': outcome.value}
     else:
@@ -111,6 +113,12 @@ class PrincipalSandbox(HubSandbox):
 
     def cleanup(self) -> None:
         try:
+            for process in self.processes:
+                if process.stdin is not None:
+                    try:
+                        process.stdin.close()
+                    except OSError:
+                        pass
             super().cleanup()
         finally:
             shutil.rmtree(self.run, ignore_errors=True)
@@ -160,11 +168,12 @@ class Peer:
         self.process.stdin.flush()
         return self.read()
 
-    def hello(self, project_id: object, client: str = BACKEND) -> dict:
-        return self.ask(op='hello', hello={'v': 1, 'type': 'hello', 'client': client, 'project_id': project_id})
+    def hello(self, project_id: object, client: str = BACKEND, conn: str = 'a') -> dict:
+        return self.ask(op='hello', conn=conn,
+                        hello={'v': 1, 'type': 'hello', 'client': client, 'project_id': project_id})
 
-    def request(self, frame_id: str, kind: str, **fields) -> dict:
-        return self.ask(op='send', frame={'v': 1, 'id': frame_id, 'type': kind, **fields})
+    def request(self, frame_id: str, kind: str, conn: str = 'a', **fields) -> dict:
+        return self.ask(op='send', conn=conn, frame={'v': 1, 'id': frame_id, 'type': kind, **fields})
 
 
 class BackendPrincipalCase(unittest.TestCase):
@@ -288,6 +297,50 @@ LOCAL_OPS = ('status', 'list', 'stop_request', 'stop_confirm', 'review_mode')
 RESERVED = ('power_on', 'power_off_request', 'power_off_confirm', 'pause', 'resume', 'confirm_boot')
 
 
+class ConnectionPoolTests(BackendPrincipalCase):
+    """Backend connections: one per project (a newer verified one replaces the older), never displaced by forged
+    hellos, no idle timeout and outside ``MAX_CONNECTIONS``."""
+
+    def test_a_second_verified_connection_of_the_project_replaces_the_first(self):
+        root, project_id = self.box.project('alpha')
+        self.box.register(root, project_id)
+        self.box.start_hub()
+        peer = self.box.peer(root)
+        self.assertEqual(peer.hello(project_id, conn='first')['type'], 'welcome')
+        self.assertTrue(peer.request('f1', 'inbox_list', conn='first')['ok'])
+        self.assertEqual(peer.hello(project_id, conn='second')['type'], 'welcome')
+        self.assertEqual(peer.request('f2', 'inbox_list', conn='first'), {'eof': True}, 'the older one is closed')
+        self.assertTrue(peer.request('s1', 'inbox_list', conn='second')['ok'])
+
+    def test_repeated_forged_hellos_never_displace_the_real_backend_connection(self):
+        root, project_id = self.box.project('alpha')
+        self.box.register(root, project_id)
+        self.box.start_hub()
+        peer = self.box.peer(root)
+        self.assertEqual(peer.hello(project_id)['type'], 'welcome')
+        for number in range(20):
+            line = self.connect()
+            line.send({'v': 1, 'type': 'hello', 'client': BACKEND, 'project_id': project_id})
+            self.assertEqual(line.recv()['reason'], 'principal_mismatch', number)
+            line.close()
+        self.assertTrue(peer.request('r1', 'inbox_list')['ok'])
+
+    def test_backend_connections_have_no_idle_timeout_and_are_outside_the_connection_limit(self):
+        from workbench.contracts.hub_v1 import MAX_CONNECTIONS
+        root, project_id = self.box.project('alpha')
+        self.box.register(root, project_id)
+        self.box.start_hub('--idle-timeout', '1')
+        peer = self.box.peer(root)
+        self.assertEqual(peer.hello(project_id)['type'], 'welcome')
+        lines = [self.connect() for _ in range(MAX_CONNECTIONS)]
+        for line in lines:
+            self.assertEqual(line.hello()['type'], 'welcome')
+        self.assertEqual(self.connect().recv(), {'v': 1, 'type': 'reject', 'reason': 'connection_limit'})
+        self.assertTrue(lines[0].closed(5), 'a local connection idles out')
+        time.sleep(1.0)
+        self.assertTrue(peer.request('i1', 'inbox_list')['ok'], 'the backend connection is still served')
+
+
 class OpPermissionTests(BackendPrincipalCase):
     def unsupported(self, reply: dict, request_id: str) -> None:
         self.assertEqual({key: reply.get(key) for key in ('id', 'ok', 'reason')},
@@ -394,8 +447,8 @@ class InboxLinkResultTests(BackendPrincipalCase):
     """``workbench.backend.inbox_link.InboxLink`` run inside the fake backend peer: ok / rejected / unavailable /
     unknown are told apart (SPEC "Manager 도구" result classes)."""
 
-    def link(self, peer: Peer, call: str, timeout: float = 5.0, **fields) -> dict:
-        return peer.ask(op='link', call=call, fields=fields, timeout=timeout)
+    def link(self, peer: Peer, call: str, timeout: float = 5.0, reconnect_interval: float = 5.0, **fields) -> dict:
+        return peer.ask(op='link', call=call, fields=fields, timeout=timeout, reconnect_interval=reconnect_interval)
 
     def test_without_a_hub_a_call_is_unavailable(self):
         root, project_id = self.box.project('alpha')
@@ -403,6 +456,19 @@ class InboxLinkResultTests(BackendPrincipalCase):
         peer = self.box.peer(root)
         answer = self.link(peer, 'inbox_list')
         self.assertEqual(answer['status'], 'unavailable', answer)
+
+    def test_a_call_within_the_reconnect_interval_after_a_failed_connect_is_unavailable_at_once(self):
+        root, project_id = self.box.project('alpha')
+        self.box.register(root, project_id)
+        peer = self.box.peer(root)
+        failed_at = time.monotonic()
+        self.assertEqual(self.link(peer, 'inbox_list', reconnect_interval=3.0)['status'], 'unavailable')
+        self.box.start_hub()
+        if time.monotonic() - failed_at < 2.5:
+            backoff = self.link(peer, 'inbox_list')
+            self.assertEqual((backoff['status'], backoff['reason']), ('unavailable', 'backoff'), backoff)
+        time.sleep(max(0.0, failed_at + 3.2 - time.monotonic()))
+        self.assertEqual(self.link(peer, 'inbox_list')['status'], 'ok')
 
     def test_answers_are_ok_or_rejected_and_a_refused_principal_is_unavailable(self):
         root, project_id = self.box.project('alpha')
@@ -432,7 +498,44 @@ class InboxLinkResultTests(BackendPrincipalCase):
         self.assertEqual(answer['status'], 'unknown', answer)
 
 
-CONTRACT_BACKEND =Path(__file__).resolve().parent / 'fixtures' / 'contract_backend.py'
+class HubPeerCheckTests(BackendPrincipalCase):
+    """``inbox_link.HubPeerCheck``: the backend's test that a ui_v1 peer pid is the verified running Hub (pid and
+    start ticks from ``hub.json`` checked against the lock holder and ``/proc``), cached briefly."""
+
+    def check(self, **kwargs):
+        from workbench.backend.inbox_link import HubPeerCheck
+        from workbench.hub.paths import hub_layout
+        return HubPeerCheck(hub_layout(self.box.env), **kwargs)
+
+    def test_only_the_running_hubs_pid_passes(self):
+        check = self.check()
+        self.assertFalse(check(os.getpid()), 'no Hub runs yet')
+        hub = self.box.start_hub()
+        check = self.check()
+        self.assertTrue(check(hub.pid))
+        self.assertFalse(check(os.getpid()))
+        self.assertFalse(check(1))
+
+    def test_the_hub_identity_is_cached_for_the_ttl(self):
+        import workbench.hub.process as hub_process
+        hub = self.box.start_hub()
+        reads = []
+        original = hub_process.verified_record
+
+        def counted(layout):
+            reads.append(layout)
+            return original(layout)
+        hub_process.verified_record = counted
+        self.addCleanup(setattr, hub_process, 'verified_record', original)
+        check = self.check(ttl=30.0)
+        for _ in range(5):
+            self.assertTrue(check(hub.pid))
+        self.assertEqual(len(reads), 1, 'one disk read for repeated checks of the cached Hub')
+        self.assertFalse(check(os.getpid()))
+        self.assertLessEqual(len(reads), 2, 'a mismatch re-reads at most once')
+
+
+CONTRACT_BACKEND = Path(__file__).resolve().parent / 'fixtures' / 'contract_backend.py'
 TASK_ID = '2c5e8a1f-7b3d-4c9e-8f60-1a2b3c4d5e6f'
 
 
@@ -485,6 +588,21 @@ class BackendPortTests(BackendPrincipalCase):
                 with self.assertRaises(backend_port.BackendPortError) as raised:
                     backend_port.task_status(root, [TASK_ID])
                 self.assertEqual(raised.exception.reason, 'backend_too_old')
+
+    def test_the_error_detail_is_a_generic_sentence_without_backend_text(self):
+        from workbench.hub.inbox import backend_port
+        self.environment()
+        secret = '/home/someone/secret-path boom'
+        for reason in ('task_changed', 'unsupported_type'):
+            with self.subTest(reason=reason):
+                root, _project_id = self.box.project(f'detail-{reason}')
+                self.contract_backend(root, {'task_status': {'ok': False, 'reason': reason, 'detail': secret}})
+                with self.assertRaises(backend_port.BackendPortError) as raised:
+                    backend_port.task_status(root, [TASK_ID])
+                error = raised.exception
+                self.assertIn(error.reason, ('task_changed', 'backend_too_old'))
+                self.assertEqual(error.detail, backend_port.DETAILS.get(error.reason, backend_port.REFUSED))
+                self.assertNotIn('secret-path', error.detail + str(error))
 
     def test_a_stopped_project_is_backend_not_running_and_nothing_is_contacted(self):
         from workbench.hub.inbox import backend_port

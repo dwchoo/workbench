@@ -100,6 +100,7 @@ from workbench.workflow.worker_port import G3WorkerResponsePort
 
 EXIT_LOCKED = 75
 READY_TIMEOUT = 90.0
+TASK_STATUS_BUDGET = 2.0  # TI-09: total seconds of one ui_v1 task_status on the UI loop thread
 STATE_INTERVAL = 0.25
 SHUTDOWN_TOKEN_TTL = 120.0
 # C-AC-22 (CW-16 O4): the confirm answer is sent before the close starts; the CLI then waits for the result up to
@@ -554,7 +555,10 @@ class Backend:
                 and self.important_storage_status.get("state") in ("ok", "ready", "healthy"),
             compatibility=self.summary_compatibility)
         self.automation_loop.summary_scheduler = self.summary_scheduler
-        self.ui = UiServer(layout.ui_socket, self)
+        from workbench.backend.inbox_link import HubPeerCheck
+        from workbench.hub.paths import hub_layout
+        # TI-09: inbox_notice/cancel_task come only from the verified running Hub process
+        self.ui = UiServer(layout.ui_socket, self, hub_peer=HubPeerCheck(hub_layout(self.environment)))
         self._write_record()
         self._shell_env = shell_environment(self.environment)
         self._shell_cwd = os.getcwd()
@@ -594,12 +598,13 @@ class Backend:
 
     def _start_inbox_link(self) -> None:
         """Task Inbox (TI-09): this backend's hub_v1 link (backend principal), after ``backend.json`` names this
-        process. It never starts a Hub; with no Hub it only retries every 5 s and core work is unaffected."""
+        process. It never starts a Hub and contacts one only while the Hub registry (read only) lists this project id
+        with this root; otherwise it only re-reads the registry every 5 s. Core work is unaffected either way."""
         if self.project_id is None:
             return
         from workbench.backend.inbox_link import InboxLink
         try:
-            self.inbox_link = InboxLink(self.project_id, environment=self.environment)
+            self.inbox_link = InboxLink(self.project_id, environment=self.environment, root=self.project_dir)
             self.inbox_link.start()
         except Exception as exc:  # the inbox is optional; the backend runs without it
             self.inbox_link = None
@@ -2282,12 +2287,30 @@ class Backend:
     def cancel_task(self, task_id: str, request_id: str, expect: dict[str, Any], reason: str | None) -> dict[str, Any]:
         raise Held(Reason.UNSUPPORTED_TYPE, "cancel_task is not served by this backend yet")  # TI-13
 
-    def task_status(self, task_ids: list[str], detail: bool) -> dict[str, Any]:
-        """ui_v1 ``task_status``: read only (TaskFlow views, ``tasks.sqlite3`` read-only, the terminal journal);
-        no model call and no bridge frame (P2-AC-06)."""
-        return {"tasks": [self._task_status_item(task_id, detail) for task_id in task_ids]}
+    task_status_budget = TASK_STATUS_BUDGET
 
-    def _task_status_item(self, task_id: str, detail: bool) -> dict[str, Any]:
+    def task_status(self, task_ids: list[str], detail: bool) -> dict[str, Any]:
+        """ui_v1 ``task_status``: read only (TaskFlow views, ``tasks.sqlite3`` on one read-only connection, the
+        terminal journal); no model call and no bridge frame (P2-AC-06). It runs on the UI loop thread, so the whole
+        call has ``task_status_budget`` seconds: an id not read in time is ``{task_id, timeout: true}`` and the answer
+        carries ``timeout: true``."""
+        deadline = time.monotonic() + self.task_status_budget
+        items: list[dict[str, Any]] = []
+        with TaskStore(self.layout.tasks, deadline) as store:
+            for task_id in task_ids:
+                if time.monotonic() >= deadline:
+                    items.append({"task_id": task_id, "timeout": True})
+                    continue
+                try:
+                    items.append(self._task_status_item(task_id, detail, store))
+                except TimeoutError:
+                    items.append({"task_id": task_id, "timeout": True})
+        answer: dict[str, Any] = {"tasks": items}
+        if any(item.get("timeout") for item in items):
+            answer["timeout"] = True
+        return answer
+
+    def _task_status_item(self, task_id: str, detail: bool, store: "TaskStore") -> dict[str, Any]:
         view = self.flow.status_view(task_id) if self.flow is not None else None
         if view is None:
             return {"task_id": task_id, "exists": False}
@@ -2302,7 +2325,7 @@ class Backend:
                 runs = []
             commands = [{"command_id": item.get("command_id"), "owner": "worker", "exit_code": item.get("exit_code"),
                          "log_path": item.get("log_path")} for item in runs]
-        stored = read_task_store(self.layout.tasks, task_id, detail=detail)
+        stored = store.read(task_id, detail=detail)
         for run in stored["runs"]:
             if last.get("run_id") == run["run_id"]:
                 run["exit_code"] = run["exit_code"] if run["exit_code"] is not None else last.get("exit_code")
@@ -2437,49 +2460,84 @@ def _decoded_json(text: object) -> Any:
         return None
 
 
-def read_task_store(path: Path, task_id: str, *, detail: bool) -> dict[str, list]:
-    """A Task's runs (and with ``detail`` the worker reports to the manager) from ``tasks.sqlite3``, opened read-only
-    (``mode=ro``) on its own short-lived connection, so it never writes or waits on the backend's writers for long."""
+class TaskStore:
+    """Read-only view of ``tasks.sqlite3`` for ``task_status``: one connection (``mode=ro``, the path quoted by
+    ``Path.as_uri``) for the whole call, never writing; a statement still running at ``deadline`` (monotonic) is
+    interrupted and :meth:`read` raises ``TimeoutError``. An unopenable or unreadable store reads as empty."""
+
+    def __init__(self, path: Path, deadline: float):
+        self.deadline = deadline
+        self.connection: sqlite3.Connection | None = None
+        try:
+            uri = Path(os.path.abspath(path)).as_uri() + "?mode=ro"
+            self.connection = sqlite3.connect(uri, uri=True,
+                                              timeout=max(0.05, min(1.0, deadline - time.monotonic())))
+            self.connection.set_progress_handler(lambda: 1 if time.monotonic() >= self.deadline else 0, 1000)
+        except sqlite3.Error:
+            self.close()
+
+    def __enter__(self) -> "TaskStore":
+        return self
+
+    def __exit__(self, *_exc: object) -> None:
+        self.close()
+
+    def close(self) -> None:
+        if self.connection is not None:
+            self.connection.close()
+            self.connection = None
+
+    def read(self, task_id: str, *, detail: bool) -> dict[str, list]:
+        if self.connection is None:
+            return {"runs": [], "reports": []}
+        try:
+            return _read_task_rows(self.connection, task_id, detail)
+        except sqlite3.OperationalError as exc:
+            if time.monotonic() >= self.deadline:
+                raise TimeoutError("task store read passed the task_status deadline") from exc
+        except sqlite3.Error:
+            pass
+        return {"runs": [], "reports": []}
+
+
+def read_task_store(path: Path, task_id: str, *, detail: bool, budget: float = TASK_STATUS_BUDGET) -> dict[str, list]:
+    """One Task's runs (and with ``detail`` its worker reports to the manager) through its own :class:`TaskStore`."""
+    with TaskStore(path, time.monotonic() + budget) as store:
+        return store.read(task_id, detail=detail)
+
+
+def _read_task_rows(connection: sqlite3.Connection, task_id: str, detail: bool) -> dict[str, list]:
     runs: list[dict[str, Any]] = []
     reports: list[dict[str, Any]] = []
-    try:
-        connection = sqlite3.connect(f"file:{path}?mode=ro", uri=True, timeout=1.0)
-    except sqlite3.Error:
-        return {"runs": runs, "reports": reports}
-    try:
-        rows = connection.execute("SELECT run_id, created_at FROM runs WHERE task_id = ? ORDER BY created_at, rowid",
-                                  (task_id,)).fetchall()
-        for run_id, created_at in rows:
-            events = connection.execute("SELECT kind, details_json, created_at FROM run_events WHERE run_id = ? "
-                                        "ORDER BY rowid", (run_id,)).fetchall()
-            started = next((at for kind, _, at in events if kind == "started"), None)
-            end = next(((kind, _decoded_json(text) or {}, at) for kind, text, at in reversed(events)
-                        if kind in _RUN_ENDS), None)
-            details = end[1] if end is not None and isinstance(end[1], dict) else {}
-            runs.append({"run_id": run_id, "status": end[0] if end is not None else ("running" if started else
-                                                                                     "created"),
-                         "exit_code": details.get("exit_code"), "started_at": started or created_at,
-                         "ended_at": end[2] if end is not None else None, "stopped_by": details.get("stopped_by"),
-                         "log_sources": []})
-        if detail:
-            for message_id, content, created_at in connection.execute(
-                    "SELECT message_id, content_json, created_at FROM messages WHERE task_id = ? ORDER BY rowid",
-                    (task_id,)).fetchall():
-                content = _decoded_json(content)
-                if not isinstance(content, dict) or (content.get("sender_role"), content.get("target_role")) != (
-                        "worker", "manager"):
-                    continue
-                payload = _decoded_json(content.get("payload"))
-                payload = payload if isinstance(payload, dict) else {}
-                text = payload.get("message")
-                text = text if isinstance(text, str) else json.dumps(payload, ensure_ascii=False)
-                encoded = text.encode("utf-8")[:ui_v1.MAX_REPORT_TEXT_BYTES]
-                reports.append({"message_id": message_id, "kind": payload.get("kind") or content.get("kind"),
-                                "at": created_at, "text": encoded.decode("utf-8", "ignore")})
-    except sqlite3.Error:
-        pass
-    finally:
-        connection.close()
+    rows = connection.execute("SELECT run_id, created_at FROM runs WHERE task_id = ? ORDER BY created_at, rowid",
+                              (task_id,)).fetchall()
+    for run_id, created_at in rows:
+        events = connection.execute("SELECT kind, details_json, created_at FROM run_events WHERE run_id = ? "
+                                    "ORDER BY rowid", (run_id,)).fetchall()
+        started = next((at for kind, _, at in events if kind == "started"), None)
+        end = next(((kind, _decoded_json(text) or {}, at) for kind, text, at in reversed(events)
+                    if kind in _RUN_ENDS), None)
+        details = end[1] if end is not None and isinstance(end[1], dict) else {}
+        runs.append({"run_id": run_id, "status": end[0] if end is not None else ("running" if started else
+                                                                                 "created"),
+                     "exit_code": details.get("exit_code"), "started_at": started or created_at,
+                     "ended_at": end[2] if end is not None else None, "stopped_by": details.get("stopped_by"),
+                     "log_sources": []})
+    if detail:
+        for message_id, content, created_at in connection.execute(
+                "SELECT message_id, content_json, created_at FROM messages WHERE task_id = ? ORDER BY rowid",
+                (task_id,)).fetchall():
+            content = _decoded_json(content)
+            if not isinstance(content, dict) or (content.get("sender_role"), content.get("target_role")) != (
+                    "worker", "manager"):
+                continue
+            payload = _decoded_json(content.get("payload"))
+            payload = payload if isinstance(payload, dict) else {}
+            text = payload.get("message")
+            text = text if isinstance(text, str) else json.dumps(payload, ensure_ascii=False)
+            encoded = text.encode("utf-8")[:ui_v1.MAX_REPORT_TEXT_BYTES]
+            reports.append({"message_id": message_id, "kind": payload.get("kind") or content.get("kind"),
+                            "at": created_at, "text": encoded.decode("utf-8", "ignore")})
     return {"runs": runs, "reports": reports}
 
 

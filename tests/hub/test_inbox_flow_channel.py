@@ -92,7 +92,7 @@ class TaskStatusTests(ChannelCase):
         time.sleep(1.0)
         self.assertEqual((len(quiet()), len(self.records('FAKE_NOTICES'))), (frames, notices),
                          'task_status sends nothing to an OMP')
-        # an attached UI may not ask; the Hub's other two requests are not implemented by this backend yet
+        # an attached UI may not ask; notice and cancel also need the running Hub's own pid (this test process is not it)
         refused = ui.request(ClientType.TASK_STATUS, task_ids=[task_id])
         self.assertEqual((refused['ok'], refused.get('reason')), (False, 'not_attached'), refused)
         for kind, fields in ((ClientType.INBOX_NOTICE, {
@@ -105,7 +105,7 @@ class TaskStatusTests(ChannelCase):
             if kind is ClientType.INBOX_NOTICE:
                 fields['fields']['request_id'] = fields['request_id']
             answer = hub.request(kind, **fields)
-            self.assertEqual((answer['ok'], answer.get('reason')), (False, 'unsupported_type'), answer)
+            self.assertEqual((answer['ok'], answer.get('reason')), (False, 'not_attached'), answer)
 
 
 class BackendLinkTests(ChannelCase):
@@ -143,6 +143,28 @@ class BackendLinkTests(ChannelCase):
         self.box.start_hub()
         self.assertTrue(wait_until(lambda: len(self.grants(project_id)) >= 2, 15), self.grants(project_id))
         self.assertEqual(set(self.grants(project_id)), {(pid, ticks)})
+
+
+class RegistryGateTests(BackendLinkTests):
+    """The backend contacts the Hub only while the Hub registry (read only) has this project id with this root."""
+
+    def mentions(self, project_id: str) -> list[str]:
+        log = self.box.hub_state / 'hub.log'
+        return [line for line in (log.read_text().splitlines() if log.exists() else ()) if project_id in line]
+
+    def test_an_unregistered_backend_never_contacts_the_hub_until_it_is_registered(self):
+        root, project_id = self.box.project('alpha')
+        other, _other_id = self.box.project('beta')
+        self.box.register(self.box.entry(other, project_id))  # this id under another root does not count
+        pid, ticks = self.box.power_on(root, project_id)
+        self.box.start_hub()
+        time.sleep(7.0)  # more than one reconnect interval
+        self.assertEqual(self.mentions(project_id), [], 'no hello reached the Hub')
+        self.box.register(self.box.entry(root, project_id))
+        self.assertTrue(wait_until(lambda: self.grants(project_id), 15), self.mentions(project_id))
+        self.assertEqual(self.grants(project_id), [(pid, ticks)])
+
+    test_the_backend_links_to_a_hub_started_later_and_again_after_a_hub_restart = None
 
 
 if __name__ == '__main__':

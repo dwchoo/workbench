@@ -238,8 +238,10 @@ Hub requests (Task Inbox SPEC "Hub ↔ backend 요청 통로"; additive, the con
 version stays 1): ``inbox_notice``, ``task_status`` and ``cancel_task`` are
 served only to a connection whose hello ``client`` is in
 :data:`NON_ATTACHED_CONTROL_CLIENTS` and whose server-side peer uid is the
-backend's effective uid, attached or not; every other connection (an attached UI
-included) is refused with ``not_attached``. They never take or change the attach
+backend's effective uid, attached or not; ``inbox_notice`` and ``cancel_task``
+(which change backend state) also need the peer pid to be the verified running
+Hub process (its ``hub.json`` pid and start ticks, cached briefly). Every other
+connection (an attached UI included) is refused with ``not_attached``. They never take or change the attach
 slot and push no ``state``. An older backend answers ``unsupported_type``.
 - ``inbox_notice{request_id, delivery_id, event, fields}`` (canonical UUIDs;
   ``event`` one of :data:`INBOX_NOTICE_EVENTS`; ``fields`` exactly
@@ -253,7 +255,10 @@ slot and push no ``state``. An older backend answers ``unsupported_type``.
   source_id}]}], commands: [{command_id, owner, exit_code, log_path}],
   reports}]`` in request order; ``reports`` (``[{message_id, kind, at, text}]``,
   ``text`` <= 64 KiB) only with ``detail``; an unknown id is ``{task_id,
-  exists: false}``. Read only: no model call, no bridge frame.
+  exists: false}``. Read only: no model call, no bridge frame. The whole call
+  has a bounded time (the backend's UI loop is not held): an id not read in
+  time is ``{task_id, timeout: true}`` and the answer then carries ``timeout:
+  true`` (a partial answer; ask again for those ids).
 - ``cancel_task{task_id, request_id, expect: {status (one of
   :data:`TASK_STATUSES`), command_id (canonical UUID or null)}, reason (<= 1000
   chars or null)}`` -> ``{cancel, stop}`` (a backend without it answers

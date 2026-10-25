@@ -10,10 +10,14 @@ Failures raise :class:`BackendPortError` with ``reason``:
 socket refused, wrong peer; nothing was sent), ``backend_too_old`` (the backend answered ``unsupported_type`` or
 ``not_attached``: it predates the request), ``unknown`` (sent, no answer in time or the connection ended: the outcome
 is unknown), or the backend's own refusal reason (``invalid_message``, ``task_changed``, ...).
+
+``detail`` is always the fixed sentence of :data:`DETAILS` for the reason (never exception or backend text, which may
+name paths); the underlying text goes to the Hub log (stderr) only. Web and MCP layers expose only ``reason``.
 """
 from __future__ import annotations
 
 from pathlib import Path
+import sys
 from typing import Any
 
 from workbench.contracts.ui_v1 import ClientType, Reason
@@ -23,10 +27,23 @@ TIMEOUT = 5.0
 TOO_OLD = frozenset({Reason.UNSUPPORTED_TYPE.value, Reason.NOT_ATTACHED.value})
 
 
+DETAILS = {
+    "backend_not_running": "The project's backend is not running.",
+    "backend_unreachable": "The project's backend could not be reached or verified.",
+    "backend_too_old": "The project's backend is too old for this request.",
+    "unknown": "The backend did not answer; the outcome is unknown.",
+}
+REFUSED = "The project's backend refused the request."
+
+
 class BackendPortError(Exception):
-    def __init__(self, reason: str, detail: str = "", header: dict | None = None):
-        super().__init__(f"{reason}: {detail}" if detail else reason)
-        self.reason, self.detail, self.header = reason, detail, header or {}
+    """``reason`` is the code; ``detail`` a generic sentence; ``header`` the backend's reply when there was one."""
+
+    def __init__(self, reason: str, log: str = "", header: dict | None = None):
+        self.reason, self.detail, self.header = reason, DETAILS.get(reason, REFUSED), header or {}
+        super().__init__(f"{reason}: {self.detail}")
+        if log:  # the specific text stays in the Hub log
+            print(f"[workbench] backend request failed ({reason}): {log}", file=sys.stderr, flush=True)
 
 
 def call(root: Path, kind: ClientType, *, timeout: float = TIMEOUT, **fields: Any) -> dict[str, Any]:

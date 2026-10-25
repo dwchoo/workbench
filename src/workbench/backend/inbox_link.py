@@ -3,7 +3,8 @@
 The backend keeps one connection to the Hub with hello ``client: workbench-backend`` and its ``project_id``; the Hub
 grants the backend principal only when the socket peer is the running backend recorded for that project. The link
 never starts a Hub. A background thread reconnects every :data:`RECONNECT_INTERVAL` seconds while disconnected, and a
-call that finds no connection tries once at once. Each call waits at most ``timeout`` (:data:`CALL_TIMEOUT`) and
+call that finds no connection tries once at once, unless the last connect failed less than ``reconnect_interval`` ago
+(then it is ``unavailable``/``backoff`` without a new attempt). Each call waits at most ``timeout`` (:data:`CALL_TIMEOUT`) and
 returns a :class:`LinkResult` whose ``status`` is
 
 - ``ok``: the Hub answered ``ok: true`` (``value`` = the result fields);
@@ -38,6 +39,39 @@ class LinkResult:
     value: dict[str, Any] = field(default_factory=dict)
 
 
+class HubPeerCheck:
+    """``check(pid)``: is ``pid`` the verified running Hub (``hub.process.verified_record``: the ``hub.json`` of the
+    live ``hub.lock`` holder with exact start ticks), and does ``/proc/<pid>`` still have those start ticks? The Hub
+    identity is cached for ``ttl`` seconds so repeated checks do not read the disk; a mismatch reads it again at most
+    every ``refresh`` seconds (a Hub that just restarted). Any failure is "not the Hub"."""
+
+    def __init__(self, layout: Any, *, ttl: float = 2.0, refresh: float = 0.5):
+        self.layout, self.ttl, self.refresh = layout, ttl, refresh
+        self._lock = threading.Lock()
+        self._identity: tuple[int, int] | None = None
+        self._read_at: float | None = None
+
+    def _read(self) -> None:
+        from workbench.hub import process as hub_process
+        try:
+            record = hub_process.verified_record(self.layout)
+            self._identity = (int(record["pid"]), int(record["start_ticks"]))
+        except Exception:
+            self._identity = None
+        self._read_at = time.monotonic()
+
+    def __call__(self, pid: int) -> bool:
+        from workbench.hub.process import start_ticks
+        with self._lock:
+            now = time.monotonic()
+            if self._read_at is None or now - self._read_at >= self.ttl:
+                self._read()
+            elif (self._identity is None or self._identity[0] != pid) and now - self._read_at >= self.refresh:
+                self._read()
+            identity = self._identity
+        return identity is not None and identity[0] == pid and start_ticks(pid) == identity[1]
+
+
 class _Unavailable(Exception):
     def __init__(self, reason: str):
         super().__init__(reason)
@@ -45,10 +79,14 @@ class _Unavailable(Exception):
 
 
 class InboxLink:
-    def __init__(self, project_id: str, *, environment: Mapping[str, str] | None = None,
+    def __init__(self, project_id: str, *, environment: Mapping[str, str] | None = None, root: str | None = None,
                  timeout: float = CALL_TIMEOUT, reconnect_interval: float = RECONNECT_INTERVAL):
+        """``root``: the project root; when given, each connect first reads the Hub registry (read only) and
+        contacts the Hub only if it lists ``project_id`` with this root (a backend of an unregistered project, e.g.
+        an in-process test under a real HOME, never touches a Hub)."""
         from workbench.hub.paths import hub_layout
         self.project_id = project_id
+        self.root = root
         self.layout = hub_layout(dict(os.environ if environment is None else environment))
         self.timeout = timeout
         self.reconnect_interval = reconnect_interval
@@ -61,6 +99,7 @@ class InboxLink:
         self._thread: threading.Thread | None = None
         self.state = "disconnected"  # connected | disconnected
         self.last_reason: str | None = None
+        self._failed_at: float | None = None  # monotonic time of the last failed connect (call backoff)
 
     # -- lifetime ------------------------------------------------------------------------
     def start(self) -> None:
@@ -103,6 +142,8 @@ class InboxLink:
     def _connect(self) -> None:
         """Verified like ``HubClient``: record → lock holder → live process → peer pid/uid → welcome identity."""
         from workbench.hub.process import HubNotRunning, HubUnknown, verified_record
+        if self.root is not None and not self._registered():
+            raise self._unavailable("not_registered")
         try:
             record = verified_record(self.layout)
         except HubNotRunning:
@@ -134,10 +175,18 @@ class InboxLink:
         except (OSError, hub_v1.ProtocolError, KeyError, TypeError) as exc:
             self._drop()
             raise self._unavailable(f"connect_failed:{type(exc).__name__}") from None
-        self.state, self.last_reason = "connected", None
+        self.state, self.last_reason, self._failed_at = "connected", None, None
+
+    def _registered(self) -> bool:
+        from workbench.hub import registry
+        try:
+            entries = registry.read(self.layout)
+        except (registry.RegistryError, OSError):
+            return False
+        return any(entry.project_id == self.project_id and entry.root == self.root for entry in entries)
 
     def _unavailable(self, reason: str) -> _Unavailable:
-        self.last_reason = reason
+        self.last_reason, self._failed_at = reason, time.monotonic()
         return _Unavailable(reason)
 
     def _next(self, deadline: float) -> dict[str, Any] | None:
@@ -173,6 +222,9 @@ class InboxLink:
         with self._lock:
             for attempt in (1, 2):
                 if self._sock is None:
+                    if (attempt == 1 and self._failed_at is not None
+                            and time.monotonic() - self._failed_at < self.reconnect_interval):
+                        return LinkResult("unavailable", "backoff", self.last_reason)  # no new attempt yet
                     try:
                         self._connect()
                     except _Unavailable as exc:

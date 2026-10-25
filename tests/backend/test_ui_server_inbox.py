@@ -149,5 +149,126 @@ class UnreadablePeerInboxTests(InboxFixture):
         self.assertEqual(self.controller.calls, [])
 
 
+class HubPeerFixture(InboxFixture):
+    """A ``UiServer`` given a ``hub_peer`` check (the backend passes the verified running Hub's pid check)."""
+
+    hub_pids: set = set()
+
+    def setUp(self):
+        import os
+        from workbench.backend.ui_server import UiServer
+        original = UiServer.__init__
+        allowed = {os.getpid()} if self.hub_pids == {"self"} else set()
+        self.checked: list[int] = []
+
+        def check(pid):
+            self.checked.append(pid)
+            return pid in allowed
+
+        def init(server, path, controller, **kwargs):
+            original(server, path, controller, hub_peer=check, **kwargs)
+        self.server_class = type("CheckedServer", (UiServer,), {"__init__": init})
+        super().setUp()
+
+
+class NotTheHubTests(HubPeerFixture):
+    hub_pids = set()
+
+    def test_notice_and_cancel_need_the_running_hubs_pid_while_task_status_keeps_the_name_and_uid_rule(self):
+        hub = self.client()
+        for kind, fields in REQUESTS:
+            with self.subTest(kind=kind.value):
+                result = hub.request(kind, **fields)
+                if kind is ClientType.TASK_STATUS:
+                    self.assertTrue(result["ok"], result)
+                else:
+                    self.assertEqual((result["ok"], result.get("reason")), (False, "not_attached"), result)
+        self.assertEqual([call[0] for call in self.controller.calls], ["task_status"])
+        self.assertTrue(self.checked, "the Hub check ran")
+
+
+class TheHubTests(HubPeerFixture):
+    hub_pids = {"self"}
+
+    def test_the_running_hubs_pid_gets_notice_and_cancel(self):
+        hub = self.client()
+        for kind, fields in REQUESTS:
+            self.assertTrue(hub.request(kind, **fields)["ok"], kind.value)
+        self.assertEqual([call[0] for call in self.controller.calls], ["inbox_notice", "task_status", "cancel_task"])
+
+
+class TaskStoreReadTests(unittest.TestCase):
+    """``service.read_task_store``: the read-only open survives a data root with URI-special characters."""
+
+    def test_a_root_with_question_mark_hash_and_percent_is_read(self):
+        import sqlite3
+        import tempfile
+        from pathlib import Path
+        from workbench.backend.service import read_task_store
+        from workbench.tasks.repository import TaskRepository
+        with tempfile.TemporaryDirectory(prefix="ti09-uri-") as base:
+            data = Path(base) / "we?ird#root%41" / ".wb"
+            data.mkdir(parents=True)
+            path = data / "tasks.sqlite3"
+            TaskRepository(path).close()
+            run_id = "4b1d3c2a-9e8f-4a7b-8c6d-5e4f3a2b1c0d"
+            with sqlite3.connect(path) as db:
+                db.execute("INSERT INTO runs (run_id, task_id, revision, settings_revision, retry_count_used, "
+                           "inputs_json, created_at) VALUES (?, ?, 1, 1, 0, '{}', '2026-10-25T00:00:00Z')",
+                           (run_id, TASK_ID))
+            db.close()
+            stored = read_task_store(path, TASK_ID, detail=False)
+            self.assertEqual([run["run_id"] for run in stored["runs"]], [run_id])
+            self.assertFalse((Path(base) / "we").exists(), "nothing was created at a truncated path")
+
+
+class TaskStatusBudgetTests(unittest.TestCase):
+    """``Backend.task_status`` runs on the UI loop thread, so it has a total time budget: what is not read in time is
+    ``{task_id, timeout: true}`` and the answer says ``timeout: true`` (a partial answer, never a stall)."""
+
+    def stub(self, base, budget, delay):
+        import time
+        from pathlib import Path
+        from types import SimpleNamespace
+        from workbench.backend.service import Backend
+        from workbench.tasks.repository import TaskRepository
+        path = Path(base) / "tasks.sqlite3"
+        TaskRepository(path).close()
+
+        class Flow:
+            tasks: dict = {}
+
+            def status_view(self, task_id):
+                time.sleep(delay)
+                return {"task_id": task_id, "kind": "work", "status": "running", "revision": 1, "closed_reason": None}
+
+        class Stub:
+            flow, terminal, layout = Flow(), None, SimpleNamespace(tasks=path)
+            task_status_budget = budget
+            _task_status_item = Backend._task_status_item
+        return Stub(), Backend.task_status
+
+    def test_ids_past_the_budget_are_marked_timeout_and_the_answer_is_partial(self):
+        import tempfile
+        ids = [f"00000000-0000-4000-8000-{number:012x}" for number in range(1, 6)]
+        with tempfile.TemporaryDirectory(prefix="ti09-budget-") as base:
+            stub, task_status = self.stub(base, budget=0.5, delay=0.3)
+            answer = task_status(stub, ids, False)
+        self.assertIs(answer.get("timeout"), True, answer)
+        done = [item for item in answer["tasks"] if not item.get("timeout")]
+        late = [item for item in answer["tasks"] if item.get("timeout")]
+        self.assertTrue(1 <= len(done) <= 2, answer)
+        self.assertEqual([item["task_id"] for item in answer["tasks"]], ids, "every id, in order")
+        self.assertEqual(late, [{"task_id": task_id, "timeout": True} for task_id in ids[len(done):]])
+
+    def test_within_the_budget_there_is_no_timeout_marker(self):
+        import tempfile
+        with tempfile.TemporaryDirectory(prefix="ti09-budget-") as base:
+            stub, task_status = self.stub(base, budget=2.0, delay=0.0)
+            answer = task_status(stub, [TASK_ID], True)
+        self.assertNotIn("timeout", answer)
+        self.assertEqual((answer["tasks"][0]["task_id"], answer["tasks"][0]["exists"]), (TASK_ID, True))
+
+
 if __name__ == "__main__":
     unittest.main()

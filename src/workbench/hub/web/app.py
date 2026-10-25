@@ -75,18 +75,25 @@ async def flush_last_used(app: web.Application):
     """``cleanup_ctx``: write API key last-use times every ``services.flush_interval`` seconds while the
     app runs (the listener's stop step does the final flush)."""
     services = app[SERVICES]
+    in_flight: list[asyncio.Future] = []
 
     async def loop() -> None:
         while True:
             await asyncio.sleep(services.flush_interval)
+            flush = asyncio.ensure_future(services.blocking(services.api_keys.flush))
+            in_flight[:] = [flush]
             try:
-                await services.blocking(services.api_keys.flush)
+                await asyncio.shield(flush)  # stopping cancels the timer, never a write in progress
+            except asyncio.CancelledError:
+                raise
             except Exception as exc:  # kept in memory for the next try; never stops the app
                 print(f"[workbench] web: api key last-use flush failed: {exc!r}", file=sys.stderr, flush=True)
     task = asyncio.create_task(loop())
     yield
     task.cancel()
     await asyncio.gather(task, return_exceptions=True)
+    # A write already running finishes before the app (and then ``hub.sqlite3``) closes.
+    await asyncio.gather(*in_flight, return_exceptions=True)
 
 
 def create_app(services: WebServices, *, routes: Iterable[Callable[[web.Application], None]] = ()) -> web.Application:

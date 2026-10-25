@@ -7,12 +7,14 @@ params). Run with ``discover -s tests/hub -p 'test_hub_mcp*.py'``.
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 from pathlib import Path
 import socket
 import sys
 import unittest
+from unittest import mock
 
 REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO / 'src'))
@@ -192,6 +194,14 @@ class FramingTests(TransportCase):
         reply = self.client.raw('POST', chunked, {'Transfer-Encoding': 'chunked', 'Content-Length': None})
         self.assertEqual(reply.status, 413)
 
+    def test_413_is_a_json_rpc_error(self):
+        message = json.dumps({'jsonrpc': '2.0', 'id': 1, 'method': 'ping',
+                              'params': {'pad': 'x' * (256 * 1024)}}).encode()
+        chunked = hex(len(message))[2:].encode() + b'\r\n' + message + b'\r\n0\r\n\r\n'
+        for reply in (self.body(message),
+                      self.client.raw('POST', chunked, {'Transfer-Encoding': 'chunked', 'Content-Length': None})):
+            self.assert_rpc_error(reply, -32600, 413)
+
     def test_body_at_the_limit_is_read(self):
         head = json.dumps({'jsonrpc': '2.0', 'id': 1, 'method': 'ping', 'params': {'pad': ''}}).encode()
         message = head.replace(b'"pad": ""', b'"pad": "' + b'x' * (256 * 1024 - len(head)) + b'"')
@@ -216,6 +226,20 @@ class FramingTests(TransportCase):
         reply = self.body(b'{')
         self.assertNotIn('/', reply.json['error']['message'])
         self.assertNotIn(str(self.hub.base).encode(), reply.body)
+
+
+class SessionCapTests(TransportCase):
+    """Memory bounds: one key's sessions are capped per key, so it cannot push other keys' sessions out."""
+
+    def test_one_key_cannot_evict_another_keys_session(self):
+        other = self.hub.client(self.hub.key('r2'))
+        other.initialize()
+        with mock.patch.object(mcp, 'SESSION_LIMIT', 4), mock.patch.object(mcp, 'SESSIONS_PER_KEY', 3):
+            clients = [self.hub.client(self.key) for _ in range(6)]
+            for client in clients:
+                client.initialize()
+            self.assertEqual(other.result('ping'), {})
+            self.assertEqual([client.request('ping').status for client in clients], [404, 404, 404, 200, 200, 200])
 
 
 class InternalListenerTests(TransportCase):
@@ -263,6 +287,20 @@ class InternalListenerTests(TransportCase):
 
     def test_foreign_origin_is_403(self):
         self.assertEqual(self.board().request('ping', headers={'Origin': 'http://evil.example'}).status, 403)
+
+    def test_concurrent_starts_open_one_listener_and_stop_forgets_the_port(self):
+        listener = mcp.InternalListener(self.hub.keys, self.hub.server)
+
+        async def both():
+            return await asyncio.gather(listener.start(), listener.start())
+        before = set(tcp_listening(os.getpid()))
+        first, second = self.hub.run(both())
+        self.addCleanup(lambda: self.hub.run(listener.stop()))
+        self.assertEqual(first, second)
+        self.assertEqual(len(set(tcp_listening(os.getpid())) - before), 1)
+        self.hub.run(listener.stop())
+        self.assertIsNone(listener.port)
+        self.assertIsNone(listener.url)
 
     def test_stop_closes_the_port(self):
         self.hub.run(self.listener.stop())

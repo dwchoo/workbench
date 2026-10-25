@@ -167,6 +167,10 @@ def expected_origin(request: web.Request) -> tuple | None:
 
 @web.middleware
 async def body_limit(request: web.Request, handler):
+    """413 for a declared body over the limit. Own-auth routes (``/mcp``) answer it themselves in their
+    own error shape; ``client_max_size`` still caps every body that is read."""
+    if access_of(request) == ACCESS_OWN:
+        return await handler(request)
     if request.content_length is not None and request.content_length > BODY_LIMIT:
         return refuse(request, 413, "too_large")
     return await handler(request)

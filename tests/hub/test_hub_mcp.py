@@ -6,11 +6,15 @@ test reads back with stdlib ``sqlite3``. Run with ``discover -s tests/hub -p 'te
 """
 from __future__ import annotations
 
+import asyncio
 import json
 from pathlib import Path
 import sys
+import tempfile
+import threading
 import time
 import unittest
+from unittest import mock
 import uuid
 
 REPO = Path(__file__).resolve().parents[2]
@@ -20,6 +24,8 @@ from support.mcp_client import McpClient  # noqa: E402
 from support.mcp_hub import McpHub  # noqa: E402
 from workbench.hub import auth, mcp  # noqa: E402
 from workbench.hub.inbox.service import Principal  # noqa: E402
+from workbench.hub.web.app import OriginPolicy, WebServices, create_app  # noqa: E402
+from aiohttp import test_utils  # noqa: E402
 
 UNAUTHORIZED = 'Bearer realm="workbench-hub"'
 
@@ -116,6 +122,35 @@ class LastUsedTests(McpCase):
         self.hub.now[0] += 5.0
         McpClient('127.0.0.1', listener.port, key).initialize()
         self.assertTrue(wait_until(lambda: self.hub.key_row(key)[0] == self.hub.now[0]), self.hub.key_row(key))
+
+
+class _SlowFlush:
+    """An ``ApiKeyStore`` stand-in whose flush takes a while (a slow ``hub.sqlite3`` write)."""
+
+    def __init__(self):
+        self.started, self.finished = threading.Event(), threading.Event()
+
+    def flush(self) -> int:
+        self.started.set()
+        time.sleep(0.5)
+        self.finished.set()
+        return 1
+
+
+class FlushShutdownTests(unittest.IsolatedAsyncioTestCase):
+    async def test_app_shutdown_waits_for_a_flush_in_flight(self):
+        temp = tempfile.TemporaryDirectory(prefix='wb-mcp-flush-')
+        self.addCleanup(temp.cleanup)
+        state = Path(temp.name) / 'hub'
+        db = auth.HubDb.open(state)
+        self.addCleanup(db.close)
+        services = WebServices(auth.PasswordStore(state), db, OriginPolicy('127.0.0.1'), flush_interval=0.05)
+        services.api_keys = slow = _SlowFlush()
+        server = test_utils.TestServer(create_app(services), host='127.0.0.1', port=0)
+        await server.start_server()
+        self.assertTrue(await asyncio.to_thread(slow.started.wait, 5))
+        await server.close()
+        self.assertTrue(slow.finished.is_set(), 'the app stopped while a last-use flush was still writing')
 
 
 # SPEC tool table: name -> (argument names, required arguments)
@@ -572,6 +607,23 @@ class CancelTests(ToolCase):
         token = self.first()['confirm_token']
         self.hub.inbox.observe_task(self.rid, 'task-1', 'running', view={'command': dict(COMMAND, command_id='cmd-2')})
         self.mismatch(token)
+
+    def test_tokens_are_capped_per_key(self):
+        self.running()
+        other = self.first(self.ed)['confirm_token']
+        with mock.patch.object(mcp, 'TOKENS_PER_KEY', 2):
+            tokens = [self.first()['confirm_token'] for _ in range(3)]
+        self.mismatch(tokens[0])
+        self.assertEqual(self.ed.tool('inbox_cancel', request_id=self.rid, confirm_token=other)['status'],
+                         'cancel_requested')
+
+    def test_expired_tokens_are_pruned_when_a_token_is_taken(self):
+        self.running()
+        self.first()
+        self.first(self.ed)
+        self.hub.mono[0] += 61.0
+        self.mismatch('x' * 32)
+        self.assertEqual(len(self.hub.server._tokens), 0)
 
     def test_token_of_another_key_or_request(self):
         self.running()

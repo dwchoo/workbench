@@ -49,6 +49,8 @@ SESSION_HEADER = "Mcp-Session-Id"
 VERSION_HEADER = "MCP-Protocol-Version"
 SESSION_LIMIT = 4096  # live session ids kept; the oldest is dropped first (clients may re-initialize)
 CANCEL_TOKEN_TTL = 60.0  # SPEC 기술 보완 17
+SESSIONS_PER_KEY = 64  # one key cannot push the other keys' sessions out
+TOKENS_PER_KEY = 32  # live cancel tokens per key (the oldest is dropped)
 
 
 def _json(value: object, *, status: int = 200, headers: dict | None = None) -> web.Response:
@@ -329,8 +331,12 @@ class McpServer:
     # -- sessions ---------------------------------------------------------------------------
     def _new_session(self, principal: Principal) -> str:
         session_id = secrets.token_urlsafe(24)
+        owner = principal.key_id or ""
         with self._lock:
-            self._sessions[session_id] = principal.key_id or ""
+            own = [sid for sid, key in self._sessions.items() if key == owner]  # oldest first
+            for stale in own[:max(0, len(own) - SESSIONS_PER_KEY + 1)]:
+                del self._sessions[stale]
+            self._sessions[session_id] = owner
             while len(self._sessions) > SESSION_LIMIT:
                 self._sessions.popitem(last=False)
         return session_id
@@ -407,16 +413,25 @@ class McpServer:
         token = secrets.token_urlsafe(24)
         now = self.monotonic()
         with self._lock:
-            self._tokens = {key: entry for key, entry in self._tokens.items() if entry.deadline > now}
+            self._prune(now)
+            own = [key for key, entry in self._tokens.items()  # insertion order: oldest first
+                   if (entry.kind, entry.key_id) == (principal.kind, principal.key_id)]
+            for stale in own[:max(0, len(own) - TOKENS_PER_KEY + 1)]:
+                del self._tokens[stale]
             self._tokens[_token_key(token)] = _CancelToken(principal.kind, principal.key_id, request_id, *bound,
                                                            deadline=now + self.token_ttl)
         return token
+
+    def _prune(self, now: float) -> None:
+        """Drop lapsed tokens (caller holds ``_lock``)."""
+        self._tokens = {key: entry for key, entry in self._tokens.items() if entry.deadline > now}
 
     def _take_token(self, principal: Principal, request_id: str, token: str) -> "_CancelToken":
         """The token's binding, used up; ``token_mismatch`` for an unknown, expired or foreign token.
         A token presented by another key or for another request is left for its owner."""
         key = _token_key(token)
         with self._lock:
+            self._prune(self.monotonic())
             entry = self._tokens.get(key)
             if entry is None or (entry.kind, entry.key_id, entry.request_id) != (principal.kind, principal.key_id,
                                                                                request_id):
@@ -510,6 +525,8 @@ class McpServer:
         if origins and (len(origins) != 1 or origin_of_header(origins[0]) is None
                         or origin_of_header(origins[0]) != expected_origin(request)):
             return rpc_error(INVALID_REQUEST, "origin not allowed", status=403)
+        if request.content_length is not None and request.content_length > BODY_LIMIT:
+            return rpc_error(INVALID_REQUEST, "request body too large", status=413)
         principal = await self.authenticate(request)
         if principal is None:
             return rpc_error(UNAUTHORIZED, "unauthorized", status=401, headers={"WWW-Authenticate": WWW_AUTHENTICATE})
@@ -639,27 +656,31 @@ class InternalListener:
         self.api_keys, self.server, self.clock, self.flush_interval = api_keys, server, clock, flush_interval
         self.runner: web.AppRunner | None = None
         self.port: int | None = None
+        self._lock = asyncio.Lock()  # one start/stop at a time: a second start never opens a second port
 
     @property
     def url(self) -> str | None:
         return None if self.port is None else f"http://{INTERNAL_HOST}:{self.port}/mcp"
 
     async def start(self) -> str:
-        if self.runner is not None:
+        async with self._lock:
+            if self.runner is not None:
+                return self.url
+            app = create_internal_app(self.api_keys, self.server, clock=self.clock,
+                                      flush_interval=self.flush_interval)
+            runner = web.AppRunner(app, access_log=None, handle_signals=False)
+            await runner.setup()
+            try:
+                await web.TCPSite(runner, INTERNAL_HOST, 0).start()
+            except BaseException:
+                await runner.cleanup()
+                raise
+            self.runner, self.port = runner, runner.addresses[0][1]
             return self.url
-        app = create_internal_app(self.api_keys, self.server, clock=self.clock, flush_interval=self.flush_interval)
-        runner = web.AppRunner(app, access_log=None, handle_signals=False)
-        await runner.setup()
-        try:
-            await web.TCPSite(runner, INTERNAL_HOST, 0).start()
-        except BaseException:
-            await runner.cleanup()
-            raise
-        self.runner, self.port = runner, runner.addresses[0][1]
-        return self.url
 
     async def stop(self) -> None:
-        runner, self.runner = self.runner, None
-        if runner is not None:
-            await runner.cleanup()
-            await asyncio.get_running_loop().run_in_executor(None, self.api_keys.flush)  # last uses before stop
+        async with self._lock:
+            runner, self.runner, self.port = self.runner, None, None
+            if runner is not None:
+                await runner.cleanup()
+                await asyncio.get_running_loop().run_in_executor(None, self.api_keys.flush)  # last uses

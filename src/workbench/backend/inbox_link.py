@@ -452,6 +452,6 @@ def manager_inbox_tool(link: "InboxLink | None", args: object) -> dict[str, Any]
         return dict(INBOX_UNAVAILABLE)
     op, fields = call
     answer = tool_result(link.call(op, **fields))
-    if answer["status"] == "ok" and op == hub_v1.ClientType.INBOX_SHOW.value:
+    if answer["status"] == "ok" and op in (hub_v1.ClientType.INBOX_SHOW.value, hub_v1.ClientType.INBOX_LIST.value):
         answer["note"] = REQUEST_TEXT_NOTE
     return answer

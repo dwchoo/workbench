@@ -30,6 +30,7 @@ composer (P2-AC-10). It runs on its own thread; ``committed`` (the inbox ``on_co
 """
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 import sys
 import threading
 import time
@@ -41,6 +42,11 @@ from .limits import InboxError
 from .service import CommittedEvent, InboxService, ProjectRef
 
 INTERVAL = 2.0
+# TI-11 Task sync: each project's sync runs on a small pool off the tick thread (at most one at a time per project),
+# so a backend that does not answer holds neither the notices nor other projects; one pass of one project asks at
+# most SYNC_BUDGET seconds in all, in chunks of the ui_v1 task_status limit.
+SYNC_WORKERS = 4
+SYNC_BUDGET = 10.0
 PORT_RETRY = 30.0  # a backend that refused the notice call (too old, not ready) is asked again after this long
 RETRY_FIRST, RETRY_MAX = 10.0, 600.0  # rejected/dropped rounds: 10 s, 20 s, 40 s, ... at most 10 min
 ANY_MODE_EVENTS = frozenset({"revised", "cancelled", "linked_task_closed"})
@@ -90,8 +96,10 @@ def notice_fields(request: dict) -> dict:
 
 class Dispatcher:
     def __init__(self, inbox: InboxService, targets: Callable[[], Iterable[ProjectRef]], *, port: Any = None,
-                 clock: Callable[[], float] = time.monotonic, interval: float = INTERVAL):
-        """``targets()``: the registered projects (called on the dispatcher thread each tick)."""
+                 clock: Callable[[], float] = time.monotonic, interval: float = INTERVAL,
+                 sync_workers: int = SYNC_WORKERS, sync_budget: float = SYNC_BUDGET):
+        """``targets()``: the registered projects (called on the dispatcher thread each tick). ``sync_workers``: the
+        Task sync pool size; 0 syncs on the tick thread itself (tests)."""
         self.inbox, self.targets = inbox, targets
         self.port = port if port is not None else _DefaultPort()
         self.clock, self.interval = clock, interval
@@ -102,6 +110,9 @@ class Dispatcher:
         self._failures: dict[str, tuple[int, float]] = {}  # request id -> (rejected/dropped count, retry at)
         self._sync_dirty: set[str] = set()  # TI-11: projects whose linked set must be read again
         self._linked: dict[str, list[dict]] = {}  # project id -> open requests that link a Task (last read)
+        self._sync_workers, self._sync_budget = sync_workers, sync_budget
+        self._sync_pool: ThreadPoolExecutor | None = None
+        self._syncing: set[str] = set()  # projects whose sync pass runs on the pool now
         self._wake = threading.Event()
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
@@ -117,6 +128,10 @@ class Dispatcher:
         self._wake.set()
         if self._thread is not None:
             self._thread.join(timeout)
+        with self._lock:
+            pool, self._sync_pool = self._sync_pool, None
+        if pool is not None:  # a pass in flight ends within its budget (it also stops between chunks)
+            pool.shutdown(wait=True, cancel_futures=True)
 
     def _run(self) -> None:
         while not self._stop.is_set():
@@ -214,6 +229,36 @@ class Dispatcher:
         project_id = ref.project_id
         if backend is None or getattr(self.port, "task_status", None) is None:  # a port without it: no sync
             return
+        if self._sync_workers <= 0:
+            self._sync_project(ref)
+            return
+        with self._lock:
+            if project_id in self._syncing or self._stop.is_set():
+                return  # the previous pass of this project is still waiting for its backend
+            if self._sync_pool is None:
+                self._sync_pool = ThreadPoolExecutor(max_workers=self._sync_workers, thread_name_prefix="inbox-sync")
+            self._syncing.add(project_id)
+            pool = self._sync_pool
+
+        def run() -> None:
+            try:
+                self._sync_project(ref)
+            except InboxError as exc:
+                if exc.code not in ("hub_stopping", "project_unavailable", "not_found"):
+                    _log(f"project {project_id}: task sync {exc.code}")
+            except Exception as exc:  # the next tick tries again
+                _log(f"project {project_id}: task sync failed: {exc!r}")
+            finally:
+                with self._lock:
+                    self._syncing.discard(project_id)
+        try:
+            pool.submit(run)
+        except RuntimeError:  # closing
+            with self._lock:
+                self._syncing.discard(project_id)
+
+    def _sync_project(self, ref: ProjectRef) -> None:
+        project_id = ref.project_id
         with self._lock:
             stale = project_id in self._sync_dirty or project_id not in self._linked
             self._sync_dirty.discard(project_id)
@@ -226,14 +271,22 @@ class Dispatcher:
                 linked = list(self._linked.get(project_id) or ())
         if not linked:
             return
-        from .backend_port import BackendPortError
+        from workbench.contracts.ui_v1 import MAX_TASK_STATUS_IDS
+        from .backend_port import TIMEOUT, BackendPortError
         task_ids = list(dict.fromkeys(item["task_id"] for item in linked))
-        try:
-            tasks = self.port.task_status(ref.root, task_ids)
-        except BackendPortError as exc:
-            _log(f"project {project_id}: task_status failed ({exc.reason})")
-            return
-        known = {item.get("task_id"): item for item in tasks if isinstance(item, dict)}
+        deadline = time.monotonic() + self._sync_budget
+        known: dict[Any, dict] = {}
+        for start in range(0, len(task_ids), MAX_TASK_STATUS_IDS):
+            remaining = deadline - time.monotonic()
+            if remaining <= 0 or self._stop.is_set():
+                break  # the rest waits for the next pass
+            try:
+                tasks = self.port.task_status(ref.root, task_ids[start:start + MAX_TASK_STATUS_IDS],
+                                              timeout=min(TIMEOUT, remaining))
+            except BackendPortError as exc:
+                _log(f"project {project_id}: task_status failed ({exc.reason})")
+                break
+            known.update({item.get("task_id"): item for item in tasks if isinstance(item, dict)})
         for item in linked:
             task = known.get(item["task_id"])
             if task is None or task.get("timeout") or task.get("exists") is not True:

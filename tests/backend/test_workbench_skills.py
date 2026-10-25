@@ -214,6 +214,17 @@ class SmokeCorrectionSkillTests(unittest.TestCase):
             self.assertLessEqual(len(text.split()), 600, name)
 
 
+class InboxSkillTests(unittest.TestCase):
+    def test_workbench_inbox_never_does_request_work_outside_a_linked_task(self):
+        fields = frontmatter("workbench-inbox")
+        self.assertEqual(fields["name"], "workbench-inbox")
+        text = entry("workbench-inbox")
+        line = next((l for l in text.splitlines() if "Never" in l and "request_id" in l), None)
+        self.assertIsNotNone(line, "a rule line: never work on a request without to_worker request_id")
+        self.assertIn("to_worker", line)
+        self.assertRegex(line, r"(?i)yourself|directly")
+
+
 class RoleFilterTests(unittest.TestCase):
     def test_role_patterns(self):
         self.assertEqual(launcher.ROLE_SKILL_PATTERNS["manager"],

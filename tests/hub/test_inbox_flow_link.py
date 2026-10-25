@@ -19,6 +19,15 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from test_inbox_flow_review import ReviewCase  # noqa: E402
 
+
+def wait_until(predicate, timeout: float = 5.0) -> bool:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if predicate():
+            return True
+        time.sleep(0.01)
+    return predicate()
+
 WORK = {'kind': 'work', 'message': 'collect the facts TI11-MARK', 'spec': {'goal': 'facts', 'paths': []}}
 
 
@@ -216,11 +225,13 @@ class HubPort:
         self.after: dict = {}
         self.lose: set[str] = set()
         self.calls: list[str] = []
+        self.last: dict = {}  # the fields of the last call
 
     def __call__(self, op: str, *, call_timeout: float, **fields):
         from workbench.backend.inbox_link import LinkResult
         from workbench.hub.inbox.limits import InboxError
         self.calls.append(op)
+        self.last = dict(fields)
         try:
             if op == 'inbox_link_check':
                 value = self.service.link_check(self.principal, fields['request_id'])
@@ -311,7 +322,8 @@ class RaceTests(LinkSeamCase):
                 return [{'task_id': tid, 'exists': True, **{key: flow.status_view(tid)[key] for key in
                                                              ('status', 'closed_reason', 'revision')},
                          'cancel_requested_by': None, 'runs': [], 'commands': []} for tid in task_ids]
-        dispatcher = Dispatcher(self.service, lambda: [ProjectRef(self.project_id, self.root, 'alpha')], port=Port())
+        dispatcher = Dispatcher(self.service, lambda: [ProjectRef(self.project_id, self.root, "alpha")], port=Port(),
+                                sync_workers=0)
         dispatcher.tick()
         request = self.request()
         self.assertEqual((request['state'], request['task']['task_id']), ('REVIEWING', None), 'link voided')
@@ -330,6 +342,55 @@ class RaceTests(LinkSeamCase):
         self.assertNotIn('task_id', second, 'refused at the check: no second Task')
         self.assertEqual(len(self.fixture.mailbox.created), created)
         self.assertEqual(self.request()['task']['task_id'], first['task_id'])
+
+    def close_in_window(self, reason: str = 'shutdown_closing') -> None:
+        """Between the Hub's commit and the dispatch, something else in the backend closes the Task."""
+        def close():
+            with self.flow._lock:
+                self.flow._close(self.flow.tasks[self.port.last['task_id']], reason)
+        self.port.after['inbox_link_commit'] = close
+
+    def test_a_task_closed_between_the_commit_and_the_dispatch_is_not_dispatched(self):
+        self.close_in_window()
+        answer = self.to_worker()
+        self.assertEqual((answer['status'], answer['reason'], answer['dispatched']),
+                         ('rejected', 'task_changed_before_dispatch', False), answer)
+        self.assertEqual((answer['task_status'], answer['closed_reason']), ('closed', 'shutdown_closing'))
+        self.assertEqual(answer['inbox'], {'request_id': self.rid, 'state': 'READY'}, 'the Hub link was committed')
+        time.sleep(0.3)
+        self.assertEqual(self.fixture.mailbox.created, [], 'no TASK frame for the worker')
+        self.assertEqual(self.fixture.decisions(answer['task_id'], 1), [], 'never delegated')
+
+    def test_a_follow_up_whose_task_closed_in_the_window_sends_nothing(self):
+        first = self.to_worker()
+        task_id = first['task_id']
+        self.assertTrue(wait_until(lambda: self.flow.task_view()['status'] == 'running'
+                                   and len(self.fixture.mailbox.created) >= 1), self.flow.task_view())
+        self.service.observe_task(self.rid, task_id, 'running')  # the Hub's Task sync
+        self.service.review(self.manager, self.rid, 'ask', body='which branch?')
+        self.service.comment(self.owner, self.rid, 'main')
+        created = len(self.fixture.mailbox.created)
+        self.close_in_window('cancelled')
+        follow = self.fixture.to_worker({'kind': 'work', 'message': 'use main', 'task_id': task_id,
+                                         'request_id': self.rid})
+        self.assertEqual((follow['status'], follow['reason']), ('rejected', 'task_changed_before_dispatch'), follow)
+        time.sleep(0.3)
+        self.assertEqual(len(self.fixture.mailbox.created), created, 'no follow-up message')
+
+    def test_a_refused_commit_leaves_the_previous_inactive_task_untouched(self):
+        old = self.fixture.finished_experiment()
+        self.port.after['inbox_link_check'] = lambda: self.service.cancel(self.owner, self.rid)
+        answer = self.to_worker()
+        self.assertEqual(answer['reason'], 'inbox_link_refused', answer)
+        self.assertEqual((self.flow.tasks[old].status, self.flow.tasks[old].closed_reason), ('finished', None),
+                         'the old Task is ended only when the new one is dispatched')
+        other = self.service.submit(self.owner, self.project_id, 'Other', 'body', None)['request_id']
+        self.service.review(self.manager, other, 'begin_review')
+        self.port.after.clear()
+        done = self.fixture.to_worker({**WORK, 'request_id': other})
+        self.assertEqual(done['status'], 'dispatched', done)
+        self.assertEqual((self.flow.tasks[old].status, self.flow.tasks[old].closed_reason),
+                         ('closed', 'superseded_by_new_task'))
 
     def test_without_a_hub_link_nothing_is_created(self):
         self.flow.inbox_call = None
@@ -353,6 +414,100 @@ class RaceTests(LinkSeamCase):
         self.assertEqual(self.port.calls, ['inbox_link_check'], 'no commit without a Task to link')
         self.assertEqual(self.service.get(self.owner, other)['state'], 'REVIEWING', 'the other request is not linked')
         self.assertEqual(self.service.get(self.owner, other)['task']['task_id'], None)
+
+
+class TaskSyncTests(unittest.TestCase):
+    """Dispatcher Task sync against a real ``InboxService`` and a fake backend port (SPEC "Task 동기화")."""
+
+    def setUp(self):
+        import tempfile
+        from test_inbox_service import make_project
+        from workbench.hub.inbox.service import InboxService, ProjectRef
+        temp = tempfile.TemporaryDirectory(prefix='wb-inbox-sync-')
+        self.addCleanup(temp.cleanup)
+        base = Path(temp.name).resolve()
+        self.projects = [make_project(base, name) for name in ('alpha', 'beta')]
+        self.service = InboxService()
+        self.addCleanup(self.service.close)
+        self.refs = [ProjectRef(project_id, root, root.name) for root, project_id in self.projects]
+        self.service.set_projects(self.refs)
+
+    def linked(self, project_id: str, count: int) -> dict[str, str]:
+        """``count`` READY requests of ``project_id``, each linked to its own Task: request id -> task id."""
+        from workbench.hub.inbox.service import Principal
+        owner, manager = Principal.owner(), Principal.manager(project_id)
+        found = {}
+        for number in range(count):
+            rid = self.service.submit(owner, project_id, f'request {number}', 'body', None)['request_id']
+            token = self.service.link_check(manager, rid)['link_token']
+            task_id = str(uuid.uuid4())
+            self.service.link_commit(manager, token, task_id, 1, 'dispatched')
+            found[rid] = task_id
+        return found
+
+    def dispatcher(self, port, **kwargs):
+        from workbench.hub.inbox.dispatch import Dispatcher
+        dispatcher = Dispatcher(self.service, lambda: self.refs, port=port, **kwargs)
+        self.addCleanup(dispatcher.close)
+        return dispatcher
+
+    @staticmethod
+    def running(task_ids):
+        return [{'task_id': tid, 'exists': True, 'status': 'running', 'closed_reason': None, 'revision': 1,
+                 'cancel_requested_by': None, 'runs': [], 'commands': []} for tid in task_ids]
+
+    def state(self, rid: str) -> str:
+        from workbench.hub.inbox.service import Principal
+        return self.service.get(Principal.owner(), rid)['state']
+
+    def test_task_ids_go_in_chunks_of_the_ui_v1_limit(self):
+        from workbench.contracts.ui_v1 import MAX_TASK_STATUS_IDS
+        (_root, alpha), _beta = self.projects
+        links = self.linked(alpha, MAX_TASK_STATUS_IDS + 6)
+        asked = []
+        test = self
+
+        class Port:
+            identity = staticmethod(lambda root: '1:1' if root == test.refs[0].root else None)
+            inbox_notice = staticmethod(lambda *args, **kwargs: {'queued': True, 'notice_id': 'n'})
+
+            @staticmethod
+            def task_status(root, task_ids, **kwargs):
+                asked.append(list(task_ids))
+                return TaskSyncTests.running(task_ids)
+        self.dispatcher(Port(), sync_workers=0).tick()
+        self.assertEqual([len(chunk) for chunk in asked], [MAX_TASK_STATUS_IDS, 6])
+        self.assertEqual(sorted(tid for chunk in asked for tid in chunk), sorted(links.values()))
+        self.assertTrue(all(self.state(rid) == 'RUNNING' for rid in links))
+
+    def test_an_unresponsive_backend_does_not_hold_the_tick_or_another_projects_sync(self):
+        import threading
+        (_ra, alpha), (_rb, beta) = self.projects
+        (stuck_rid,) = self.linked(alpha, 1)
+        (other_rid,) = self.linked(beta, 1)
+        release = threading.Event()
+        self.addCleanup(release.set)
+        test = self
+
+        class Port:
+            identity = staticmethod(lambda root: '1:1')
+            inbox_notice = staticmethod(lambda *args, **kwargs: {'queued': True, 'notice_id': 'n'})
+
+            @staticmethod
+            def task_status(root, task_ids, **kwargs):
+                if root == test.refs[0].root:
+                    release.wait(30)  # this backend never answers in time
+                return TaskSyncTests.running(task_ids)
+        dispatcher = self.dispatcher(Port())
+        started = time.monotonic()
+        dispatcher.tick()
+        dispatcher.tick()
+        self.assertLess(time.monotonic() - started, 1.0, 'the tick waited for a backend')
+        self.assertTrue(wait_until(lambda: self.state(other_rid) == 'RUNNING', 5), 'the other project was synced')
+        self.assertEqual(self.state(stuck_rid), 'READY')
+        release.set()
+        dispatcher.tick()
+        self.assertTrue(wait_until(lambda: self.state(stuck_rid) == 'RUNNING', 5))
 
 
 if __name__ == '__main__':

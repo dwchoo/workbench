@@ -92,6 +92,7 @@ class ReadTests(ReviewCase):
                           for item in listed['requests']],
                          [(second, 2, 'Add a flag', 'REVIEWING'), (first, 1, 'Fix the build', 'REVIEWING')],
                          'the Hub answer as is (newest first)')
+        self.assertIn('data', listed['note'], 'list titles are requester text too')
         shown = self.inbox(ui, 'show', first)
         self.assertEqual(shown['status'], 'ok', shown)
         request = shown['request']

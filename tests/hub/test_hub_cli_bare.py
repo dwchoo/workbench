@@ -178,6 +178,19 @@ class Terminal:
                 return self.text()
         self.case.fail(f'{needle!r} never appeared; screen:\n{self.text()}')
 
+    def settle(self, timeout: float = 5.0) -> str:
+        """Pump until the screen text is the same on two consecutive reads (a curses frame can be read half
+        painted), then return it. A negative assertion on the screen goes through this."""
+        deadline = time.monotonic() + timeout
+        previous = None
+        while time.monotonic() < deadline:
+            self.pump(0.15)
+            current = self.text()
+            if current == previous:
+                return current
+            previous = current
+        return self.text()
+
     def send(self, data: bytes) -> None:
         os.write(self.fd, data)
 
@@ -239,7 +252,7 @@ class ListOnATty(BareCase):
         deadline = time.monotonic() + 5
         while '켤까요' in term.text() and time.monotonic() < deadline:
             term.pump(0.1)
-        self.assertNotIn('켤까요', term.text())
+        self.assertNotIn('켤까요', term.settle())
         self.assertIn('alpha', term.text())
         self.assertFalse((alpha / '.wb' / 'backend.json').exists())
         term.send(b'q')
@@ -252,7 +265,9 @@ class ListOnATty(BareCase):
         term = Terminal(self, cwd=self.folder('plain'))
         term.wait_for('꺼짐')
         self.assertEqual(self.wb('hub', 'stop', '--yes', env=quiet).returncode, 0)
-        screen = term.wait_for('Hub 연결 없음', timeout=40)
+        term.wait_for('Hub 연결 없음', timeout=40)
+        term.wait_for('연결 없음/불명')
+        screen = term.settle()  # the banner is painted before the rows: judge the finished frame
         self.assertIn('alpha', screen)
         self.assertIn('연결 없음/불명', screen)
         self.assertNotIn('꺼짐', screen)
@@ -285,7 +300,7 @@ class RealBackendFlow(unittest.TestCase):
         self.assertEqual(self.box.hub_row(self.root)['power'], 'on')
         term.send(b'\r')  # Enter on the running project: run_product on this terminal
         term.pump(2.0)
-        self.assertNotIn('Workbench Hub', term.text())  # the product UI owns the screen now
+        self.assertNotIn('Workbench Hub', term.settle())  # the product UI owns the screen now
         term.send(b'\x1dq')  # Ctrl-] q
         screen = term.wait_for('detach했습니다', timeout=30)
         self.assertIn('Workbench Hub', screen)

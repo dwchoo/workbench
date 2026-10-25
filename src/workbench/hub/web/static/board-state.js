@@ -5,11 +5,11 @@
 //         attached|connecting -> taken_elsewhere (taken_over / taken_elsewhere; never reconnects by itself)
 //         attached -> released (pagehide; pageshow of a restored page resumes)
 // Events: start, opened, message, data, closed (all but start carry the socket number `conn`; events of an
-//         older socket are ignored), timer {name: ping|pong|reconnect}, retake, reconnect, input, resize,
+//         older socket are ignored), timer {name: ping|pong|reconnect|stable}, retake, reconnect, input, resize,
 //         pagehide, pageshow.
 // Effects: open {conn}, close {conn, code}, send {message}, send_binary {bytes}, write {channel, payload},
 //          reset_terminals,
-//          set_timer {name, ms}, clear_timer {name}, notice {reason, channel}.
+//          set_timer {name, ms}, clear_timer {name} (names: ping, pong, reconnect, stable), notice {reason, channel}.
 export const PROTOCOL_VERSION = 1;
 export const PONG_LIMIT_MS = 20000;
 export const DEFAULT_HEARTBEAT_MS = 10000;
@@ -19,11 +19,16 @@ export const MIN_SIZE = 1;
 export const MAX_SIZE = 500;
 export const BANNER_TEXT = "다른 곳에서 연결됨 — 다시 가져오기";
 const CLIENT_TIMEOUT_CODE = 4000; // our own close when no pong came (not a server code)
-const NO_RETRY_CODES = new Set([4400, 4403]); // the server refused this page itself (bad hello, csrf mismatch)
+// 4400-4499: the server refused this page itself (4400 bad hello, 4403 csrf mismatch, any later client error).
+// Retrying the same hello cannot succeed, so the tab shows 연결 없음 and waits for the owner's 다시 연결.
+const isClientRefusal = (code) => code >= 4400 && code <= 4499;
+export const STABLE_MS = 10000; // an attach must hold this long before the reconnect delay starts over
 const CHANNEL_IDS = { agent: 0, shell: 1 };
 const CHANNEL_NAMES = ["agent", "shell"];
 const NONE = (state) => ({ state, effects: [] });
-const CLEAR_HEARTBEAT = [{ type: "clear_timer", name: "ping" }, { type: "clear_timer", name: "pong" }];
+const CLEAR_HEARTBEAT = [
+  { type: "clear_timer", name: "ping" }, { type: "clear_timer", name: "pong" }, { type: "clear_timer", name: "stable" },
+];
 
 export function initialState({ csrf }) {
   return {
@@ -130,7 +135,7 @@ function connect(state, resume) {
 function onClosed(state, code) {
   if (state.phase !== "connecting" && state.phase !== "attached") return NONE(state);
   const next = { ...state, phase: "disconnected", epoch: null };
-  if (NO_RETRY_CODES.has(code)) return { state: next, effects: [...CLEAR_HEARTBEAT] };
+  if (isClientRefusal(code)) return { state: next, effects: [...CLEAR_HEARTBEAT] };
   return disconnected(next, [...CLEAR_HEARTBEAT]);
 }
 
@@ -146,6 +151,7 @@ function disconnected(state, effects) {
 function onTimer(state, name) {
   if (name === "reconnect" && state.phase === "disconnected") return connect(state, state.resume);
   if (state.phase !== "attached") return NONE(state);
+  if (name === "stable") return { state: { ...state, attempt: 0 }, effects: [] };
   if (name === "ping") {
     const n = state.pings + 1;
     return {
@@ -189,6 +195,12 @@ function onResize(state, event) {
 
 // Tab close or navigation: give the lease back at once (best effort; the server's heartbeat is the fallback).
 function onPageHide(state) {
+  if (state.phase === "connecting") { // nothing held yet: do not leave a socket that could attach unseen
+    return {
+      state: { ...state, phase: "released" },
+      effects: [{ type: "close", conn: state.conn, code: 1000 }],
+    };
+  }
   if (state.phase !== "attached") return NONE(state);
   return {
     state: { ...state, phase: "released", epoch: null },
@@ -218,13 +230,14 @@ function onAttached(state, message) {
   const heartbeatMs = (Number(message.heartbeat) || 0) * 1000 || DEFAULT_HEARTBEAT_MS;
   return {
     state: {
-      ...state, phase: "attached", epoch: message.epoch, channels: message.channels || {}, attempt: 0, pings: 0,
+      ...state, phase: "attached", epoch: message.epoch, channels: message.channels || {}, pings: 0,
       heartbeatMs, resume: { run: message.run, epoch: message.epoch },
     },
     effects: [
       { type: "reset_terminals" }, // the replay that follows is the whole ring: drop what is on screen first
       { type: "set_timer", name: "ping", ms: heartbeatMs },
       { type: "set_timer", name: "pong", ms: PONG_LIMIT_MS },
+      { type: "set_timer", name: "stable", ms: STABLE_MS },
     ],
   };
 }

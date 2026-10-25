@@ -41,6 +41,12 @@ ACCESS_API = "api"  # session; refusals are 401 instead of ``303 /login``
 ACCESS_OWN = "own"  # the handler authenticates by itself (``/mcp`` with an API key, TI-05)
 
 
+def inline_styles(handler):
+    """Mark one page handler whose 200 response may carry inline ``<style>`` elements (see :func:`csp_for`)."""
+    handler.wb_inline_styles = True
+    return handler
+
+
 def public(handler):
     handler.wb_access = ACCESS_PUBLIC
     return handler
@@ -56,10 +62,27 @@ def own_auth(handler):
     return handler
 
 
+def csp_for(request: web.Request, response: web.StreamResponse) -> str:
+    """The CSP of this response: the strict global one, except for a 200 from a route marked
+    :func:`inline_styles` (the Board page only).
+
+    xterm.js 5.5's DOM renderer creates ``<style>`` elements and fills them with ``textContent``; under
+    ``style-src 'self'`` the browser refuses them and the terminal draws nothing. The Board page therefore gets
+    ``style-src 'self' 'unsafe-inline'`` (orchestrator decision, TI-18 review). Nothing else changes: ``script-src
+    'self'`` stays, and no other page, error or static file is loosened. Style injection alone cannot run script;
+    the page holds no user-controlled HTML (terminal output is written through xterm, not as markup).
+    """
+    marked = getattr(request.match_info.handler, "wb_inline_styles", False)
+    if marked and response.status == 200:
+        return CSP.replace("style-src 'self'", "style-src 'self' 'unsafe-inline'", 1)
+    return CSP
+
+
 async def security_headers(request: web.Request, response: web.StreamResponse) -> None:
     """``on_response_prepare``: the SPEC headers on every response (errors and 421 included)."""
     headers = response.headers
     headers.update(SECURITY_HEADERS)
+    headers["Content-Security-Policy"] = csp_for(request, response)
     headers["Server"] = "wb-hub"
     if request.path.startswith(STATIC_PREFIX) and response.status == 200:
         headers["Cache-Control"] = STATIC_CACHE

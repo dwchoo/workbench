@@ -16,7 +16,7 @@ from typing import Callable
 from aiohttp import web
 
 from .. import render
-from ..middleware import SERVICES, session_of
+from ..middleware import SERVICES, inline_styles, session_of
 
 CHANNELS = (("agent", "Board agent"), ("shell", "Shell"))
 CHANNEL_NAMES = tuple(name for name, _ in CHANNELS)
@@ -108,6 +108,7 @@ def confirm_page(request: web.Request, channel: str) -> web.Response:
 
 def make_register(board: Callable[[], object | None]) -> Callable[[web.Application], None]:
     """``GET /board`` and ``GET /board/restart`` over ``board()`` (the Hub's ``BoardSet`` or None)."""
+    @inline_styles  # xterm.js inserts <style> elements: this page's CSP alone allows inline styles
     async def get_board(request: web.Request) -> web.Response:
         return board_page(request, board())
 

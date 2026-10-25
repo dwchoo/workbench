@@ -1,0 +1,19 @@
+[
+  {"info": {"state": "running"}, "label": "실행 중"},
+  {"info": {"state": "starting"}, "label": "시작 중"},
+  {"info": {"state": "not_started"}, "label": "시작 전"},
+  {"info": {"state": "exited", "exit_status": 3}, "label": "종료됨 (종료 코드 3)"},
+  {"info": {"state": "exited", "exit_status": 0}, "label": "종료됨 (종료 코드 0)"},
+  {"info": {"state": "exited", "exit_status": null}, "label": "종료됨"},
+  {"info": {"state": "exited"}, "label": "종료됨"},
+  {"info": {"state": "failed", "detail": "omp_missing"}, "label": "실패: omp_missing"},
+  {"info": {"state": "failed", "detail": null}, "label": "실패"},
+  {"info": {"state": "failed", "detail": ""}, "label": "실패"},
+  {"info": {"state": "isolation_failed", "detail": "mcp_leak"}, "label": "격리 실패: mcp_leak"},
+  {"info": {"state": "isolation_failed"}, "label": "격리 실패"},
+  {"info": {"state": "weird"}, "label": "weird"},
+  {"info": {"state": 7}, "label": "알 수 없음"},
+  {"info": {}, "label": "알 수 없음"},
+  {"info": null, "label": "알 수 없음"},
+  {"info": "running", "label": "알 수 없음"}
+]

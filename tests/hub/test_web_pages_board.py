@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from html.parser import HTMLParser
 from pathlib import Path
+import json
 import re
 import sys
 import unittest
@@ -18,6 +19,7 @@ sys.path.insert(0, str(REPO / 'src'))
 
 import test_hub_web_auth as web_auth  # noqa: E402  (module import: its test classes stay uncollected here)
 from workbench.hub.web.app import board_routes  # noqa: E402
+from workbench.hub.web.pages.board import channel_label  # noqa: E402
 
 STATIC = REPO / 'src/workbench/hub/web/static'
 
@@ -133,8 +135,8 @@ class PageStructureTests(BoardPageCase):
                 self.assertFalse(name.startswith('on'), f'<{tag} {name}>')
             self.assertNotIn('style', attrs, tag)
         self.assertEqual(re.findall(r'(?:src|href|action)="(?:https?:)?//[^"]*"', text), [])
-        self.assertIn("script-src 'self'", response.headers['Content-Security-Policy'])
-        self.assertNotIn("'unsafe-inline'", response.headers['Content-Security-Policy'])
+        self.assertIn("script-src 'self';", response.headers['Content-Security-Policy'])
+        self.assertNotIn("script-src 'self' 'unsafe-inline'", response.headers['Content-Security-Policy'])
 
     async def test_own_assets_and_xterm_assets_are_served_with_a_javascript_type_and_no_external_url(self):
         for path, kind in (('/static/board.js', 'javascript'), ('/static/board-state.js', 'javascript'),
@@ -149,11 +151,43 @@ class PageStructureTests(BoardPageCase):
             self.assertEqual(re.findall(r'https?://', text), [], name)
             self.assertNotIn('eval(', text, name)
 
+    async def test_board_page_alone_allows_inline_styles_for_xterm_and_changes_nothing_else_in_the_csp(self):
+        # xterm 5.5's DOM renderer inserts <style> elements; the global style-src 'self' would block them.
+        strict = web_auth.COMMON_HEADERS['Content-Security-Policy']
+        response, _ = await self.page()
+        csp = response.headers['Content-Security-Policy']
+        self.assertEqual(csp, strict.replace("style-src 'self'", "style-src 'self' 'unsafe-inline'"))
+        self.assertIn("style-src 'self' 'unsafe-inline'", csp)
+        self.assertIn("script-src 'self';", csp)
+        self.assertNotIn("'unsafe-eval'", csp)
+        self.assertEqual(response.headers['X-Content-Type-Options'], 'nosniff')
+
+    async def test_every_other_page_keeps_the_strict_csp(self):
+        strict = web_auth.COMMON_HEADERS['Content-Security-Policy']
+        self.assertNotIn("'unsafe-inline'", strict)
+        for path, cookies in (('/board/restart?channel=agent', self.cookies), ('/board/restart?channel=x', self.cookies),
+                              ('/login', None), ('/', self.cookies), ('/board', None), ('/nope', self.cookies),
+                              ('/static/board.js', None), ('/ws/board', self.cookies)):
+            response = await self.get(path, cookies=cookies)
+            self.assertEqual(response.headers['Content-Security-Policy'], strict, path)
+        self.board_ref[0] = None
+        response, _ = await self.page()
+        self.assertEqual(response.status, 503)
+        self.assertEqual(response.headers['Content-Security-Policy'], strict, 'the 503 page has no terminal')
+
     async def test_page_needs_a_session(self):
         response = await self.get('/board')
         self.assertEqual((response.status, response.headers['Location']), (303, '/login'))
         response = await self.get('/board/restart?channel=agent')
         self.assertEqual((response.status, response.headers['Location']), (303, '/login'))
+
+
+class ChannelLabelParityTests(unittest.TestCase):
+    def test_python_channel_label_matches_the_table_the_js_channelLabel_is_tested_with(self):
+        table = json.loads((REPO / 'tests/hub/js/channel_labels.json').read_text())
+        self.assertGreaterEqual(len(table), 10)
+        for row in table:
+            self.assertEqual(channel_label(row['info']), row['label'], row['info'])
 
 
 class ChannelStateTests(BoardPageCase):

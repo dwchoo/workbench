@@ -97,7 +97,7 @@ test("attached enables input; keystrokes become binary frames with the epoch; ou
   socket.onmessage({ data: frame(0, 7, "hello") });
   socket.onmessage({ data: frame(0, 6, "stale") });
   assert.deepEqual(terminals[0].written, ["hello"]);
-  assert.deepEqual([...timers.values()].map((timer) => timer.ms).sort((a, b) => a - b), [10000, 20000]);
+  assert.deepEqual([...timers.values()].map((timer) => timer.ms).sort((a, b) => a - b), [10000, 10000, 20000]);
 });
 
 test("taken_over shows the banner and 다시 가져오기 reconnects with resume null", () => {

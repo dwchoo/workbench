@@ -3,6 +3,7 @@
 // backoff 1->2->4..<=15 s, 10 s ping, 20 s pong limit) and P2-AC-35, not from the module under test.
 import test from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import * as board from "../../../src/workbench/hub/web/static/board-state.js";
 
 const CSRF = "tok-123";
@@ -20,7 +21,7 @@ function boot(extra = {}) {
   return { send, get state() { return state; }, log };
 }
 
-const effect = (effects, type) => effects.find((item) => item.type === type);
+const effect = (effects, type, name) => effects.find((item) => item.type === type && (name === undefined || item.name === name));
 const effectsOf = (effects, type) => effects.filter((item) => item.type === type);
 
 test("start opens connection 1 and the opened socket sends a hello without resume", () => {
@@ -55,6 +56,7 @@ test("attached makes the tab the holder, schedules the 10 s ping and the 20 s po
   assert.deepEqual(effectsOf(effects, "set_timer"), [
     { type: "set_timer", name: "ping", ms: 10000 },
     { type: "set_timer", name: "pong", ms: 20000 },
+    { type: "set_timer", name: "stable", ms: 10000 },
   ]);
   assert.equal(board.describe(tab.state).channels.agent.state, "running");
   assert.equal(board.describe(tab.state).connection, "연결됨");
@@ -91,7 +93,7 @@ test("a network drop shows 연결 없음 and reconnects with a resume hello afte
   const dropped = tab.send({ type: "closed", conn: 1, code: 1006 });
   assert.equal(tab.state.phase, "disconnected");
   assert.equal(board.describe(tab.state).connection, "연결 없음");
-  assert.deepEqual(effectsOf(dropped, "clear_timer").map((item) => item.name).sort(), ["ping", "pong"]);
+  assert.deepEqual(effectsOf(dropped, "clear_timer").map((item) => item.name).sort(), ["ping", "pong", "stable"]);
   assert.deepEqual(effect(dropped, "set_timer"), { type: "set_timer", name: "reconnect", ms: 1000 });
   const retry = tab.send({ type: "timer", name: "reconnect" });
   assert.deepEqual(effect(retry, "open"), { type: "open", conn: 2 });
@@ -101,7 +103,7 @@ test("a network drop shows 연결 없음 and reconnects with a resume hello afte
   assert.deepEqual(hello.sizes, SIZES);
 });
 
-test("failed reconnects back off 1, 2, 4, 8, 15, 15 s and a successful attach resets the delay", () => {
+test("failed reconnects back off 1, 2, 4, 8, 15, 15 s; only an attach that held for 10 s resets the delay", () => {
   const tab = boot();
   attach(tab);
   const delays = [];
@@ -115,8 +117,25 @@ test("failed reconnects back off 1, 2, 4, 8, 15, 15 s and a successful attach re
   assert.deepEqual(delays, [1000, 2000, 4000, 8000, 15000, 15000]);
   tab.send({ type: "opened", conn });
   tab.send({ type: "message", conn, message: { ...ATTACHED, epoch: 1 } });
-  const dropped = tab.send({ type: "closed", conn, code: 1006 });
-  assert.equal(effect(dropped, "set_timer").ms, 1000);
+  // attached, then dropped at once (a flapping server): the delay keeps growing
+  const flapped = tab.send({ type: "closed", conn, code: 1006 });
+  assert.equal(effect(flapped, "set_timer").ms, 15000);
+  assert.deepEqual(effect(flapped, "clear_timer", "stable"), { type: "clear_timer", name: "stable" });
+  tab.send({ type: "timer", name: "reconnect" });
+  conn += 1;
+  tab.send({ type: "opened", conn });
+  tab.send({ type: "message", conn, message: { ...ATTACHED, epoch: 1 } });
+  tab.send({ type: "timer", name: "stable" }); // 10 s of a held attach
+  const held = tab.send({ type: "closed", conn, code: 1006 });
+  assert.equal(effect(held, "set_timer").ms, 1000);
+});
+
+test("the stable timer does nothing once the tab is no longer attached", () => {
+  const tab = boot();
+  attach(tab);
+  tab.send({ type: "closed", conn: 1, code: 1006 });
+  tab.send({ type: "timer", name: "stable" });
+  assert.equal(tab.state.attempt, 1);
 });
 
 test("heartbeat timeout, send queue overflow and a stopping Hub are reconnected; events of an old socket are ignored", () => {
@@ -136,8 +155,8 @@ test("heartbeat timeout, send queue overflow and a stopping Hub are reconnected;
   assert.deepEqual(tab.send({ type: "message", conn: 1, message: ATTACHED }), []);
 });
 
-test("a bad hello (4400) or a csrf mismatch (4403) is 연결 없음 without an automatic reconnect", () => {
-  for (const code of [4400, 4403]) {
+test("every close code 4400-4499 (bad hello, csrf, any future client error) is 연결 없음 without an automatic reconnect", () => {
+  for (const code of [4400, 4401, 4402, 4403, 4499]) {
     const tab = boot();
     tab.send({ type: "start", sizes: SIZES });
     tab.send({ type: "opened", conn: 1 });
@@ -153,7 +172,7 @@ test("taken_over and taken_elsewhere stop the tab: banner, no timers, no automat
     attach(tab);
     const taken = tab.send({ type: "message", conn: 1, message: { t: kind, epoch: 2 } });
     assert.equal(tab.state.phase, "taken_elsewhere", kind);
-    assert.deepEqual(effectsOf(taken, "clear_timer").map((item) => item.name).sort(), ["ping", "pong"], kind);
+    assert.deepEqual(effectsOf(taken, "clear_timer").map((item) => item.name).sort(), ["ping", "pong", "stable"], kind);
     const view = board.describe(tab.state);
     assert.equal(view.connection, "다른 곳에서 연결됨", kind);
     assert.equal(view.banner, true, kind);
@@ -221,7 +240,7 @@ test("a pong restarts the 20 s limit; no pong for 20 s is 연결 없음, closes 
   assert.equal(board.describe(tab.state).connection, "연결 없음");
   assert.deepEqual(effect(lost, "close"), { type: "close", conn: 1, code: 4000 });
   assert.deepEqual(effect(lost, "set_timer"), { type: "set_timer", name: "reconnect", ms: 1000 });
-  assert.deepEqual(effectsOf(lost, "clear_timer").map((item) => item.name).sort(), ["ping", "pong"]);
+  assert.deepEqual(effectsOf(lost, "clear_timer").map((item) => item.name).sort(), ["ping", "pong", "stable"]);
   assert.deepEqual(tab.send({ type: "closed", conn: 1, code: 1006 }), []);
   tab.send({ type: "timer", name: "reconnect" });
   assert.deepEqual(effect(tab.send({ type: "opened", conn: 2 }), "send").message.resume, { run: "run-a", epoch: 1 });
@@ -241,7 +260,7 @@ test("pagehide sends release with the epoch and the tab does not reconnect; page
   const hidden = tab.send({ type: "pagehide" });
   assert.deepEqual(effect(hidden, "send").message, { t: "release", epoch: 6 });
   assert.equal(tab.state.phase, "released");
-  assert.deepEqual(effectsOf(hidden, "clear_timer").map((item) => item.name).sort(), ["ping", "pong"]);
+  assert.deepEqual(effectsOf(hidden, "clear_timer").map((item) => item.name).sort(), ["ping", "pong", "stable"]);
   assert.deepEqual(tab.send({ type: "closed", conn: 1, code: 1000 }), []);
   assert.equal(tab.state.phase, "released");
   const shown = tab.send({ type: "pageshow", persisted: true });
@@ -249,10 +268,23 @@ test("pagehide sends release with the epoch and the tab does not reconnect; page
   assert.deepEqual(effect(tab.send({ type: "opened", conn: 2 }), "send").message.resume, { run: "run-a", epoch: 6 });
 });
 
-test("pagehide while not the holder sends nothing; a plain pageshow does nothing", () => {
+test("pagehide while connecting closes that socket (no release: nothing was held) and a restored page resumes", () => {
   const tab = boot();
   tab.send({ type: "start", sizes: SIZES });
-  assert.equal(effect(tab.send({ type: "pagehide" }), "send"), undefined);
+  const hidden = tab.send({ type: "pagehide" });
+  assert.equal(effect(hidden, "send"), undefined);
+  assert.deepEqual(effect(hidden, "close"), { type: "close", conn: 1, code: 1000 });
+  assert.equal(tab.state.phase, "released");
+  assert.deepEqual(tab.send({ type: "closed", conn: 1, code: 1006 }), [], "the late close does not schedule a retry");
+  assert.deepEqual(effect(tab.send({ type: "pageshow", persisted: true }), "open"), { type: "open", conn: 2 });
+});
+
+test("pagehide while idle or taken elsewhere sends nothing; a plain pageshow does nothing", () => {
+  const tab = boot();
+  assert.deepEqual(tab.send({ type: "pagehide" }), []);
+  attach(tab);
+  tab.send({ type: "message", conn: 1, message: { t: "taken_over", epoch: 2 } });
+  assert.deepEqual(tab.send({ type: "pagehide" }), []);
   assert.deepEqual(tab.send({ type: "pageshow", persisted: false }), []);
 });
 
@@ -337,4 +369,12 @@ test("encodeFrame lays out channel byte, uint32 big-endian epoch, payload", () =
   const bytes = board.encodeFrame("shell", 0x01020304, new Uint8Array([0x61, 0x62]));
   assert.deepEqual(Array.from(bytes), [1, 1, 2, 3, 4, 0x61, 0x62]);
   assert.deepEqual(Array.from(board.encodeFrame("agent", 5, new Uint8Array(0))), [0, 0, 0, 0, 5]);
+});
+
+// The same table runs against Python pages/board.py channel_label (test_web_pages_board.py): the server-rendered
+// first paint and the live updates must read alike.
+test("channelLabel matches the shared fixture table (also run against the Python channel_label)", () => {
+  const table = JSON.parse(readFileSync(new URL("./channel_labels.json", import.meta.url), "utf8"));
+  assert.ok(table.length >= 10);
+  for (const { info, label } of table) assert.equal(board.channelLabel(info), label, JSON.stringify(info));
 });

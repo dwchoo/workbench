@@ -597,7 +597,7 @@ class TextAndRegistryTests(ListCase):
                      ('이름', '경로', '상태', 'Task·단계', '명령', '대기 사유', '요청', '마지막 활동')]
         self.assertEqual(positions, sorted(positions))
         alpha_line = next(line for line in lines[1:] if line.startswith('alpha'))
-        for text in (str(alpha), '켜짐', 'sweep lr · running', 'python train.py (실행 중)', '일시정지', '—'):
+        for text in (str(alpha), '켜짐', 'sweep lr · running', 'python train.py (실행 중)', '일시정지', ' 0 '):
             self.assertIn(text, alpha_line)
         beta_line = next(line for line in lines[1:] if line.startswith('beta'))
         self.assertIn('꺼짐', beta_line)

@@ -1294,6 +1294,19 @@ class AccessorPins(unittest.TestCase):
     JUDGE_REFACTOR_ADDED = {"_AnalysisWait", "_AnalysisWait.__init__", "_AnalysisWait.reset", "_worker_analysis_request",
                             "TaskFlow._wait_out_hold", "TaskFlow._busy_past_limit", "TaskFlow._judge_once",
                             "TaskFlow._analysis_held"}
+    # Phase 2 (Task Inbox TI-11: to_worker request_id link check/commit, 2305285/f8f8ff5; TI-13: user Task cancel,
+    # 3d4b601/cc0289e) changed flow_tasks.py on purpose as well. Relative to c1778cb the changed methods are
+    # __init__, _cancel, _finish_cancel and _work_follow_up (already in CS_O01_O02_CHANGED) plus the ones below; the
+    # added names are the TI-11 link helpers and the TI-13 user-cancel/user-stop methods (nested defs included).
+    PHASE2_TI11_TI13_CHANGED = {"TaskFlow._decide", "TaskFlow._delegate", "TaskFlow._experiment_follow_up",
+                                "TaskFlow._spec_document", "TaskFlow._to_worker"}
+    PHASE2_TI11_TI13_ADDED = {"_LinkPlan", "_flow_log", "_spec_core", "TaskFlow._apply_cancel",
+                              "TaskFlow._experiment_follow_up.ask", "TaskFlow._experiment_follow_up.rerun",
+                              "TaskFlow._inbox", "TaskFlow._link_failure", "TaskFlow._linked_to_worker",
+                              "TaskFlow._plan", "TaskFlow._plan_changed", "TaskFlow._running_command_id",
+                              "TaskFlow._start_user_stop", "TaskFlow._start_user_stop.run",
+                              "TaskFlow._to_worker.dispatch", "TaskFlow._to_worker_decision",
+                              "TaskFlow._work_follow_up.follow_up", "TaskFlow.cancel_by_user"}
     PRE_CS_REV = "ee5a312"  # main HEAD just before a8e630d (the first CS-O01/CS-O02 commit)
 
     @staticmethod
@@ -1320,8 +1333,9 @@ class AccessorPins(unittest.TestCase):
         after = self._functions((REPO / "src/workbench/backend/flow_tasks.py").read_text())
         self.assertEqual(set(before) - set(after), set())
         self.assertEqual({name for name in before if before[name] != after[name]},
-                         {"TaskFlow._judge_when_ready"} | self.CS_O01_O02_CHANGED)
-        self.assertEqual(set(after) - set(before), self.JUDGE_REFACTOR_ADDED | self.CS_O01_O02_ADDED)
+                         {"TaskFlow._judge_when_ready"} | self.CS_O01_O02_CHANGED | self.PHASE2_TI11_TI13_CHANGED)
+        self.assertEqual(set(after) - set(before),
+                         self.JUDGE_REFACTOR_ADDED | self.CS_O01_O02_ADDED | self.PHASE2_TI11_TI13_ADDED)
 
     @needs_baseline
     def test_the_cs_o01_o02_commits_did_not_touch_the_judge_split(self):
@@ -1335,8 +1349,9 @@ class AccessorPins(unittest.TestCase):
         after = self._functions((REPO / "src/workbench/backend/flow_tasks.py").read_text())
         judge = {"TaskFlow._judge_when_ready"} | self.JUDGE_REFACTOR_ADDED
         self.assertEqual({name for name in judge if before.get(name) != after.get(name)}, set())
-        self.assertEqual({name for name in before if before[name] != after[name]}, self.CS_O01_O02_CHANGED)
-        self.assertEqual(set(after) - set(before), self.CS_O01_O02_ADDED)
+        self.assertEqual({name for name in before if before[name] != after[name]},
+                         self.CS_O01_O02_CHANGED | self.PHASE2_TI11_TI13_CHANGED)
+        self.assertEqual(set(after) - set(before), self.CS_O01_O02_ADDED | self.PHASE2_TI11_TI13_ADDED)
 
 
 if __name__ == "__main__":

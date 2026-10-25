@@ -21,7 +21,7 @@ class IndependentManagerReportIntegration(unittest.TestCase):
 
     def test_shipped_role_rosters_expose_report_only_to_manager(self):
         self.assertEqual(set(launcher.role_skill_allowlist("manager")),
-                         {"to-worker", "workbench-recovery", "workbench-report"})
+                         {"to-worker", "workbench-inbox", "workbench-recovery", "workbench-report"})  # TI-11: + inbox
         self.assertEqual(set(launcher.role_skill_allowlist("worker")), {"to-manager"})
         self.assertEqual(launcher.role_skill_allowlist("unknown"), ())
         with tempfile.TemporaryDirectory(prefix="wpr-manager-overlay-") as directory:
@@ -32,7 +32,7 @@ class IndependentManagerReportIntegration(unittest.TestCase):
                 self.assertEqual("workbench-report" in patterns, role == "manager")
 
     def test_manager_command_only_is_allowed_and_model_exposure_is_rejected(self):
-        allowed = ("to-worker", "workbench-recovery", "workbench-report")
+        allowed = ("to-worker", "workbench-inbox", "workbench-recovery", "workbench-report")
         manual = self.observed(role="manager")
         self.assertIn("workbench-report", manual["skill_commands"])
         self.assertNotIn("workbench-report", manual["skills"])

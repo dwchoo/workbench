@@ -9,6 +9,7 @@ snapshot values, paths and ``/proc`` reads. Run with ``discover -s tests/hub``.
 from __future__ import annotations
 
 import json
+import re
 import os
 from pathlib import Path
 import shutil
@@ -181,7 +182,9 @@ class EmptyRegistryTests(ListCase):
 
 
 ROW_KEYS = {'root', 'name', 'project_id', 'power', 'power_detail', 'task', 'command', 'waits',
-            'pending_requests', 'last_activity', 'backend', 'observed_at'}
+            'pending_requests', 'review_mode', 'last_activity', 'backend', 'observed_at'}
+# TI-10: a readable inbox (a missing file reads as empty) gives counts and its review mode
+NO_REQUESTS = {'new': 0, 'reviewing': 0, 'needs_info': 0, 'ready': 0, 'running': 0}
 
 
 class OffRowTests(ListCase):
@@ -194,7 +197,8 @@ class OffRowTests(ListCase):
         self.assertEqual({key: row[key] for key in ROW_KEYS - {'observed_at'}},
                          {'root': str(root), 'name': 'alpha', 'project_id': self.box.marker_id(root),
                           'power': 'off', 'power_detail': None, 'task': None, 'command': None, 'waits': [],
-                          'pending_requests': None, 'last_activity': None, 'backend': None})
+                          'pending_requests': NO_REQUESTS, 'review_mode': 'auto', 'last_activity': None,
+                          'backend': None})
         self.assertLess(abs(row['observed_at'] - time.time()), 30)
 
     def test_an_off_project_with_a_backend_record_reports_its_mtime(self):
@@ -219,7 +223,7 @@ class MismatchRowTests(ListCase):
     def assert_mismatch(self, row: dict, detail: str):
         self.assertEqual({key: row[key] for key in ROW_KEYS - {'observed_at', 'root', 'name', 'project_id'}},
                          {'power': 'mismatch', 'power_detail': detail, 'task': None, 'command': None, 'waits': [],
-                          'pending_requests': None, 'last_activity': None, 'backend': None})
+                          'pending_requests': None, 'review_mode': None, 'last_activity': None, 'backend': None})
 
     def test_the_four_mismatches_in_spec_order(self):
         gone = self.box.project('gone')
@@ -266,7 +270,7 @@ class OnRowTests(ListCase):
         row = self.row(self.box.list_json(), root)
         self.assertEqual((row['power'], row['power_detail']), ('on', None))
         self.assertEqual(row['backend'], {'pid': backend.pid, 'start_ticks': proc_start_ticks(backend.pid)})
-        self.assertIsNone(row['pending_requests'])  # HB-AC-19: unknown until (A), not 0
+        self.assertEqual(row['pending_requests'], NO_REQUESTS)  # TI-10: counts from the (empty) inbox
 
     def test_the_observation_says_hello_as_workbench_hub_and_never_attaches(self):
         root = self.box.project('alpha')
@@ -391,13 +395,55 @@ class SnapshotPowerTests(ListCase):
         self.assertEqual(row['task']['status'], 'running')
 
 
+class RequestCountTests(ListCase):
+    """Task Inbox (TI-10) "Hub 목록 연결": ``pending_requests`` counts and ``review_mode`` per row; the ``요청``
+    column is ``대기 N · 질문 M`` (``0`` when there is none, ``—`` when the inbox cannot be read)."""
+
+    def seed(self, root: Path, *, new: int, needs_info: int, mode: str) -> None:
+        from workbench.hub.inbox.service import InboxService, Principal, ProjectRef
+        project_id = self.box.marker_id(root)
+        service = InboxService()
+        try:
+            service.set_projects([ProjectRef(project_id, root, root.name)])
+            service.review_mode(Principal.local(), project_id, mode)
+            for n in range(new + needs_info):
+                rid = service.submit(Principal.owner(), project_id, f'r{n}', 'body', None)['request_id']
+                if n >= new:
+                    service.set_state(Principal.owner(), rid, 1, 'NEEDS_INFO')
+        finally:
+            service.close()
+
+    def test_rows_count_open_requests_and_show_the_review_mode(self):
+        busy, empty = self.box.project('busy'), self.box.project('empty')
+        mismatched = self.box.folder('plain')
+        self.seed(busy, new=2, needs_info=1, mode='manual')
+        self.box.register((busy, self.box.marker_id(busy)), (empty, self.box.marker_id(empty)),
+                          (mismatched, '0' * 8 + '-0000-4000-8000-' + '0' * 12))
+        self.box.start_hub()
+        result = self.box.list_json()
+        self.assertEqual({key: self.row(result, busy)[key] for key in ('pending_requests', 'review_mode')},
+                         {'pending_requests': {'new': 2, 'reviewing': 0, 'needs_info': 1, 'ready': 0, 'running': 0},
+                          'review_mode': 'manual'})
+        self.assertEqual({key: self.row(result, empty)[key] for key in ('pending_requests', 'review_mode')},
+                         {'pending_requests': {'new': 0, 'reviewing': 0, 'needs_info': 0, 'ready': 0, 'running': 0},
+                          'review_mode': 'auto'})
+        self.assertEqual({key: self.row(result, mismatched)[key] for key in ('pending_requests', 'review_mode')},
+                         {'pending_requests': None, 'review_mode': None})
+        self.assertFalse((empty / '.wb' / 'inbox.sqlite3').exists(), 'listing creates no inbox')
+        text = self.box.wb('hub', 'list')
+        self.assertEqual(text.returncode, 0, text.stderr)
+        cells = {line.split()[0]: re.split(r'\s{2,}', line.strip()) for line in text.stdout.splitlines()[1:]}
+        self.assertEqual((cells['busy'][6], cells['empty'][6], cells['plain'][6]), ('대기 2 · 질문 1', '0', '—'))
+
+
 class UnknownRowTests(ListCase):
     """Observation failures are "연결 없음/불명", never ``off`` (SPEC 불변식 3)."""
 
     def assert_unknown(self, row: dict, detail: str):
         self.assertEqual({key: row[key] for key in ROW_KEYS - {'observed_at', 'root', 'name', 'project_id'}},
                          {'power': 'unknown', 'power_detail': detail, 'task': None, 'command': None, 'waits': [],
-                          'pending_requests': None, 'last_activity': None, 'backend': None})
+                          'pending_requests': NO_REQUESTS, 'review_mode': 'auto', 'last_activity': None,
+                          'backend': None})
 
     def listed(self, root: Path) -> dict:
         self.box.register_projects(root)
@@ -551,11 +597,11 @@ class TextAndRegistryTests(ListCase):
                      ('이름', '경로', '상태', 'Task·단계', '명령', '대기 사유', '요청', '마지막 활동')]
         self.assertEqual(positions, sorted(positions))
         alpha_line = next(line for line in lines[1:] if line.startswith('alpha'))
-        for text in (str(alpha), '켜짐', 'sweep lr · running', 'python train.py (실행 중)', '일시정지', '—'):
+        for text in (str(alpha), '켜짐', 'sweep lr · running', 'python train.py (실행 중)', '일시정지', ' 0 '):
             self.assertIn(text, alpha_line)
         beta_line = next(line for line in lines[1:] if line.startswith('beta'))
         self.assertIn('꺼짐', beta_line)
-        self.assertNotIn(' 0 ', beta_line)
+        self.assertIn(' 0 ', beta_line)  # TI-10: no open request is 0 (the inbox reads as empty)
         self.assertEqual(len(lines), 3)
 
     def test_an_initialized_but_unregistered_project_is_not_listed(self):

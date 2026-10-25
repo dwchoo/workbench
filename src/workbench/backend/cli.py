@@ -1246,6 +1246,11 @@ def cmd_hub_reserved(args: argparse.Namespace) -> int:
     return run(args)
 
 
+def cmd_hub_review_mode(args: argparse.Namespace) -> int:
+    from workbench.hub.cli import cmd_hub_review_mode as run
+    return run(args)
+
+
 def cmd_hub_passwd(args: argparse.Namespace) -> int:
     from workbench.hub.cli import cmd_hub_passwd as run
     return run(args)
@@ -1461,6 +1466,10 @@ def parser() -> argparse.ArgumentParser:
     hub_remove = hub_sub.add_parser("remove", help="Hub registry에서 등록 해제 (.wb는 그대로)")
     hub_remove.add_argument("path", metavar="PATH")
     hub_remove.set_defaults(handler=cmd_hub_remove)
+    hub_review = hub_sub.add_parser("review-mode", help="WB 프로젝트의 검토 방식(auto|manual) 보기·바꾸기")
+    hub_review.add_argument("path", metavar="PATH")
+    hub_review.add_argument("mode", nargs="?", choices=("auto", "manual"))
+    hub_review.set_defaults(handler=cmd_hub_review_mode)
 
     backend = sub.add_parser("_backend", help=argparse.SUPPRESS)
     backend.add_argument("--data-dir", required=True)

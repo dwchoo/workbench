@@ -36,8 +36,12 @@ sys.path.insert(0, str(REPO / 'src'))
 from workbench.backend.project import initialize_project, resolve_project_context  # noqa: E402
 
 OTHER_ID = '00000000-0000-4000-8000-0000000000aa'
+# Task Inbox TI-10 (SPEC "Hub 목록 연결"): rows also carry ``review_mode``; ``pending_requests`` is the counts dict of
+# a readable inbox (a project without an inbox file reads as empty: all 0, mode ``auto``) and ``null`` with
+# ``review_mode`` ``null`` only when the inbox cannot be read (a mismatched entry).
 ROW_KEYS = {'root', 'name', 'project_id', 'power', 'power_detail', 'task', 'command', 'waits',
-            'pending_requests', 'last_activity', 'backend', 'observed_at'}
+            'pending_requests', 'review_mode', 'last_activity', 'backend', 'observed_at'}
+NO_REQUESTS = {'new': 0, 'reviewing': 0, 'needs_info': 0, 'ready': 0, 'running': 0}
 UNKNOWN_DETAILS = {'unreachable', 'timeout', 'snapshot_mismatch'}
 COLUMNS = ['이름', '경로', '상태', 'Task·단계', '명령', '대기 사유', '요청', '마지막 활동']
 
@@ -340,8 +344,8 @@ class Case(unittest.TestCase):
             self.assertIn(row['power_detail'], details, row)
         self.assertEqual({key: row[key] for key in ROW_KEYS - {'observed_at', 'root', 'name', 'project_id',
                                                                'power', 'power_detail'}},
-                         {'task': None, 'command': None, 'waits': [], 'pending_requests': None,
-                          'last_activity': None, 'backend': None}, row)
+                         {'task': None, 'command': None, 'waits': [], 'pending_requests': NO_REQUESTS,
+                          'review_mode': 'auto', 'last_activity': None, 'backend': None}, row)
 
 
 def fixture_row(case: Case, name: str = 'alpha', **options) -> dict:
@@ -366,8 +370,8 @@ class PowerMappingTests(Case):
         self.assertEqual(set(row), ROW_KEYS)
         self.assertEqual((row['power'], row['power_detail'], row['last_activity'], row['backend']),
                          ('off', None, None, None))
-        self.assertEqual((row['task'], row['command'], row['waits'], row['pending_requests']),
-                         (None, None, [], None))
+        self.assertEqual((row['task'], row['command'], row['waits'], row['pending_requests'], row['review_mode']),
+                         (None, None, [], NO_REQUESTS, 'auto'))
 
     def test_stopped_project_with_stale_backend_json_is_off_with_its_mtime(self):
         root = self.box.project('alpha')
@@ -411,7 +415,7 @@ class PowerMappingTests(Case):
             self.assertEqual({key: row[key] for key in ROW_KEYS - {'observed_at', 'root', 'name', 'project_id',
                                                                    'power', 'power_detail'}},
                              {'task': None, 'command': None, 'waits': [], 'pending_requests': None,
-                              'last_activity': None, 'backend': None}, row)
+                              'review_mode': None, 'last_activity': None, 'backend': None}, row)
         self.assertEqual(self.row(result, other)['project_id'], ids[3])
 
     def test_a_running_backend_under_another_project_id_is_a_mismatch_and_is_not_contacted(self):
@@ -725,7 +729,10 @@ class SchemaAndTextTests(Case):
         self.assertEqual([row['root'] for row in result['rows']], [str(on), str(off), str(gone)], 'registry order')
         for row in result['rows']:
             self.assertEqual(set(row), ROW_KEYS)
-            self.assertIsNone(row['pending_requests'])
+            if row['power'] == 'mismatch':
+                self.assertEqual((row['pending_requests'], row['review_mode']), (None, None))
+            else:
+                self.assertEqual((row['pending_requests'], row['review_mode']), (NO_REQUESTS, 'auto'))
             self.assertIsInstance(row['observed_at'], (int, float))
         on_row = self.row(result, on)
         self.assertEqual(set(on_row['backend']), {'pid', 'start_ticks'})
@@ -754,13 +761,12 @@ class SchemaAndTextTests(Case):
         self.assertIn('make', on_cells[4])
         self.assertIn('일시정지', on_cells[5])
         self.assertIn('Task 보류', on_cells[5])
-        self.assertEqual(on_cells[6], '—')
+        self.assertEqual(on_cells[6], '0', 'TI-10: a readable empty inbox shows 0')
         self.assertTrue(on_cells[7].endswith('분 전'), on_cells)
-        self.assertEqual(by_name['off-one'][2:], ['꺼짐', '—', '—', '—', '—', '—'])
+        self.assertEqual(by_name['off-one'][2:], ['꺼짐', '—', '—', '—', '0', '—'])
         self.assertTrue(by_name['gone-one'][2].startswith('불일치'))
         self.assertIn('root_missing', by_name['gone-one'][2])
-        for cells in by_name.values():
-            self.assertEqual(cells[6], '—', 'pending_requests is — and never 0 (HB-AC-19)')
+        self.assertEqual(by_name['gone-one'][6], '—', 'an unreadable inbox is — and never 0 (HB-AC-19)')
         self.assertEqual(result.stdout.count('요청'), 1, 'only the header names the column')
 
     def test_registry_changes_are_visible_on_the_next_call(self):

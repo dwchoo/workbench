@@ -32,7 +32,7 @@ def _row(entry: registry.Entry, power: str, detail: str | None = None, **fields)
     """A row with SPEC defaults: every field not observed is ``null``/``[]``."""
     row = {"root": entry.root, "name": entry.name, "project_id": entry.project_id, "power": power,
            "power_detail": detail, "task": None, "command": None, "waits": [], "pending_requests": None,
-           "last_activity": None, "backend": None, "observed_at": time.time()}
+           "review_mode": None, "last_activity": None, "backend": None, "observed_at": time.time()}
     row.update(fields)
     return row
 
@@ -152,8 +152,10 @@ def _snapshot_fields(snapshot: dict) -> dict:
 
 # SPEC "대기 사유" order; the codes are presentation's WAIT_LABELS keys.
 WAIT_CODES = ("paused", "boot_confirmation_required", "manager_editor_not_empty", "manager_session_not_connected",
-              "metadata_unavailable", "model_hold", "task_held")
+              "manager_busy", "metadata_unavailable", "model_hold", "task_held")
 REPORT_WAITS = ("manager_editor_not_empty", "manager_session_not_connected")
+# Task Inbox (TI-10): the waits of request notices (snapshot ``inbox.notices[].wait``); ``paused`` is shown once
+INBOX_WAITS = ("manager_editor_not_empty", "manager_session_not_connected", "manager_busy")
 MODEL_HOLD_PREFIX = "model_hold:"
 
 
@@ -177,6 +179,14 @@ def _waits(snapshot: dict) -> list[dict]:
     report = _dict(_dict(snapshot.get("recovery")).get("report_wait"))
     if report.get("reason") in REPORT_WAITS:
         waits.append(_wait(report["reason"], report.get("since")))
+    notices = [item for item in _dict(snapshot.get("inbox")).get("notices") or () if isinstance(item, dict)]
+    for code in INBOX_WAITS:
+        since = [item.get("queued_at") for item in notices if item.get("wait") == code]
+        if since and all(wait["code"] != code for wait in waits):
+            moments = [moment for moment in map(_epoch, since) if moment is not None]
+            waits.append(_wait(code, min(moments) if moments else None))
+    if any(item.get("wait") == "paused" for item in notices) and all(wait["code"] != "paused" for wait in waits):
+        waits.insert(0, _wait("paused"))
     if (found := hold(lambda reason: reason == "metadata_unavailable")) is not None:
         waits.append(_wait("metadata_unavailable", found.get("since"), found.get("detail")))
     if (found := hold(lambda reason: reason.startswith(MODEL_HOLD_PREFIX))) is not None:
@@ -250,8 +260,11 @@ class Lister:
     """
 
     def __init__(self, layout: HubLayout, *, workers: int = MAX_WORKERS, timeout: float = OBSERVE_TIMEOUT,
-                 cache_seconds: float = CACHE_SECONDS, clock=time.monotonic):
+                 cache_seconds: float = CACHE_SECONDS, clock=time.monotonic, requests=None):
+        """``requests(entries)`` (TI-10, blocking, run in an executor): ``{root: {pending_requests, review_mode}}``
+        from the project inboxes, laid over the observed rows (never cached with them)."""
         self.layout = layout
+        self.requests = requests
         self.timeout = timeout
         self.cache_seconds = cache_seconds
         self.clock = clock
@@ -272,6 +285,12 @@ class Lister:
         for stale in set(self.cache) - set(entries):
             del self.cache[stale]
         rows = await asyncio.gather(*(self.row(entry, fresh) for entry in entries))
+        if self.requests is not None:
+            try:
+                extra = await loop.run_in_executor(None, self.requests, entries)
+            except Exception:  # an inbox problem leaves the counts unknown, never the list
+                extra = {}
+            rows = [{**row, **extra.get(row["root"], {})} for row in rows]
         return {"observed_at": time.time(), "registry": summary, "rows": list(rows)}
 
     async def row(self, entry: registry.Entry, fresh: bool) -> dict:

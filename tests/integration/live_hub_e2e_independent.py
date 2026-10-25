@@ -13,6 +13,7 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
+import re
 import shlex
 import signal
 import subprocess
@@ -443,7 +444,7 @@ class RowFieldDriftTests(Case):
         time.sleep(2.2)  # the Hub caches a list for 2 s
         return self.box.hub_row(self.alpha)
 
-    def test_the_idle_row_matches_the_snapshot_and_requests_are_a_dash_not_zero(self):
+    def test_the_idle_row_matches_the_snapshot_and_an_empty_inbox_counts_zero(self):
         snapshot = self.box.status(self.alpha)
         row = self.row()
         self.assertEqual((row['name'], row['root'], row['project_id']), ('alpha', str(self.alpha), self.alpha_id))
@@ -452,13 +453,16 @@ class RowFieldDriftTests(Case):
         self.assertIsNone((snapshot['panes']['host_shell']).get('command'))
         self.assertIsNone(row['command'])
         self.assertEqual(row['waits'], [])
-        self.assertIsNone(row['pending_requests'])  # (A) is not here: null, never 0
+        # TI-10 (SPEC "Hub 목록 연결"): a readable (empty) inbox is counts of 0 and mode auto, not null
+        self.assertEqual(row['pending_requests'], {'new': 0, 'reviewing': 0, 'needs_info': 0, 'ready': 0, 'running': 0})
+        self.assertEqual(row['review_mode'], 'auto')
         self.assertIsInstance(row['last_activity'], (int, float))
         table = self.box.wb_env('hub', 'list', cwd=self.plain)
         self.assertEqual(table.returncode, 0, table)
         line = [item for item in table.stdout.splitlines() if 'alpha' in item][0]
         self.assertIn('켜짐', line)
-        self.assertIn('—', line)
+        cells = [cell for cell in re.split(r'\s{2,}', line.strip())]
+        self.assertEqual(cells[6], '0', 'the 요청 column of an empty inbox is 0')
 
     def test_user_work_and_a_pause_show_in_the_row_as_the_snapshot_has_them(self):
         """A job the user typed into the host shell is not a Task command: the row keeps ``command`` null, as the

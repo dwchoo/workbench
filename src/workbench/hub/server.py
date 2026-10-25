@@ -18,11 +18,12 @@ from workbench.backend.paths import (BackendLocked, DataDirError, InstanceLock, 
                                      unlink_stale_socket, write_private_json)
 from workbench.contracts import hub_v1
 
-from . import registry
+from . import config as hub_config, registry
 from .inbox.limits import InboxError
 from .inbox.service import OPEN_STATES, InboxService, Principal, ProjectRef
 from .status import Lister, check_entry
 from .paths import HubLayout, hub_layout, prepare_socket_path, prepare_state_dir
+from .web.listener import WebListener
 from .process import (READY_LOST, READY_MANAGED, READY_STARTED, RECORD_SCHEMA_VERSION, UNVERIFIABLE,
                       installed_version,
                       lock_holder, managed_ancestor, send_ready, start_ticks, wait_reparented)
@@ -108,6 +109,19 @@ class Hub:
         self.inbox = InboxService()
         # Verified backend connections by project id (one each): outside ``tasks`` and its limit (hub_v1).
         self.backend_tasks: dict[str, asyncio.Task] = {}
+        self.web: WebListener | None = None
+
+    def load_web(self, environment=None) -> None:
+        """Read ``hub.toml`` and decide TLS once, at start (changes need a Hub restart)."""
+        try:
+            loaded = hub_config.load_config(hub_config.config_path(environment))
+        except hub_config.ConfigInvalid as exc:
+            print(f"[workbench] hub.toml invalid: {exc.reason}; web listener stays closed", file=sys.stderr, flush=True)
+            self.web = WebListener(self.layout.state_dir, config=None, config_error=exc, tls=None)
+            return
+        cert, key = hub_config.tls_paths(loaded.web, environment)
+        tls = hub_config.decide_tls(loaded.web, cert, key)
+        self.web = WebListener(self.layout.state_dir, config=loaded, config_error=None, tls=tls)
 
     def bind(self) -> None:
         path = prepare_socket_path()
@@ -169,6 +183,11 @@ class Hub:
                 await loop.run_in_executor(None, self.inbox.close_idle)
             except Exception as exc:  # an inbox problem never stops the Hub
                 print(f"[workbench] inbox idle close failed: {exc!r}", file=sys.stderr, flush=True)
+            if self.web is not None and reason is None:
+                try:
+                    await self.web.poll()
+                except Exception as exc:  # a web problem never stops the Hub
+                    print(f"[workbench] web listener poll failed: {exc!r}", file=sys.stderr, flush=True)
             if reason is not None:
                 self.watchdog_reason = reason
                 print(f"[workbench] Hub stopping: {reason}", file=sys.stderr, flush=True)
@@ -291,8 +310,8 @@ class Hub:
 
     async def status(self) -> dict:
         registry = await asyncio.get_running_loop().run_in_executor(None, registry_summary, self.layout)
-        return {"hub": dict(self.record or {}), "registry": registry,
-                "web": {"state": "not_available"}, "board_agent": None}
+        web = self.web.status() if self.web is not None else {"state": "not_available"}
+        return {"hub": dict(self.record or {}), "registry": registry, "web": web, "board_agent": None}
 
     def active(self) -> list:
         """Live things this Hub owns that a stop would end; (A) adds Board agent sets."""
@@ -352,9 +371,20 @@ class Hub:
         if self.early_stop:
             self.request_stop()
         server = await asyncio.start_unix_server(self.connection, sock=self.listener)
+        if self.web is not None:
+            try:
+                await self.web.start()
+            except Exception as exc:  # a web problem never stops the Hub's other functions
+                print(f"[workbench] web listener start failed: {exc!r}", file=sys.stderr, flush=True)
         watchdog = asyncio.create_task(self.watchdog())
         await self.stop_event.wait()
         watchdog.cancel()
+        await asyncio.gather(watchdog, return_exceptions=True)  # no web open can be half done below
+        if self.web is not None:  # (A) stop order: the web listener goes first
+            try:
+                await self.web.stop()
+            except Exception as exc:
+                print(f"[workbench] web listener stop failed: {exc!r}", file=sys.stderr, flush=True)
         server.close()
         tasks = [*self.tasks, *self.backend_tasks.values()]
         for task in tasks:
@@ -596,6 +626,7 @@ def main_hub(args: argparse.Namespace) -> int:
     try:
         hub.bind()
         hub.publish_record()
+        hub.load_web()
     except (DataDirError, OSError) as exc:
         hub.cleanup()
         print(f"[workbench] Hub start failed: {exc}", file=sys.stderr)

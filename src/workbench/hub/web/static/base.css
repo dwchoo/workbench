@@ -1,0 +1,16 @@
+/* WB Hub base layout (no inline style anywhere: CSP style-src 'self'). */
+:root { --fg: #1d1f21; --bg: #fafafa; --muted: #666; --accent: #2457a6; --warn-bg: #fff3cd; --warn-fg: #7a4d00; --err: #a61b1b; }
+* { box-sizing: border-box; }
+body { margin: 0; font-family: system-ui, sans-serif; color: var(--fg); background: var(--bg); line-height: 1.5; }
+header { display: flex; align-items: center; gap: 1rem; padding: 0.5rem 1rem; border-bottom: 1px solid #ddd; background: #fff; }
+header .brand { font-weight: 600; color: var(--fg); text-decoration: none; }
+header .badge:empty { display: none; }
+header .badge { padding: 0 0.5rem; border-radius: 1rem; background: var(--accent); color: #fff; font-size: 0.85rem; }
+header .logout { margin-left: auto; }
+main { max-width: 64rem; margin: 1rem auto; padding: 0 1rem; }
+.banner { padding: 0.5rem 1rem; }
+.banner.insecure { background: var(--warn-bg); color: var(--warn-fg); border-bottom: 1px solid #e0c36a; }
+.error { color: var(--err); }
+form.stack { display: flex; flex-direction: column; gap: 0.5rem; max-width: 20rem; }
+pre { white-space: pre-wrap; word-break: break-word; background: #f0f0f0; padding: 0.5rem; }
+input, button { font: inherit; padding: 0.25rem 0.5rem; }

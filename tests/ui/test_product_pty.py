@@ -125,7 +125,8 @@ class ProductPtyTests(unittest.TestCase):
         ui.send(P + b"3")
         self.assertTrue(server.wait_for(lambda: server.received("focus")))
         self.assertEqual("host_shell", server.received("focus")[-1].header["pane"])
-        self.assertTrue(ui.until(lambda: "focus: HOST SHELL" in ui.text()))
+        self.assertTrue(ui.until(lambda: "focus: HOST SHELL" in ui.text() and "host 입력 owner: user" in ui.text()),
+                        ui.text())
         self.assertIn("host 입력 owner: user", ui.text())
         # keys forwarded unchanged
         ui.send(b"ls\r")
@@ -187,8 +188,8 @@ class ProductPtyTests(unittest.TestCase):
     def test_owner_and_state_push_update_status(self):
         server, ui = self.start()
         server.state(snapshot(owner="manager", mode="manager_control", automation="running", phase="ready"))
-        self.assertTrue(ui.until(lambda: "host 입력 owner: manager" in ui.text() and "자동화: running" in ui.text()),
-                        ui.text())
+        self.assertTrue(ui.until(lambda: "host 입력 owner: manager" in ui.text() and "자동화: running" in ui.text()
+                                 and "focus: MANAGER OMP" in ui.text()), ui.text())
         self.assertIn("focus: MANAGER OMP", ui.text())
         ui.send(P + b"q")
         ui.wait_exit()
@@ -366,7 +367,8 @@ class ProductPtyTests(unittest.TestCase):
         ui.send(P + b"[")
         self.assertTrue(ui.until(lambda: "[SCROLL" in ui.text()), ui.text())
         ui.send(b"g")  # top of history
-        self.assertTrue(ui.until(lambda: "history line 0000" in ui.text() and "user@host$" not in ui.text()), ui.text())
+        self.assertTrue(ui.until(lambda: "history line 0000" in ui.text() and "user@host$" not in ui.text()
+                                 and "SCROLL live보다" in ui.text() and "history line 0001" in ui.text()), ui.text())
         self.assertIn("SCROLL live보다", ui.text())
         self.assertIn("history line 0001", ui.text())
         ui.send(b"\x1b[6~\x1b[6~")  # PgDn x2, then typed keys must not reach the pane
@@ -378,8 +380,8 @@ class ProductPtyTests(unittest.TestCase):
         self.assertNotIn("NEW-OUTPUT-WHILE-SCROLLED", ui.text())  # the held view did not jump to live
         self.assertEqual([], server.received("input"))
         ui.send(b"q")
-        self.assertTrue(ui.until(lambda: "[SCROLL" not in ui.text() and "NEW-OUTPUT-WHILE-SCROLLED" in ui.text()),
-                        ui.text())
+        self.assertTrue(ui.until(lambda: "[SCROLL" not in ui.text() and "NEW-OUTPUT-WHILE-SCROLLED" in ui.text()
+                                 and "user@host$" in ui.text()), ui.text())
         self.assertIn("user@host$", ui.text())
         ui.send(b"ls\r")
         self.assertTrue(server.wait_for(lambda: any(f.payload == b"ls\r" for f in server.received("input"))))
@@ -644,8 +646,9 @@ class ProductLayoutPtyTests(unittest.TestCase):
         stored = json.dumps({"version": 1, "col_ratio": None, "row_ratio": None, "zoom": True}).encode()
         server, ui = self.start(stored)
         self.assertTrue(ui.until(lambda: "[ZOOM]" in ui.text() and "WORKER OMP" not in ui.text()), ui.text())
-        self.assertIn(("manager_omp", 25, 118), [(f.header["pane"], f.header["rows"], f.header["cols"])
-                                                  for f in server.received("resize")])
+        sizes = lambda: [(f.header["pane"], f.header["rows"], f.header["cols"]) for f in server.received("resize")]
+        self.assertTrue(server.wait_for(lambda: ("manager_omp", 25, 118) in sizes()), sizes())
+        self.assertIn(("manager_omp", 25, 118), sizes())
         ui.send(P + b"q")
         self.assertEqual(0, ui.wait_exit())
         self.assertTrue(self.layout_file(server)["zoom"])  # still stored
@@ -800,8 +803,11 @@ class ImeNeutralPrefixTests(unittest.TestCase):
     def test_menu_arrows_enter_digits_and_esc(self):
         server, ui = self.start()
         ui.send(P + b" ")
-        self.assertTrue(ui.until(lambda: "명령 메뉴" in ui.text() and "> 1" in ui.text()), ui.text())
-        for needle in ("Ctrl-q", "Ctrl-z", "1/2/3", "Esc"):
+        needles = ("Ctrl-q", "Ctrl-z", "1/2/3", "Esc")
+        # the menu box arrives in more than one PTY read: wait for everything asserted below
+        self.assertTrue(ui.until(lambda: "명령 메뉴" in ui.text() and "> 1" in ui.text()
+                                 and all(needle in ui.text() for needle in needles)), ui.text())
+        for needle in needles:
             self.assertIn(needle, ui.text())
         ui.send(b"\x1b[B")  # down -> item 2 (zoom)
         self.assertTrue(ui.until(lambda: "> 2" in ui.text()), ui.text())
@@ -1042,7 +1048,8 @@ class RestartExitedOmpPtyTests(RealBackendCase):
         old = next(r for r in before if r["role"] == "manager")
         self.assertTrue(ui.until(lambda: f"fake omp manager pid={old['pid']}" in ui.text()), ui.text())
         ui.send(b"exit\r")  # the fake OMP exits on this line
-        self.assertTrue(ui.until(lambda: "OMP 종료됨" in ui.text() and "/resume" in ui.text()), ui.text())
+        self.assertTrue(ui.until(lambda: "OMP 종료됨" in ui.text() and "/resume" in ui.text()
+                                 and f"pid={old['pid']}" in ui.text()), ui.text())
         self.assertIn(f"pid={old['pid']}", ui.text(), "the last screen stays visible")
         ui.send(b"stray")  # other keys go nowhere
         self.assertTrue(ui.until(lambda: "Enter로 새 세션" in ui.text()), ui.text())

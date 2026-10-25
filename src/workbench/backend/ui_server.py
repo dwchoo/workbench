@@ -21,7 +21,7 @@ import sys
 import threading
 import time
 import traceback
-from typing import Any, Iterable, Protocol
+from typing import Any, Callable, Iterable, Protocol
 
 from workbench.contracts import ui_v1
 from workbench.contracts.ui_v1 import ClientType, Reason, ServerType
@@ -33,6 +33,10 @@ MAX_CONNECTIONS = 16
 MAX_STOPS_IN_FLIGHT = 8  # stop_command requests answered but not yet finished (each waits on its own thread)
 # The only attach-requiring requests a non-attached ``NON_ATTACHED_CONTROL_CLIENTS`` connection may send (HB-06)
 _UNATTACHED_CONTROL = frozenset({ClientType.PAUSE, ClientType.RESUME})
+# Task Inbox (TI-09): requests served to the Hub only (same name + peer uid rule, attached or not); never to a UI
+_HUB_ONLY = frozenset({ClientType.INBOX_NOTICE, ClientType.TASK_STATUS, ClientType.CANCEL_TASK})
+# ... of which these change backend state, so the peer must also be the verified running Hub process (``hub_peer``)
+_HUB_PROCESS_ONLY = frozenset({ClientType.INBOX_NOTICE, ClientType.CANCEL_TASK})
 
 
 class Held(Exception):
@@ -66,6 +70,11 @@ class Controller(Protocol):
     def stop_command(self, command_id: str) -> dict[str, Any]: ...
     def pause(self) -> dict[str, Any]: ...
     def resume(self, reconciled: bool) -> dict[str, Any]: ...
+    # Task Inbox (TI-09), Hub only: raise ``Held`` for a refusal (``unsupported_type`` until implemented)
+    def inbox_notice(self, request_id: str, delivery_id: str, event: str, fields: dict[str, Any]) -> dict[str, Any]: ...
+    def task_status(self, task_ids: list[str], detail: bool) -> dict[str, Any]: ...
+    def cancel_task(self, task_id: str, request_id: str, expect: dict[str, Any],
+                    reason: str | None) -> dict[str, Any]: ...
 
 
 class _Connection:
@@ -88,9 +97,14 @@ class _Connection:
 
 
 class UiServer:
-    def __init__(self, path: Path, controller: Controller, *, max_outbound: int = MAX_OUTBOUND_BYTES):
+    def __init__(self, path: Path, controller: Controller, *, max_outbound: int = MAX_OUTBOUND_BYTES,
+                 hub_peer: Callable[[int], bool] | None = None):
+        """``hub_peer(pid)``: whether ``pid`` is the verified running Hub; ``inbox_notice``/``cancel_task`` (which
+        change backend state) need it on top of the name + uid rule. The backend always passes it
+        (``inbox_link.HubPeerCheck``); None (a test of the name + uid gate alone) skips that extra check."""
         self.path = Path(path)
         self.controller = controller
+        self.hub_peer = hub_peer
         self.max_outbound = max_outbound
         self.connections: list[_Connection] = []
         self.attached: _Connection | None = None
@@ -366,6 +380,18 @@ class UiServer:
         return (connection.client in ui_v1.NON_ATTACHED_CONTROL_CLIENTS and connection.peer is not None
                 and connection.peer[1] == os.geteuid())
 
+    def _is_hub_process(self, connection: _Connection) -> bool:
+        """The peer pid read at accept is the verified running Hub's (``hub_peer``); a failing check refuses."""
+        if self.hub_peer is None:
+            return True
+        if connection.peer is None:
+            return False
+        try:
+            return bool(self.hub_peer(connection.peer[0]))
+        except Exception:
+            traceback.print_exc(file=sys.stderr)
+            return False
+
     def _dispatch(self, connection: _Connection, message: ui_v1.ClientMessage) -> dict[str, Any] | None:
         kind, fields, controller = message.type, message.fields, self.controller
         if kind is ClientType.SNAPSHOT:
@@ -404,6 +430,17 @@ class UiServer:
                                                    fields["offset"], fields["limit"])}
         if kind is ClientType.RAW_STATUS:
             return {"result": controller.raw_status()}
+        if kind in _HUB_ONLY:
+            if not self._may_control_unattached(connection) or (
+                    kind in _HUB_PROCESS_ONLY and not self._is_hub_process(connection)):
+                raise Held(Reason.NOT_ATTACHED, f"{kind.value} is a Workbench Hub request")
+            if kind is ClientType.INBOX_NOTICE:
+                return controller.inbox_notice(fields["request_id"], fields["delivery_id"], fields["event"],
+                                               fields["fields"])
+            if kind is ClientType.TASK_STATUS:
+                return controller.task_status(fields["task_ids"], fields["detail"])
+            return controller.cancel_task(fields["task_id"], fields["request_id"], fields["expect"],
+                                          fields["reason"])
         if not (kind in _UNATTACHED_CONTROL and self._may_control_unattached(connection)):
             self._require_attached(connection)
         if kind in {ClientType.INPUT, ClientType.PASTE}:

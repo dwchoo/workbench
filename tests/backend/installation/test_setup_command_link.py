@@ -20,7 +20,7 @@ class CommandLinkTests(unittest.TestCase):
     def public_cli(self, *arguments):
         return subprocess.run([sys.executable, '-m', 'workbench.backend.cli', *arguments],
                               env=dict(self.env, PYTHONPATH=str(fixtures.ROOT / 'src'),
-                                       PYTHONDONTWRITEBYTECODE='1'),
+                                       PYTHONDONTWRITEBYTECODE='1', WORKBENCH_HUB_AUTOSTART='0'),
                               cwd=self.root / 'project', capture_output=True, text=True, timeout=10)
 
     def managed(self):

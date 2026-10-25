@@ -19,14 +19,16 @@ from workbench.backend.paths import (BackendLocked, DataDirError, InstanceLock, 
 from workbench.contracts import hub_v1
 
 from . import registry
-from .status import Lister
+from .inbox.limits import InboxError
+from .inbox.service import OPEN_STATES, InboxService, Principal, ProjectRef
+from .status import Lister, check_entry
 from .paths import HubLayout, hub_layout, prepare_socket_path, prepare_state_dir
 from .process import (READY_LOST, READY_MANAGED, READY_STARTED, RECORD_SCHEMA_VERSION, UNVERIFIABLE,
                       installed_version,
                       lock_holder, managed_ancestor, send_ready, start_ticks, wait_reparented)
 
 
-LOCAL_PRINCIPAL = "local"
+LOCAL_PRINCIPAL = Principal.local()
 STOP_SIGNALS = (signal.SIGTERM, signal.SIGINT)
 WATCHDOG_INTERVAL = 2.0
 
@@ -40,14 +42,46 @@ def registry_summary(layout: HubLayout) -> dict:
         return {**summary, "state": "invalid"}
 
 
-def _peer_is_owner(writer: asyncio.StreamWriter) -> bool:
-    """``SO_PEERCRED`` uid of the connecting process equals this Hub's euid."""
+def _peer_credentials(writer: asyncio.StreamWriter) -> tuple[int, int] | None:
+    """``SO_PEERCRED`` ``(pid, uid)`` of the connecting process, None when unreadable."""
     sock = writer.get_extra_info("socket")
     try:
-        _pid, uid, _gid = struct.unpack("iII", sock.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, 12))
+        pid, uid, _gid = struct.unpack("iII", sock.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, 12))
     except (OSError, AttributeError, struct.error):
-        return False
-    return uid == os.geteuid()
+        return None
+    return pid, uid
+
+
+def backend_mismatch(entries: list[registry.Entry], project_id: str, peer: tuple[int, int | None] | None) -> str | None:
+    """Why ``peer`` (pid, start ticks read at accept) is not the running backend of registered ``project_id``,
+    or None when it is (SPEC "Hub ↔ backend 요청 통로"). Blocking file and ``/proc`` reads: executor only."""
+    from workbench.backend.paths import DataDirError, DataLayout
+    from workbench.backend.process_identity import BackendIdentityError, inspect_backend
+    if peer is None or peer[1] is None:
+        return "peer_unreadable"
+    pid, ticks = peer
+    entry = next((item for item in entries if item.project_id == project_id), None)
+    if entry is None:
+        return "not_registered"
+    mismatch = check_entry(entry)
+    if mismatch is not None:
+        return mismatch
+    try:
+        identity = inspect_backend(DataLayout(Path(entry.root) / ".wb"))
+    except BackendIdentityError as exc:
+        return f"identity:{exc.reason}"
+    except (DataDirError, OSError, ValueError):
+        return "identity:unavailable"
+    if identity.state != "running" or identity.record is None:
+        return f"backend_{identity.state}"
+    if identity.project_id != project_id:
+        return "project_id_mismatch"
+    reference = identity.record["processes"]["backend"]
+    if reference.get("pid") != pid or reference.get("start_ticks") != ticks:
+        return "peer_not_backend"
+    if start_ticks(pid) != ticks:  # the peer process itself is gone (its pid may be reused)
+        return "peer_gone"
+    return None
 
 
 class Hub:
@@ -71,6 +105,9 @@ class Hub:
         self.state_identity: tuple[int, int] | None = None
         self.watchdog_reason: str | None = None
         self.lister = Lister(layout)
+        self.inbox = InboxService()
+        # Verified backend connections by project id (one each): outside ``tasks`` and its limit (hub_v1).
+        self.backend_tasks: dict[str, asyncio.Task] = {}
 
     def bind(self) -> None:
         path = prepare_socket_path()
@@ -126,7 +163,12 @@ class Hub:
     async def watchdog(self) -> None:
         while True:
             await asyncio.sleep(WATCHDOG_INTERVAL)
-            reason = await asyncio.get_running_loop().run_in_executor(None, self.guard_broken)
+            loop = asyncio.get_running_loop()
+            reason = await loop.run_in_executor(None, self.guard_broken)
+            try:
+                await loop.run_in_executor(None, self.inbox.close_idle)
+            except Exception as exc:  # an inbox problem never stops the Hub
+                print(f"[workbench] inbox idle close failed: {exc!r}", file=sys.stderr, flush=True)
             if reason is not None:
                 self.watchdog_reason = reason
                 print(f"[workbench] Hub stopping: {reason}", file=sys.stderr, flush=True)
@@ -137,13 +179,18 @@ class Hub:
         record = self.record or {}
         return {key: record.get(key) for key in ("pid", "start_ticks", "version", "started_at", "mode")}
 
-    async def handle(self, principal: str, request: dict) -> dict:
+    async def handle(self, principal: Principal, request: dict) -> dict:
         """One hub_v1 request from ``principal``; (A) adds web/API-key principals.
 
+        A backend principal reaches :data:`hub_v1.BACKEND_OPS` only, any other connection everything else.
         File and ``/proc`` reads run in the default executor, never on the loop.
         """
         request_id = request["id"]
         op = request.get("type")
+        if (op in hub_v1.BACKEND_OPS) != (principal.kind == "manager"):
+            return hub_v1.failure(request_id, hub_v1.Reason.UNSUPPORTED_TYPE, f"unsupported request type: {op!r}")
+        if principal.kind == "manager" or op == hub_v1.ClientType.REVIEW_MODE.value:
+            return await self.inbox_op(principal, request)
         if op == hub_v1.ClientType.STATUS.value:
             return hub_v1.result(request_id, **await self.status())
         if op == hub_v1.ClientType.LIST.value:
@@ -159,6 +206,88 @@ class Hub:
                                       "The stop token is unknown, expired or the active set changed.")
             return hub_v1.result(request_id, stopping=True)
         return hub_v1.failure(request_id, hub_v1.Reason.UNSUPPORTED_TYPE, f"unsupported request type: {op!r}")
+
+    async def inbox_op(self, principal: Principal, request: dict) -> dict:
+        """A backend principal's inbox op, run on an executor thread (the inbox blocks on its project thread)."""
+        request_id = request["id"]
+        try:
+            value = await asyncio.get_running_loop().run_in_executor(None, self._inbox_op, principal, request)
+        except InboxError as exc:
+            extra = {key: value for key, value in (("state", exc.state), ("version", exc.version))
+                     if value is not None}
+            return hub_v1.failure(request_id, exc.code, exc.detail or exc.code, **extra)
+        return hub_v1.result(request_id, **value)
+
+    def _inbox_op(self, principal: Principal, request: dict) -> dict:
+        op, inbox = request.get("type"), self.inbox
+        if op == hub_v1.ClientType.REVIEW_MODE.value:  # local (``wb hub review-mode``)
+            return inbox.review_mode(principal, self._registered_project(request.get("root")), request.get("set"))
+        (project_id,) = principal.scope
+        if op == hub_v1.ClientType.INBOX_LIST.value:
+            states = request.get("states", None)
+            if states is None:
+                states = OPEN_STATES
+            elif not isinstance(states, list) or not all(isinstance(state, str) for state in states):
+                raise InboxError("invalid_input", "states must be a list of state names")
+            return inbox.list_requests(principal, project_id=project_id, states=states, limit=request.get("limit"))
+        if op == hub_v1.ClientType.INBOX_SHOW.value:
+            return {"request": inbox.get(principal, request.get("request_id"))}
+        if op == hub_v1.ClientType.INBOX_REVIEW.value:
+            return inbox.review(principal, request.get("request_id"), request.get("action"), body=request.get("body"),
+                                outcome=request.get("outcome"), summary=request.get("summary"))
+        if op == hub_v1.ClientType.INBOX_LINK_CHECK.value:
+            return inbox.link_check(principal, request.get("request_id"))
+        if op == hub_v1.ClientType.INBOX_LINK_COMMIT.value:
+            return inbox.link_commit(principal, request.get("link_token"), request.get("task_id"),
+                                     request.get("spec_revision"), request.get("task_status"))
+        # inbox_delivery: the request must be this project's (visible to the principal) before the Hub records it
+        request_id = request.get("request_id")
+        inbox.get(principal, request_id)
+        return inbox.record_delivery(request_id, request.get("delivery_id"), request.get("outcome"))
+
+    def sync_projects(self) -> list[registry.Entry]:
+        """Give the inbox the registry's projects (a mismatched entry is ``project_unavailable``); executor only."""
+        entries = registry.read(self.layout)
+        self.inbox.set_projects(ProjectRef(entry.project_id, Path(entry.root), entry.name, check_entry(entry))
+                                for entry in entries)
+        return entries
+
+    def _registered_project(self, root: object) -> str:
+        """The project id of the registry entry for ``root`` (an absolute path; resolved like the registry)."""
+        if not isinstance(root, str) or not os.path.isabs(root):
+            raise InboxError("invalid_input", "root must be an absolute path")
+        try:
+            entries = self.sync_projects()
+        except registry.RegistryError as exc:
+            raise InboxError("registry_invalid", str(exc)) from None
+        wanted = {root, os.path.realpath(root)}
+        entry = next((item for item in entries if item.root in wanted), None)
+        if entry is None:
+            raise InboxError("not_found", "project not registered")
+        return entry.project_id
+
+    def verify_backend(self, project_id: str, peer: tuple[int, int | None] | None, *, sync: bool) -> str | None:
+        """:func:`backend_mismatch` against the current registry (``sync`` also refreshes the inbox projects)."""
+        try:
+            entries = self.sync_projects() if sync else registry.read(self.layout)
+        except registry.RegistryError:
+            return "registry_invalid"
+        return backend_mismatch(entries, project_id, peer)
+
+    def adopt_backend(self, project_id: str, task: asyncio.Task | None) -> None:
+        """Move a verified backend connection out of the general pool; a newer one replaces an older one."""
+        if task is None:
+            return
+        self.tasks.discard(task)
+        previous = self.backend_tasks.get(project_id)
+        self.backend_tasks[project_id] = task
+        if previous is not None and previous is not task:
+            previous.cancel()
+
+    def drop_backend(self, task: asyncio.Task | None) -> None:
+        for project_id, current in list(self.backend_tasks.items()):
+            if current is task:
+                del self.backend_tasks[project_id]
 
     async def status(self) -> dict:
         registry = await asyncio.get_running_loop().run_in_executor(None, registry_summary, self.layout)
@@ -196,18 +325,22 @@ class Hub:
     async def connection(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
         task = asyncio.current_task()
         try:
-            if not _peer_is_owner(writer):
+            credentials = _peer_credentials(writer)
+            if credentials is None or credentials[1] != os.geteuid():
                 return
             if len(self.tasks) >= self.max_connections:
                 writer.write(hub_v1.encode_line(hub_v1.reject(hub_v1.Reason.CONNECTION_LIMIT)))
                 await writer.drain()
                 return
             self.tasks.add(task)
-            await Connection(self, reader, writer).run()
+            # The peer's start ticks are read now, at accept, so a later pid reuse cannot pass as this peer.
+            ticks = await asyncio.get_running_loop().run_in_executor(None, start_ticks, credentials[0])
+            await Connection(self, reader, writer, (credentials[0], ticks)).run()
         except (ConnectionError, asyncio.CancelledError):
             pass
         finally:
             self.tasks.discard(task)
+            self.drop_backend(task)
             writer.close()
 
     async def serve(self) -> None:
@@ -223,10 +356,12 @@ class Hub:
         await self.stop_event.wait()
         watchdog.cancel()
         server.close()
-        for task in list(self.tasks):
+        tasks = [*self.tasks, *self.backend_tasks.values()]
+        for task in tasks:
             task.cancel()
-        await asyncio.gather(*self.tasks, return_exceptions=True)
+        await asyncio.gather(*tasks, return_exceptions=True)
         self.lister.close()
+        await loop.run_in_executor(None, self.inbox.close)  # releases every inbox.lock
 
     def new_owner_possible(self) -> bool:
         """After the guard broke, does another process hold a lock at ``hub.lock``?
@@ -269,21 +404,29 @@ class Hub:
 class Connection:
     """One hub_v1 peer: hello first, then line requests until EOF or protocol error."""
 
-    def __init__(self, hub: Hub, reader: asyncio.StreamReader, writer: asyncio.StreamWriter):
+    def __init__(self, hub: Hub, reader: asyncio.StreamReader, writer: asyncio.StreamWriter,
+                 peer: tuple[int, int | None] | None = None):
         self.hub, self.reader, self.writer = hub, reader, writer
+        self.peer = peer  # (SO_PEERCRED pid, its /proc start ticks at accept)
         self.decoder = hub_v1.LineDecoder()
         self.greeted = False
+        self.principal = LOCAL_PRINCIPAL
 
     async def send(self, value: dict) -> None:
         self.writer.write(hub_v1.encode_line(value))
         await self.writer.drain()
 
+    async def verify(self, project_id: str, *, sync: bool) -> str | None:
+        return await asyncio.get_running_loop().run_in_executor(
+            None, lambda: self.hub.verify_backend(project_id, self.peer, sync=sync))
+
     async def run(self) -> None:
-        """Serve lines until EOF, a protocol error, a stop or ``idle_timeout`` without a request."""
+        """Serve lines until EOF, a protocol error, a stop or ``idle_timeout`` without a request (a backend
+        principal's connection has no idle timeout: the backend keeps it open)."""
         deadline = time.monotonic() + self.hub.idle_timeout
         while True:
-            remaining = deadline - time.monotonic()
-            if remaining <= 0:
+            remaining = None if self.principal.kind == "manager" else deadline - time.monotonic()
+            if remaining is not None and remaining <= 0:
                 return
             try:
                 data = await asyncio.wait_for(self.reader.read(65536), remaining)
@@ -311,9 +454,25 @@ class Connection:
             if frame.get("v") not in hub_v1.SUPPORTED_VERSIONS:
                 await self.send(hub_v1.reject(hub_v1.Reason.VERSION_MISMATCH))
                 return False
-            if not hub_v1.valid_client_name(frame.get("client")):
+            if not hub_v1.valid_client_name(frame.get("client")) or (
+                    frame.get("project_id") is not None and not hub_v1.valid_project_id(frame["project_id"])):
                 await self.send(hub_v1.reject(hub_v1.Reason.BAD_REQUEST))
                 return False
+            project_id = frame.get("project_id")
+            if frame["client"] == hub_v1.BACKEND_CLIENT or project_id is not None:
+                # Stricter of the SPEC readings: the name alone grants nothing, and a project id without the
+                # backend name (or the name without an id) is refused rather than served as ``local``.
+                why = ("hello_incomplete" if frame["client"] != hub_v1.BACKEND_CLIENT or project_id is None
+                       else await self.verify(project_id, sync=True))
+                if why is not None:
+                    print(f"[workbench] backend principal refused: project {project_id} peer {self.peer}: {why}",
+                          file=sys.stderr, flush=True)
+                    await self.send(hub_v1.reject(hub_v1.Reason.PRINCIPAL_MISMATCH))
+                    return False
+                self.principal = Principal.manager(project_id)
+                self.hub.adopt_backend(project_id, asyncio.current_task())
+                print(f"[workbench] backend principal: project {project_id} pid {self.peer[0]} "
+                      f"start_ticks {self.peer[1]}", file=sys.stderr, flush=True)
             self.greeted = True
             await self.send(hub_v1.welcome(self.hub.welcome_identity()))
             return True
@@ -321,7 +480,16 @@ class Connection:
         if frame.get("v") != hub_v1.VERSION or not hub_v1.valid_request_id(request_id):
             await self.send(hub_v1.reject(hub_v1.Reason.PROTOCOL_ERROR))
             return False
-        await self.send(await self.hub.handle(LOCAL_PRINCIPAL, frame))
+        if self.principal.kind == "manager":
+            (project_id,) = self.principal.scope
+            why = await self.verify(project_id, sync=False)
+            if why is not None:  # per connection: a backend this connection no longer is gets nothing
+                print(f"[workbench] backend principal withdrawn: project {project_id} peer {self.peer}: {why}",
+                      file=sys.stderr, flush=True)
+                await self.send(hub_v1.failure(request_id, hub_v1.Reason.PRINCIPAL_MISMATCH,
+                                               "This connection is no longer the project's running backend."))
+                return False
+        await self.send(await self.hub.handle(self.principal, frame))
         if self.hub.stop_requested:
             self.hub.request_stop()
             return False

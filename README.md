@@ -79,7 +79,7 @@ cd /path/to/research
 wb
 ```
 
-`wb`는 `wb start`처럼 동작합니다. OMP 준비가 되어 있고 초기화된 프로젝트가 없으면 Workbench가 현재 폴더를 프로젝트 root로 표시하고 `.wb/`를 만들지 확인합니다. 입력 프롬프트의 기본값은 아니요(`[y/N]`)입니다. 터미널 입력 없이 실행하면 확인을 받지 못해 프로젝트를 만들거나 backend를 시작하지 않습니다. Git 저장소는 필요하지 않고, Git root로 자동 이동하지도 않습니다. 처음 시작할 폴더를 먼저 선택하세요. 일반 `wb`/`wb start`는 OMP나 runtime을 내려받지 않습니다. 시작 전 검사에서 OMP 선택·실행 요건을 충족하지 못하면 `wb setup` 안내와 함께 멈추며, 새 `.wb/`나 backend를 만들지 않습니다. SDK 로드 검사는 `wb setup`에서 수행합니다.
+프로젝트 안(가장 가까운 `.wb/`가 있는 폴더 또는 그 하위)에서 `wb`는 `wb start`처럼 동작합니다. 프로젝트 밖에서 인자 없이 실행한 `wb`는 더 이상 초기화를 묻지 않고 등록된 프로젝트의 [Hub 목록](#hub와-여러-프로젝트)을 엽니다. 새 프로젝트는 폴더에서 `wb init`으로 만들거나 `wb start`를 명시해 만듭니다. `wb init`과 명시한 `wb start`는 OMP 준비가 되어 있고 초기화된 프로젝트가 없으면 Workbench가 현재 폴더를 프로젝트 root로 표시하고 `.wb/`를 만들지 확인합니다. 입력 프롬프트의 기본값은 아니요(`[y/N]`)입니다. 터미널 입력 없이 실행하면 확인을 받지 못해 프로젝트를 만들거나 backend를 시작하지 않습니다. Git 저장소는 필요하지 않고, Git root로 자동 이동하지도 않습니다. 처음 시작할 폴더를 먼저 선택하세요. 프로젝트 안의 `wb`와 `wb start`는 OMP나 runtime을 내려받지 않습니다. 시작 전 검사에서 OMP 선택·실행 요건을 충족하지 못하면 `wb setup` 안내와 함께 멈추며, 새 `.wb/`나 backend를 만들지 않습니다. SDK 로드 검사는 `wb setup`에서 수행합니다.
 
 현재 폴더에서 상위 폴더 방향으로 검사할 때 처음 발견한 `.wb/`만 확인합니다. 정상 marker면 해당 프로젝트를 사용하지만, symlink·invalid/incomplete marker·미완료 이관이면 진단과 함께 그 자리에서 멈추고 더 위의 `.wb/`로 건너뛰지 않습니다. 해당 경로를 자동으로 덮어쓰거나 복구하지 않습니다. `research/.wb/`가 정상이라면 `research/src/`에서도 같은 프로젝트에 연결됩니다. Git 저장소 안에서는 `.wb/`를 Git에서 제외합니다. Git 제외를 확인할 수 없거나 `.wb/`가 이미 추적 중이면 새 초기화와 backend 시작을 보류합니다. 기존 추적 파일과 ignore 설정을 보존하며 임의 untrack·삭제·자동 복구를 하지 않습니다.
 
@@ -95,7 +95,11 @@ wb
 
 | 명령 | 동작 |
 |---|---|
-| `wb` 또는 `wb start` | backend를 시작하거나 실행 중인 backend를 재사용해 Workbench 화면에 연결 |
+| `wb` (프로젝트 안) 또는 `wb start` | backend를 시작하거나 실행 중인 backend를 재사용해 Workbench 화면에 연결 |
+| `wb` (프로젝트 밖) | 등록된 프로젝트의 Hub 목록(TUI)을 엽니다. 터미널이 아니면 `wb hub list`를 쓰라는 안내와 함께 종료 |
+| `wb init [PATH]` | 폴더(기본 현재 폴더)를 확인 후 WB 프로젝트로 초기화하고 Hub에 등록. backend는 시작하지 않음 |
+| `wb hub …` | Hub 시작·정지·상태·목록·등록·부팅 자동 시작. 아래 "Hub와 여러 프로젝트" 참고 |
+| `wb --version` | 설치된 Workbench 버전 표시 |
 | `wb start --no-attach` | backend를 시작하거나 재사용한 뒤 화면 연결 없이 반환 |
 | `wb attach` | 현재 프로젝트의 실행 중 backend에 연결. `--plain`은 최소 터미널 client 사용 |
 | `wb status` | 현재 프로젝트 backend 상태 표시. `--json`은 JSON 출력 |
@@ -131,6 +135,41 @@ WORKBENCH_DATA_DIR=/path/to/old-data-dir wb status
 | `wb logs raw-status` | 기존 raw 저장과 비활성 v2 raw 저장의 사용량을 구분해 표시 |
 | `wb logs raw-rotation activate` | 검증된 로컬 product record(`--evidence`)로 raw rotation을 사용자가 명시적으로 활성화 |
 | `wb logs summary-compat status\|verify` | 중요 로그 요약의 호환 상태 표시와 명시적 scripted 검증(`verify --scripted`). 요약·raw 활성화는 하지 않음 |
+
+## Hub와 여러 프로젝트
+
+Hub는 OS 사용자당 하나만 background로 실행되는 관리 프로세스입니다. 등록된 WB 프로젝트를 한곳에서 보고, 켜고 끄고, 골라 들어가게 해 줍니다. Hub는 어느 프로젝트의 backend도 부모로 두거나 감독하지 않으므로 Hub를 멈추거나 Hub가 죽어도 실행 중인 실험은 계속되고, 프로젝트 안에서 `wb`로 직접 들어갈 수 있습니다. 프로젝트는 `wb init`이나 첫 시작 때 자동으로 등록되며 `wb hub add`/`remove`로 직접 관리합니다. 등록 해제는 `.wb/`를 지우지 않습니다.
+
+프로젝트 밖에서 `wb`를 실행하면 Hub 목록이 열립니다. 이름·경로·상태·Task·명령·대기 사유·마지막 활동을 보여 주며 3초마다 갱신합니다.
+
+| 키 | 동작 |
+|---|---|
+| `↑` `↓` / `k` `j` | 선택 이동 |
+| `Enter` | 켜진 프로젝트에 연결. 꺼진 프로젝트는 "켤까요? [y/N]"을 묻고 `y`일 때만 켜서 연결 |
+| `o` | 꺼진 프로젝트를 연결 없이 켜기 (같은 확인) |
+| `x` | 켜진 프로젝트 끄기 (진행 중 작업을 보여 주고 확인, 기존 `wb shutdown`과 같은 종료) |
+| `r` | 새로 고침 |
+| `q` | 종료 |
+
+연결을 확인하지 못한 프로젝트는 "연결 없음/불명"으로 표시합니다. 이것은 꺼짐이 아니라 상태를 모른다는 뜻이므로 켜거나 연결하지 않습니다. 연결에서 detach하면 목록으로 돌아옵니다.
+
+| 명령 | 동작 |
+|---|---|
+| `wb hub start` / `stop [--yes]` | Hub 시작 / 정지. 정지해도 켜진 프로젝트는 계속 실행 |
+| `wb hub status [--json]` | pid·version·위치·등록 수·부팅 자동 시작 여부 |
+| `wb hub list [--json]` | Hub 목록을 TUI 없이 출력 |
+| `wb hub add PATH` / `remove PATH` | 프로젝트 root 등록 / 해제. `remove`는 켜져 있거나 상태가 불명인 프로젝트를 거절 |
+| `wb hub enable` / `disable` | 로그인 뒤 자동 시작하는 systemd 사용자 서비스 만들기 / 지우기 |
+
+`wb hub passwd`와 `wb hub tls`는 Web Board 기능에서 제공할 예정인 예약 명령이며 지금은 "제공 예정" 안내만 냅니다.
+
+Hub는 `wb`가 없으면 자동으로 띄웁니다. 자동 시작하지 않는 명령은 `wb setup`, `wb update`, `wb doctor`, `wb hub start|stop|status|enable|disable`, `--help`, `--version`입니다. Hub를 띄우지 못해도 명령 자체는 계속 실행됩니다. WB가 관리하는 terminal(backend나 실험 shell 아래) 안에서는 Hub가 실험 종료와 `wb update`를 막지 않도록 자동 시작을 보류하고, 외부 terminal에서 `wb hub start`를 실행하라고 안내합니다. 이미 Hub가 실행 중이면 그 안에서도 목록을 쓸 수 있습니다. `/proc`을 읽을 수 없는 호스트(`hidepid` 등)에서는 관리 terminal 여부를 확인할 수 없어 같은 이유로 보류하고 `proc_unreadable`로 안내합니다.
+
+`wb update`는 Hub도 멈춥니다(실패하면 backend를 종료하지 않고 중단). 업데이트가 끝난 뒤 다음 `wb`가 새 버전의 Hub를 띄웁니다.
+
+`wb hub enable`은 `systemd --user` 서비스를 만듭니다. 기본적으로 로그인한 뒤에 Hub가 시작되며, 부팅 직후(로그인 전)에 시작하려면 사용자가 직접 `loginctl enable-linger`를 실행해야 합니다. Workbench는 linger를 바꾸지 않습니다. 설치나 `wb`만으로는 서비스를 만들지 않습니다.
+
+개발·테스트용으로 환경 변수 `WORKBENCH_HUB_AUTOSTART=0`은 자동 시작만 끕니다(`wb hub start`는 영향 없음). 상태·log·socket 위치와 자세한 동작은 [Hub 사용 안내](docs/features/workbench-hub/USAGE.md)를 확인하세요.
 
 ## 작업 기록
 

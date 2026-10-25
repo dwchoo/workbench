@@ -234,6 +234,36 @@ the attached UI, if any, gets the ``state`` push; the requesting connection
 gets none. Every other request that needs attaching still does. An older
 backend refuses it with ``not_attached``.
 
+Hub requests (Task Inbox SPEC "Hub ↔ backend 요청 통로"; additive, the contract
+version stays 1): ``inbox_notice``, ``task_status`` and ``cancel_task`` are
+served only to a connection whose hello ``client`` is in
+:data:`NON_ATTACHED_CONTROL_CLIENTS` and whose server-side peer uid is the
+backend's effective uid, attached or not; ``inbox_notice`` and ``cancel_task``
+(which change backend state) also need the peer pid to be the verified running
+Hub process (its ``hub.json`` pid and start ticks, cached briefly). Every other
+connection (an attached UI included) is refused with ``not_attached``. They never take or change the attach
+slot and push no ``state``. An older backend answers ``unsupported_type``.
+- ``inbox_notice{request_id, delivery_id, event, fields}`` (canonical UUIDs;
+  ``event`` one of :data:`INBOX_NOTICE_EVENTS`; ``fields`` exactly
+  ``{request_id (the same), seq (>= 1), title (1-200 chars), origin (object),
+  state (one of :data:`INBOX_STATES`), excerpt (<= 1000 chars), hint (string
+  <= 1000 chars or null)}``) -> ``{queued: true, notice_id}``.
+- ``task_status{task_ids, detail}`` (1-64 distinct canonical UUIDs; ``detail``
+  boolean, false when absent) -> ``tasks: [{task_id, exists, status,
+  closed_reason, revision, cancel_requested_by, runs: [{run_id, status,
+  exit_code, started_at, ended_at, stopped_by, log_sources: [{source_kind,
+  source_id}]}], commands: [{command_id, owner, exit_code, log_path}],
+  reports}]`` in request order; ``reports`` (``[{message_id, kind, at, text}]``,
+  ``text`` <= 64 KiB) only with ``detail``; an unknown id is ``{task_id,
+  exists: false}``. Read only: no model call, no bridge frame. The whole call
+  has a bounded time (the backend's UI loop is not held): an id not read in
+  time is ``{task_id, timeout: true}`` and the answer then carries ``timeout:
+  true`` (a partial answer; ask again for those ids).
+- ``cancel_task{task_id, request_id, expect: {status (one of
+  :data:`TASK_STATUSES`), command_id (canonical UUID or null)}, reason (<= 1000
+  chars or null)}`` -> ``{cancel, stop}`` (a backend without it answers
+  ``unsupported_type``).
+
 Automation state (CW-18 U3; additive)
 -------------------------------------
 A snapshot's ``automation`` is ``{state, source, detail, paused, transition,
@@ -304,6 +334,14 @@ TASK_STATUSES = ("dispatched", "starting", "running", "waiting_report", "held", 
 # hello ``client`` names whose connection may send ``pause``/``resume`` without attaching (HB-06); the server also
 # requires the connection's server-side peer uid to equal the backend euid.
 NON_ATTACHED_CONTROL_CLIENTS = frozenset({"workbench-hub"})
+# Task Inbox (TI-09): Hub-only requests and their field values.
+INBOX_NOTICE_EVENTS = ("new", "answered", "updated", "revised", "cancelled", "linked_task_closed")
+INBOX_STATES = ("NEW", "REVIEWING", "NEEDS_INFO", "READY", "RUNNING", "CLOSED")
+INBOX_NOTICE_FIELDS = frozenset({"request_id", "seq", "title", "origin", "state", "excerpt", "hint"})
+MAX_TASK_STATUS_IDS = 64
+MAX_NOTICE_TEXT = 1000
+MAX_NOTICE_TITLE = 200
+MAX_REPORT_TEXT_BYTES = 64 * 1024
 
 
 class ClientType(StrEnum):
@@ -330,6 +368,9 @@ class ClientType(StrEnum):
     IMPORTANT_DELETE_DB = "important_delete_db"
     RAW_QUERY = "raw_query"
     RAW_STATUS = "raw_status"
+    INBOX_NOTICE = "inbox_notice"
+    TASK_STATUS = "task_status"
+    CANCEL_TASK = "cancel_task"
 
 
 class ServerType(StrEnum):
@@ -613,10 +654,66 @@ def parse_client_frame(frame: Frame, version: int | None) -> ClientMessage:
         if type(header.get("limit")) is not int or not 1 <= header["limit"] <= 32 * 1024:
             raise ContractError("raw UI page must be 1..32768 bytes")
         fields["offset"], fields["limit"] = header["offset"], header["limit"]
+    elif kind is ClientType.INBOX_NOTICE:
+        fields.update(_inbox_notice(header))
+    elif kind is ClientType.TASK_STATUS:
+        task_ids = header.get("task_ids")
+        if (not isinstance(task_ids, list) or not 1 <= len(task_ids) <= MAX_TASK_STATUS_IDS
+                or len(set(map(str, task_ids))) != len(task_ids)):
+            raise ContractError(f"task_ids must be 1-{MAX_TASK_STATUS_IDS} distinct Task ids")
+        fields["task_ids"] = [_canonical_uuid(item, "task_ids") for item in task_ids]
+        detail = header.get("detail", False)
+        if type(detail) is not bool:
+            raise ContractError("task_status detail must be a boolean")
+        fields["detail"] = detail
+    elif kind is ClientType.CANCEL_TASK:
+        fields["task_id"] = _canonical_uuid(header.get("task_id"), "task_id")
+        fields["request_id"] = _canonical_uuid(header.get("request_id"), "request_id")
+        expect = header.get("expect")
+        if not isinstance(expect, dict) or set(expect) != {"status", "command_id"}:
+            raise ContractError("expect must be {status, command_id}")
+        if expect["status"] not in TASK_STATUSES:
+            raise ContractError("expect.status must be a Task status")
+        command_id = expect["command_id"]
+        fields["expect"] = {"status": expect["status"],
+                            "command_id": None if command_id is None else _canonical_uuid(command_id,
+                                                                                         "expect.command_id")}
+        fields["reason"] = _short_text(header.get("reason"), "reason", MAX_NOTICE_TEXT, optional=True)
     return ClientMessage(kind, request_id, fields, frame.payload, frame.discarded_bytes)
 
 
-def request(kind: ClientType, request_id: str, **fields: Any) -> dict[str, Any]:
+def _short_text(value: object, field: str, limit: int, *, optional: bool = False, empty: bool = True) -> str | None:
+    if value is None and optional:
+        return None
+    if not isinstance(value, str) or len(value) > limit or (not empty and not value):
+        raise ContractError(f"{field} must be a string of at most {limit} characters")
+    return value
+
+
+def _inbox_notice(header: dict[str, Any]) -> dict[str, Any]:
+    request_id = _canonical_uuid(header.get("request_id"), "request_id")
+    delivery_id = _canonical_uuid(header.get("delivery_id"), "delivery_id")
+    if header.get("event") not in INBOX_NOTICE_EVENTS:
+        raise ContractError(f"event must be one of {', '.join(INBOX_NOTICE_EVENTS)}")
+    fields = header.get("fields")
+    if not isinstance(fields, dict) or set(fields) != INBOX_NOTICE_FIELDS:
+        raise ContractError("fields must be {" + ", ".join(sorted(INBOX_NOTICE_FIELDS)) + "}")
+    if fields["request_id"] != request_id:
+        raise ContractError("fields.request_id must be the notice's request_id")
+    if type(fields["seq"]) is not int or fields["seq"] < 1:
+        raise ContractError("fields.seq must be a positive integer")
+    _short_text(fields["title"], "fields.title", MAX_NOTICE_TITLE, empty=False)
+    if not isinstance(fields["origin"], dict):
+        raise ContractError("fields.origin must be an object")
+    if fields["state"] not in INBOX_STATES:
+        raise ContractError("fields.state must be a request state")
+    _short_text(fields["excerpt"], "fields.excerpt", MAX_NOTICE_TEXT)
+    _short_text(fields["hint"], "fields.hint", MAX_NOTICE_TEXT, optional=True)
+    return {"request_id": request_id, "delivery_id": delivery_id, "event": header["event"], "fields": dict(fields)}
+
+
+def request(kind: ClientType, request_id: str, /, **fields: Any) -> dict[str, Any]:
+    """``request_id`` is the frame ``id`` (positional: ``inbox_notice``/``cancel_task`` carry a ``request_id`` field)."""
     return {"v": VERSION, "type": kind.value, "id": request_id, **fields}
 
 

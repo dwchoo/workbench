@@ -351,8 +351,10 @@ with patch('os.execv',external_backend), patch('os.fork',tracked_fork), patch('o
         self.assertEqual(list(self.project.iterdir()), [])
         self.assertFalse((self.base / 'home/.local/state/omp-workbench').exists())
 
-    def test_bare_execution_has_start_requirement_guidance_without_any_creation(self):
-        result = self.cli()
+    def test_explicit_start_has_start_requirement_guidance_without_any_creation(self):
+        # HB-08: a bare `wb` outside a project is now the Hub list (tests/hub/test_hub_cli_bare.py); the start
+        # path this test guards (requirement guidance, nothing created) is reached by the explicit `start`.
+        result = self.cli('start')
         self.assertEqual(result.returncode, 2, result.stderr)
         self.assertIn('wb setup', result.stderr)
         self.assertEqual(list(self.project.iterdir()), [])

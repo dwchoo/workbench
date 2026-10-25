@@ -928,6 +928,25 @@ class DeliveryCase(FlowCase):
         path = Path(self.box.env[name])
         return [json.loads(line) for line in path.read_text().splitlines()] if path.exists() else []
 
+    def worker_input(self) -> dict:
+        """Everything the worker OMP was offered so far (frames and notices), from the fake OMP's records."""
+        frames = [item['frame'] for item in self.records('FAKE_FRAMES') if item['role'] == 'worker']
+        return {'messages': {frame.get('message_id') for frame in frames if frame.get('kind') == 'deliver'},
+                'other': [frame for frame in frames if frame.get('kind') != 'deliver'],
+                'notices': [item for item in self.records('FAKE_NOTICES') if item['role'] == 'worker']}
+
+    def assert_task_untouched(self, before: dict, now: dict, worker_input: dict) -> None:
+        """The Task may move on by itself (starting -> running); the notice changes neither its identity nor its
+        revision, closes or cancels nothing and gives the worker no new input (P2-AC-10/24)."""
+        self.assertEqual((now['task']['task_id'], now['task']['revision']),
+                         (before['task']['task_id'], before['task']['revision']))
+        self.assertNotIn(now['task']['status'], ('closed', 'cancelling'))
+        added = self.worker_input()
+        self.assertEqual(added['notices'], worker_input['notices'], 'no notice went to the worker')
+        self.assertEqual(added['other'], worker_input['other'], 'no other frame went to the worker')
+        self.assertLessEqual(added['messages'], worker_input['messages'] | {None},
+                             'only re-offers of the Task message the worker already had')
+
     def tool_results(self) -> list[dict]:
         return [item['frame'] for item in self.records('FAKE_FRAMES')
                 if item['role'] == 'manager' and item['frame'].get('kind') == 'tool_result']
@@ -969,20 +988,17 @@ class RealFlowOrderTests(DeliveryCase):
         sleeper = self.box.sleeper(root, 120)
         ticks = start_ticks(sleeper)
         before = self.box.status(root)
+        worker_input = self.worker_input()
         self.manager_input(ui, 'busy')
         self.box.start_hub()
         self.until(lambda: 'manager_busy' in self.waits(root), 40, 'P2-AC-10: a busy manager is not interrupted')
         time.sleep(4.0)
         self.assertEqual((self.row(root, rid)['state'], self.inbox_notices()), ('NEW', []))
-        during = self.box.status(root)
-        keys = ('task_id', 'status', 'revision')
-        self.assertEqual({key: during['task'][key] for key in keys}, {key: before['task'][key] for key in keys})
+        self.assert_task_untouched(before, self.box.status(root), worker_input)
         self.assertEqual(start_ticks(sleeper), ticks)
         self.manager_input(ui, 'idle')
         self.until(lambda: self.row(root, rid)['state'] == 'REVIEWING', 40)
-        after = self.box.status(root)
-        self.assertEqual({key: after['task'][key] for key in keys}, {key: before['task'][key] for key in keys},
-                         'the notice did not touch the Task (P2-AC-24)')
+        self.assert_task_untouched(before, self.box.status(root), worker_input)
         self.assertEqual(start_ticks(sleeper), ticks, 'nor the host command')
         self.until(lambda: 'manager_busy' not in self.waits(root), 20)
 

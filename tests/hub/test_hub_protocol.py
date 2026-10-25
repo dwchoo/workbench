@@ -105,7 +105,7 @@ class HubProtocolTests(unittest.TestCase):
         line.send({'v': 1, 'type': 'hello', 'client': 'c' * 64})
         self.assertEqual(line.recv()['type'], 'welcome')
 
-    def test_status_reports_the_hub_record_registry_and_unavailable_web(self):
+    def test_status_reports_the_hub_record_registry_and_closed_web(self):
         hub = self.box.start_hub()
         record = self.box.record()
         line = self.connect()
@@ -117,7 +117,7 @@ class HubProtocolTests(unittest.TestCase):
         self.assertEqual(reply['hub']['pid'], hub.pid)
         self.assertEqual(reply['registry'], {'state': 'ok', 'count': 0,
                                              'path': str(self.box.state / 'registry.json')})
-        self.assertEqual(reply['web'], {'state': 'not_available'})
+        self.assertEqual(reply['web'], {'state': 'password_not_set'})  # no auth.json in the sandbox (TI-03)
         self.assertIsNone(reply['board_agent'])
 
     def assert_stopped_and_clean(self, hub, record: dict) -> None:

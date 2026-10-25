@@ -84,8 +84,34 @@ def cmd_hub_status(args: argparse.Namespace) -> int:
     print(f"  log: {hub.get('log')}")
     print(f"  registry: {registry.get('state')}, {registry.get('count')}개 ({registry.get('path')})")
     print(f"  부팅 자동 시작: {boot}")
-    print(f"  web: {(status['web'] or {}).get('state')}")
+    for line in web_status_lines(status["web"] or {}):
+        print(f"  {line}")
     return EXIT_OK
+
+
+PASSWORD_NOT_SET_HINT = "'wb hub passwd'로 비밀번호를 정하세요"
+
+
+def web_status_lines(web: dict) -> list[str]:
+    """``web: listening <url>`` (+ the plain-HTTP warning) or ``web: not_listening (<reason>)``."""
+    from .config import INSECURE_WARNING_TEXT
+    state, detail = web.get("state"), web.get("detail")
+    if state == "listening":
+        lines = [f"web: listening {web.get('url')}"]
+        if web.get("insecure_warning"):
+            lines.append(f"경고: {INSECURE_WARNING_TEXT}")
+        for warning in web.get("warnings") or ():
+            kind, _, value = str(warning).partition(":")
+            if kind == "tls_key_mode":
+                lines.append(f"경고: TLS key 파일 권한이 {value}입니다. 'chmod 600 <key>'로 본인만 읽게 하세요.")
+            else:
+                lines.append(f"경고: {warning}")
+        return lines
+    reason = f"{state}:{detail}" if detail else f"{state}"
+    line = f"web: not_listening ({reason})"
+    if state == "password_not_set" and not detail:
+        line += f" — {PASSWORD_NOT_SET_HINT}"
+    return [line]
 
 
 LIST_TIMEOUT = 30.0  # rows are observed in parallel batches, each bounded by status.OBSERVE_TIMEOUT

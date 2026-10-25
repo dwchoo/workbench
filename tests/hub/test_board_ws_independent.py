@@ -340,6 +340,9 @@ class Env(unittest.IsolatedAsyncioTestCase):
     MISSES = 2
     HELLO = 1.0
     QUEUE_LIMIT = board_ws.SEND_QUEUE_LIMIT
+    MAX_CONNECTIONS: int | None = None  # None: the shipped caps (8 sockets, 2 before the hello per session)
+    MAX_PENDING: int | None = None
+    SESSION_CHECK: float | None = None
 
     @property
     def limit(self) -> float:
@@ -368,7 +371,10 @@ class Env(unittest.IsolatedAsyncioTestCase):
         self.board = BoardSet(self.launcher, grace=1.0)
         self.terminal = board_ws.BoardTerminal(
             self.board, heartbeat=self.HEARTBEAT, misses=self.MISSES, slack=self.SLACK, hello_timeout=self.HELLO,
-            queue_limit=self.QUEUE_LIMIT, audit=board_ws.audit_to(self.services))
+            queue_limit=self.QUEUE_LIMIT, audit=board_ws.audit_to(self.services),
+            **{key: value for key, value in (('max_connections', self.MAX_CONNECTIONS),
+                                             ('max_pending', self.MAX_PENDING),
+                                             ('session_check', self.SESSION_CHECK)) if value is not None})
         self.app = create_app(self.services, routes=[board_ws.routes(lambda: self.terminal)])
         self.runner = web.AppRunner(self.app, access_log=None, handle_signals=False, shutdown_timeout=2)
         await self.runner.setup()
@@ -417,6 +423,7 @@ class Env(unittest.IsolatedAsyncioTestCase):
         cookie = kwargs.pop('cookie', (session or self.session).token)
         wire = Wire(proxy.port if proxy else self.port, self.headers(cookie=cookie, **kwargs), read=read,
                     rcvbuf=rcvbuf, label=label, reply_close=reply_close)
+        wire.csrf = (session or self.session).csrf
         self.wires.append(wire)
         if connect:
             self.assertEqual(await wire.open(), 101)
@@ -538,15 +545,99 @@ class UpgradeTests(Env):
 
 
 # ===================================================================================================
+# Connection caps (SPEC 2026-10-25: 8 sockets in all -> 503, 2 per session before the hello -> 429; both
+# refused before the upgrade)
+# ===================================================================================================
+
+class ConnectionCapTests(Env):
+    HELLO = 1.5
+    HEARTBEAT = 5.0  # an idle holder must not time out while the test waits for hello windows
+
+    async def refused(self, session=None) -> int:
+        wire = await self.wire(session=session, connect=False)
+        return await wire.open()
+
+    async def test_the_ninth_socket_in_all_is_refused_503_and_attached_sockets_count(self):
+        holder, attached = await self.tab(label='attached')  # 1 open, greeted
+        waiting = []
+        for _ in range(3):  # 3 sessions x 2 sockets before their hello = 6
+            session = self.new_session()
+            waiting += [await self.wire(session=session) for _ in range(2)]
+        last = self.new_session()
+        waiting.append(await self.wire(session=last))  # 8th socket: one before its hello in a fifth session
+        self.assertEqual(self.terminal.open, 8)
+        self.assertEqual(await self.refused(last), 503, 'the 9th socket: below its per-session cap, over the total')
+        self.assertEqual(await self.refused(self.new_session()), 503)
+        self.assertEqual(await self.refused(self.session), 503)
+        await holder.ping(attached['epoch'])
+        self.assertEqual((self.lease()['state'], self.lease()['epoch']), ('connected', 1))
+        self.assertEqual(self.audit(), [('terminal_attach', 1, None)], 'a refused upgrade leaves no row')
+        # A socket that ends frees its place.
+        await waiting[0].close()
+        self.assertTrue(await until(lambda: self.terminal.open == 7, 5))
+        again = await self.wire(session=last)
+        self.assertEqual(self.terminal.open, 8)
+        self.assertEqual(await self.refused(self.new_session()), 503)
+        await again.attach(last.csrf)  # and it works
+        self.assertEqual(again.of('attached')[0]['epoch'], 2)
+
+    async def test_a_third_socket_before_the_hello_in_one_session_is_refused_429(self):
+        first = await self.wire(label='first')
+        second = await self.wire(label='second')
+        self.assertEqual(await self.refused(), 429)
+        other = self.new_session()
+        elsewhere = await self.wire(session=other, label='elsewhere')  # another session is not limited by it
+        self.assertEqual(elsewhere.status, 101)
+        # A greeted socket no longer counts as waiting.
+        await first.attach(self.session.csrf)
+        third = await self.wire(label='third')
+        self.assertEqual(await self.refused(), 429, 'second and third are waiting again')
+        self.assertEqual(self.audit(), [('terminal_attach', 1, None)], 'a refused upgrade leaves no row')
+        # The hello window frees the places (4400), then the session may open sockets again.
+        self.assertEqual(await second.wait_close(5), 4400)
+        self.assertEqual(await third.wait_close(5), 4400)
+        self.assertTrue(await until(lambda: self.terminal.pending.get(self.session.token, 0) == 0, 5))
+        await self.wire(label='fresh')
+        self.assertEqual((self.lease()['state'], self.lease()['epoch']), ('connected', 1), 'the holder was never touched')
+
+    async def test_the_caps_never_touch_the_current_holder_or_its_input(self):
+        holder, attached = await self.tab(label='holder')
+        for _ in range(2):
+            await self.wire()
+        for _ in range(3):
+            self.assertEqual(await self.refused(), 429)
+        await self.type_in(holder, attached['epoch'], b'still-typing;')
+        self.assertEqual(self.recorded(), b'still-typing;')
+
+
+# ===================================================================================================
 # Hello (5 s window -> 4400; csrf -> 4403)
 # ===================================================================================================
 
 class HelloTests(Env):
+    denied = 0
+
+    async def assert_denied(self) -> None:
+        """Every failed hello leaves exactly one ``terminal_denied`` row: epoch (and a reason) only."""
+        self.denied += 1
+        rows = await self.audit_has(self.denied)
+        await self.settled()
+        rows = self.audit_rows()
+        self.assertEqual([event for event, _, _ in rows], ['terminal_denied'] * self.denied)
+        for _, actor, detail in rows:
+            self.assertEqual(actor, 'owner')
+            self.assertEqual(detail['epoch'], 0)
+            self.assertLessEqual(set(detail), {'epoch', 'previous_epoch', 'reason'})
+            self.assertIsNone(detail.get('previous_epoch'))
+        dump = json.dumps(rows)
+        for secret in (self.session.csrf, self.session.token, 'not json', 'wrong'):
+            self.assertNotIn(secret, dump)
+
     async def assert_no_attach(self, wire: Wire, code: int):
         self.assertEqual(await wire.wait_close(5), code, wire.events)
         self.assertEqual(wire.of('attached'), [])
-        await self.settled()
-        self.assertEqual((self.terminal.epoch, self.lease()['state'], self.audit()), (0, 'none', []))
+        await self.assert_denied()
+        self.assertEqual((self.terminal.epoch, self.lease()['state']), (0, 'none'))
         self.assertIsNone(self.terminal.current)
 
     async def test_no_hello_in_time_closes_4400(self):
@@ -556,6 +647,7 @@ class HelloTests(Env):
         self.assertGreaterEqual(wire.closed_at - t0, self.HELLO - 0.05)
         self.assertLess(wire.closed_at - t0, self.HELLO + 1.5)
         self.assertEqual(self.terminal.epoch, 0)
+        await self.assert_denied()
 
     async def test_the_hello_window_is_per_connection_and_a_late_hello_is_too_late(self):
         wire = await self.wire()
@@ -567,6 +659,7 @@ class HelloTests(Env):
         self.assertEqual(await wire.wait_close(3), 4400)
         self.assertEqual(wire.of('attached'), [])
         self.assertEqual(self.terminal.epoch, 0)
+        await self.assert_denied()
 
     async def test_a_first_frame_that_is_not_a_valid_hello_closes_4400(self):
         valid = {'t': 'hello', 'v': 1, 'csrf': self.session.csrf, 'resume': None, 'sizes': {}}
@@ -595,6 +688,7 @@ class HelloTests(Env):
             pass
         self.assertEqual(await wire.wait_close(5), 4400)
         self.assertEqual(wire.of('attached'), [])
+        await self.assert_denied()  # the first socket's row above, this one's second
 
     async def test_a_wrong_missing_or_foreign_csrf_closes_4403_without_attaching(self):
         other = self.new_session()
@@ -909,6 +1003,10 @@ class NetworkCutTests(Env):
         self.assertEqual(await revived.wait_close(5), 4001)
         await new.ping(second['epoch'])
         self.assertEqual((self.lease()['state'], self.lease()['epoch']), ('connected', second['epoch']))
+        rows = await self.audit_has(4)
+        self.assertEqual(rows[-1], ('terminal_denied', second['epoch'], None), 'taken_elsewhere is one denied row')
+        self.assertEqual(len([row for row in rows if row[0] == 'terminal_denied']), 1)
+        self.assertEqual({tuple(detail) for _, _, detail in self.audit_rows()[-1:]}, {('epoch', 'previous_epoch')})
 
     async def test_a_resume_that_is_not_the_current_lease_never_evicts_the_holder(self):
         holder, attached = await self.tab(label='holder')
@@ -941,9 +1039,14 @@ class NetworkCutTests(Env):
 # Scenario 4: many tabs at once
 # ===================================================================================================
 
-class SimultaneousTests(Env):
-    async def race(self, count: int):
-        wires = [await self.wire(label=f'tab{index}') for index in range(count)]
+class RaceChecks(Env):
+    """The single-holder invariant under true concurrency. ``sessions``: the login sessions the tabs are spread
+    over round-robin (each must stay within the per-session cap of sockets before their hello)."""
+
+    async def race(self, count: int, sessions=None):
+        sessions = sessions or [self.session]
+        wires = [await self.wire(label=f'tab{index}', session=sessions[index % len(sessions)])
+                 for index in range(count)]
         samples: list[tuple[str, int]] = []
         stop = False
 
@@ -952,15 +1055,15 @@ class SimultaneousTests(Env):
                 samples.append((self.lease()['state'], self.lease()['epoch']))
                 await asyncio.sleep(0.002)
         watcher = asyncio.create_task(sampler())
-        await asyncio.gather(*(wire.hello(self.session.csrf) for wire in wires))
+        await asyncio.gather(*(wire.hello(wire.csrf) for wire in wires))
         await until(lambda: self.terminal.epoch == count, 10)
         await asyncio.sleep(0.4)
         stop = True
         await watcher
         return wires, samples
 
-    async def check_race(self, count: int):
-        wires, samples = await self.race(count)
+    async def check_race(self, count: int, sessions=None):
+        wires, samples = await self.race(count, sessions)
         alive = [wire for wire in wires if not wire.eof]
         self.assertEqual(len(alive), 1, 'exactly one connection survives')
         survivor = alive[0]
@@ -996,8 +1099,13 @@ class SimultaneousTests(Env):
         await asyncio.sleep(self.limit / 2)
         self.assertEqual((self.terminal.epoch, survivor.close_code), (count, None))
 
-    async def test_two_tabs_at_once_leave_exactly_one_holder(self):
-        await self.check_race(2)
+
+
+class SimultaneousTests(RaceChecks):
+    """Many tabs at once: the caps are raised so the race itself (not the 8-socket limit) is what is exercised;
+    ``RealCapRaceTests`` repeats the invariant under the shipped caps."""
+    MAX_CONNECTIONS = 64
+    MAX_PENDING = 64
 
     async def test_five_tabs_at_once_leave_exactly_one_holder(self):
         await self.check_race(5)
@@ -1012,7 +1120,7 @@ class SimultaneousTests(Env):
         other = self.new_session()
         sessions = [self.session, other] * 3
         wires = [await self.wire(session=session, label=f's{index}') for index, session in enumerate(sessions)]
-        await asyncio.gather(*(wire.hello(session.csrf) for wire, session in zip(wires, sessions)))
+        await asyncio.gather(*(wire.hello(wire.csrf) for wire in wires))
         await until(lambda: self.terminal.epoch == 6, 10)
         await asyncio.sleep(0.3)
         self.assertEqual(len([wire for wire in wires if not wire.eof]), 1)
@@ -1047,6 +1155,20 @@ class SimultaneousTests(Env):
                          'attach order is hello arrival order')
         self.assertEqual(len([wire for wire in wires if not wire.eof]), 1)
         self.assertFalse(wires[-1].eof)
+
+
+class RealCapRaceTests(RaceChecks):
+    """The single-holder invariant under the shipped caps: 8 sockets in all, 2 per session before the hello."""
+
+    async def test_two_tabs_of_one_session_at_once_leave_exactly_one_holder(self):
+        self.assertEqual((self.terminal.max_connections, self.terminal.max_pending), (8, 2))
+        await self.check_race(2)
+
+    async def test_four_tabs_of_two_sessions_at_once_leave_exactly_one_holder(self):
+        await self.check_race(4, [self.session, self.new_session()])
+
+    async def test_eight_tabs_of_four_sessions_filling_the_cap_leave_exactly_one_holder(self):
+        await self.check_race(8, [self.session] + [self.new_session() for _ in range(3)])
 
 
 # ===================================================================================================
@@ -1149,6 +1271,7 @@ class StaleInputTests(Env):
             self.assertIn(head, prefixes, f'trial {trial}: not an in-order prefix of the old burst')
             self.assertNotIn(late, delta, trial)
             seen.add(len(head))
+            await old.close()  # a socket that never answers the close would count against the 8-socket cap
         self.assertEqual((self.lease()['state'], self.lease()['epoch']), ('connected', 24))
 
     async def test_input_queued_behind_a_release_in_the_same_segment_is_dropped(self):
@@ -1473,6 +1596,58 @@ class SendQueueTests(Env):
 
 
 # ===================================================================================================
+# The login session ends -> the open terminal ends with 4401 (logout at once, CLI passwd within ~6 s)
+# ===================================================================================================
+
+class SessionEndTests(Env):
+    async def post(self, path: str, data: dict, session=None) -> int:
+        session = session or self.session
+        headers = {'Origin': self.url, 'Cookie': f'wb_hub_session={session.token}'}
+        async with aiohttp.ClientSession(cookie_jar=aiohttp.DummyCookieJar()) as http:
+            async with http.post(self.url + path, data=data, headers=headers, allow_redirects=False) as response:
+                return response.status
+
+    async def test_logout_closes_that_sessions_terminal_4401_at_once_and_spares_others(self):
+        wire, attached = await self.tab(label='logged-out')
+        epoch = attached['epoch']
+        await self.type_in(wire, epoch, b'before-logout;')
+        other = self.new_session()
+        bystander = await self.wire(session=other, label='bystander')  # another session, before its hello
+        self.remember_procs()
+        t0 = time.monotonic()
+        self.assertEqual(await self.post('/logout', {'csrf': self.session.csrf}), 303)
+        self.assertEqual(await wire.wait_close(3), 4401)
+        self.assertLess(time.monotonic() - t0, 1.0, 'logout does not wait for the 5 s session check')
+        self.assertEqual((self.lease()['state'], self.lease()['epoch']), ('none', epoch))
+        rows = await self.audit_has(2)
+        self.assertEqual(rows, [('terminal_attach', epoch, None), ('terminal_closed', epoch, None)])
+        for pid, ticks in self.procs.items():
+            self.assertTrue(pid_alive(pid, ticks), 'a logout never ends the PTY')
+        again = await self.wire(connect=False)  # the dead cookie opens nothing
+        self.assertEqual(await again.open(), 401)
+        await bystander.hello(other.csrf)
+        self.assertEqual((await bystander.wait_event('attached'))['epoch'], epoch + 1)
+        await bystander.wait_output('shell', b'<before-logout;>')  # the set and its replay live on
+
+    async def test_a_cli_password_change_closes_the_terminal_4401_within_about_six_seconds(self):
+        """``wb hub passwd`` rewrites the password file; the Hub's 5 s session re-check notices it."""
+        wire, attached = await self.tab(label='cli')
+        epoch = attached['epoch']
+        t0 = time.monotonic()
+        await asyncio.get_running_loop().run_in_executor(None, self.passwords.set_password, 'another password 1')
+        while wire.close_code is None and time.monotonic() - t0 < 9:
+            wire.lenient = True
+            await wire.send_json({'t': 'ping', 'epoch': epoch, 'n': 1})  # a live tab: not the heartbeat
+            await asyncio.sleep(0.2)
+        await wire.wait_close(3)
+        elapsed = wire.closed_at - t0
+        self.assertEqual(wire.close_code, 4401)
+        self.assertLess(elapsed, 6.5, f'closed after {elapsed:.1f}s')
+        self.assertEqual((self.lease()['state'], self.lease()['epoch']), ('none', epoch))
+        self.assertEqual((await self.audit_has(2))[-1], ('terminal_closed', epoch, None))
+
+
+# ===================================================================================================
 # Hub stop (SPEC: WebSocket closed 1001 before the set ends)
 # ===================================================================================================
 
@@ -1621,6 +1796,30 @@ class RealHubTests(unittest.IsolatedAsyncioTestCase):
         rows = [row['epoch'] for row in self.hub.audit('terminal_attach')]
         self.assertEqual(sorted(rows), [first['epoch'], second['epoch']])
         self.assertNotIn(b'FRESH', (self.hub.box.state / 'hub.sqlite3').read_bytes())
+
+    async def test_a_cli_password_change_closes_the_open_terminal_4401_within_about_six_seconds(self):
+        """The real ``wb hub passwd`` while a tab is attached (the Hub re-checks the login every 5 s)."""
+        tab = await self.wire('cli-tab')
+        self.assertEqual(await tab.open(), 101)
+        attached = await tab.attach(self.csrf)
+        await tab.wait_output('shell', b'ready:shell;', 20)
+        t0 = time.monotonic()
+        result = await asyncio.to_thread(self.hub.box.set_password, 'a second hub password 7')
+        self.assertEqual(result.returncode, 0)
+        tab.lenient = True
+        while tab.close_code is None and time.monotonic() - t0 < 12:
+            await tab.send_json({'t': 'ping', 'epoch': attached['epoch'], 'n': 1})
+            await asyncio.sleep(0.25)
+        await tab.wait_close(3)
+        elapsed = tab.closed_at - t0
+        self.assertEqual(tab.close_code, 4401)
+        self.assertLess(elapsed, 7.5, f'closed {elapsed:.1f}s after the password change started')
+        self.assertEqual((await self.lease_state()), 'none')
+        self.assertEqual([row['epoch'] for row in self.hub.audit('terminal_closed')], [attached['epoch']])
+        self.assertEqual(self.hub.board()['shell']['state'], 'running')
+
+    async def lease_state(self) -> str:
+        return ((await asyncio.to_thread(self.hub.board)) or {}).get('lease', {}).get('state')
 
 
 if __name__ == '__main__':

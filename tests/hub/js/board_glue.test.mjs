@@ -20,10 +20,16 @@ function element(id) {
 
 const terminals = [];
 class FakeTerminal {
-  constructor() {
+  constructor(options) {
     this.rows = 30; this.cols = 100; this.options = {}; this.written = []; this.raw = []; this.resets = 0; this.handlers = {};
+    this.created = options; this.selection = ""; this.cleared = 0; this.bottomScrolls = 0;
     terminals.push(this);
   }
+  attachCustomKeyEventHandler(handler) { this.keyHandler = handler; }
+  hasSelection() { return this.selection !== ""; }
+  getSelection() { return this.selection; }
+  clearSelection() { this.selection = ""; this.cleared += 1; }
+  scrollToBottom() { this.bottomScrolls += 1; }
   loadAddon() {}
   open() {}
   focus() {}
@@ -46,10 +52,24 @@ class FakeWebSocket {
 const timers = new Map();
 const windowListeners = {};
 let timerSeq = 0;
+const documentListeners = {};
+const clipboard = { copied: [], execResult: true };
 globalThis.document = {
   getElementById: element,
   querySelector: (selector) => (selector.includes("csrf-token") ? { content: "csrf-from-meta" } : null),
+  addEventListener: (type, handler) => { documentListeners[type] = handler; },
+  // The browser's copy command: a copy event the page may fill (plain HTTP has no navigator.clipboard).
+  execCommand(command) {
+    if (command !== "copy" || !clipboard.execResult) return false;
+    const event = { clipboardData: { setData: (type, text) => clipboard.copied.push([type, text]) },
+      defaultPrevented: false, preventDefault() { this.defaultPrevented = true; } };
+    if (documentListeners.copy) documentListeners.copy(event);
+    clipboard.lastEventPrevented = event.defaultPrevented;
+    return true;
+  },
 };
+Object.defineProperty(globalThis, "navigator", { value: { platform: "Linux x86_64", userAgent: "test" }, configurable: true });
+globalThis.isSecureContext = false;
 globalThis.window = { addEventListener: (type, handler) => { windowListeners[type] = handler; } };
 globalThis.location = { protocol: "http:", host: "127.0.0.1:8780" };
 globalThis.Terminal = FakeTerminal;
@@ -163,4 +183,74 @@ test("close 4401 shows 연결 없음 — 다시 로그인 with the login link an
   assert.equal(element("board-login").hidden, false);
   assert.equal(element("board-reconnect").hidden, true);
   assert.equal([...timers.values()].filter((timer) => timer.ms === 1000).length, 0, "no reconnect timer");
+});
+
+const keyEvent = (key, mods = {}, extra = {}) => ({
+  type: "keydown", key, code: key.length === 1 ? `Key${key.toUpperCase()}` : key, keyCode: 0,
+  ctrlKey: false, shiftKey: false, altKey: false, metaKey: false, isComposing: false, prevented: 0,
+  preventDefault() { this.prevented += 1; }, stopPropagation() {}, ...mods, ...extra,
+});
+
+test("both terminals keep a 10000-line scrollback, return to the bottom on typing and never on output", () => {
+  for (const term of terminals) {
+    assert.ok(term.created.scrollback >= 10000, `scrollback ${term.created.scrollback}`);
+    assert.notEqual(term.created.scrollOnUserInput, false);
+    assert.equal(typeof term.keyHandler, "function", "a key handler for copy and paste");
+  }
+  assert.equal(terminals[0].bottomScrolls + terminals[1].bottomScrolls, 0, "output never yanks the view down");
+});
+
+test("Ctrl+Shift+C copies the selection through the copy event even while disconnected, Hangul intact", () => {
+  assert.equal(element("board-connection").textContent, "연결 없음 — 다시 로그인");
+  const term = terminals[1];
+  term.selection = "한글 출력   \n둘째 줄 ";
+  const event = keyEvent("C", { ctrlKey: true, shiftKey: true });
+  assert.equal(term.keyHandler(event), false, "xterm does not see the key");
+  assert.equal(event.prevented, 1, "the browser's own Ctrl+Shift+C does not run");
+  assert.deepEqual(clipboard.copied.at(-1), ["text/plain", "한글 출력\n둘째 줄"]);
+  assert.equal(clipboard.lastEventPrevented, true);
+  assert.equal(term.selection, "", "the selection is cleared: the next Ctrl+C is ^C");
+});
+
+test("Ctrl+C copies only with a selection; Ctrl+V is left to the browser's paste; IME keys go to xterm", () => {
+  const term = terminals[0];
+  const copies = clipboard.copied.length;
+  const plain = keyEvent("c", { ctrlKey: true });
+  assert.equal(term.keyHandler(plain), true, "^C reaches the program");
+  assert.equal(plain.prevented, 0);
+  term.selection = "가나다";
+  assert.equal(term.keyHandler(keyEvent("c", { ctrlKey: true })), false);
+  assert.deepEqual(clipboard.copied.at(-1), ["text/plain", "가나다"]);
+  assert.equal(clipboard.copied.length, copies + 1);
+  for (const type of ["keypress", "keyup"]) {
+    term.selection = "x";
+    assert.equal(term.keyHandler(keyEvent("c", { ctrlKey: true, shiftKey: true }, { type })), false);
+  }
+  assert.equal(clipboard.copied.length, copies + 1, "only the keydown copies");
+  const paste = keyEvent("v", { ctrlKey: true });
+  assert.equal(term.keyHandler(paste), false, "xterm does not turn Ctrl+V into ^V");
+  assert.equal(paste.prevented, 0, "the browser's paste event still happens");
+  term.selection = "sel";
+  assert.equal(term.keyHandler(keyEvent("c", { ctrlKey: true }, { keyCode: 229 })), true);
+  assert.equal(term.keyHandler(keyEvent("ㅎ", {}, { isComposing: true })), true);
+  assert.equal(term.keyHandler(keyEvent("PageUp", { shiftKey: true })), true);
+});
+
+test("without a copy command the clipboard API is used only in a secure context", () => {
+  const writes = [];
+  Object.defineProperty(globalThis, "navigator", {
+    value: { platform: "Linux", userAgent: "t", clipboard: { writeText: (text) => { writes.push(text); return Promise.resolve(); } } },
+    configurable: true,
+  });
+  clipboard.execResult = false;
+  const term = terminals[0];
+  term.selection = "보안 없음";
+  term.keyHandler(keyEvent("C", { ctrlKey: true, shiftKey: true }));
+  assert.deepEqual(writes, []);
+  globalThis.isSecureContext = true;
+  term.selection = "보안 있음  ";
+  term.keyHandler(keyEvent("C", { ctrlKey: true, shiftKey: true }));
+  assert.deepEqual(writes, ["보안 있음"]);
+  clipboard.execResult = true;
+  globalThis.isSecureContext = false;
 });

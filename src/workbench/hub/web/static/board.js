@@ -1,7 +1,7 @@
 // Board page: xterm.js terminals for the Board agent and the shell over /ws/board (TI-18).
 // This file is DOM and socket glue only. Every protocol rule lives in board-state.js (pure, node-tested);
 // here events are fed to step() and its effects are carried out. No inline script, no external URL.
-import { initialState, step, describe, channelLabel } from "./board-state.js";
+import { initialState, step, describe, channelLabel, terminalKey, selectionText } from "./board-state.js";
 
 const CHANNELS = ["agent", "shell"];
 const NOTICES = {
@@ -135,14 +135,49 @@ function main() {
     terminals[name].term.focus();
   }
 
+  // Copy: the page's own copy command fills the browser's copy event (works on plain HTTP, where
+  // navigator.clipboard is missing); the clipboard API is only a fallback in a secure context.
+  let copying = null;
+  document.addEventListener("copy", (event) => {
+    if (copying === null || !event.clipboardData) return;
+    event.clipboardData.setData("text/plain", copying);
+    event.preventDefault();
+  });
+  function copySelection(term) {
+    const text = selectionText(term.getSelection());
+    if (text === "") return;
+    copying = text;
+    let done = false;
+    try { done = document.execCommand("copy"); } catch (_) { done = false; } finally { copying = null; }
+    const api = globalThis.navigator && globalThis.navigator.clipboard;
+    if (!done && globalThis.isSecureContext && api && typeof api.writeText === "function") {
+      api.writeText(text).catch(() => { /* nothing more to try */ });
+    }
+    term.clearSelection(); // the next Ctrl+C is ^C again
+  }
+  const nav = globalThis.navigator || {};
+  const mac = /Mac|iPhone|iPad/.test(nav.platform || nav.userAgent || "");
+
   for (const name of CHANNELS) {
+    // scrollOnUserInput: typing or a paste returns to the bottom; output never moves a scrolled-up view.
     const term = new TerminalClass({
-      cursorBlink: true, scrollback: 5000, fontSize: 14, fontFamily: "ui-monospace, Menlo, Consolas, monospace",
+      cursorBlink: true, scrollback: 10000, scrollOnUserInput: true, fontSize: 14,
+      fontFamily: "ui-monospace, Menlo, Consolas, monospace",
     });
     const fit = new FitAddonClass();
     term.loadAddon(fit);
     term.open(byId(`term-${name}`));
     terminals[name] = { term, fit };
+    // Copy works without the lease (scrollback stays readable); paste and typing stay the holder's (disableStdin).
+    term.attachCustomKeyEventHandler((event) => {
+      const action = terminalKey(event, { mac, hasSelection: term.hasSelection() });
+      if (action === "pass") return true;
+      if (action === "copy" && event.type === "keydown") {
+        event.preventDefault();
+        copySelection(term);
+      }
+      return false; // "native": the browser's paste event reaches xterm's own paste handler
+    });
     term.onData((data) => dispatch({ type: "input", channel: name, bytes: encoder.encode(data) }));
     term.onBinary((data) => dispatch({ type: "input", channel: name, bytes: Uint8Array.from(data, (c) => c.charCodeAt(0) & 255) }));
     term.onResize(({ rows, cols }) => dispatch({ type: "resize", channel: name, rows, cols }));

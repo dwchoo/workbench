@@ -279,3 +279,37 @@ function onData(state, bytes) {
   if (frame === null || frame.epoch !== state.epoch) return NONE(state);
   return { state, effects: [{ type: "write", channel: frame.channel, payload: frame.payload }] };
 }
+
+// Clipboard and IME keys for xterm's custom key handler: "copy" (the page copies the selection itself),
+// "native" (xterm leaves the key alone, so the browser's own paste event reaches xterm's paste handler: no
+// navigator.clipboard, which plain HTTP does not have) or "pass" (xterm handles it: the PTY, scrolling, IME).
+// Ctrl+C copies only while something is selected; otherwise it is ^C for the program. A Mac uses Cmd.
+// The letter is the physical key when the layout gives another character (Hangul mode: Ctrl+ㅊ is Ctrl+C).
+function letterOf(event) {
+  const key = typeof event.key === "string" ? event.key : "";
+  if (/^[A-Za-z]$/.test(key)) return key.toLowerCase();
+  const match = /^Key([A-Z])$/.exec(event.code || "");
+  return match ? match[1].toLowerCase() : key;
+}
+
+export function terminalKey(event, { mac, hasSelection }) {
+  if (event.isComposing || event.keyCode === 229) return "pass"; // an IME composition belongs to xterm
+  const { ctrlKey: ctrl, shiftKey: shift, altKey: alt, metaKey: meta } = event;
+  const letter = letterOf(event);
+  if (mac) {
+    if (meta && !ctrl && !alt && letter === "c") return hasSelection ? "copy" : "pass";
+    if (meta && !ctrl && !alt && letter === "v") return "native";
+    return "pass";
+  }
+  if (alt || meta) return "pass";
+  if (ctrl && letter === "c") return shift || hasSelection ? "copy" : "pass";
+  if (ctrl && letter === "v") return "native";
+  if (event.key === "Insert" && ctrl && !shift) return "copy";
+  if (event.key === "Insert" && shift && !ctrl) return "native";
+  return "pass";
+}
+
+// What a copy puts on the clipboard: xterm's selection without the padding spaces at line ends.
+export function selectionText(text) {
+  return text.replace(/[ \t]+(?=\r?\n|$)/g, "");
+}

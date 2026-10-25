@@ -19,6 +19,7 @@ from workbench.backend.paths import (BackendLocked, DataDirError, InstanceLock, 
 from workbench.contracts import hub_v1
 
 from . import config as hub_config, mcp, registry
+from .inbox import backend_port
 from .inbox.dispatch import Dispatcher
 from .inbox.limits import InboxError
 from .inbox.service import OPEN_STATES, InboxService, Principal, ProjectRef
@@ -110,8 +111,9 @@ class Hub:
         self.watchdog_reason: str | None = None
         self.lister = Lister(layout, requests=self._row_requests)
         # TI-10: every inbox commit wakes the dispatcher (it only marks work; it never calls back in)
+        # TI-13: a READY/RUNNING cancel asks the backend's cancel_task right after its commit (backend_port)
         self.inbox = InboxService(on_committed=lambda event: self.dispatcher.committed(event),
-                                  backend_running=self._backend_running)
+                                  backend_running=self._backend_running, cancel_port=backend_port.cancel_port)
         self.dispatcher = Dispatcher(self.inbox, self._dispatch_targets)
         # TI-05: ``/mcp`` on the web listener (the Board agent's internal listener reuses it, TI-16)
         self.mcp = mcp.McpServer(self.inbox, projects=self._mcp_projects)

@@ -99,3 +99,17 @@ def cancel_task(root: Path, task_id: str, request_id: str, expect: dict[str, Any
     """``cancel_task`` → ``{cancel, stop}`` (TI-13 fills the backend side)."""
     return call(root, ClientType.CANCEL_TASK, timeout=timeout, task_id=task_id, request_id=request_id, expect=expect,
                 reason=reason)
+
+
+def cancel_port(ref: Any, task_id: str, request_id: str, expect: dict[str, Any], reason: str | None) -> dict[str, Any]:
+    """The ``InboxService`` cancel port (TI-13) over :func:`cancel_task`: ``{outcome: "accepted", cancel, stop}``,
+    ``{outcome: "refused", reason}`` (nothing was sent, or the backend refused: nothing was cancelled) or
+    ``{outcome: "unknown"}`` (sent, no answer)."""
+    try:
+        reply = cancel_task(Path(ref.root), task_id, request_id, expect, reason)
+    except BackendPortError as exc:
+        if exc.reason == "unknown":
+            return {"outcome": "unknown"}
+        return {"outcome": "refused", "reason": exc.reason}
+    stop = reply.get("stop")
+    return {"outcome": "accepted", "cancel": reply.get("cancel"), "stop": stop if isinstance(stop, dict) else None}

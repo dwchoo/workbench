@@ -299,8 +299,12 @@ class Dispatcher:
             return
         runs = [{"run_id": run.get("run_id"), "status": run.get("status"), "exit_code": run.get("exit_code")}
                 for run in task.get("runs") or () if isinstance(run, dict)]
+        command = task.get("command")  # TI-13: the running command the cancel confirmation shows and binds
+        command = ({"command_id": command.get("command_id"), "owner": command.get("owner"),
+                    "label": command.get("label"), "state": command.get("state")}
+                   if isinstance(command, dict) and isinstance(command.get("command_id"), str) else None)
         view = {"revision": task.get("revision"), "runs": runs,
-                "cancel_requested_by": task.get("cancel_requested_by")}
+                "cancel_requested_by": task.get("cancel_requested_by"), "command": command}
         user_cancelled = status == "closed" and task.get("cancel_requested_by") == "user"
         try:
             self.inbox.observe_task(item["request_id"], item["task_id"], status,

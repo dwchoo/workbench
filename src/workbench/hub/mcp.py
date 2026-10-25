@@ -303,6 +303,18 @@ def _command(view: dict) -> dict | None:
     return {"command_id": command["command_id"], "label": command.get("label"), "state": command.get("state")}
 
 
+def _cancel_answer(value: dict, *, stop: bool) -> dict:
+    """SPEC ``inbox_cancel``: ``cancel_requested`` (acceptance, never "cancelled"), the confirmed RUNNING cancel with
+    the backend's ``stop`` (null or ``{status: "stopping", ...}``); ``cancel: "unknown"`` when the backend's answer was
+    lost (the request stays requested, never a success)."""
+    answer: dict = {"status": "cancel_requested"}
+    if stop:
+        answer["stop"] = value.get("stop")
+    if value.get("cancel") == "unknown":
+        answer["cancel"] = "unknown"
+    return answer
+
+
 def _release() -> str:
     from .process import installed_version
     return str(installed_version().get("release") or "unknown")
@@ -456,14 +468,14 @@ class McpServer:
             if not two_step or (entry.version, entry.task_status, entry.command_id) != bound:
                 raise InboxError("token_mismatch", "the request or its Task changed after the confirm token was issued")
             try:
-                await self._blocking(self.inbox.cancel, principal, request_id, reason=reason,
-                                     base_version=entry.version)
+                value = await self._blocking(self.inbox.cancel, principal, request_id, reason=reason,
+                                             base_version=entry.version)
             except InboxError as exc:
                 if exc.code == "conflict":  # changed between the read above and the cancel commit
                     raise InboxError("token_mismatch", "the request changed after the confirm token was issued",
                                      state=exc.state, version=exc.version) from None
                 raise
-            return {"status": "cancel_requested", "stop": None}  # TI-13: the backend's command stop result
+            return _cancel_answer(value, stop=True)  # TI-13: the backend's command stop result
         if two_step:
             if request["cancel_state"] is not None:
                 raise InboxError("invalid_transition", "cancel was already requested", state=state,
@@ -474,7 +486,7 @@ class McpServer:
         value = await self._blocking(self.inbox.cancel, principal, request_id, reason=reason)
         if value["status"] == "cancelled":
             return {"status": "cancelled", "state": value["state"]}
-        return {"status": "cancel_requested"}
+        return _cancel_answer(value, stop=False)
 
     async def _inbox_result(self, principal: Principal, args: dict) -> dict:
         """SPEC "결과 조회" default: the manager's ``close`` summary, else the Task state and run lines.

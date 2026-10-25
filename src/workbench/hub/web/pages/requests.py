@@ -90,6 +90,7 @@ def _form_text(form, name: str) -> str:
 def _error_status(error: InboxError) -> int:
     return {"not_found": 404, "forbidden": 403, "conflict": 409, "invalid_transition": 409,
             "idempotency_conflict": 409, "backend_not_running": 409, "token_mismatch": 409,
+            "backend_unreachable": 503, "backend_too_old": 409, "backend_refused": 409,
             "inbox_busy": 503, "inbox_unavailable": 503, "project_unavailable": 503,
             "internal_error": 500}.get(error.code, 400)
 
@@ -100,6 +101,9 @@ ERROR_TEXT = {"not_found": "찾을 수 없습니다", "forbidden": "이 동작�
               "idempotency_conflict": "이미 제출된 양식입니다. 새 양식으로 다시 제출하세요",
               "backend_not_running": "프로젝트 backend가 꺼져 있어 실행 중인 작업은 취소할 수 없습니다",
               "token_mismatch": "작업이 바뀌었습니다. 확인 화면을 다시 여세요",
+              "backend_unreachable": "프로젝트 backend에 연결하지 못해 취소하지 않았습니다",
+              "backend_too_old": "프로젝트 backend가 오래되어 취소할 수 없습니다",
+              "backend_refused": "프로젝트 backend가 취소를 거절했습니다",
               "project_unavailable": "프로젝트를 사용할 수 없습니다", "inbox_busy": "요청 저장소가 사용 중입니다",
               "inbox_unavailable": "요청 저장소를 읽을 수 없습니다", "internal_error": "저장하지 못했습니다"}
 
@@ -349,7 +353,9 @@ def _post_form(request: web.Request, action: str, fields: dict, button: str, *, 
 NOTICES = {"created": "요청을 접수했습니다", "edited": "내용을 바꿨습니다", "revised": "새 revision으로 저장했습니다",
            "commented": "댓글을 남겼습니다", "answered": "답변을 남기고 검토로 돌려보냈습니다",
            "state_set": "상태를 바꿨습니다", "reopened": "요청을 다시 열었습니다", "cancelled": "요청을 취소했습니다",
-           "cancel_requested": "실행 중인 작업의 취소를 요청했습니다"}
+           "cancel_requested": "실행 중인 작업의 취소를 요청했습니다(아직 취소되지 않았습니다)",
+           "cancel_stopping": "취소를 요청했고 실행 중인 명령을 멈추는 중입니다(아직 취소되지 않았습니다)",
+           "cancel_unknown": "backend가 답하지 않아 취소 결과를 알 수 없습니다"}
 
 
 def detail_page(request: web.Request, detail: dict, *, notice: str | None = None, comment_error: InboxError | None = None,
@@ -367,7 +373,8 @@ def detail_page(request: web.Request, detail: dict, *, notice: str | None = None
              _definition("revision", f"r{detail['revision']}"), _definition("접수", when(detail["created_at"])),
              _definition("갱신", when(detail["updated_at"]))]
     if detail.get("cancel_state"):
-        facts.append(_definition("취소", "취소 요청됨"))
+        facts.append(_definition("취소", "취소 요청됨 · 명령 멈추는 중" if detail["cancel_state"] == "stop_requested"
+                                 else "취소 요청됨"))
     summary = render.tag("section", render.html_join([
         render.tag("h1", render.html_join([f"#{detail['seq']} ", render.tag("bdi", detail["title"])])),
         render.tag("dl", render.html_join(facts))]), id="summary")
@@ -513,7 +520,13 @@ def _binding(request: web.Request, detail: dict) -> tuple:
     status and its command."""
     principal, view = principal_of(request), detail["task"]["view"] or {}
     return (session_of(request).csrf, principal.kind, principal.key_id, detail["request_id"], detail["version"],
-            view.get("status"), view.get("command_id"))
+            view.get("status"), (_view_command(view) or {}).get("command_id"))
+
+
+def _view_command(view: dict) -> dict | None:
+    """The Task's running command in the synced view (``task_status.command``), or None."""
+    command = view.get("command")
+    return command if isinstance(command, dict) and isinstance(command.get("command_id"), str) else None
 
 
 def issue_cancel_token(request: web.Request, detail: dict) -> str:
@@ -548,11 +561,16 @@ async def get_cancel(request: web.Request) -> web.Response:
     fields = {"base_version": detail["version"]}
     if linked:
         view = detail["task"]["view"] or {}
+        command = _view_command(view)
+        command_text = EMPTY if command is None else (
+            f"{command.get('label') or command['command_id']} ({command.get('state') or 'running'})")
         parts.append(render.tag("section", render.html_join([
             render.tag("h2", "영향"),
-            render.tag("p", "연결된 Task와 실행 중인 명령을 멈추고, Task가 닫혀야 이 요청이 취소로 닫힙니다."),
+            render.tag("p", "연결된 Task와 실행 중인 명령을 멈추고(명령은 SIGINT부터), Task가 닫히고 명령이 끝나야 "
+                            "이 요청이 취소로 닫힙니다."),
             render.tag("dl", render.html_join([_definition("Task", detail["task"]["task_id"]),
                                                _definition("진행", view.get("status") or EMPTY),
+                                               _definition("실행 중인 명령", render.tag("bdi", command_text)),
                                                _definition("상태", state_label(detail["state"]))]))]), id="impact"))
         fields["token"] = issue_cancel_token(request, detail)
     parts.append(_post_form(request, request_url(rid, "/cancel"), fields, "확인", class_="inline"))
@@ -571,7 +589,10 @@ async def post_cancel(request: web.Request) -> web.Response:
         done = await _call(request, port.inbox.cancel, principal_of(request), rid, base_version=version)
     except InboxError as exc:
         return error_page(request, exc, back=request_url(rid))
-    return see_other(_query_url(request_url(rid), notice="cancelled" if done["status"] == "cancelled" else "cancel_requested"))
+    notice = ("cancelled" if done["status"] == "cancelled" else
+              "cancel_unknown" if done.get("cancel") == "unknown" else
+              "cancel_stopping" if done.get("stop") else "cancel_requested")
+    return see_other(_query_url(request_url(rid), notice=notice))
 
 
 @api

@@ -1440,6 +1440,8 @@ class TaskFlow:
             return HandoffDecision(rejected("unknown_task", detail=UNKNOWN_TASK_DETAIL))
         if task.status == "closed":
             return HandoffDecision(rejected("task_closed") | {"closed_reason": task.closed_reason})
+        if (task.cancel_requested or {}).get("by") == "user":  # TI-13: the user's cancel is under way; it stays
+            return HandoffDecision({"status": "cancel_requested", "task_id": task_id, "detail": CANCEL_WAIT_DETAIL})
         record = {"by": "manager", "message": request.args["message"][:SUMMARY_MAX], "at": _now(),
                   **self._standing(request)}
         cancel, notice = self._apply_cancel(task, record)

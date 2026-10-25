@@ -146,5 +146,46 @@ class CancelWithoutCommandTests(UserCancelFixture):
         return ActorRole.WORKER
 
 
+from test_task_flow import FlowFixture  # noqa: E402
+
+
+class ExperimentUserCancelTests(FlowFixture):
+    """The user's cancel of an experiment Task follows the manager's procedure (TaskFlow fixture, fake host)."""
+
+    def cancel(self, task_id, message="stop"):
+        return self.to_worker({"kind": "work", "message": message, "cancel": True, "task_id": task_id})
+
+    def test_an_unstarted_task_closes_and_the_worker_gets_nothing(self):
+        self.port.busy_reason = "a job is running"
+        pending = self.new_experiment()
+        self.assertTrue(wait_until(lambda: self.flow.task_view()["held_reason"] == "host_terminal_busy"))
+        status = self.flow.task_status(pending["task_id"])
+        result = self.flow.cancel_by_user(pending["task_id"], None, {"status": status, "command_id": None})
+        self.assertEqual((result["status"], result["cancel"], result["stop"]), ("accepted", "cancelled", None))
+        self.port.busy_reason = None
+        time.sleep(0.2)
+        self.assertEqual(self.runs, [], "nothing started")
+        self.assertEqual(self.mailbox.created, [], "the worker never got anything, so nothing is sent")
+
+    def test_a_running_host_command_waits_for_its_exit_and_a_later_manager_cancel_keeps_the_users(self):
+        self.gates.exit.clear()
+        pending = self.new_experiment()
+        task_id = pending["task_id"]
+        self.assertTrue(wait_until(lambda: self.flow.task_view()["status"] == "running"
+                                   and self.flow.status_view(task_id)["host_commands"]))
+        run_id = self.flow.task_view()["run_id"]
+        result = self.flow.cancel_by_user(task_id, "no longer needed", {"status": "running", "command_id": run_id})
+        self.assertEqual((result["status"], result["cancel"]), ("accepted", "cancel_requested"), result)
+        self.assertEqual(result["stop"]["command_id"], run_id, "the experiment command is the one stopped")
+        self.assertEqual(self.flow.task_status(task_id), "cancelling")
+        manager = self.cancel(task_id)
+        self.assertEqual(manager["status"], "cancel_requested", manager)
+        self.assertEqual(self.flow.tasks[task_id].cancel_requested["by"], "user", "the user's cancel stays")
+        self.gates.exit.set()
+        self.assertTrue(wait_until(lambda: self.flow.task_view()["status"] == "closed"))
+        self.assertEqual((self.flow.task_view()["closed_reason"], self.gates.judged), ("cancelled", 0))
+        self.assertEqual(self.run_history(run_id)[-1]["details"].get("reason"), "cancelled_by_user")
+
+
 if __name__ == "__main__":
     unittest.main()

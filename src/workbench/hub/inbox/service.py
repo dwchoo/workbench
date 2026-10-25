@@ -40,6 +40,19 @@ REVIEW_ACTIONS = ("begin_review", "ask", "comment", "reject", "close")
 UNKNOWN_DELIVERY_COMMENT = "manager 전달 여부 확인 불명"
 REQUEUED_COMMENT = ("backend가 다시 시작되어(이전 manager 전달은 확인되지 않음) 이 요청을 manager에게 다시 전달합니다.")
 EXCERPT_MAX = 1000  # SPEC ``inbox_notice`` fields.excerpt
+# TI-13 cancel system comments (SPEC "취소": acceptance is not the end; unknown is never a success)
+CANCEL_ACCEPTED_COMMENT = "Task 취소를 요청했습니다. Task가 닫히면 이 요청이 취소로 닫힙니다."
+CANCEL_STOPPING_COMMENT = ("Task 취소를 요청했고 실행 중인 명령을 멈추는 중입니다(SIGINT부터). "
+                           "명령이 끝나고 Task가 닫히면 이 요청이 취소로 닫힙니다.")
+CANCEL_UNKNOWN_COMMENT = ("backend가 취소 요청에 답하지 않아 결과를 알 수 없습니다. "
+                          "Task가 사용자 취소로 닫히는 것이 보이기 전에는 취소된 것으로 보지 않습니다.")
+CANCEL_REFUSED_COMMENT = "backend가 취소를 거절했습니다. 아무것도 멈추지 않았습니다."
+CANCEL_REFUSED_COMMENTS = {
+    "task_changed": "확인 뒤 Task나 실행 중인 명령이 바뀌어 취소하지 않았습니다. 아무것도 멈추지 않았습니다.",
+    "backend_not_running": "프로젝트 backend가 꺼져 있어 취소하지 않았습니다.",
+}
+STOP_UNKNOWN_COMMENT = ("실행 중인 명령의 stop 결과를 확인하지 못했습니다(unknown). 명령이 아직 남아 있을 수 있어 "
+                        "취소가 끝난 것으로 보지 않습니다.")
 # The last event of a request that names the notice of its pending round (SPEC ``event`` values).
 NOTICE_EVENT_SOURCES = {"submitted": "new", "reopened": "new", "state_set": "new", "link_voided": "new",
                         "answered": "answered", "updated": "updated", "revised": "revised",
@@ -194,14 +207,20 @@ class InboxService:
     def __init__(self, *, on_committed: Callable[[CommittedEvent], None] | None = None,
                  backend_running: Callable[[str], bool] | None = None,
                  clock: Callable[[], float] = time.time, idle_seconds: float = IDLE_SECONDS,
-                 link_ttl: float = LINK_TTL):
+                 link_ttl: float = LINK_TTL,
+                 cancel_port: Callable[[ProjectRef, str, str, dict, str | None], dict] | None = None):
         """``on_committed``: post-commit side-effect port (notices, backend ``cancel_task``). It runs on
         the committing project's executor thread, so it must not call this service for the same
         project with ``wait=True`` (that waits on its own thread and deadlocks); hand work off
         (``wait=False``, a queue or the event loop) and keep it short.
-        ``backend_running(project_id)``: whether READY/RUNNING cancel can reach the backend now."""
+        ``backend_running(project_id)``: whether READY/RUNNING cancel can reach the backend now.
+        ``cancel_port(ref, task_id, request_id, expect, reason)`` (TI-13): the backend ``cancel_task`` for a
+        committed ``cancel_requested``, called on the cancelling caller's thread right after that commit; it answers
+        ``{outcome: "accepted", cancel, stop}``, ``{outcome: "refused", reason}`` (nothing was cancelled) or
+        ``{outcome: "unknown"}``. Without it the ``cancel_requested`` event is all there is (tests)."""
         self._on_committed = on_committed
         self._backend_running = backend_running or (lambda project_id: False)
+        self._cancel_port = cancel_port
         self._clock = clock
         self._idle_seconds = idle_seconds
         self._link_ttl = link_ttl
@@ -782,6 +801,7 @@ class InboxService:
         """Before dispatch: CLOSED(cancelled) at once. READY/RUNNING: ``cancel_state=requested`` and a
         ``cancel_requested`` event for the backend port; the request closes only when the Task does."""
         reason = None if reason is None else limits.comment(reason)
+        sent: dict = {}  # the committed ``expect`` for the backend call (TI-13)
 
         def fn(tx: _Tx, row: sqlite3.Row) -> dict:
             if base_version is not None:
@@ -804,14 +824,70 @@ class InboxService:
                     raise InboxError("backend_not_running", "the project backend is not running",
                                      state=state, version=row["version"])
                 view = json.loads(row["task_view"]) if row["task_view"] else {}
+                command = view.get("command") if isinstance(view.get("command"), dict) else {}
+                expect = {"status": view.get("status"), "command_id": command.get("command_id")}
                 new = self._set(tx, row, cancel_state="requested")
                 tx.event(request_id, "cancel_requested", state, state,
-                         {"task_id": row["task_id"], "reason": reason, "expect": {"status": view.get("status")}},
+                         {"task_id": row["task_id"], "reason": reason, "expect": expect},
                          version=new["version"])
+                sent["expect"] = expect
                 return {"status": "cancel_requested", "state": state, "version": new["version"],
                         "task_id": row["task_id"]}
             raise self._invalid(row, "a closed request cannot be cancelled")
-        return self._change(principal, request_id, "cancel", fn, wait)
+        result = self._change(principal, request_id, "cancel", fn, wait)
+        if not wait or self._cancel_port is None or result.get("status") != "cancel_requested":
+            return result
+        return self._send_cancel(request_id, result, sent["expect"], reason)
+
+    def _send_cancel(self, request_id: str, committed: dict, expect: dict, reason: str | None) -> dict:
+        """TI-13: the backend ``cancel_task`` for the ``cancel_requested`` just committed, then its answer recorded:
+        accepted keeps the request open (``stop_requested`` when a command stop started; the Task sync closes it),
+        refused reverts ``cancel_state`` and raises (``task_changed`` as ``token_mismatch``), unknown stays requested
+        with a system comment and is never reported as a success."""
+        project = self._locate(Principal("hub"), request_id)
+        task_id = committed["task_id"]
+        try:
+            answer = self._cancel_port(project.ref, task_id, request_id, expect, reason)
+        except Exception as exc:  # the port never should; the outcome is then not known
+            LOG.warning("inbox cancel port failed for %s: %r", request_id, exc)
+            answer = {"outcome": "unknown"}
+        outcome = answer.get("outcome") if isinstance(answer, dict) else None
+        outcome = outcome if outcome in ("accepted", "refused") else "unknown"
+        stop = answer.get("stop") if outcome == "accepted" and isinstance(answer.get("stop"), dict) else None
+        refusal = str(answer.get("reason") or "backend_refused") if outcome == "refused" else None
+
+        def fn(tx: _Tx, row: sqlite3.Row) -> dict:
+            state = row["state"]
+            current = row["cancel_state"] == "requested" and state != "CLOSED" and row["task_id"] == task_id
+            if not current:  # the Task sync already closed it (or it moved on): nothing more to record
+                return {"state": state, "version": row["version"]}
+            if outcome == "refused":
+                self._comment(tx, request_id, "system", CANCEL_REFUSED_COMMENTS.get(refusal, CANCEL_REFUSED_COMMENT))
+                new = self._set(tx, row, cancel_state=None)
+                tx.event(request_id, "cancel_refused", state, state, {"task_id": task_id, "reason": refusal},
+                         version=new["version"])
+            elif outcome == "accepted":
+                self._comment(tx, request_id, "system", CANCEL_STOPPING_COMMENT if stop else CANCEL_ACCEPTED_COMMENT)
+                new = self._set(tx, row, cancel_state="stop_requested" if stop else "requested")
+                tx.event(request_id, "cancel_accepted", state, state,
+                         {"task_id": task_id, "cancel": answer.get("cancel"), "stop": stop}, version=new["version"])
+            else:
+                self._comment(tx, request_id, "system", CANCEL_UNKNOWN_COMMENT)
+                new = self._set(tx, row)
+                tx.event(request_id, "cancel_unknown", state, state, {"task_id": task_id}, version=new["version"])
+            return {"state": new["state"], "version": new["version"]}
+        recorded = self._hub_change(request_id, fn, True)
+        if outcome == "refused":
+            code = "token_mismatch" if refusal == "task_changed" else (
+                refusal if refusal in ("backend_not_running", "backend_unreachable", "backend_too_old")
+                else "backend_refused")
+            raise InboxError(code, "the backend did not cancel the Task", state=recorded["state"],
+                             version=recorded["version"])
+        value = {"status": "cancel_requested", "state": recorded["state"], "version": recorded["version"],
+                 "task_id": task_id, "stop": stop}
+        if outcome == "unknown":
+            value["cancel"] = "unknown"
+        return value
 
     def start_review(self, principal: Principal, request_id: str, *, wait: bool = True) -> Any:
         """Owner's manual "검토 시작" (or "다시 전달" after ``unknown``): mark the round for dispatch."""
@@ -1107,13 +1183,28 @@ class InboxService:
                 return {"state": state, "version": row["version"], "changed": False}
             old_view = json.loads(row["task_view"]) if row["task_view"] else {}
             new_view = dict(view or {}, status=status)
+            command = new_view.get("command") if isinstance(new_view.get("command"), dict) else None
+            old_command = old_view.get("command") if isinstance(old_view.get("command"), dict) else {}
+            if (row["cancel_state"] is not None and command is not None and command.get("state") == "unknown"
+                    and old_command.get("state") != "unknown"):
+                self._comment(tx, request_id, "system", STOP_UNKNOWN_COMMENT)  # P2-AC-30: never a success
             if status == "closed":
                 new_view.update(closed=True, closed_reason=closed_reason)
+                if user_cancelled and command is not None:
+                    # TI-13: the user-cancelled Task is closed but its command has not ended yet (being stopped, or
+                    # its stop ended unknown): the request waits for the end; no linked_task_closed either
+                    if old_view == new_view:
+                        return {"state": state, "version": row["version"], "changed": False}
+                    new = self._set(tx, row, task_view=json.dumps(new_view))
+                    return {"state": new["state"], "version": new["version"], "changed": True}
                 if user_cancelled:
                     tx.connection.execute(
                         "UPDATE links SET state = 'closed' WHERE request_id = ? AND state = 'active'", (request_id,))
+                    # the manager hears of it through the dispatcher's ``cancelled`` notice (unless one is on offer)
+                    told = {} if row["delivery_state"] == "offered" else {"delivery_state": "pending",
+                                                                         "delivery_id": None}
                     new = self._set(tx, row, state="CLOSED", outcome="cancelled", cancel_state=None,
-                                    task_view=json.dumps(new_view))
+                                    task_view=json.dumps(new_view), **told)
                     tx.event(request_id, "cancelled", state, "CLOSED", {"task_id": task_id, "by": "user"},
                              version=new["version"])
                 elif closed_reason == "inbox_link_unconfirmed" and state == "READY":

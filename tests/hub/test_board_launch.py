@@ -132,6 +132,32 @@ class SystemKeyTests(LauncherCase):
             pass
 
 
+
+class InheritedBoardKeyTests(LauncherCase):
+    """Security review fix 4: a ``WB_BOARD_MCP_KEY`` in the Hub's own environment (a Board shell starting ``wb``)
+    never reaches a spawned Hub or a Board shell; only the Board agent gets the key issued for it."""
+
+    def setUp(self):
+        self.box_env_key = 'wbk_AAAAAAAAAA_' + 'x' * 43
+        super().setUp()
+        self.box.env['WB_BOARD_MCP_KEY'] = self.box_env_key
+        self.launcher = self.make_launcher(self.config)
+
+    def test_hub_environment_drops_the_board_key(self):
+        from workbench.hub.process import hub_environment
+        env = hub_environment({'PATH': '/usr/bin', 'WB_BOARD_MCP_KEY': self.box_env_key})
+        self.assertEqual(env, {'PATH': '/usr/bin'})
+
+    def test_board_shell_does_not_inherit_the_board_key(self):
+        shell = self.launcher.prepare_shell()
+        self.assertNotIn('WB_BOARD_MCP_KEY', shell.env)
+
+    def test_board_agent_gets_its_own_new_key_not_the_inherited_one(self):
+        started = self.prepare()
+        self.assertNotEqual(started.env['WB_BOARD_MCP_KEY'], self.box_env_key)
+        self.assertTrue(self.keys.verify(started.env['WB_BOARD_MCP_KEY'], 1.0).system)
+
+
 def manager_default_selector() -> str:
     """``manager: default:`` of ``omp_bridge/omp-models.yml``, read here without the product parser."""
     section = None

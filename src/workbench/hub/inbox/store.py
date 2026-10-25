@@ -150,6 +150,21 @@ class InboxStore:
         except sqlite3.Error as exc:
             raise _sqlite_error(exc, "read failed", "inbox_unavailable") from exc
 
+    def peek(self, fn: Callable[[sqlite3.Connection], Any]) -> Any:
+        """``fn(connection)`` read only on the connection that is open already, else None. It neither opens the
+        file nor counts as a use (``close_if_idle`` keeps its time)."""
+        connection = self._connection
+        if connection is None:
+            return None
+        try:
+            connection.execute("PRAGMA query_only=1")
+            try:
+                return fn(connection) if self._initialized(connection) else None
+            finally:
+                connection.execute("PRAGMA query_only=0")
+        except sqlite3.Error as exc:
+            raise _sqlite_error(exc, "read failed", "inbox_unavailable") from exc
+
     def write(self, fn: Callable[[sqlite3.Connection], Any]) -> Any:
         """``BEGIN IMMEDIATE`` → ``fn(connection)`` → ``COMMIT``; any exception rolls back everything."""
         connection = self._open(create=True)

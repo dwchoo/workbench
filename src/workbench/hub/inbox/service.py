@@ -12,6 +12,7 @@ from dataclasses import dataclass, field
 import hashlib
 import json
 import logging
+import os
 import secrets
 from pathlib import Path
 import sqlite3
@@ -208,6 +209,9 @@ class InboxService:
         self._projects: dict[str, _Project] = {}
         self._index: dict[str, str] = {}
         self._link_tokens: dict[str, tuple[str, str, int, float]] = {}
+        # TI-10: the Hub list's counts and review mode per project, kept from the reads and writes the inbox does
+        # anyway (list polling never opens a store or counts as its use)
+        self._summaries: dict[str, dict] = {}
 
     # -- projects ---------------------------------------------------------------------------
     def set_projects(self, refs: Iterable[ProjectRef]) -> None:
@@ -219,6 +223,7 @@ class InboxService:
                        if pid not in wanted or p.ref.root != wanted[pid].root]
             for project in removed:
                 del self._projects[project.ref.project_id]
+                self._summaries.pop(project.ref.project_id, None)
             self._index = {rid: pid for rid, pid in self._index.items() if pid in self._projects}
             added = []
             for ref in refs:
@@ -263,8 +268,10 @@ class InboxService:
 
     def _try_index(self, project: _Project) -> None:
         def scan() -> list[str]:
-            return project.store.read(
-                lambda c: [row[0] for row in c.execute("SELECT request_id FROM requests")], missing=[])
+            def fn(connection: sqlite3.Connection) -> list[str]:
+                self._remember(project, connection)
+                return [row[0] for row in connection.execute("SELECT request_id FROM requests")]
+            return project.store.read(fn, missing=[])
         try:
             if project.ref.unavailable is not None:
                 return
@@ -316,14 +323,59 @@ class InboxService:
                 raise InboxError("not_found", _NOT_FOUND) from None
             raise
 
+    # -- list summary (TI-10) -----------------------------------------------------------------
+    @staticmethod
+    def _summary_of(connection: sqlite3.Connection) -> dict:
+        counts = dict(connection.execute("SELECT state, count(*) FROM requests GROUP BY state").fetchall())
+        mode = connection.execute("SELECT value FROM meta WHERE key = 'review_mode'").fetchone()
+        return {"pending_requests": {name.lower(): counts.get(name, 0)
+                                     for name in ("NEW", "REVIEWING", "NEEDS_INFO", "READY", "RUNNING")},
+                "review_mode": mode[0] if mode else "auto"}
+
+    def _remember(self, project: _Project, connection: sqlite3.Connection, summary: dict | None = None) -> None:
+        """Keep the project's list summary (project thread, on a connection the inbox opened anyway)."""
+        summary = self._summary_of(connection) if summary is None else summary
+        with self._lock:
+            if self._projects.get(project.ref.project_id) is project:
+                self._summaries[project.ref.project_id] = summary
+
+    def list_summary(self, project_id: str) -> dict | None:
+        """The Hub list's ``{pending_requests, review_mode}`` for a project, from memory: the last value an inbox
+        read or write left, filled once from an inbox that is open already. It never opens an inbox and does not
+        count as its use (an idle inbox still closes). A missing inbox file is empty (``auto``); a project not
+        known yet whose inbox is closed, or one that cannot be read (``project_unavailable``), is None."""
+        with self._lock:
+            project = self._projects.get(project_id)
+            cached = self._summaries.get(project_id)
+        if project is None or project.ref.unavailable is not None:
+            return None
+        if cached is not None:
+            return json.loads(json.dumps(cached))
+        if not os.path.lexists(project.store.path):
+            return {"pending_requests": {"new": 0, "reviewing": 0, "needs_info": 0, "ready": 0, "running": 0},
+                    "review_mode": "auto"}
+
+        def peek() -> dict | None:
+            summary = project.store.peek(self._summary_of)
+            if summary is not None:
+                self._remember(project, None, summary)  # type: ignore[arg-type]
+            return summary
+        try:
+            return self._run(project, peek)
+        except InboxError:
+            return None
+
     def _write(self, project: _Project, actor: Principal | None, fn: Callable[[_Tx], Any]) -> Any:
         """Run ``fn`` in one write transaction on the project thread, then emit its events."""
-        holder: dict[str, _Tx] = {}
+        holder: dict[str, Any] = {}
 
         def body(connection: sqlite3.Connection) -> Any:
             tx = holder["tx"] = _Tx(self, project, connection, actor)
-            return fn(tx)
+            result = fn(tx)
+            holder["summary"] = self._summary_of(connection)  # the state this commit leaves
+            return result
         result = project.store.write(body)
+        self._remember(project, None, holder["summary"])  # type: ignore[arg-type]
         for event in holder["tx"].events:
             self._emit(event)
         return result
@@ -545,10 +597,9 @@ class InboxService:
             return None
 
         def fn(connection: sqlite3.Connection) -> dict:
-            counts = dict(connection.execute(
-                "SELECT state, count(*) FROM requests GROUP BY state").fetchall())
-            return {name.lower(): counts.get(name, 0) for name in ("NEW", "REVIEWING", "NEEDS_INFO", "READY",
-                                                                     "RUNNING")}
+            summary = self._summary_of(connection)
+            self._remember(project, connection, summary)
+            return summary["pending_requests"]
         empty = {"new": 0, "reviewing": 0, "needs_info": 0, "ready": 0, "running": 0}
         try:
             return self._run(project, lambda: project.store.read(fn, missing=empty))
@@ -767,7 +818,11 @@ class InboxService:
         def fn(tx: _Tx, row: sqlite3.Row) -> dict:
             if row["state"] not in ("NEW", "REVIEWING") or row["delivery_state"] not in ("pending", "unknown"):
                 raise self._invalid(row, "there is no review round waiting to be sent")
-            new = self._set(tx, row, delivery_state="pending", delivery_id=None)
+            # A pending round keeps a reserved delivery id: its notice may already be queued at the backend, so
+            # the dispatcher sends that same id again (the backend queues it once) and its result still applies.
+            # Only "다시 전달" after ``unknown`` starts a new delivery.
+            keep = {} if row["delivery_state"] == "pending" else {"delivery_id": None}
+            new = self._set(tx, row, delivery_state="pending", **keep)
             tx.event(request_id, "review_started", row["state"], row["state"],
                      {"review_round": row["review_round"]}, version=new["version"])
             return {"state": new["state"], "version": new["version"]}
@@ -979,6 +1034,7 @@ class InboxService:
         project = self._project(Principal("hub"), project_id)
 
         def fn(connection: sqlite3.Connection) -> dict:
+            self._remember(project, connection)
             connection.row_factory = sqlite3.Row
             mode = connection.execute("SELECT value FROM meta WHERE key = 'review_mode'").fetchone()
             rows = connection.execute(

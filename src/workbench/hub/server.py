@@ -264,15 +264,9 @@ class Hub:
             return {}
         rows = {}
         for entry in entries:
-            counts = mode = None
-            if check_entry(entry) is None:
-                counts = self.inbox.pending_requests(entry.project_id)
-                if counts is not None:
-                    try:
-                        mode = self.inbox.review_mode(LOCAL_PRINCIPAL, entry.project_id)["review_mode"]
-                    except InboxError:
-                        counts = None
-            rows[entry.root] = {"pending_requests": counts, "review_mode": mode}
+            # from memory (InboxService.list_summary): polling never opens an inbox or keeps it open
+            summary = self.inbox.list_summary(entry.project_id) if check_entry(entry) is None else None
+            rows[entry.root] = summary or {"pending_requests": None, "review_mode": None}
         return rows
 
     def _dispatch_targets(self) -> list[ProjectRef]:

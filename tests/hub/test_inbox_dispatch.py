@@ -163,6 +163,80 @@ class ManualModeTests(DispatchCase):
         self.assertEqual([item['event'] for item in self.port.notices], ['new', 'answered'])
 
 
+class StartReviewRaceTests(DispatchCase):
+    def test_a_second_start_while_the_notice_is_on_its_way_keeps_its_delivery_and_sends_no_new_one(self):
+        self.service.review_mode(Principal.local(), self.a, 'manual')
+        rid = self.new()
+        self.service.start_review(OWNER, rid)
+        original = self.port.inbox_notice
+        pressed = []
+
+        def press_again(root, request_id, delivery_id, event, fields, **kwargs):
+            reply = original(root, request_id, delivery_id, event, fields, **kwargs)
+            if not pressed:  # the owner presses "검토 시작" again while the notice is queued
+                pressed.append(self.service.start_review(OWNER, request_id))
+            return reply
+        self.port.inbox_notice = press_again
+        for _ in range(3):
+            self.tick()
+        self.assertEqual({item['delivery_id'] for item in self.port.notices}, {self.row(rid)['delivery_id']},
+                         'one delivery id: the backend queues it once')
+        self.assertEqual(self.row(rid)['delivery_state'], 'offered')
+        self.assertEqual(self.deliver(rid)['state'], 'REVIEWING', 'its result still applies')
+        self.tick()
+        self.assertEqual(len({item['delivery_id'] for item in self.port.notices}), 1)
+
+
+class ListSummaryTests(unittest.TestCase):
+    """``InboxService.list_summary`` (the Hub list's counts and review mode) is served from memory: polling it never
+    opens an inbox nor keeps one from closing when idle (SPEC "60 s 동안 쓰지 않은 DB는 닫고 lock을 푼다")."""
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory(prefix='wb-inbox-summary-')
+        self.addCleanup(self.temp.cleanup)
+        self.root, self.project = make_project(Path(self.temp.name).resolve(), 'alpha')
+        self.now = [1000.0]
+        self.service = InboxService(clock=lambda: self.now[0], idle_seconds=60.0)
+        self.addCleanup(self.service.close)
+        self.service.set_projects([ProjectRef(self.project, self.root, 'alpha')])
+
+    def other(self) -> InboxService:
+        other = InboxService()
+        self.addCleanup(other.close)
+        other.set_projects([ProjectRef(self.project, self.root, 'alpha')])
+        return other
+
+    def test_a_missing_inbox_is_empty_and_writes_update_it(self):
+        empty = {'new': 0, 'reviewing': 0, 'needs_info': 0, 'ready': 0, 'running': 0}
+        self.assertEqual(self.service.list_summary(self.project), {'pending_requests': empty, 'review_mode': 'auto'})
+        self.assertFalse((self.root / '.wb' / 'inbox.sqlite3').exists())
+        self.service.submit(OWNER, self.project, 't', 'b', None)
+        self.service.review_mode(Principal.local(), self.project, 'manual')
+        self.assertEqual(self.service.list_summary(self.project),
+                         {'pending_requests': {**empty, 'new': 1}, 'review_mode': 'manual'})
+
+    def test_polling_does_not_keep_the_inbox_open_or_reopen_it(self):
+        self.service.submit(OWNER, self.project, 't', 'b', None)
+        known = self.service.list_summary(self.project)
+        self.now[0] += 50.0
+        for _ in range(5):
+            self.assertEqual(self.service.list_summary(self.project), known)
+        self.now[0] += 11.0  # 61 s after the last real use
+        self.assertEqual(self.service.close_idle(), [self.project], 'polling did not count as use')
+        for _ in range(5):
+            self.assertEqual(self.service.list_summary(self.project), known, 'the last known value')
+        self.other().submit(OWNER, self.project, 'another writer', 'b', None)  # nobody holds inbox.lock
+
+    def test_a_cold_summary_of_a_closed_inbox_is_unknown(self):
+        self.service.submit(OWNER, self.project, 't', 'b', None)
+        other = self.other()  # cannot index it: this service holds the lock
+        self.assertIsNone(other.list_summary(self.project))
+        self.service.close()
+        self.assertIsNone(other.list_summary(self.project), 'never opened by a poll')
+        self.assertEqual(other.submit(OWNER, self.project, 'later', 'b', None)['seq'], 2)
+        self.assertEqual(other.list_summary(self.project)['pending_requests']['new'], 2)
+
+
 class OrderTests(DispatchCase):
     def test_an_off_project_gets_nothing_and_once_on_its_requests_go_one_at_a_time_in_seq_order(self):
         self.port.backends[self.root] = None

@@ -171,6 +171,8 @@ class Dispatcher:
             return  # one offered notice per project; its outcome comes as a commit
         if offered:  # requeued just now: read the rounds again
             requests = self.inbox.delivery_view(project_id)["requests"]
+        # First offers go in seq order (P2-AC-23). No head-of-line blocking (orchestrator decision): a round in its
+        # rejected/dropped retry delay is skipped, so a later seq may be offered meanwhile.
         for item in requests:
             if item["delivery_state"] != "pending" or not self._sendable(item, view["review_mode"]):
                 continue

@@ -819,6 +819,7 @@ AUDIT_EVENTS: dict[str, frozenset] = {
     "terminal_release": _TERMINAL_DETAIL,
     "terminal_timeout": _TERMINAL_DETAIL,
     "terminal_closed": _TERMINAL_DETAIL,
+    "terminal_denied": _TERMINAL_DETAIL,  # a refused hello or a taken_elsewhere (TI-17): the epoch then, no content
     "board_restart": _BOARD_DETAIL,
     "board_start": _BOARD_DETAIL,
     "board_stop": _BOARD_DETAIL,

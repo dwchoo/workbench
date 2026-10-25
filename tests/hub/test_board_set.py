@@ -363,16 +363,16 @@ class TerminalIoTests(SetCase):
 
     def test_out_of_range_sizes_are_refused_and_never_break_a_restart(self):
         self.start()
-        for rows, cols in ((0, 80), (24, 0), (501, 80), (24, 501), (-1, 80), (24, 70000), (True, 80), (24.0, 80)):
+        for rows, cols in ((0, 80), (24, 0), (1001, 80), (24, 1001), (-1, 80), (24, 70000), (True, 80), (24.0, 80)):
             with self.assertRaises(ValueError, msg=(rows, cols)):
                 self.board.resize('shell', rows, cols)
-        self.board.resize('shell', 500, 500)
+        self.board.resize('shell', 1000, 1000)
         self.arun(self.board.restart('shell'))
         shell = self.board.status()['shell']
         self.pids.add(shell['pid'])
         self.assertEqual(shell['state'], 'running')
         self.board.write('shell', b'stty size\n')
-        self.assertTrue(self.wait(lambda: b'500 500' in self.board.replay('shell')))
+        self.assertTrue(self.wait(lambda: b'1000 1000' in self.board.replay('shell')))
 
     def test_resize_changes_the_pty_window_size(self):
         self.start()

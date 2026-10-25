@@ -60,12 +60,22 @@ class WebServices:
     flush_interval: float = 10.0  # API key ``last_used_at`` (SPEC: every 10 s and at Hub stop)
     # ``(project_id, name)`` of the registered projects (blocking read; the Hub supplies the registry view).
     projects: Callable[[], Iterable[tuple[str, str]]] = lambda: ()
+    # Called with a logged-out session token, or None after a password change (every session ended); the
+    # Board terminal ends those sessions' WebSockets at once (TI-17).
+    session_listeners: list = field(default_factory=list)
 
     def __post_init__(self) -> None:
         self.sessions = auth.SessionStore(self.db, self.passwords)
         self.throttle = (self.throttle_factory or auth.LoginThrottle)(self.db, clock=self.clock)
         self.audit = auth.AuditLog(self.db)
         self.api_keys = auth.ApiKeyStore(self.db)
+
+    def sessions_ended(self, token: str | None) -> None:
+        for listener in list(self.session_listeners):
+            try:
+                listener(token)
+            except Exception as exc:  # a listener problem never fails the logout
+                print(f"[workbench] web: session listener failed: {exc!r}", file=sys.stderr, flush=True)
 
     async def blocking(self, function, *args):
         return await asyncio.get_running_loop().run_in_executor(None, function, *args)
@@ -100,11 +110,26 @@ BOARD_CHANNELS = ("agent", "shell")
 
 
 def board_routes(board: Callable[[], object | None]) -> Callable[[web.Application], None]:
-    """``POST /board/restart`` (form ``channel``): the logged-in owner restarts one Board channel (TI-16).
+    """``POST /board/restart`` (form ``channel``): the logged-in owner restarts one Board channel (TI-16), and
+    ``GET /ws/board``, the Board terminal WebSocket (TI-17).
 
     Session and CSRF are the ``session_check`` middleware's (a page route, unsafe method); API keys cannot reach
     it. ``board()`` returns the Hub's ``BoardSet`` or None (``hub.toml`` invalid). The confirm page is TI-18's.
+    The set's one :class:`~workbench.hub.board.ws.BoardTerminal` (its lease and epochs) outlives a listener
+    reopen: it is kept here, per set.
     """
+    from ..board import ws as board_ws
+    terminals: dict[str, board_ws.BoardTerminal] = {}
+
+    def terminal_for(app: web.Application) -> board_ws.BoardTerminal | None:
+        current = board()
+        if current is None:
+            return None
+        terminal = terminals.get("current")
+        if terminal is None or terminal.board is not current:
+            terminal = terminals["current"] = board_ws.BoardTerminal(current, audit=board_ws.audit_to(app[SERVICES]))
+        return terminal
+
     async def post_restart(request: web.Request) -> web.Response:
         current = board()
         if current is None:
@@ -118,6 +143,7 @@ def board_routes(board: Callable[[], object | None]) -> Callable[[web.Applicatio
 
     def register(app: web.Application) -> None:
         app.router.add_post("/board/restart", post_restart)
+        board_ws.routes(lambda: terminal_for(app))(app)
     return register
 
 

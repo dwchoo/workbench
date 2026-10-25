@@ -245,7 +245,7 @@ Tool(이름·인자·결과):
 | `inbox_comment` | `request_id`, `body` | `{comment_id, state, version}`. NEEDS_INFO면 답변이 되어 REVIEWING | 둘 다 |
 | `inbox_update` | `request_id`, `base_version`, `title?`, `body?` | `{state, version, revision, mode:"in_place"\|"new_revision"}` | editor |
 | `inbox_set_state` | `request_id`, `base_version`, `to:"NEW"\|"NEEDS_INFO"`, `reason?` | `{state, version}`. CLOSED → NEW는 다시 열기 | editor |
-| `inbox_cancel` | `request_id`, `confirm_token?`, `reason?` | 실행 전: `{status:"cancelled", state:"CLOSED"}`. READY: `{status:"cancel_requested"}`(token 없음). RUNNING 첫 호출: `{status:"confirm_required", confirm_token, expires_in:60, impact:{task_id, task_status, command:{command_id, label, state}\|null}}`. Token 확인: `{status:"cancel_requested", stop:{status:"stopping"}\|null}`. 취소 수락은 종료가 아니다(P2-AC-30) | 둘 다 |
+| `inbox_cancel` | `request_id`, `confirm_token?`, `reason?` | 실행 전: `{status:"cancelled", state:"CLOSED"}`. READY: `{status:"cancel_requested"}`(token 없음). 웹은 READY·RUNNING 모두 확인 page와 token을 거친다(2026-10-25 orchestrator 결정: 웹은 사람이 누르는 경로라 확인을 두고, MCP READY는 바로 요청한다). RUNNING 첫 호출: `{status:"confirm_required", confirm_token, expires_in:60, impact:{task_id, task_status, command:{command_id, label, state}\|null}}`. Token 확인: `{status:"cancel_requested", stop:{status:"stopping"}\|null}`. 취소 수락은 종료가 아니다(P2-AC-30) | 둘 다 |
 | `inbox_result` | `request_id`, `full`(기본 false), `run_id?`, `offset?`, `length?`, `artifact_path?` | 기본: `{summary, state, outcome, task:{status, runs:[{run_id, status, exit_code}]}}`. `full`: 아래 "결과 조회" | 둘 다 |
 
 Board agent는 별도 내부 listener(아래)의 같은 `/mcp`를 쓴다. 외부 listener가 없어도(TLS 문제 등) Board agent의 MCP는 동작한다.

@@ -111,6 +111,37 @@ class NoticeOutcomeTests(WatchdogFixture):
                          ['backend_restarted', 'backend_restarted', 'r1', 'r2'])
 
 
+class EnqueueWhileSendingTests(WatchdogFixture):
+    def test_queueing_a_notice_does_not_wait_for_a_send_in_progress(self):
+        """``Backend.inbox_notice`` runs on the UI loop thread: queueing never waits for a tick's send."""
+        import threading
+        import time
+        release, sending = threading.Event(), threading.Event()
+        from workbench.backend.flow_recovery import WatchPorts, Watchdog
+
+        def notify(role, notice):
+            self.sent.append(notice)
+            sending.set()
+            release.wait(10)
+            return 'delivered'
+        self.watchdog = Watchdog(WatchPorts(task=lambda: None, notify=notify), clock=self.clock)
+        self.enqueue('r1')
+        ticker = threading.Thread(target=self.watchdog.tick)
+        ticker.start()
+        try:
+            self.assertTrue(sending.wait(5))
+            started = time.monotonic()
+            self.enqueue('r2')
+            self.assertLess(time.monotonic() - started, 0.5, 'enqueue waited for the send')
+            self.assertEqual([item['request_id'] for item in self.watchdog.inbox_view()['notices']], ['r1', 'r2'])
+        finally:
+            release.set()
+            ticker.join(10)
+        self.tick()
+        self.assertEqual([item.get('request_id') for item in self.sent], ['r1', 'r2'])
+        self.assertEqual(self.outcomes, ['delivered', 'delivered'])
+
+
 class InboxWaitTests(WatchdogFixture):
     """SPEC: ``inbox:{notices:[{request_id, event, queued_at, attempts, wait}]}`` while a notice is deferred."""
 
@@ -309,12 +340,27 @@ class OrderFlowTests(FlowCase):
         from test_project_control import start_ticks
         ticks = start_ticks(sleeper)
         before = self.box.status(root)['task']
+        worker_input = self.worker_input()  # every Task message the worker OMP was offered so far
         self.box.start_hub()
         self.until(lambda: self.row(root, rid)['state'] == 'REVIEWING', 40)
         after = self.box.status(root)['task']
-        self.assertEqual({key: after[key] for key in ('task_id', 'status', 'revision')},
-                         {key: before[key] for key in ('task_id', 'status', 'revision')}, 'P2-AC-24: Task unchanged')
+        # The Task's own status may move on by itself (starting -> ...); the notice changes neither its identity
+        # nor its revision, closes nothing and gives the worker no new input.
+        self.assertEqual((after['task_id'], after['revision']), (before['task_id'], before['revision']),
+                         'P2-AC-24: Task unchanged')
+        self.assertNotIn(after['status'], ('closed', 'cancelling'))
+        added = self.worker_input()
+        self.assertEqual(added['notices'], worker_input['notices'], 'no notice went to the worker')
+        self.assertEqual(added['other'], worker_input['other'], 'no other frame went to the worker')
+        self.assertLessEqual(added['messages'], worker_input['messages'] | {None},
+                             'only re-offers of the Task message the worker already had')
         self.assertEqual(start_ticks(sleeper), ticks, 'the host command still runs')
+
+    def worker_input(self) -> dict:
+        frames = [item['frame'] for item in self.records('FAKE_FRAMES') if item['role'] == 'worker']
+        return {'messages': {frame.get('message_id') for frame in frames if frame.get('kind') == 'deliver'},
+                'other': [frame for frame in frames if frame.get('kind') != 'deliver'],
+                'notices': [item for item in self.records('FAKE_NOTICES') if item['role'] == 'worker']}
 
     def records(self, name: str) -> list[dict]:
         import json

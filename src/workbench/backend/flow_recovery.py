@@ -271,6 +271,10 @@ class Watchdog:
         self._watch: _TaskWatch | None = None
         self._sessions: dict[ActorRole, tuple[str, int]] = {}
         self._queue: list[_Queued] = []
+        # TI-10: notices queued from other threads (the UI loop) wait here under a short lock and join the queue
+        # at the next send pass, so queueing never waits for a tick (whose send may take seconds)
+        self._incoming: list[tuple[_Queued, bool]] = []
+        self._incoming_lock = threading.Lock()
         self._noticed_unknown: set[str] = set()
         self._cursor = 0
         self._stop = threading.Event()
@@ -376,10 +380,13 @@ class Watchdog:
     def _enqueue(self, role: ActorRole, notice_type: str, fields: Mapping[str, Any], *, first: bool = False,
                  handoff_id: str | None = None,
                  build: Callable[[], Mapping[str, Any] | None] | None = None,
-                 on_result: Callable[[str], None] | None = None) -> str:
+                 on_result: Callable[[str], None] | None = None, incoming: bool = False) -> str:
         notice = {"notice_id": str(uuid4()), "type": notice_type, **fields}
         item = _Queued(role, notice, handoff_id=handoff_id, build=build, on_result=on_result, queued_at=self._wall())
-        if first:
+        if incoming:
+            with self._incoming_lock:
+                self._incoming.append((item, first))
+        elif first:
             self._queue.insert(0, item)
         else:
             self._queue.append(item)
@@ -571,7 +578,30 @@ class Watchdog:
                           "outcome": {"delivered": "sent"}.get(outcome, outcome)})
         return outcome
 
+    def _absorb(self) -> None:
+        """Move the notices queued from other threads into the queue (tick thread, under the tick lock)."""
+        with self._incoming_lock:
+            incoming, self._incoming = self._incoming, []
+        for item, first in incoming:
+            if first:
+                self._queue.insert(0, item)
+            else:
+                self._queue.append(item)
+
+    def _all_queued(self) -> list[_Queued]:
+        """The queue as it will be once the incoming notices joined it (views)."""
+        queue = list(self._queue)
+        with self._incoming_lock:
+            incoming = list(self._incoming)
+        for item, first in incoming:
+            if first:
+                queue.insert(0, item)
+            else:
+                queue.append(item)
+        return queue
+
     def _send_queue(self, now: float) -> None:
+        self._absorb()
         while self._queue:
             item = self._queue[0]
             if now < item.retry_at:
@@ -612,7 +642,7 @@ class Watchdog:
 
     def inbox_view(self) -> dict[str, Any]:
         """ui_v1 snapshot ``inbox`` (TI-10, additive): the inbox notices still queued, oldest first."""
-        items = [item for item in list(self._queue) if item.notice.get("type") == INBOX_NOTICE_TYPE]
+        items = [item for item in self._all_queued() if item.notice.get("type") == INBOX_NOTICE_TYPE]
         return {"notices": [{"request_id": item.notice.get("request_id"), "event": item.notice.get("event"),
                              "queued_at": item.queued_at, "attempts": item.attempts, "wait": item.wait}
                             for item in items]}
@@ -635,12 +665,12 @@ class Watchdog:
         ``build`` (VM F1) makes the fields again right before each attempt; None drops the notice unsent.
         ``on_result`` (TI-10) hears the final outcome once: ``delivered``, ``unknown``, ``rejected`` or ``dropped``
         (not applicable any more). ``first``: ahead of the waiting notices (the default) or behind them."""
-        with self._tick_lock:
-            return self._enqueue(role, notice_type, fields, first=first, build=build, on_result=on_result)
+        # TI-10: never under the tick lock (the UI loop thread calls this): the notice joins at the next send pass
+        return self._enqueue(role, notice_type, fields, first=first, build=build, on_result=on_result, incoming=True)
 
     def queued(self) -> list[dict[str, Any]]:
         """The notices waiting for a deliverable OMP (tests and workbench_status)."""
-        return [{"role": item.role.value, **item.notice} for item in self._queue]
+        return [{"role": item.role.value, **item.notice} for item in self._all_queued()]
 
 
 __all__ = ["BACKEND_RESTARTED_HINT", "INBOX_NOTICE_TYPE", "STOP_COMMAND_TOOL", "STOP_SURVIVOR_TOOL", "validate_stop_command_arguments", "validate_stop_survivor_arguments", "EDITOR_WAIT", "IDLE_LIMIT", "MANAGER_NOTICE_TYPES", "MANAGER_TOOLS", "MAX_CHECKS", "PROBE_INTERVAL",

@@ -24,6 +24,7 @@ from .inbox.limits import InboxError
 from .inbox.service import OPEN_STATES, InboxService, Principal, ProjectRef
 from .status import Lister, check_entry
 from .paths import HubLayout, hub_layout, prepare_socket_path, prepare_state_dir
+from .web.app import board_routes
 from .web.listener import WebListener
 from .web.pages import requests as request_pages
 from .process import (READY_LOST, READY_MANAGED, READY_STARTED, RECORD_SCHEMA_VERSION, UNVERIFIABLE,
@@ -118,6 +119,9 @@ class Hub:
         # Verified backend connections by project id (one each): outside ``tasks`` and its limit (hub_v1).
         self.backend_tasks: dict[str, asyncio.Task] = {}
         self.web: WebListener | None = None
+        # TI-16: the Board agent set (None while ``hub.toml`` is invalid) and its internal MCP listener.
+        self.board = None
+        self.internal_mcp: mcp.InternalListener | None = None
 
     def project_pairs(self) -> list[tuple[str, str]]:
         """``(project_id, name)`` of the registered projects for the web settings pages; executor only."""
@@ -128,7 +132,40 @@ class Hub:
 
     def web_routes(self) -> list:
         """Route registrations the web app adds to its defaults: the request pages over this Hub's inbox."""
-        return [request_pages.routes(self.inbox, self._dispatch_targets), mcp.routes(self.mcp)]
+        return [request_pages.routes(self.inbox, self._dispatch_targets), mcp.routes(self.mcp),
+                board_routes(lambda: self.board)]
+
+    # --- Board agent set (TI-16) -----------------------------------------------------------------
+
+    def _web_services(self):
+        services = self.web.services if self.web is not None else None
+        if services is None:  # the set starts from a logged-in web request, so this only races a stop
+            raise RuntimeError("web services are not open")
+        return services
+
+    def _internal_listener(self) -> mcp.InternalListener:
+        if self.internal_mcp is None:
+            self.internal_mcp = mcp.InternalListener(self._web_services().api_keys, self.mcp)
+        return self.internal_mcp
+
+    def _board_audit(self, event: str, actor: str, address: str | None, detail: dict) -> None:
+        """``board_start``/``board_stop``/``board_restart`` rows; executor only (SQLite)."""
+        services = self.web.services if self.web is not None else None
+        if services is None:
+            return
+        services.audit.record(event, actor, address, detail, now=float(services.clock()))
+
+    def make_board(self, config: hub_config.BoardAgentConfig, environment=None) -> None:
+        from .board.launch import BoardLauncher
+        from .board.set import BoardSet
+        launcher = BoardLauncher(self.layout.state_dir, config, api_keys=lambda: self._web_services().api_keys,
+                                 listener=self._internal_listener, environment=environment)
+        self.board = BoardSet(launcher, audit=self._board_audit)
+
+    async def stop_board(self) -> None:
+        """Stop order (A): after the WebSockets close, before the API key flush; idempotent."""
+        if self.board is not None:
+            await self.board.stop()
 
     async def _mcp_projects(self) -> list[dict]:
         """``inbox_projects`` rows: the Hub list (cached observation, request counts and review mode)."""
@@ -157,6 +194,8 @@ class Hub:
         self.web = WebListener(self.layout.state_dir, config=loaded, config_error=None, tls=tls,
                                routes=self.web_routes())
         self.web.projects = self.project_pairs
+        self.make_board(loaded.board_agent, environment)
+        self.web.stop_hooks.append(self.stop_board)
 
     def bind(self) -> None:
         path = prepare_socket_path()
@@ -368,11 +407,12 @@ class Hub:
     async def status(self) -> dict:
         registry = await asyncio.get_running_loop().run_in_executor(None, registry_summary, self.layout)
         web = self.web.status() if self.web is not None else {"state": "not_available"}
-        return {"hub": dict(self.record or {}), "registry": registry, "web": web, "board_agent": None}
+        board = self.board.status() if self.board is not None else None
+        return {"hub": dict(self.record or {}), "registry": registry, "web": web, "board_agent": board}
 
     def active(self) -> list:
-        """Live things this Hub owns that a stop would end; (A) adds Board agent sets."""
-        return []
+        """Live things this Hub owns that a stop would end: the Board agent set while a channel lives."""
+        return self.board.active() if self.board is not None else []
 
     def offer_stop(self) -> dict:
         token = secrets.token_hex(16)
@@ -443,6 +483,10 @@ class Hub:
                 await self.web.stop()
             except Exception as exc:
                 print(f"[workbench] web listener stop failed: {exc!r}", file=sys.stderr, flush=True)
+        try:
+            await self.stop_board()  # already done by the web stop hook; a failed web stop must not skip it
+        except Exception as exc:
+            print(f"[workbench] Board agent set stop failed: {exc!r}", file=sys.stderr, flush=True)
         server.close()
         tasks = [*self.tasks, *self.backend_tasks.values()]
         for task in tasks:

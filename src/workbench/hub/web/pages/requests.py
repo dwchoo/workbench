@@ -253,7 +253,8 @@ def create_form(request: web.Request, projects: list[ProjectRef], *, project: st
     parts.append(render.tag("form", render.html_join([
         render.csrf_field(session_of(request).csrf), render.hidden("nonce", nonce or secrets.token_urlsafe(18)),
         _field_row("프로젝트", render.tag("select", render.html_join(options), name="project", required=True)),
-        _field_row("제목", render.void("input", type="text", name="title", value=title, maxlength=200, required=True)),
+        # No maxlength: HTML counts UTF-16 units (an emoji is 2) and cuts IME input; the server counts code points.
+        _field_row("제목", render.void("input", type="text", name="title", value=title, required=True)),
         _field_row("본문", _textarea("body", body, rows=12, required=True)),
         render.tag("button", "제출", type="submit")]), method="post", action="/requests", class_="stack wide"))
     parts.append(render.tag("p", render.tag("a", "요청 목록", href="/requests")))
@@ -482,7 +483,7 @@ def edit_form(request: web.Request, detail: dict, *, title: str | None = None, b
         parts.append(render.tag("p", "입력하던 내용은 아래 양식에 그대로 두었습니다. 확인하고 다시 저장하세요."))
     parts.append(_post_form(request, request_url(rid, "/edit"), {"base_version": detail["version"] if base_version is None else base_version}, "저장", extra=render.html_join([
         _field_row("제목", render.void("input", type="text", name="title", value=detail["title"] if title is None else title,
-                                      maxlength=200, required=True)),
+                                      required=True)),
         _field_row("본문", _textarea("body", detail["body"] if body is None else body, rows=12, required=True))]),
         class_="stack wide"))
     parts.append(render.tag("p", render.tag("a", "돌아가기", href=request_url(rid))))

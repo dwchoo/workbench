@@ -34,7 +34,7 @@ const strictDecode = (bytes) => new TextDecoder("utf-8", { fatal: true }).decode
 
 test("typed Hangul syllables, compatibility jamo, conjoining jamo and emoji reach the frame as exact UTF-8", () => {
   const tab = attachedTab();
-  const text = "안녕하세요 ㄱㄴㅎㅏ 한 👍🏽 한글";
+  const text = "안녕하세요 ㄱㄴㅎㅏ \u1112\u1161\u11ab 👍🏽 한글";
   const frames = sent(tab.send({ type: "input", channel: "agent", bytes: new TextEncoder().encode(text) }));
   assert.equal(frames.length, 1);
   assert.equal(frames[0][0], 0);

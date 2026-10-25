@@ -595,7 +595,7 @@ class InboxService:
                     continue
                 if wanted is None and not include_closed and row["state"] == "CLOSED":
                     continue
-                if query and query.casefold() not in haystack:
+                if query and limits.search_key(query) not in haystack:
                     continue
                 found.append(row)
         # Newest first by arrival order (seq), not by the wall clock, which can step backwards.
@@ -620,7 +620,7 @@ class InboxService:
             connection.row_factory = sqlite3.Row
             rows = connection.execute("SELECT * FROM requests ORDER BY seq").fetchall()
             untrusted = untrusted_ids(connection)
-            return [(self._summary(project, row, untrusted), f"{row['title']}\n{row['body']}".casefold())
+            return [(self._summary(project, row, untrusted), limits.search_key(f"{row['title']}\n{row['body']}"))
                     for row in rows if self._can_see(principal, row)]
         return project.store.read(fn, missing=[])
 

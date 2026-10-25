@@ -43,7 +43,7 @@ class HangulInputTests(board_case.BoardWsCase):
 
     async def test_typed_hangul_jamo_and_emoji_reach_the_pty_byte_exact_and_echo_back(self):
         tab, epoch = await self.attached()
-        typed = '안녕하세요 ㄱㅏ 한 ㅤ 👍🏽'.encode('utf-8')
+        typed = '안녕하세요 ㄱㅏ \u1112\u1161\u11ab \u3164 👍🏽'.encode('utf-8')
         await tab.send_input('agent', epoch, typed)
         await tab.wait_output('agent', b'<' + typed + b'>')
         self.assertEqual(self.recorded('agent'), typed)
@@ -68,7 +68,7 @@ class ReplayBoundaryTests(unittest.TestCase):
     """The attach replay is the ring's newest bytes: trimming must never start it inside a UTF-8 sequence."""
 
     def test_a_trimmed_ring_starts_on_a_code_point_boundary_for_every_cut_offset(self):
-        for wide in ('한', 'ㄱ', 'ᅡ', '😀', 'é'):
+        for wide in ('한', 'ㄱ', '\u1161', '😀', 'é'):
             encoded = wide.encode('utf-8')
             for cut in range(len(encoded)):
                 with self.subTest(wide=wide, cut=cut):

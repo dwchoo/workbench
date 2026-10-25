@@ -560,7 +560,7 @@ class McpServer:
             if principal.scope is not None and row.get("project_id") not in principal.scope:
                 continue
             haystack = f"{row.get('name') or ''}\n{row.get('root') or ''}" if editor else str(row.get("name") or "")
-            if query and query.casefold() not in haystack.casefold():
+            if query and limits.search_key(query) not in limits.search_key(haystack):
                 continue
             if not editor:
                 found.append({"project_id": row.get("project_id"), "name": row.get("name")})

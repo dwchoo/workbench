@@ -103,6 +103,12 @@ def query(value: object) -> str | None:
     return value
 
 
+def search_key(text: str) -> str:
+    """``text`` for a caseless, canonical-equivalence substring match (Unicode D145: NFD of the case fold of
+    NFD), so a composed Hangul query finds decomposed text (macOS file names) and the other way round."""
+    return unicodedata.normalize("NFD", unicodedata.normalize("NFD", text).casefold())
+
+
 def list_limit(value: object) -> int:
     if value is None:
         return LIST_LIMIT_DEFAULT

@@ -302,6 +302,31 @@ class InternalListenerTests(TransportCase):
         self.assertIsNone(listener.port)
         self.assertIsNone(listener.url)
 
+    def test_connections_over_sixteen_are_closed_at_once(self):
+        """Security review fix 5: the loopback listener holds at most 16 connections; the 17th is closed unread."""
+        import time
+        held = [socket.create_connection(('127.0.0.1', self.port), timeout=5) for _ in range(16)]
+        try:
+            time.sleep(0.3)
+            extra = socket.create_connection(('127.0.0.1', self.port), timeout=5)
+            try:
+                extra.sendall(b'GET /mcp HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n')
+                try:
+                    closed = extra.recv(65536) == b''
+                except ConnectionResetError:
+                    closed = True
+                self.assertTrue(closed, 'the 17th connection was served')
+            finally:
+                extra.close()
+            held[0].settimeout(0.3)
+            with self.assertRaises(socket.timeout):
+                held[0].recv(1)  # a held connection stays open
+        finally:
+            for connection in held:
+                connection.close()
+        time.sleep(0.3)
+        self.assertEqual(self.board().request('ping').status, 200)
+
     def test_stop_closes_the_port(self):
         self.hub.run(self.listener.stop())
         with self.assertRaises(OSError):

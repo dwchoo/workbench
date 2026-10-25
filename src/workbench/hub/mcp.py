@@ -629,6 +629,7 @@ def routes(server: McpServer) -> Callable[[web.Application], None]:
 
 INTERNAL_HOST = "127.0.0.1"
 FLUSH_INTERVAL = 10.0  # SPEC API key: last use written every 10 s
+INTERNAL_MAX_CONNECTIONS = 16  # the Board agent is one client; more is closed at once (security review fix 5)
 
 
 @dataclass(slots=True)
@@ -670,11 +671,13 @@ def create_internal_app(api_keys: auth.ApiKeyStore, server: McpServer, *, clock:
 
 
 class InternalListener:
-    """The Board agent's loopback MCP listener on ``127.0.0.1:0`` (TI-16 starts and stops it)."""
+    """The Board agent's loopback MCP listener on ``127.0.0.1:0`` (TI-16 starts and stops it), at most
+    ``max_connections`` connections at once (the web listener's :class:`~workbench.hub.web.listener.GuardedSite`)."""
 
     def __init__(self, api_keys: auth.ApiKeyStore, server: McpServer, *, clock: Callable[[], float] = time.time,
-                 flush_interval: float = FLUSH_INTERVAL):
+                 flush_interval: float = FLUSH_INTERVAL, max_connections: int = INTERNAL_MAX_CONNECTIONS):
         self.api_keys, self.server, self.clock, self.flush_interval = api_keys, server, clock, flush_interval
+        self.max_connections = max_connections
         self.runner: web.AppRunner | None = None
         self.port: int | None = None
         self._lock = asyncio.Lock()  # one start/stop at a time: a second start never opens a second port
@@ -691,8 +694,9 @@ class InternalListener:
                                       flush_interval=self.flush_interval)
             runner = web.AppRunner(app, access_log=None, handle_signals=False)
             await runner.setup()
+            from .web.listener import GuardedSite
             try:
-                await web.TCPSite(runner, INTERNAL_HOST, 0).start()
+                await GuardedSite(runner, INTERNAL_HOST, 0, max_connections=self.max_connections).start()
             except BaseException:
                 await runner.cleanup()
                 raise

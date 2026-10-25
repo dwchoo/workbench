@@ -387,6 +387,8 @@ AUTOSTART_ENV = "WORKBENCH_HUB_AUTOSTART"
 # ``hub start`` starts the Hub itself; future ``hub`` commands are listed by name.
 AUTOSTART_EXEMPT_COMMANDS = frozenset({"setup", "update", "doctor", "_backend", "_hub"})
 AUTOSTART_EXEMPT_HUB_ACTIONS = frozenset({"start", "status", "stop", "enable", "disable", "passwd", "tls"})
+# ``wb logs <kind>``: diagnostic log reads like ``doctor``; they start no Hub and create nothing under HOME.
+AUTOSTART_EXEMPT_LOGS_KINDS = frozenset({"important", "raw", "raw-status", "raw-rotation", "summary-compat"})
 
 
 def autostart_wanted(args: argparse.Namespace, environment=None) -> bool:
@@ -395,6 +397,8 @@ def autostart_wanted(args: argparse.Namespace, environment=None) -> bool:
         return False
     command = getattr(args, "command", None)
     if command in AUTOSTART_EXEMPT_COMMANDS:
+        return False
+    if command == "logs" and getattr(args, "logs_kind", None) in AUTOSTART_EXEMPT_LOGS_KINDS:
         return False
     return not (command == "hub" and getattr(args, "hub_action", None) in AUTOSTART_EXEMPT_HUB_ACTIONS)
 

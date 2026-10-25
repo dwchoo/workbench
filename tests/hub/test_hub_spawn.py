@@ -324,6 +324,27 @@ class AutoStartTests(unittest.TestCase):
                 self.assertEqual(self.box.hub_pids(), [])
                 self.assertFalse(self.box.record_path.exists())
 
+    # The diagnostic ``wb logs ...`` kinds are read-only like ``doctor``: no Hub, nothing under HOME's Hub state.
+    LOGS = (
+        ('logs', 'summary-compat', 'verify', '--scripted'),
+        ('logs', 'summary-compat', 'status'),
+        ('logs', 'important', 'status'),
+        ('logs', 'raw-status'),
+        ('logs', 'raw', '--run', '00000000-0000-4000-8000-000000000000'),
+        ('logs', 'raw-rotation', 'activate', '--yes', '--evidence', '00000000-0000-4000-8000-000000000000'),
+    )
+
+    def test_logs_commands_start_no_hub_and_create_no_hub_state(self):
+        default_state = self.box.home / '.local' / 'state' / 'omp-workbench' / 'hub'
+        without_xdg = {key: value for key, value in self.box.env.items() if key != 'XDG_STATE_HOME'}
+        for args in self.LOGS:
+            for env in (self.box.env, without_xdg):
+                with self.subTest(args=args, xdg_state='XDG_STATE_HOME' in env):
+                    self.box.wb(*args, env=env)
+                    self.assertEqual(self.box.hub_pids(), [])
+                    self.assertFalse(self.box.state.exists(), 'Hub state dir created')
+                    self.assertFalse(default_state.exists(), 'HOME Hub state dir created')
+
     def hold_update_fence(self) -> None:
         """Hold the exclusive update fence the way ``wb update`` does."""
         self.box.fence_base.mkdir(mode=0o700)

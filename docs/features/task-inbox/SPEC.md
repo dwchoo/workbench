@@ -369,6 +369,7 @@ Frame:
 - 입력: binary frame의 epoch가 현재 epoch이고 그 연결이 현재 lease일 때만 PTY에 쓴다. 아니면 버리고 셈만 한다(D-28 (2)).
 - `{"t":"resize","epoch":E,"channel":"agent","rows":r,"cols":c}`(1~1000), `{"t":"ping","epoch":E,"n":k}` → `{"t":"pong","n":k}`, `{"t":"release","epoch":E}` → lease 해제·1000 close(D-28 (4), tab 닫기 `pagehide`에서 best-effort).
 - Heartbeat: client는 10 s마다 `ping`. Server는 현재 연결에서 어떤 frame도 20 s(+1 s 여유) 동안 오지 않으면 4002로 닫고 lease를 `none`("연결 없음")으로 둔다(D-28 (3)). TCP 끊김(EOF·RST)은 즉시 해제다. Lease 해제는 epoch를 올리지 않는다(같은 tab의 resume이 된다).
+- (2026-10-25 orchestrator 보완) 세션이 무효가 되면(로그아웃·비밀번호 변경·CLI `wb hub passwd`·24 h 만료) 열린 terminal 연결도 4401로 닫는다(약 5 s 안 재확인, 로그아웃·변경 시 즉시). `/ws/board` 연결은 전체 8개, 세션당 hello 전 2개로 제한한다. 다른 Hub run의 `resume`은 이 run에 아직 attach가 없을 때만 attach한다. Client는 4400~4499를 자동 재연결하지 않는다. `/board` 응답만 xterm DOM renderer 때문에 `style-src 'self' 'unsafe-inline'`을 쓰고 `script-src`는 그대로다.
 - 남은 "연결됨"은 아무것도 막지 않는다: 새 hello는 항상 인수한다(불변식 6).
 - Client 재연결 규칙(`board-state.js`): 네트워크로 끊기면 지수 backoff(1→2→4…≤15 s)로 `resume` hello. `taken_over`·`taken_elsewhere`를 받은 뒤에는 자동 재연결하지 않는다(두 tab 사이 핑퐁 방지). Pong이 20 s 없으면 "연결 없음"을 보이고 재연결.
 - 송신 queue가 연결당 4 MiB를 넘으면 그 연결을 4003으로 닫는다(client는 resume).

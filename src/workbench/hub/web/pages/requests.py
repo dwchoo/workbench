@@ -1,5 +1,6 @@
 """Request pages (TI-06; SPEC "웹 route와 화면"): list, detail, create/edit/comment/state forms and the
-cancel confirmation page.
+cancel confirmation page; TI-14 result pages: ``/full`` (HTML) and the raw log / artifact pages ``/raw``,
+``/artifact`` (the original bytes as inline ``text/plain; charset=utf-8``, never HTML).
 
 Every page is server-rendered through :mod:`workbench.hub.web.render`: user text only ever reaches the
 document as an escaped text node or inside ``<pre>`` (no Markdown, no HTML), URLs are built with
@@ -9,8 +10,10 @@ with ``principal_of(request)`` so the service stays the one place that decides w
 """
 from __future__ import annotations
 
+import base64
 from dataclasses import dataclass, field
 import secrets
+import sys
 import time
 from typing import Callable, Iterable
 from urllib.parse import quote, urlencode
@@ -18,6 +21,7 @@ from urllib.parse import quote, urlencode
 from aiohttp import web
 
 from ...inbox.limits import InboxError
+from ...inbox.results import MAX_PAGE as MAX_RESULT_PAGE, Results, page_bounds, summary as result_summary
 from ...inbox.service import PERMISSIONS, STATES, Principal, ProjectRef
 from .. import render
 from ..middleware import SERVICES, api, principal_of, see_other, session_of
@@ -46,6 +50,7 @@ class RequestsPort:
     inbox: object
     projects: Callable[[], Iterable[ProjectRef]]
     cancel_tokens: dict = field(default_factory=dict)  # token -> (binding, expires_at); in memory only
+    results: object = None  # :class:`~workbench.hub.inbox.results.Results` over ``inbox`` (TI-14)
 
 
 PORT: web.AppKey = web.AppKey("requests_port", RequestsPort)
@@ -418,6 +423,7 @@ def detail_page(request: web.Request, detail: dict, *, notice: str | None = None
         buttons.append(_post_form(request, request_url(rid, "/start-review"), {}, review_label, class_="inline"))
     if "cancel" in allowed:
         buttons.append(render.tag("a", "취소", href=request_url(rid, "/cancel"), class_="button danger"))
+    buttons.append(render.tag("a", "전체 보기", href=request_url(rid, "/full"), class_="button"))  # TI-14
     body = [summary]
     if notice in NOTICES:
         body.append(render.tag("p", NOTICES[notice], class_="notice", role="status"))
@@ -427,7 +433,8 @@ def detail_page(request: web.Request, detail: dict, *, notice: str | None = None
                            id="body"))
     body.append(_revisions_section(detail))
     body.append(_task_section(detail))
-    result = render.pre(detail["result_summary"]) if detail["result_summary"] else render.tag("p", EMPTY, class_="none")
+    text = result_summary(detail)["summary"]
+    result = render.pre(text) if text else render.tag("p", EMPTY, class_="none")
     body.append(render.tag("section", render.html_join([render.tag("h2", "결과 요약"), result]), id="result"))
     body.append(_thread_section(detail))
     if "comment" in allowed:
@@ -641,19 +648,170 @@ async def post_start_review(request: web.Request) -> web.Response:
     return see_other(_query_url(request_url(rid), notice="review_started"))
 
 
+# -- results (TI-14; SPEC "결과 조회") -------------------------------------------------------------------
+RESULT_ERROR_TEXT = {"backend_not_running": "프로젝트 backend가 꺼져 있어 원문 로그를 읽을 수 없습니다",
+                     "backend_unreachable": "프로젝트 backend에 연결하지 못했습니다",
+                     "forbidden": "이 경로는 읽을 수 없습니다"}
+TEXT_HEADERS = {"Content-Disposition": "inline"}
+
+
+def _result_error(request: web.Request, error: InboxError, rid: str) -> web.Response:
+    text = RESULT_ERROR_TEXT.get(error.code) or ERROR_TEXT.get(error.code, "요청을 처리하지 못했습니다")
+    parts = [render.tag("h1", text), _error_block(error) if error.code not in RESULT_ERROR_TEXT else "",
+             render.tag("p", render.tag("a", "전체 보기로 돌아가기", href=request_url(rid, "/full"))),
+             render.tag("p", render.tag("a", "요청 목록", href="/requests"))]
+    status = {"backend_unreachable": 503}.get(error.code) or _error_status(error)
+    return _frame(request, "오류", render.html_join(parts), status=status)
+
+
+def _page_query(request: web.Request) -> tuple[int, int]:
+    """``offset``/``length`` of a raw or artifact page from the query (defaults 0 and the page maximum)."""
+    query = request.query
+    offset = number_field(query["offset"], "offset") if query.get("offset", "") != "" else 0
+    length = number_field(query["length"], "length") if query.get("length", "") != "" else MAX_RESULT_PAGE
+    return page_bounds(offset, length)
+
+
+def _page_response(page: dict) -> web.Response:
+    """The original bytes: UTF-8 text as inline ``text/plain``, anything else as an ``application/octet-stream``
+    download (never rendered as HTML; ``nosniff`` comes from the middleware)."""
+    if "text" in page:
+        return web.Response(body=page["text"].encode("utf-8"),
+                            headers={"Content-Type": "text/plain; charset=utf-8", **TEXT_HEADERS})
+    return web.Response(body=base64.b64decode(page["data_base64"]),
+                        headers={"Content-Type": "application/octet-stream", "Content-Disposition": "attachment"})
+
+
+async def _result_call(request: web.Request, function, *args):
+    """A result read off the loop; an unexpected failure is ``internal_error`` (its type goes to the Hub log only)."""
+    try:
+        return await _call(request, function, *args)
+    except InboxError:
+        raise
+    except Exception as exc:
+        print(f"[workbench] result page failed: {type(exc).__name__}", file=sys.stderr, flush=True)
+        raise InboxError("internal_error", "the result could not be read") from None
+
+
+def _raw_link(rid: str, source_id: object) -> render.Markup:
+    if not isinstance(source_id, str):
+        return render.Markup(EMPTY)
+    return render.tag("a", "원문", href=f"{request_url(rid, '/raw')}?{urlencode({'run_id': source_id})}")
+
+
+def _full_task_section(rid: str, full: dict) -> render.Markup:
+    if not full["available"]:
+        parts = [render.tag("p", f"backend에서 실행 기록을 읽지 못했습니다({full['reason']}). 마지막으로 본 Task 상태만 "
+                                 "보입니다. 원문 로그는 backend를 켠 뒤 볼 수 있습니다.", class_="notice")]
+        view = full.get("view") or {}
+        runs = [run for run in view.get("runs") or [] if isinstance(run, dict)]
+        rows = [render.tag("tr", render.html_join([render.tag("td", str(run.get("run_id"))),
+                                                   render.tag("td", str(run.get("status"))),
+                                                   render.tag("td", str(run.get("exit_code")))])) for run in runs]
+        parts.append(_definition("진행", view.get("status") or EMPTY))
+        if rows:
+            parts.append(render.tag("table", render.html_join([render.tag("tr", render.html_join(
+                [render.tag("th", "run"), render.tag("th", "상태"), render.tag("th", "exit")])), *rows])))
+        return render.tag("section", render.html_join([render.tag("h2", "실행 기록"), *parts]), id="runs")
+    task = full["task"]
+    if task is None:
+        return render.tag("section", render.html_join([render.tag("h2", "실행 기록"),
+                                                       render.tag("p", "연결된 Task가 없습니다", class_="none")]), id="runs")
+    head = render.tag("p", f"Task {task['task_id']} · {task['status']}"
+                      + (f" · 닫힘({task['closed_reason']})" if task.get("closed_reason") else ""))
+    run_rows = [render.tag("tr", render.html_join([
+        render.tag("td", str(run["run_id"])), render.tag("td", str(run["status"])),
+        render.tag("td", str(run["exit_code"])), render.tag("td", when(run["started_at"])),
+        render.tag("td", when(run["ended_at"])), render.tag("td", _raw_link(rid, run["run_id"]))]))
+        for run in task["runs"]]
+    runs = render.tag("table", render.html_join([render.tag("tr", render.html_join([
+        render.tag("th", name) for name in ("run", "상태", "exit", "시작", "끝", "원문")])), *run_rows])) \
+        if run_rows else render.tag("p", "run이 없습니다", class_="none")
+    command_rows = [render.tag("tr", render.html_join([
+        render.tag("td", str(command["command_id"])), render.tag("td", str(command["owner"])),
+        render.tag("td", str(command["exit_code"])), render.tag("td", _raw_link(rid, command["command_id"]))]))
+        for command in task["commands"]]
+    commands = render.tag("table", render.html_join([render.tag("tr", render.html_join([
+        render.tag("th", name) for name in ("명령", "주체", "exit", "출력")])), *command_rows])) \
+        if command_rows else render.tag("p", "명령이 없습니다", class_="none")
+    reports = [render.tag("li", render.html_join([render.tag("div", f"[{report['kind']}] {when(report['at'])}",
+                                                             class_="meta"), render.pre(report["text"])]))
+               for report in task["reports"]]
+    return render.html_join([
+        render.tag("section", render.html_join([render.tag("h2", "실행 기록"), head, runs]), id="runs"),
+        render.tag("section", render.html_join([render.tag("h2", "명령"), commands]), id="commands"),
+        render.tag("section", render.html_join([render.tag("h2", "worker 보고 원문"),
+                                                render.tag("ol", render.html_join(reports)) if reports else
+                                                render.tag("p", "보고가 없습니다", class_="none")]), id="reports")])
+
+
+def full_page(request: web.Request, value: dict, rid: str) -> web.Response:
+    detail_link = render.tag("p", render.tag("a", "요청으로 돌아가기", href=request_url(rid)))
+    text = value["summary"]
+    artifact_form = render.tag("form", render.html_join([
+        _field_row("산출물 경로(프로젝트 root 기준)", render.void("input", name="path", required=True)),
+        _field_row("offset", render.void("input", name="offset", value="0", inputmode="numeric")),
+        _field_row("length", render.void("input", name="length", value=str(MAX_RESULT_PAGE), inputmode="numeric")),
+        render.tag("button", "열기", type="submit")]), method="get", action=request_url(rid, "/artifact"),
+        class_="stack")
+    body = [render.tag("h1", "전체 보기"), detail_link,
+            render.tag("section", render.html_join([render.tag("h2", "결과 요약"),
+                                                    render.pre(text) if text else render.tag("p", EMPTY, class_="none")]),
+                       id="result"),
+            _full_task_section(rid, value["full"]),
+            render.tag("section", render.html_join([
+                render.tag("h2", "산출물"),
+                render.tag("p", "프로젝트 root 아래 일반 파일만 열립니다(.wb·.git, symlink 제외). 한 번에 최대 128 KiB."),
+                artifact_form]), id="artifact")]
+    return _frame(request, "전체 보기", render.html_join(body))
+
+
+async def get_full(request: web.Request) -> web.Response:
+    rid = request.match_info["rid"]
+    try:
+        value = await _result_call(request, request.app[PORT].results.full, principal_of(request), rid)
+    except InboxError as exc:
+        return error_page(request, exc)
+    return full_page(request, value, rid)
+
+
+async def get_raw(request: web.Request) -> web.Response:
+    rid = request.match_info["rid"]
+    try:
+        offset, length = _page_query(request)
+        page = await _result_call(request, request.app[PORT].results.raw, principal_of(request), rid,
+                                  request.query.get("run_id", ""), offset, length)
+    except InboxError as exc:
+        return _result_error(request, exc, rid)
+    return _page_response(page)
+
+
+async def get_artifact(request: web.Request) -> web.Response:
+    rid = request.match_info["rid"]
+    try:
+        offset, length = _page_query(request)
+        page = await _result_call(request, request.app[PORT].results.artifact, principal_of(request), rid,
+                                  request.query.get("path", ""), offset, length)
+    except InboxError as exc:
+        return _result_error(request, exc, rid)
+    return _page_response(page)
+
+
 @api
 async def get_badge(request: web.Request) -> web.Response:
     """``{pending: NEW 수, needs_info: NEEDS_INFO 수}`` over everything the session may see (D-24)."""
     return web.json_response(await _call(request, request.app[PORT].inbox.badge, principal_of(request)))
 
 
-def routes(inbox, projects: Callable[[], Iterable[ProjectRef]]) -> Callable[[web.Application], None]:
+def routes(inbox, projects: Callable[[], Iterable[ProjectRef]], *, results=None) -> Callable[[web.Application], None]:
     """``create_app(..., routes=[routes(inbox, projects)])``: the request pages over ``inbox``.
 
     ``projects()`` returns the attached :class:`ProjectRef` list (names and the create form's choices).
+    ``results`` reads results (default: :class:`~workbench.hub.inbox.results.Results` over ``inbox`` and the
+    project backends).
     """
     def register(app: web.Application) -> None:
-        app[PORT] = RequestsPort(inbox, projects)
+        app[PORT] = RequestsPort(inbox, projects, results=results if results is not None else Results(inbox))
         app.router.add_get("/requests", get_list)
         app.router.add_get("/api/badge", get_badge)
         app.router.add_get("/requests/new", get_new)
@@ -666,4 +824,7 @@ def routes(inbox, projects: Callable[[], Iterable[ProjectRef]]) -> Callable[[web
         app.router.add_get("/requests/{rid}/cancel", get_cancel)
         app.router.add_post("/requests/{rid}/cancel", post_cancel)
         app.router.add_post("/requests/{rid}/start-review", post_start_review)
+        app.router.add_get("/requests/{rid}/full", get_full)
+        app.router.add_get("/requests/{rid}/raw", get_raw)
+        app.router.add_get("/requests/{rid}/artifact", get_artifact)
     return register

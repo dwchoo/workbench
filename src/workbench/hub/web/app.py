@@ -61,12 +61,22 @@ class WebServices:
     flush_interval: float = 10.0  # API key ``last_used_at`` (SPEC: every 10 s and at Hub stop)
     # ``(project_id, name)`` of the registered projects (blocking read; the Hub supplies the registry view).
     projects: Callable[[], Iterable[tuple[str, str]]] = lambda: ()
+    # Called with a logged-out session token, or None after a password change (every session ended); the
+    # Board terminal ends those sessions' WebSockets at once (TI-17).
+    session_listeners: list = field(default_factory=list)
 
     def __post_init__(self) -> None:
         self.sessions = auth.SessionStore(self.db, self.passwords)
         self.throttle = (self.throttle_factory or auth.LoginThrottle)(self.db, clock=self.clock)
         self.audit = auth.AuditLog(self.db)
         self.api_keys = auth.ApiKeyStore(self.db)
+
+    def sessions_ended(self, token: str | None) -> None:
+        for listener in list(self.session_listeners):
+            try:
+                listener(token)
+            except Exception as exc:  # a listener problem never fails the logout
+                print(f"[workbench] web: session listener failed: {exc!r}", file=sys.stderr, flush=True)
 
     async def blocking(self, function, *args):
         return await asyncio.get_running_loop().run_in_executor(None, function, *args)

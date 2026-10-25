@@ -185,7 +185,11 @@ TOOLS: dict[str, Tool] = {tool.name: tool for tool in (
          {"request_id": _REQUEST_ID, "confirm_token": _STRING, "reason": _STRING}, ("request_id",)),
     Tool("inbox_result",
          "The result of a request: the manager's final summary (or the Task state before it closes) and the "
-         "Task's run results.",
+         "Task's run results. full:true adds the full view (runs, worker reports, commands; with the backend off "
+         "only the last Task state). With full:true, run_id (a run or command id from the full view) returns one "
+         "page of its raw log, and artifact_path (relative to the project root; not .wb or .git, no symlinks) "
+         "one page of that file; offset/length select the page (length up to 131072 bytes). Page bytes come as "
+         "text when they are UTF-8, else as data_base64.",
          {"request_id": _REQUEST_ID, "full": {"type": "boolean"}, "run_id": _STRING,
           "offset": {"type": "integer", "minimum": 0}, "length": {"type": "integer", "minimum": 1,
                                                                    "maximum": 131072},
@@ -330,9 +334,11 @@ class McpServer:
 
     def __init__(self, inbox, *, projects: Callable[[], Awaitable[list[dict]]] | None = None,
                  monotonic: Callable[[], float] = time.monotonic, token_ttl: float = CANCEL_TOKEN_TTL,
-                 version: str | None = None):
+                 version: str | None = None, results=None):
+        from .inbox.results import Results
         self.inbox = inbox
         self.projects = projects
+        self.results = results if results is not None else Results(inbox)  # TI-14 result reads
         self.monotonic = monotonic
         self.token_ttl = token_ttl
         self.version = version if version is not None else _release()
@@ -491,25 +497,22 @@ class McpServer:
         return _cancel_answer(value, stop=False)
 
     async def _inbox_result(self, principal: Principal, args: dict) -> dict:
-        """SPEC "결과 조회" default: the manager's ``close`` summary, else the Task state and run lines.
-        ``full`` (TI-14) is not served yet: the summary comes back with ``full_unavailable``."""
-        request = await self._blocking(self.inbox.get, principal, args["request_id"])
-        view = request["task"]["view"] if isinstance(request["task"]["view"], dict) else None
-        task = None
-        if view is not None or request["task"]["task_id"] is not None:
-            view = view or {}
-            runs = [{"run_id": run.get("run_id"), "status": run.get("status"), "exit_code": run.get("exit_code")}
-                    for run in view.get("runs") or [] if isinstance(run, dict)]
-            task = {"status": view.get("status"), "runs": runs}
-        summary = request["result_summary"]
-        if summary is None and task is not None:
-            lines = [f"Task {request['task']['task_id']}: {task['status']}"]
-            lines += [f"run {run['run_id']}: {run['status']} (exit {run['exit_code']})" for run in task["runs"]]
-            summary = "\n".join(lines)
-        value = {"summary": summary, "state": request["state"], "outcome": request["outcome"], "task": task}
-        if args.get("full"):
-            value["full_unavailable"] = True
-        return value
+        """SPEC "결과 조회" default: the manager's ``close`` summary, else the Task state and run lines."""
+        if not args.get("full"):  # page arguments without ``full`` add nothing (D-22: full views are explicit)
+            return await self._blocking(lambda: self.results.summary(self.inbox.get(principal, args["request_id"])))
+        if "run_id" not in args and "artifact_path" not in args:
+            return await self._blocking(self.results.full, principal, args["request_id"])
+        offset, length = args.get("offset", 0), args.get("length", self.results.max_page)
+
+        def pages() -> dict:
+            value = self.results.summary(self.inbox.get(principal, args["request_id"]))
+            if "run_id" in args:
+                value["raw"] = self.results.raw(principal, args["request_id"], args["run_id"], offset, length)
+            if "artifact_path" in args:
+                value["artifact"] = self.results.artifact(principal, args["request_id"], args["artifact_path"], offset,
+                                                          length)
+            return value
+        return await self._blocking(pages)
 
     async def _inbox_projects(self, principal: Principal, args: dict) -> dict:
         """Registered projects in the key's scope; ``query`` matches the name (and, for editors, the path)."""

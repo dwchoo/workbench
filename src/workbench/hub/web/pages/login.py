@@ -153,6 +153,7 @@ async def post_logout(request: web.Request) -> web.Response:
     services = request.app[SERVICES]
     now = float(services.clock())
     await services.blocking(services.sessions.delete, request[SESSION_TOKEN])
+    services.sessions_ended(request[SESSION_TOKEN])  # its open terminal ends now
     await services.blocking(lambda: services.audit.record("logout", "owner", request.remote,
                                                           {"delay_seconds": 0}, now=now))
     response = see_other("/login")
@@ -234,6 +235,7 @@ async def post_password(request: web.Request) -> web.Response:
             new_generation = await services.blocking(services.passwords.set_password, new)
         except auth.PasswordRejected:
             return settings_page(request, status=400, error=LENGTH_TEXT)
+        services.sessions_ended(None)  # every open terminal belongs to a session of the old password
         now = float(services.clock())
         reissued = await services.blocking(
             lambda: services.sessions.reissue(token, now, expected_generation=generation))

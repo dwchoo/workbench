@@ -108,7 +108,9 @@ class BoardWsCase(unittest.IsolatedAsyncioTestCase):
         self.generation = self.passwords.set_password(PASSWORD)
         self.db = auth.HubDb.open(self.state)
         self.addCleanup(self.db.close)
-        self.services = WebServices(self.passwords, self.db, OriginPolicy('127.0.0.1'))
+        self.clock_offset = 0.0  # moves the Hub's clock (session expiry)
+        self.services = WebServices(self.passwords, self.db, OriginPolicy('127.0.0.1'),
+                                    clock=lambda: time.time() + self.clock_offset)
         self.launcher = RecorderLauncher(self.base)
         self.board = BoardSet(self.launcher, grace=1.0)
         self.terminal = board_ws.BoardTerminal(self.board, heartbeat=self.heartbeat, slack=self.slack,
@@ -269,7 +271,7 @@ class ResizeTests(BoardWsCase):
         tab = self.tab()
         epoch = (await tab.attach(self.session.csrf, sizes={'shell': [24, 80]}))['epoch']
         await tab.wait_output('shell', b'ready:shell')
-        for rows, cols, channel in ((0, 80, 'shell'), (24, 501, 'shell'), ('24', 80, 'shell'), (24, 80, 'tty')):
+        for rows, cols, channel in ((0, 80, 'shell'), (24, 1001, 'shell'), ('24', 80, 'shell'), (24, 80, 'tty')):
             await tab.send({'t': 'resize', 'epoch': epoch, 'channel': channel, 'rows': rows, 'cols': cols})
             self.assertEqual((await tab.event('error'))['reason'], 'bad_resize')
         await tab.send({'t': 'resize', 'epoch': epoch + 5, 'channel': 'shell', 'rows': 33, 'cols': 99})
@@ -374,6 +376,50 @@ class HeartbeatTests(BoardWsCase):
         self.assertEqual(await tab.wait_closed(5), 4002)
         await asyncio.sleep(0.2)
         self.assertEqual([event for event, _ in self.audit()], ['terminal_attach', 'terminal_timeout'])
+
+
+class AttachClockTests(BoardWsCase):
+    heartbeat = 0.4
+    slack = 0.2
+
+    async def test_the_heartbeat_counts_from_the_attach_not_from_the_upgrade(self):
+        tab = self.tab()
+        await tab.connect()
+        await asyncio.sleep(0.9)  # a slow hello, still inside the hello window
+        await tab.hello(self.session.csrf)
+        await tab.event('attached')
+        attached_at = time.monotonic()
+        await asyncio.sleep(0.6)
+        self.assertEqual(self.board.status()['lease']['state'], 'connected')
+        self.assertTrue(await self.eventually(lambda: self.board.status()['lease']['state'] == 'none', 2))
+        self.assertGreaterEqual(time.monotonic() - attached_at, 2 * self.heartbeat + self.slack - 0.1)
+
+
+class DeniedAuditTests(BoardWsCase):
+    async def test_refused_hellos_and_taken_elsewhere_are_audited_as_denied_without_content(self):
+        self.terminal.hello_timeout = 0.3
+        for send in (lambda tab: asyncio.sleep(0), lambda tab: tab.ws.send_str('junk-hello-text'),
+                     lambda tab: tab.hello('wrong-csrf-value')):
+            tab = self.tab()
+            await tab.connect()
+            await send(tab)
+            await tab.wait_closed(3)
+        holder = self.tab()
+        attached = await holder.attach(self.session.csrf)
+        late = self.tab()
+        await late.connect()
+        await late.hello(self.session.csrf, resume={'run': attached['run'], 'epoch': 0})
+        await late.event('taken_elsewhere')
+        quitter = self.tab()  # a tab that leaves before its hello is no denial
+        await quitter.connect()
+        await quitter.ws.close()
+        await asyncio.sleep(0.3)
+        self.assertEqual(self.audit(), [('terminal_denied', {'epoch': 0, 'previous_epoch': None})] * 3 + [
+            ('terminal_attach', {'epoch': 1, 'previous_epoch': None}),
+            ('terminal_denied', {'epoch': 1, 'previous_epoch': None})])
+        dump = json.dumps(self.audit())
+        for secret in ('junk-hello-text', 'wrong-csrf-value', self.session.csrf):
+            self.assertNotIn(secret, dump)
 
 
 class TakeoverTests(BoardWsCase):
@@ -550,9 +596,14 @@ class SimultaneousTests(BoardWsCase):
         return kinds[0] if kinds else f'closed:{tab.close_code}'
 
     async def race(self, count: int, resume=None) -> list[Tab]:
-        tabs = [self.tab() for _ in range(count)]
+        # Two tabs per login session (the per-session cap on sockets before their hello).
+        logins = [self.session] + [self.services.sessions.create('127.0.0.1', 'race', time.time(),
+                                                                 generation=self.generation)
+                                   for _ in range((count - 1) // 2)]
+        sessions = [logins[index // 2] for index in range(count)]
+        tabs = [self.tab(session) for session in sessions]
         await asyncio.gather(*(tab.connect() for tab in tabs))
-        await asyncio.gather(*(tab.hello(self.session.csrf, resume=resume) for tab in tabs))
+        await asyncio.gather(*(tab.hello(session.csrf, resume=resume) for tab, session in zip(tabs, sessions)))
         return tabs
 
     async def test_two_tabs_at_once_leave_exactly_one_lease_and_no_ping_pong(self):
@@ -611,6 +662,102 @@ class SendQueueTests(BoardWsCase):
         self.assertEqual(self.board.status()['shell']['state'], 'running')
 
 
+class ControlQueueTests(BoardWsCase):
+    async def test_control_messages_count_toward_the_send_queue_limit(self):
+        self.terminal.queue_limit = 100  # smaller than ``attached`` alone
+        tab = self.tab()
+        await tab.connect()
+        await tab.hello(self.session.csrf)
+        self.assertEqual(await tab.wait_closed(5), 4003)
+        self.assertEqual(self.board.status()['lease']['state'], 'none')
+
+    async def test_pong_and_error_replies_are_rate_limited(self):
+        tab = self.tab()
+        epoch = (await tab.attach(self.session.csrf))['epoch']
+        started = time.monotonic()
+        for n in range(400):
+            await tab.send({'t': 'ping', 'epoch': epoch, 'n': n})
+            await tab.ws.send_str('not json')
+        await tab.send({'t': 'ping', 'epoch': epoch, 'n': -1})
+        await asyncio.sleep(0.5)
+        elapsed = time.monotonic() - started
+        while True:
+            try:
+                await tab._next(0.2)
+            except asyncio.TimeoutError:
+                break
+        replies = [event for event in tab.events if event['t'] in ('pong', 'error')]
+        allowed = board_ws.REPLY_BURST + board_ws.REPLY_RATE * elapsed
+        self.assertLessEqual(len(replies), allowed + 1)
+        self.assertGreaterEqual(len(replies), board_ws.REPLY_BURST)
+        self.assertIsNone(tab.close_code)
+        await asyncio.sleep(1.0)  # the budget refills
+        await tab.send({'t': 'ping', 'epoch': epoch, 'n': 7777})
+        self.assertEqual((await tab.receive_until(lambda item: isinstance(item, dict) and item.get('n') == 7777))['t'],
+                         'pong')
+
+
+class SessionEndTests(BoardWsCase):
+    async def attached_tab(self) -> tuple[Tab, int]:
+        tab = self.tab()
+        epoch = (await tab.attach(self.session.csrf))['epoch']
+        await tab.wait_output('shell', b'ready:shell')
+        return tab, epoch
+
+    async def assert_ended(self, tab: Tab, within: float) -> None:
+        started = time.monotonic()
+        self.assertEqual(await tab.wait_closed(within + 2), 4401)
+        self.assertLess(time.monotonic() - started, within)
+        self.assertEqual(self.board.status()['lease']['state'], 'none')
+        self.assertTrue(await self.eventually(lambda: self.audit()[-1][0] == 'terminal_closed'), self.audit())
+
+    async def post(self, path: str, data: dict) -> int:
+        headers = {'Origin': self.base_url, 'Cookie': f'wb_hub_session={self.session.token}'}
+        async with aiohttp.ClientSession(cookie_jar=aiohttp.DummyCookieJar()) as http:
+            async with http.post(self.base_url + path, data=data, headers=headers, allow_redirects=False) as response:
+                return response.status
+
+    async def test_a_cli_password_change_ends_the_open_terminal_within_the_session_check(self):
+        self.terminal.session_check = 0.3
+        tab, epoch = await self.attached_tab()
+        await asyncio.get_running_loop().run_in_executor(None, self.passwords.set_password, 'another password 1')
+        await self.assert_ended(tab, 1.5)
+
+    async def test_the_24_hour_expiry_ends_the_open_terminal(self):
+        self.terminal.session_check = 0.3
+        tab, epoch = await self.attached_tab()
+        await tab.send({'t': 'ping', 'epoch': epoch, 'n': 1})
+        await tab.event('pong')
+        self.clock_offset = 86400 + 1
+        await self.assert_ended(tab, 1.5)
+
+    async def test_a_valid_session_keeps_the_terminal_across_checks(self):
+        self.terminal.session_check = 0.2
+        tab, epoch = await self.attached_tab()
+        for n in range(5):
+            await asyncio.sleep(0.25)
+            await tab.send({'t': 'ping', 'epoch': epoch, 'n': n})
+            await tab.event('pong')
+        self.assertIsNone(tab.close_code)
+
+    async def test_logout_ends_that_sessions_terminal_at_once_and_spares_other_sessions(self):
+        tab, epoch = await self.attached_tab()  # session_check stays at its default 5 s
+        other_login = self.services.sessions.create('127.0.0.2', 'other', time.time(), generation=self.generation)
+        bystander = self.tab(other_login)
+        await bystander.connect()  # another session's socket before its hello
+        self.assertEqual(await self.post('/logout', {'csrf': self.session.csrf}), 303)
+        await self.assert_ended(tab, 1.0)
+        await bystander.hello(other_login.csrf)
+        self.assertEqual((await bystander.event('attached'))['epoch'], epoch + 1)
+
+    async def test_a_web_password_change_ends_every_open_terminal_at_once(self):
+        tab, epoch = await self.attached_tab()
+        status = await self.post('/settings/password', {'csrf': self.session.csrf, 'current': PASSWORD,
+                                                        'new': 'a brand new password', 'confirm': 'a brand new password'})
+        self.assertEqual(status, 303)
+        await self.assert_ended(tab, 1.0)
+
+
 class ChannelStateTests(BoardWsCase):
     async def test_a_restart_or_exit_is_told_to_the_current_tab_and_the_new_process_streams(self):
         tab = self.tab()
@@ -660,6 +807,77 @@ class ViewTests(BoardWsCase):
         self.assertEqual(view['lease'], self.board.status()['lease'])
 
 
+class SizeBoundTests(BoardWsCase):
+    async def test_resize_accepts_the_spec_bound_1000(self):
+        tab = self.tab()
+        epoch = (await tab.attach(self.session.csrf))['epoch']
+        await tab.wait_output('shell', b'ready:shell')
+        await tab.send({'t': 'resize', 'epoch': epoch, 'channel': 'shell', 'rows': 1000, 'cols': 1000})
+        await tab.send_input('shell', epoch, b'SIZE')
+        await tab.wait_output('shell', b'size:1000,1000;')
+
+    async def test_out_of_range_hello_sizes_are_clamped_not_refused(self):
+        tab = self.tab()
+        epoch = (await tab.attach(self.session.csrf, sizes={'agent': [0, 5000], 'shell': [-3, 1001]}))['epoch']
+        await tab.wait_output('shell', b'ready:shell')
+        await tab.wait_output('agent', b'ready:agent')
+        await tab.send_input('shell', epoch, b'SIZE')
+        await tab.send_input('agent', epoch, b'SIZE')
+        await tab.wait_output('shell', b'size:1,1000;')
+        await tab.wait_output('agent', b'size:1,1000;')
+
+
+class AuditFlushTests(BoardWsCase):
+    async def test_the_app_cleanup_waits_for_the_terminal_audit_rows(self):
+        record = self.terminal.audit
+
+        def slow(event, address, detail):  # a busy disk: each row takes a while
+            time.sleep(0.3)
+            record(event, address, detail)
+        self.terminal.audit = slow
+        tab = self.tab()
+        epoch = (await tab.attach(self.session.csrf))['epoch']
+        closing = asyncio.gather(*(socket_.close(code=aiohttp.WSCloseCode.GOING_AWAY, message=b'hub stopping')
+                                   for socket_ in list(self.app[WEBSOCKETS])))  # ``WebListener.stop`` order
+        await tab.wait_closed(3)
+        await closing
+        await self.runner.cleanup()  # then ``hub.sqlite3`` closes
+        self.assertEqual(self.audit()[-1], ('terminal_closed', {'epoch': epoch, 'previous_epoch': None}))
+
+
+class ConnectionCapTests(BoardWsCase):
+    async def upgrade(self, session) -> tuple[int, Tab | None]:
+        tab = self.tab(session)
+        try:
+            await tab.connect()
+        except aiohttp.WSServerHandshakeError as exc:
+            return exc.status, None
+        return 101, tab
+
+    def login(self):
+        return self.services.sessions.create('127.0.0.1', 'cap', time.time(), generation=self.generation)
+
+    async def test_a_session_has_at_most_two_sockets_before_their_hello(self):
+        other = self.login()
+        self.assertEqual([(await self.upgrade(self.session))[0] for _ in range(2)], [101, 101])
+        self.assertEqual((await self.upgrade(self.session))[0], 429)
+        self.assertEqual((await self.upgrade(other))[0], 101)
+        greeted = self.tabs[0]
+        await greeted.hello(self.session.csrf)
+        await greeted.event('attached')
+        self.assertEqual((await self.upgrade(self.session))[0], 101, 'an attached socket is no longer pending')
+
+    async def test_at_most_eight_board_sockets_are_open_and_a_closed_one_frees_its_place(self):
+        logins = [self.login() for _ in range(4)]
+        opened = [(await self.upgrade(login)) for login in logins for _ in range(2)]
+        self.assertEqual([status for status, _ in opened], [101] * 8)
+        self.assertEqual((await self.upgrade(self.login()))[0], 503)
+        await opened[0][1].ws.close()
+        self.assertTrue(await self.eventually(lambda: len(self.terminal.connections) == 7))
+        self.assertEqual((await self.upgrade(self.login()))[0], 101)
+        self.assertIsNone(self.board.status(), 'a refused upgrade starts nothing')
+
+
 class HelloTests(BoardWsCase):
     async def closed_with(self, send) -> int:
         tab = self.tab()
@@ -682,7 +900,8 @@ class HelloTests(BoardWsCase):
                lambda tab: tab.hello(self.session.csrf, resume={'run': 'x', 'epoch': -1}),
                lambda tab: tab.hello(self.session.csrf, resume={'run': 'x', 'epoch': 1 << 32}),
                lambda tab: tab.hello(self.session.csrf, resume='yes'),
-               lambda tab: tab.hello(self.session.csrf, sizes={'shell': [0, 80]}),
+               lambda tab: tab.hello(self.session.csrf, sizes={'shell': ['24', 80]}),
+               lambda tab: tab.hello(self.session.csrf, sizes={'shell': [24]}),
                lambda tab: tab.send_input('shell', 0, b'early')]
         for send in bad:
             self.assertEqual(await self.closed_with(send), 4400)
@@ -803,6 +1022,9 @@ class RealHubTests(RealHubCase):
         stopping = asyncio.ensure_future(asyncio.to_thread(self.hub.box.stop_hub, self.hub.hub))
         self.assertEqual(await tab.wait_closed(10), 1001)  # read while the Hub stops: the client answers the close
         self.assertEqual(await stopping, 0)
+        # The Hub wrote the terminal's last row before it closed ``hub.sqlite3``.
+        self.assertEqual([(row['epoch'], row['previous_epoch']) for row in self.hub.audit('terminal_closed')],
+                         [(1, None)])
 
 
 class RealHubHeartbeatTests(RealHubCase):

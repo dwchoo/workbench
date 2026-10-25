@@ -1084,10 +1084,15 @@ class ResultTests(Case):
         ok = self.r1.call('inbox_result', request_id=self.rid, full=True, length=131072, offset=0)
         self.assert_no_secret(ok)
 
-    def test_full_before_ti14_degrades_to_the_summary_not_to_an_error(self):
+    def test_full_with_the_backend_off_is_the_summary_plus_the_last_task_view_not_an_error(self):
+        """TI-14: ``full:true`` is served; with no backend running it is the summary and the last ``task_view`` only."""
         result = self.r1.call('inbox_result', request_id=self.rid, full=True)
         self.assertFalse(result['isError'], result)
-        self.assertIn('summary', result['structuredContent'])
+        value = result['structuredContent']
+        self.assertIn('summary', value)
+        self.assertEqual((value['full']['available'], value['full']['reason']), (False, 'backend_not_running'))
+        self.assertNotIn('full_unavailable', value)
+        self.assertEqual(value['full']['view']['runs'][0]['run_id'], 'run-1')
         self.assert_no_secret(result)
 
     def test_result_follows_the_visibility_rules(self):

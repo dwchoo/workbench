@@ -43,7 +43,10 @@
 | 검토 후 자동 실행 | Manager 검토로 승인 명세가 연결된 요청이 출처와 관계없이 소유자의 건별 승인 없이 상시 위임에 따라 실행되는 것. 접수만으로는 실행되지 않는다. |
 | API key 등급 | 외부 agent의 접근 범위. 등급별 권한은 [Task Inbox BRIEF](docs/features/task-inbox/BRIEF.md)(D-12)를 따른다. 어떤 등급도 terminal 사용, 승인 명세 연결, 실행 환경 제어를 할 수 없다. |
 | Board agent | Hub가 실행·소유하는 소유자 전용 OMP agent. 어느 WB 프로젝트의 manager와도 별개이며, 등록된 WB 프로젝트들의 요청을 찾고 작성·정리한다. 사용자의 일반 shell과 같은 권한으로 동작하고 Hub 외의 외부 도구 연결은 쓰지 않는다. |
-| Board agent 세트 / 웹 터미널 | Web Board에서 소유자가 쓰는 Board agent 화면과 일반 shell 화면 한 벌. 브라우저를 닫아도 유지되고 새로 연결한 곳이 즉시 인수한다. Manager·worker·host terminal 화면은 포함하지 않는다. |
+| 검토 round | 요청이 manager 검토를 받는 한 번의 차례. 접수, 답변, 검토 중 편집마다 새로 시작하며 자동 검토 방식에서는 Workbench가, 수동에서는 소유자의 "검토 시작"이 전달한다. |
+| Board agent 세트 / 웹 터미널 | Web Board에서 소유자가 쓰는 Board agent 화면과 일반 shell 화면 한 벌. 브라우저를 닫아도 유지되고 한 번에 한 연결(lease)만 쓰며 새로 연결한 곳이 즉시 인수한다. Manager·worker·host terminal 화면은 포함하지 않는다. |
+| 결과 요약 / 결과 전체 보기 | 요약은 manager가 요청을 닫으며 남긴 최종 보고 요약이다. 전체 보기는 사용자가 명시할 때만 여는 run 보고 원문·실행 로그·산출물 조회로, 프로젝트 root 안의 파일로 한정한다. |
+| API key | 외부 agent가 Hub MCP에 접근할 때 쓰는 이름 붙은 비밀 값. 소유자가 웹에서 발급하며 원문은 발급할 때 한 번만 보이고, 폐기하면 즉시 거절된다. 요청 출처의 key 이름으로 표시된다. |
 | 승인 명세 / task specification | Manager가 권한 범위 안에서 확정하는 실행 조건과 완료 기준. 원본 요청과 구분하며 task ID와 revision으로 식별한다. |
 | Task | 하나의 목표·완료 조건과 실행·복구 이력을 묶는 작업 단위. 명세 revision이나 commit 변경만으로 별도 작업이 되지 않는다. |
 | 명세 revision | 작업 명세의 한 버전. 실행 중 변경은 새 버전으로 기록하며 기존 실행에 사용한 버전과 결과 이력을 보존한다. |

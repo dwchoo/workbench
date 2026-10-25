@@ -98,7 +98,7 @@ wb
 | `wb` (프로젝트 안) 또는 `wb start` | backend를 시작하거나 실행 중인 backend를 재사용해 Workbench 화면에 연결 |
 | `wb` (프로젝트 밖) | 등록된 프로젝트의 Hub 목록(TUI)을 엽니다. 터미널이 아니면 `wb hub list`를 쓰라는 안내와 함께 종료 |
 | `wb init [PATH]` | 폴더(기본 현재 폴더)를 확인 후 WB 프로젝트로 초기화하고 Hub에 등록. backend는 시작하지 않음 |
-| `wb hub …` | Hub 시작·정지·상태·목록·등록·부팅 자동 시작. 아래 "Hub와 여러 프로젝트" 참고 |
+| `wb hub …` | Hub 시작·정지·상태·목록·등록·부팅 자동 시작·웹 비밀번호·TLS·검토 방식. 아래 "Hub와 여러 프로젝트" 참고 |
 | `wb --version` | 설치된 Workbench 버전 표시 |
 | `wb start --no-attach` | backend를 시작하거나 재사용한 뒤 화면 연결 없이 반환 |
 | `wb attach` | 현재 프로젝트의 실행 중 backend에 연결. `--plain`은 최소 터미널 client 사용 |
@@ -140,7 +140,7 @@ WORKBENCH_DATA_DIR=/path/to/old-data-dir wb status
 
 Hub는 OS 사용자당 하나만 background로 실행되는 관리 프로세스입니다. 등록된 WB 프로젝트를 한곳에서 보고, 켜고 끄고, 골라 들어가게 해 줍니다. Hub는 어느 프로젝트의 backend도 부모로 두거나 감독하지 않으므로 Hub를 멈추거나 Hub가 죽어도 실행 중인 실험은 계속되고, 프로젝트 안에서 `wb`로 직접 들어갈 수 있습니다. 프로젝트는 `wb init`이나 첫 시작 때 자동으로 등록되며 `wb hub add`/`remove`로 직접 관리합니다. 등록 해제는 `.wb/`를 지우지 않습니다.
 
-프로젝트 밖에서 `wb`를 실행하면 Hub 목록이 열립니다. 이름·경로·상태·Task·명령·대기 사유·마지막 활동을 보여 주며 3초마다 갱신합니다.
+프로젝트 밖에서 `wb`를 실행하면 Hub 목록이 열립니다. 이름·경로·상태·Task·명령·대기 사유·요청(`대기 N · 질문 M`)·마지막 활동을 보여 주며 3초마다 갱신합니다.
 
 | 키 | 동작 |
 |---|---|
@@ -159,17 +159,22 @@ Hub는 OS 사용자당 하나만 background로 실행되는 관리 프로세스�
 | `wb hub status [--json]` | pid·version·위치·등록 수·부팅 자동 시작 여부 |
 | `wb hub list [--json]` | Hub 목록을 TUI 없이 출력 |
 | `wb hub add PATH` / `remove PATH` | 프로젝트 root 등록 / 해제. `remove`는 켜져 있거나 상태가 불명인 프로젝트를 거절 |
-| `wb hub enable` / `disable` | 로그인 뒤 자동 시작하는 systemd 사용자 서비스 만들기 / 지우기 |
+| `wb hub enable` / `disable` | 로그인 뒤 자동 시작하는 systemd 사용자 서비스 만들기 / 지우기. 이미 `enable`한 사용자는 `KillMode=process`와 환경 고정을 위해 한 번 더 실행 |
+| `wb hub passwd [--stdin]` | Web Board 로그인 비밀번호 설정(terminal에서 두 번 입력). 정하면 웹 listener가 열림 |
+| `wb hub tls --self-signed [--force]` | Web Board용 자체 서명 TLS 인증서·key 생성(host `openssl`). Hub 재시작 뒤 HTTPS |
+| `wb hub review-mode PATH [auto\|manual]` | 프로젝트의 요청 검토 방식 보기·바꾸기 |
 
-`wb hub passwd`와 `wb hub tls`는 Web Board 기능에서 제공할 예정인 예약 명령이며 지금은 "제공 예정" 안내만 냅니다.
-
-Hub는 `wb`가 없으면 자동으로 띄웁니다. 자동 시작하지 않는 명령은 `wb setup`, `wb update`, `wb doctor`, `wb hub start|stop|status|enable|disable`, `--help`, `--version`입니다. Hub를 띄우지 못해도 명령 자체는 계속 실행됩니다. WB가 관리하는 terminal(backend나 실험 shell 아래) 안에서는 Hub가 실험 종료와 `wb update`를 막지 않도록 자동 시작을 보류하고, 외부 terminal에서 `wb hub start`를 실행하라고 안내합니다. 이미 Hub가 실행 중이면 그 안에서도 목록을 쓸 수 있습니다. `/proc`을 읽을 수 없는 호스트(`hidepid` 등)에서는 관리 terminal 여부를 확인할 수 없어 같은 이유로 보류하고 `proc_unreadable`로 안내합니다.
+Hub는 `wb`가 없으면 자동으로 띄웁니다. 자동 시작하지 않는 명령은 `wb setup`, `wb update`, `wb doctor`, `wb hub start|stop|status|enable|disable|passwd|tls`, `--help`, `--version`입니다. Hub를 띄우지 못해도 명령 자체는 계속 실행됩니다. WB가 관리하는 terminal(backend나 실험 shell 아래) 안에서는 Hub가 실험 종료와 `wb update`를 막지 않도록 자동 시작을 보류하고, 외부 terminal에서 `wb hub start`를 실행하라고 안내합니다. 이미 Hub가 실행 중이면 그 안에서도 목록을 쓸 수 있습니다. `/proc`을 읽을 수 없는 호스트(`hidepid` 등)에서는 관리 terminal 여부를 확인할 수 없어 같은 이유로 보류하고 `proc_unreadable`로 안내합니다.
 
 `wb update`는 Hub도 멈춥니다(실패하면 backend를 종료하지 않고 중단). 업데이트가 끝난 뒤 다음 `wb`가 새 버전의 Hub를 띄웁니다.
 
 `wb hub enable`은 `systemd --user` 서비스를 만듭니다. 기본적으로 로그인한 뒤에 Hub가 시작되며, 부팅 직후(로그인 전)에 시작하려면 사용자가 직접 `loginctl enable-linger`를 실행해야 합니다. Workbench는 linger를 바꾸지 않습니다. 설치나 `wb`만으로는 서비스를 만들지 않습니다.
 
 개발·테스트용으로 환경 변수 `WORKBENCH_HUB_AUTOSTART=0`은 자동 시작만 끕니다(`wb hub start`는 영향 없음). 상태·log·socket 위치와 자세한 동작은 [Hub 사용 안내](docs/features/workbench-hub/USAGE.md)를 확인하세요.
+
+### Web Board (요청함과 웹 화면)
+
+Hub는 브라우저용 Web Board와 외부 agent용 MCP endpoint(`/mcp`)도 제공합니다. 등록된 프로젝트의 상태를 보고, 요청을 쓰고 질문에 답하고, 요청이 manager 검토를 거쳐 실행되고 결과가 같은 요청에 남는 것을 봅니다. Board agent와 shell을 브라우저에서 쓸 수도 있습니다. 웹은 비밀번호를 정해야(`wb hub passwd`) 열리고 기본 주소는 `127.0.0.1:8780`입니다. LAN에 열면 평문 HTTP 경고가 보이며 VPN 등 네트워크 보호를 전제로 합니다. Board agent와 웹 shell은 sandbox 없이 사용자 권한으로 실행되므로 웹 로그인이 유일한 장벽입니다. 설정(`hub.toml`), TLS, API key, MCP 연결, 요청 흐름, 보안 안내와 알려진 한계는 [Task Inbox & Web Board 사용 안내](docs/features/task-inbox/USAGE.md)를 확인하세요.
 
 ## 작업 기록
 

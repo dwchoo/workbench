@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 from dataclasses import dataclass, field
 from pathlib import Path
+import sys
 import time
 import weakref
 from typing import Callable, Iterable
@@ -56,6 +57,7 @@ class WebServices:
     login_lock: asyncio.Lock = field(init=False, default_factory=asyncio.Lock)
     password_lock: asyncio.Lock = field(init=False, default_factory=asyncio.Lock)
     throttle_factory: Callable | None = None
+    flush_interval: float = 10.0  # API key ``last_used_at`` (SPEC: every 10 s and at Hub stop)
     # ``(project_id, name)`` of the registered projects (blocking read; the Hub supplies the registry view).
     projects: Callable[[], Iterable[tuple[str, str]]] = lambda: ()
 
@@ -69,6 +71,31 @@ class WebServices:
         return await asyncio.get_running_loop().run_in_executor(None, function, *args)
 
 
+async def flush_last_used(app: web.Application):
+    """``cleanup_ctx``: write API key last-use times every ``services.flush_interval`` seconds while the
+    app runs (the listener's stop step does the final flush)."""
+    services = app[SERVICES]
+    in_flight: list[asyncio.Future] = []
+
+    async def loop() -> None:
+        while True:
+            await asyncio.sleep(services.flush_interval)
+            flush = asyncio.ensure_future(services.blocking(services.api_keys.flush))
+            in_flight[:] = [flush]
+            try:
+                await asyncio.shield(flush)  # stopping cancels the timer, never a write in progress
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:  # kept in memory for the next try; never stops the app
+                print(f"[workbench] web: api key last-use flush failed: {exc!r}", file=sys.stderr, flush=True)
+    task = asyncio.create_task(loop())
+    yield
+    task.cancel()
+    await asyncio.gather(task, return_exceptions=True)
+    # A write already running finishes before the app (and then ``hub.sqlite3``) closes.
+    await asyncio.gather(*in_flight, return_exceptions=True)
+
+
 def create_app(services: WebServices, *, routes: Iterable[Callable[[web.Application], None]] = ()) -> web.Application:
     app = web.Application(middlewares=[middleware.host_check, middleware.body_limit, middleware.origin_check,
                                        middleware.session_check],
@@ -76,6 +103,7 @@ def create_app(services: WebServices, *, routes: Iterable[Callable[[web.Applicat
     app[SERVICES] = services
     app[WEBSOCKETS] = weakref.WeakSet()
     app.on_response_prepare.append(middleware.security_headers)
+    app.cleanup_ctx.append(flush_last_used)
     app.router.add_static(middleware.STATIC_PREFIX, STATIC_DIR, follow_symlinks=False, show_index=False)
     login.register(app)
     settings.make_register(lambda: services.projects())(app)

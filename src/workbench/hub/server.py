@@ -18,7 +18,7 @@ from workbench.backend.paths import (BackendLocked, DataDirError, InstanceLock, 
                                      unlink_stale_socket, write_private_json)
 from workbench.contracts import hub_v1
 
-from . import config as hub_config, registry
+from . import config as hub_config, mcp, registry
 from .inbox.dispatch import Dispatcher
 from .inbox.limits import InboxError
 from .inbox.service import OPEN_STATES, InboxService, Principal, ProjectRef
@@ -110,8 +110,11 @@ class Hub:
         self.watchdog_reason: str | None = None
         self.lister = Lister(layout, requests=self._row_requests)
         # TI-10: every inbox commit wakes the dispatcher (it only marks work; it never calls back in)
-        self.inbox = InboxService(on_committed=lambda event: self.dispatcher.committed(event))
+        self.inbox = InboxService(on_committed=lambda event: self.dispatcher.committed(event),
+                                  backend_running=self._backend_running)
         self.dispatcher = Dispatcher(self.inbox, self._dispatch_targets)
+        # TI-05: ``/mcp`` on the web listener (the Board agent's internal listener reuses it, TI-16)
+        self.mcp = mcp.McpServer(self.inbox, projects=self._mcp_projects)
         # Verified backend connections by project id (one each): outside ``tasks`` and its limit (hub_v1).
         self.backend_tasks: dict[str, asyncio.Task] = {}
         self.web: WebListener | None = None
@@ -125,7 +128,20 @@ class Hub:
 
     def web_routes(self) -> list:
         """Route registrations the web app adds to its defaults: the request pages over this Hub's inbox."""
-        return [request_pages.routes(self.inbox, self._dispatch_targets)]
+        return [request_pages.routes(self.inbox, self._dispatch_targets), mcp.routes(self.mcp)]
+
+    async def _mcp_projects(self) -> list[dict]:
+        """``inbox_projects`` rows: the Hub list (cached observation, request counts and review mode)."""
+        return (await self.lister.list())["rows"]
+
+    def _backend_running(self, project_id: str) -> bool:
+        """READY/RUNNING cancel can reach the project's backend now (verified ``backend.json`` identity)."""
+        try:
+            entries = registry.read(self.layout)
+        except (registry.RegistryError, OSError):
+            return False
+        entry = next((item for item in entries if item.project_id == project_id), None)
+        return entry is not None and self.dispatcher.port.identity(Path(entry.root)) is not None
 
     def load_web(self, environment=None) -> None:
         """Read ``hub.toml`` and decide TLS once, at start (changes need a Hub restart)."""

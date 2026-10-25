@@ -17,6 +17,7 @@ from aiohttp import web
 
 from ... import auth
 from .. import render
+from . import settings
 from ..middleware import (SERVICES, SESSION_TOKEN, clear_session_cookie, public, refuse, see_other,
                           session_of, set_session_cookie)
 
@@ -172,7 +173,7 @@ LENGTH_TEXT = "비밀번호는 10~1024자여야 합니다"
 
 def password_form(*, error: str | None = None, csrf: str) -> render.Markup:
     """The web password change form (TI-07 places it in the full settings page)."""
-    parts = [render.tag("h1", "설정"), render.tag("h2", "비밀번호 변경")]
+    parts = [render.tag("h1", "설정"), settings.settings_nav(), render.tag("h2", "비밀번호 변경")]
     if error:
         parts.append(render.tag("p", error, class_="error", role="alert"))
 

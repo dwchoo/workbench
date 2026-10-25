@@ -95,7 +95,7 @@ CSRF·출처:
 - 로그인 form은 세션 전 double-submit token(`wb_hub_login` cookie, HttpOnly, SameSite=Strict + hidden field)을 쓴다.
 
 로그인 실패 지연:
-- 로그인 검증은 Hub 전체에서 한 번에 하나(asyncio lock)다. 연속 실패 수를 client 주소별·전체로 센다(`hub.sqlite3.login_state`, Hub 재시작에도 유지). 다음 시도의 검증 전 지연 = `max(f(ip), f(global/3))`, `f(n) = 0 (n ≤ 3), min(2^(n-4), 30) s (n > 3)`. 성공하면 그 주소와 전체 수를 0으로. 실패 응답은 `비밀번호가 맞지 않습니다`만 보인다.
+- 로그인 검증은 Hub 전체에서 한 번에 하나(asyncio lock)다. 연속 실패 수를 client 주소별·전체로 센다(`hub.sqlite3.login_state`, Hub 재시작에도 유지). 다음 시도의 검증 전 지연 = `max(f(ip), f(global/3))`, `f(n) = 0 (n ≤ 3), min(2^(n-4), 30) s (n > 3)`. 성공하면 그 주소와 전체 수를 0으로. 실패 응답은 `비밀번호가 맞지 않습니다`만 보인다. (2026-10-25 orchestrator 결정, 소유자 lockout 방지) 전체 수에 따른 지연 `f(global/3)`은 loopback client와 최근 30일 안에 로그인에 성공한 주소에는 적용하지 않고 주소별 지연만 적용한다. 지연은 lock 안에서 잠들지 않고 429 + `Retry-After`로 즉시 답한다.
 
 보안 header(모든 응답): `Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'`, `X-Content-Type-Options: nosniff`, `Referrer-Policy: same-origin`(2026-10-25 orchestrator 정정: `no-referrer`면 Fetch 규칙상 같은 출처 form POST도 `Origin: null`이 되어 Origin 검사에 모두 막힌다. Origin `null`은 계속 403), `X-Frame-Options: DENY`, 인증 page·API는 `Cache-Control: no-store`. Inline script·style 없음. 요청 본문·댓글·제목·key 이름 등 사용자 텍스트는 모두 `html.escape` 뒤 `<pre>`/text node로만 출력한다(Markdown·HTML 해석 없음, P2-AC-31).
 

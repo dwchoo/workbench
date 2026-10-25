@@ -61,8 +61,8 @@ class SkillEntryBoundaryIndependentTests(unittest.TestCase):
     def test_physical_internal_asset_is_excluded_by_overlay_and_rejected_by_ordinary_isolation(self):
         skills = launcher.default_skills_dir()
         physical = {path.parent.name for path in skills.glob("*/SKILL.md")}
-        self.assertEqual(physical, {"to-worker", "to-manager", "workbench-recovery", "important-log-summary", "workbench-report"})
-        for role, expected in (("manager", {"to-worker", "workbench-recovery", "workbench-report"}), ("worker", {"to-manager"})):
+        self.assertEqual(physical, {"to-worker", "to-manager", "workbench-inbox", "workbench-recovery", "important-log-summary", "workbench-report"})
+        for role, expected in (("manager", {"to-worker", "workbench-inbox", "workbench-recovery", "workbench-report"}), ("worker", {"to-manager"})):
             with self.subTest(role=role):
                 overlay = launcher.role_overlay(role, project_dir=skills, home=skills)
                 offered = {name for name in physical if any(fnmatchcase(name, pattern)

@@ -143,6 +143,27 @@ class CommittedEvent:
     detail: dict = field(default_factory=dict)
 
 
+# Text provenance (security review fix 1): only the owner's and the Hub's own text is trusted. Everything else (requester
+# and editor keys, the Board agent, the manager, a Task's worker-written view) is data that an agent reading it must not
+# follow as instructions; reads mark it ``untrusted_text``.
+TRUSTED_AUTHORS = frozenset({"owner", "hub"})
+_UNTRUSTED_TEXT_SQL = (
+    "SELECT request_id FROM requests WHERE origin_kind IS NOT 'owner' OR task_view IS NOT NULL "
+    "OR result_summary IS NOT NULL "
+    "UNION SELECT request_id FROM request_revisions WHERE COALESCE(author_kind, '') NOT IN ('owner', 'hub') "
+    "UNION SELECT request_id FROM comments WHERE COALESCE(author_kind, '') NOT IN ('owner', 'hub') "
+    "UNION SELECT request_id FROM events WHERE type IN ('edited', 'updated') "
+    "AND COALESCE(actor_kind, '') NOT IN ('owner', 'hub')")
+
+
+def untrusted_ids(connection: sqlite3.Connection, request_id: str | None = None) -> set[str]:
+    """Requests holding any text that is not the owner's or the Hub's (all of them, or just ``request_id``)."""
+    if request_id is None:
+        return {row[0] for row in connection.execute(_UNTRUSTED_TEXT_SQL)}
+    return {row[0] for row in connection.execute(
+        f"SELECT request_id FROM ({_UNTRUSTED_TEXT_SQL}) WHERE request_id = ?", (request_id,))}
+
+
 def origin_json(kind: str, key_id: str | None, name: str | None) -> dict:
     label = {"owner": "소유자", "board_agent": "Board agent"}.get(kind, f"key:{name}")
     return {"kind": kind, "key_id": key_id, "name": name, "label": label}
@@ -438,15 +459,16 @@ class InboxService:
             raise InboxError("not_found", _NOT_FOUND)
         return row
 
-    def _summary(self, project: _Project, row: sqlite3.Row) -> dict:
+    def _summary(self, project: _Project, row: sqlite3.Row, untrusted: set[str]) -> dict:
         return {"request_id": row["request_id"], "project_id": project.ref.project_id, "seq": row["seq"],
                 "title": row["title"], "state": row["state"], "outcome": row["outcome"],
                 "origin": origin_json(row["origin_kind"], row["origin_key_id"], row["origin_name"]),
-                "created_at": row["created_at"], "updated_at": row["updated_at"], "task_id": row["task_id"]}
+                "created_at": row["created_at"], "updated_at": row["updated_at"], "task_id": row["task_id"],
+                "untrusted_text": row["request_id"] in untrusted}
 
     def _full(self, project: _Project, connection: sqlite3.Connection, row: sqlite3.Row) -> dict:
-        value = self._summary(project, row)
         request_id = row["request_id"]
+        value = self._summary(project, row, untrusted_ids(connection, request_id))
         revisions = connection.execute(
             "SELECT revision, title, body, created_at, author_kind, author_name FROM request_revisions "
             "WHERE request_id = ? ORDER BY revision", (request_id,)).fetchall()
@@ -455,7 +477,8 @@ class InboxService:
             "WHERE request_id = ? ORDER BY seq", (request_id,)).fetchall()
         value.update({
             "body": row["body"], "revision": row["revision"], "version": row["version"],
-            "revisions": [dict(r) for r in revisions], "comments": [dict(c) for c in comments],
+            "revisions": [{**dict(r), "untrusted_text": r["author_kind"] not in TRUSTED_AUTHORS} for r in revisions],
+            "comments": [{**dict(c), "untrusted_text": c["author_kind"] not in TRUSTED_AUTHORS} for c in comments],
             "task": {"task_id": row["task_id"], "spec_revision": row["spec_revision"],
                      "view": json.loads(row["task_view"]) if row["task_view"] else None},
             "result_summary": row["result_summary"], "cancel_state": row["cancel_state"],
@@ -596,7 +619,8 @@ class InboxService:
         def fn(connection: sqlite3.Connection) -> list[tuple[dict, str]]:
             connection.row_factory = sqlite3.Row
             rows = connection.execute("SELECT * FROM requests ORDER BY seq").fetchall()
-            return [(self._summary(project, row), f"{row['title']}\n{row['body']}".casefold())
+            untrusted = untrusted_ids(connection)
+            return [(self._summary(project, row, untrusted), f"{row['title']}\n{row['body']}".casefold())
                     for row in rows if self._can_see(principal, row)]
         return project.store.read(fn, missing=[])
 

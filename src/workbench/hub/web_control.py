@@ -108,6 +108,10 @@ class _DaemonExecutor:
             except BaseException as exc:  # noqa: BLE001 - handed to the waiter
                 future.set_exception(exc)
 
+    async def run(self, function: Callable[..., Any], *args: Any) -> Any:
+        """``function(*args)`` on these workers, awaited from the loop (``loop.run_in_executor`` with this pool)."""
+        return await asyncio.wrap_future(self.submit(lambda: function(*args)))
+
     def shutdown(self, wait: bool = True, *, cancel_futures: bool = False) -> None:
         with self._lock:
             self._shutdown = True
@@ -157,6 +161,9 @@ def _driver_main(argv: list[str]) -> int:
     sys.stdout.flush()
     return 0
 
+
+
+DaemonExecutor = _DaemonExecutor  # the Hub's other bounded pools (MCP, result pages)
 
 class ProjectControl:
     """Owner-only ``power_on``/``power_off_request``/``power_off_confirm``/``pause``/``resume``/

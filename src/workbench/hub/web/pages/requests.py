@@ -25,6 +25,9 @@ from ...inbox.results import MAX_PAGE as MAX_RESULT_PAGE, Results, page_bounds, 
 from ...inbox.service import PERMISSIONS, STATES, Principal, ProjectRef
 from .. import render
 from ..middleware import SERVICES, api, principal_of, see_other, session_of
+from ...web_control import DaemonExecutor
+
+RESULT_WORKERS = 8
 
 # -- labels: the one place for 출처/상태/outcome/comment-kind text --------------------------------
 STATE_LABELS = {"NEW": "신규", "REVIEWING": "검토 중", "NEEDS_INFO": "추가 정보 필요", "READY": "실행 준비",
@@ -51,6 +54,9 @@ class RequestsPort:
     projects: Callable[[], Iterable[ProjectRef]]
     cancel_tokens: dict = field(default_factory=dict)  # token -> (binding, expires_at); in memory only
     results: object = None  # :class:`~workbench.hub.inbox.results.Results` over ``inbox`` (TI-14)
+    # Result reads (backend calls, file pages) run on this bounded pool, never on the loop's default executor that
+    # logins and session checks use (security review fix 2).
+    reads: object = field(default_factory=lambda: DaemonExecutor(RESULT_WORKERS, "hub-results"))
 
 
 PORT: web.AppKey = web.AppKey("requests_port", RequestsPort)
@@ -685,7 +691,7 @@ def _page_response(page: dict) -> web.Response:
 async def _result_call(request: web.Request, function, *args):
     """A result read off the loop; an unexpected failure is ``internal_error`` (its type goes to the Hub log only)."""
     try:
-        return await _call(request, function, *args)
+        return await request.app[PORT].reads.run(function, *args)
     except InboxError:
         raise
     except Exception as exc:

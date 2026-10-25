@@ -402,7 +402,7 @@ class ListingTests(StoreCase):
         self.assertEqual(self.titles(states=['NEW', 'NEEDS_INFO']), ['Fix data', 'Plot loss', 'Train model'])
         summary = self.service.list_requests(OWNER, states=['CLOSED'])['requests'][0]
         self.assertEqual(set(summary), {'request_id', 'project_id', 'seq', 'title', 'state', 'outcome', 'origin',
-                                        'created_at', 'updated_at', 'task_id'})
+                                        'created_at', 'updated_at', 'task_id', 'untrusted_text'})  # fix 1
         self.assertEqual((summary['seq'], summary['outcome']), (4, 'cancelled'))
         self.assertEqual([n for n in dir(InboxService) if any(w in n for w in ('delete', 'purge', 'prune'))], [])
 

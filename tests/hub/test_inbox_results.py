@@ -101,7 +101,8 @@ class SummaryTests(McpResultCase):
     def test_default_is_the_summary_and_full_false_is_the_same(self):
         self.linked()
         value = self.r1.tool('inbox_result', request_id=self.rid)
-        self.assertEqual(set(value), {'summary', 'state', 'outcome', 'task'})
+        # + the untrusted-text mark of a requester's request (security review fix 1)
+        self.assertEqual(set(value), {'summary', 'state', 'outcome', 'task', 'untrusted_text', 'note'})
         self.assertEqual(value['task'], {'status': 'running', 'runs': [{'run_id': RUN, 'status': 'running',
                                                                         'exit_code': None}]})
         self.assertIn(f'run {RUN}: running', value['summary'])
@@ -120,7 +121,7 @@ class SummaryTests(McpResultCase):
         self.linked()
         (self.hub.root_a / 'out.txt').write_text('ARTIFACT-TEXT')
         value = self.r1.tool('inbox_result', request_id=self.rid, run_id=RUN, artifact_path='out.txt')
-        self.assertEqual(set(value), {'summary', 'state', 'outcome', 'task'})
+        self.assertEqual(set(value), {'summary', 'state', 'outcome', 'task', 'untrusted_text', 'note'})  # fix 1
         self.assertNotIn('ARTIFACT-TEXT', json.dumps(value))
 
 
@@ -668,6 +669,49 @@ class WebFullTests(WebResultCase):
 
 
 # --- P2-3: Workbench and credential directories are never served, even under a project root ----------
+
+class WebResultExecutorTests(WebResultCase):
+    """Security review fix 2: the result pages' reads (backend calls, file pages) run on their own bounded pool, so
+    slow reads never hold the loop's default executor that logins and session checks use."""
+
+    async def asyncSetUp(self):
+        import asyncio
+        from concurrent.futures import ThreadPoolExecutor
+        small = ThreadPoolExecutor(2)
+        self.addCleanup(small.shutdown, wait=False)
+        asyncio.get_running_loop().set_default_executor(small)
+        await super().asyncSetUp()
+
+    async def test_login_and_session_pages_answer_while_result_reads_are_slow(self):
+        import asyncio
+        import threading
+        import time
+        rid = self.linked()
+        release = threading.Event()
+        self.addCleanup(release.set)
+        entered = []
+        original = self.backend.task_status
+
+        def slow(*args, **kwargs):
+            entered.append(1)
+            release.wait(20)
+            return original(*args, **kwargs)
+        self.backend.task_status = slow
+        reads = [asyncio.ensure_future(self.raw_get(f'/requests/{rid}/full')) for _ in range(4)]
+        deadline = time.monotonic() + 10
+        while len(entered) < 2 and time.monotonic() < deadline:
+            await asyncio.sleep(0.02)
+        self.assertGreaterEqual(len(entered), 2)
+        started = time.monotonic()
+        fresh = await asyncio.wait_for(self.session_cookie(), 8)
+        response = await asyncio.wait_for(self.get('/settings', cookies={'wb_hub_session': fresh}), 8)
+        self.assertEqual(response.status, 200)
+        self.assertLess(time.monotonic() - started, 8)
+        release.set()
+        for read in reads:
+            status, _headers, _data = await asyncio.wait_for(read, 20)
+            self.assertEqual(status, 200)
+
 
 class ProtectedDirectoryTests(unittest.TestCase):
     """The project root is a temp HOME holding the hub config/state dirs, ``.omp`` and ``.ssh``; the reader's

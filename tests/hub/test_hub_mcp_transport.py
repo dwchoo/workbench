@@ -8,6 +8,7 @@ params). Run with ``discover -s tests/hub -p 'test_hub_mcp*.py'``.
 from __future__ import annotations
 
 import asyncio
+import http.client
 import json
 import os
 from pathlib import Path
@@ -21,7 +22,7 @@ sys.path.insert(0, str(REPO / 'src'))
 
 from fixtures.web_sandbox import tcp_listening  # noqa: E402
 from support.mcp_client import McpClient  # noqa: E402
-from support.mcp_hub import McpHub  # noqa: E402
+from support.mcp_hub import PASSWORD, McpHub  # noqa: E402
 from workbench.hub import mcp  # noqa: E402
 
 
@@ -240,6 +241,121 @@ class SessionCapTests(TransportCase):
                 client.initialize()
             self.assertEqual(other.result('ping'), {})
             self.assertEqual([client.request('ping').status for client in clients], [404, 404, 404, 200, 200, 200])
+
+
+class ExecutorTests(TransportCase):
+    """Security review fix 2: ``/mcp`` work (key checks and tool calls) runs on its own bounded executor, never on
+    the loop's shared default executor that logins and session checks use; one key has at most 4 calls in flight and
+    the next one is the JSON-RPC error ``busy`` at once. No request-count limit (D-41)."""
+
+    def setUp(self):
+        super().setUp()
+        from concurrent.futures import ThreadPoolExecutor
+        import threading
+        # a small shared default executor: /mcp work running there would starve logins and session checks
+        small = ThreadPoolExecutor(2)
+        self.addCleanup(small.shutdown, wait=False)
+        self.hub.run(self._set_default(small))
+        self.release = threading.Event()
+        self.entered = []
+        original = self.hub.inbox.list_requests
+
+        def blocked(*args, **kwargs):
+            self.entered.append(1)
+            self.release.wait(20)
+            return original(*args, **kwargs)
+        patcher = mock.patch.object(self.hub.inbox, 'list_requests', side_effect=blocked)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        self.threads = []
+        self.addCleanup(self._finish)  # first: free the blocked calls, then join their threads
+
+    def _finish(self) -> None:
+        self.release.set()
+        for thread in self.threads:
+            thread.join(30)
+
+    @staticmethod
+    async def _set_default(executor):
+        asyncio.get_running_loop().set_default_executor(executor)
+
+    def call_in_background(self, key: str) -> dict:
+        import threading
+        box: dict = {}
+
+        def run():
+            client = self.hub.client(key, timeout=30)
+            box['reply'] = client.request('tools/call', {'name': 'inbox_list', 'arguments': {}})
+        thread = threading.Thread(target=run, daemon=True)
+        thread.start()
+        self.threads.append(thread)
+        return box
+
+    def wait_entered(self, count: int) -> None:
+        import time
+        deadline = time.monotonic() + 10
+        while len(self.entered) < count and time.monotonic() < deadline:
+            time.sleep(0.02)
+        self.assertGreaterEqual(len(self.entered), count, 'the blocked calls did not start')
+
+    def login_and_session_page(self) -> float:
+        """Seconds for GET /login, POST /login and a session page (scrypt and session checks)."""
+        import re
+        import time
+        started = time.monotonic()
+        host = f'127.0.0.1:{self.hub.port}'
+        connection = http.client.HTTPConnection('127.0.0.1', self.hub.port, timeout=10)
+        try:
+            connection.request('GET', '/login', headers={'Host': host})
+            response = connection.getresponse()
+            page = response.read().decode()
+            cookie = re.search(r'wb_hub_login=([^;]+)', response.getheader('Set-Cookie')).group(1)
+            token = re.search(r'name="login_token" value="([^"]+)"', page).group(1)
+            body = f'login_token={token}&password={PASSWORD.replace(" ", "+")}'
+            connection.request('POST', '/login', body=body, headers={
+                'Host': host, 'Origin': f'http://{host}', 'Cookie': f'wb_hub_login={cookie}',
+                'Content-Type': 'application/x-www-form-urlencoded'})
+            response = connection.getresponse()
+            response.read()
+            self.assertEqual(response.status, 303)
+            session = re.search(r'wb_hub_session=([^;]+)', response.getheader('Set-Cookie')).group(1)
+            connection.request('GET', '/settings', headers={'Host': host, 'Cookie': f'wb_hub_session={session}'})
+            response = connection.getresponse()
+            response.read()
+            self.assertEqual(response.status, 200)
+        finally:
+            connection.close()
+        return time.monotonic() - started
+
+    def test_login_and_session_pages_answer_while_mcp_is_saturated(self):
+        keys = [self.hub.key(f'busy{index}') for index in range(3)]
+        boxes = [self.call_in_background(key) for key in keys for _ in range(4)]
+        self.wait_entered(2)
+        self.assertLess(self.login_and_session_page(), 8, 'login waited for /mcp work')
+        self.release.set()
+        for thread in self.threads:
+            thread.join(30)
+        self.assertTrue(all(box['reply'].status == 200 and 'result' in box['reply'].json for box in boxes),
+                        [box.get('reply') and box['reply'].body[:200] for box in boxes])
+
+    def test_a_fifth_call_of_one_key_is_busy_at_once_and_other_keys_still_work(self):
+        import time
+        boxes = [self.call_in_background(self.key) for _ in range(4)]
+        self.wait_entered(4)
+        started = time.monotonic()
+        reply = self.hub.client(self.key).request('tools/call', {'name': 'inbox_list', 'arguments': {}})
+        self.assertLess(time.monotonic() - started, 3)
+        self.assertEqual(reply.status, 200, reply.body)
+        self.assertEqual(reply.json['error']['message'], 'busy', reply.json)
+        self.assertNotIn('result', reply.json)
+        other = self.hub.client(self.hub.key('other')).request('ping')
+        self.assertEqual((other.status, other.json.get('result')), (200, {}))
+        self.release.set()
+        for thread in self.threads:
+            thread.join(30)
+        self.assertTrue(all('result' in box['reply'].json for box in boxes))
+        again = self.hub.client(self.key).request('ping')  # the slots are free again
+        self.assertEqual(again.json.get('result'), {})
 
 
 class InternalListenerTests(TransportCase):

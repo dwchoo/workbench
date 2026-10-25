@@ -66,10 +66,12 @@ def cmd_hub_status(args: argparse.Namespace) -> int:
     status = {key: reply.get(key) for key in ("hub", "registry", "web", "board_agent")}
     local = installed_version()
     drift = status["hub"].get("version") != local
-    from .service_unit import boot_autostart_state
+    from .service_unit import OUTDATED_UNIT_TEXT, boot_autostart_state, unit_outdated
     boot = boot_autostart_state()
+    outdated = unit_outdated()
     if args.json:
-        _print_json({"state": "running", **status, "version_drift": drift, "boot_autostart": boot})
+        _print_json({"state": "running", **status, "version_drift": drift, "boot_autostart": boot,
+                     "unit_outdated": outdated})
         return EXIT_OK
     hub, registry = status["hub"], status["registry"] or {}
     started = hub.get("started_at")
@@ -84,6 +86,8 @@ def cmd_hub_status(args: argparse.Namespace) -> int:
     print(f"  log: {hub.get('log')}")
     print(f"  registry: {registry.get('state')}, {registry.get('count')}개 ({registry.get('path')})")
     print(f"  부팅 자동 시작: {boot}")
+    if outdated:
+        print(f"  {OUTDATED_UNIT_TEXT}")
     for line in web_status_lines(status["web"] or {}):
         print(f"  {line}")
     return EXIT_OK

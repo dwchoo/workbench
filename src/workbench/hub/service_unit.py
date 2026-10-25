@@ -35,20 +35,46 @@ def quote_argument(argument: str) -> str:
     return '"' + "".join(pieces) + '"'
 
 
+_ENVIRONMENT_ESCAPES = {"\\": "\\\\", '"': '\\"', "\n": "\\n", "\t": "\\t", "%": "%%"}
+# The user environment a Hub-side power on needs (TI-08), written when set at ``enable`` time.
+UNIT_ENVIRONMENT = ("PATH", "SHELL", "LANG", "LC_ALL")
+
+
+def quote_environment(name: str, value: str) -> str:
+    """One ``Environment=`` assignment: double quoted, C escapes, ``%`` doubled; ``$`` stays as is
+    (systemd does not expand variables in ``Environment=``)."""
+    pieces = []
+    for char in f"{name}={value}":
+        if char in _ENVIRONMENT_ESCAPES:
+            pieces.append(_ENVIRONMENT_ESCAPES[char])
+        elif ord(char) < 32 or ord(char) == 127:
+            pieces.append(f"\\x{ord(char):02x}")
+        else:
+            pieces.append(char)
+    return '"' + "".join(pieces) + '"'
+
+
 def hub_argv() -> list[str]:
     """The Hub command line systemd runs: the spawn bootstrap with ``_hub --foreground --mode systemd``."""
     from workbench.backend.cli import _bootstrap_source
     return [sys.executable, "-I", "-c", _bootstrap_source(), "_hub", "--foreground", "--mode", "systemd"]
 
 
-def render_unit(argv: Sequence[str]) -> str:
+def render_unit(argv: Sequence[str], environment: Mapping[str, str] | None = None) -> str:
+    """The unit text. ``KillMode=process``: stopping the unit ends the Hub only, never the backends
+    and Board agents it started in the same cgroup (HB-D04). ``environment`` adds ``Environment=``
+    for each of :data:`UNIT_ENVIRONMENT` it sets."""
     exec_start = " ".join(quote_argument(item) for item in argv)
+    lines = "".join(f"Environment={quote_environment(name, environment[name])}\n"
+                    for name in UNIT_ENVIRONMENT if environment is not None and name in environment)
     return ("[Unit]\n"
             "Description=OMP Workbench Hub\n"
             "\n"
             "[Service]\n"
             "Type=simple\n"
             f"ExecStart={exec_start}\n"
+            f"{lines}"
+            "KillMode=process\n"
             "Restart=on-failure\n"
             "RestartSec=5\n"
             # exit 3 = permanent refusal (WB-managed tree / unreadable /proc): never restart-loop on it
@@ -152,7 +178,8 @@ def enable(environment: Mapping[str, str] | None = None) -> Outcome:
     except OSError as exc:
         return Outcome("failed", f"기존 unit을 읽지 못해 바꾸지 않았습니다: {path}: {exc}")
     try:
-        _write_atomic(path, render_unit(hub_argv()).encode("utf-8"))
+        unit = render_unit(hub_argv(), os.environ if environment is None else environment)
+        _write_atomic(path, unit.encode("utf-8"))
     except OSError as exc:
         return Outcome("failed", f"unit 파일을 쓰지 못했습니다: {path}: {exc}")
     reload_result = _systemctl("daemon-reload")
@@ -183,6 +210,19 @@ def disable(environment: Mapping[str, str] | None = None) -> Outcome:
     if reload_result[0] != 0:
         return _failure("daemon-reload", reload_result)
     return Outcome("ok", str(path))
+
+
+OUTDATED_UNIT_TEXT = "경고: systemd unit이 옛 형식입니다(KillMode 없음). 'wb hub enable'을 다시 실행하세요."
+
+
+def unit_outdated(environment: Mapping[str, str] | None = None) -> bool:
+    """True when our unit file exists but was written before ``KillMode=process`` (TI-08): then
+    stopping the unit would also end the backends the Hub started. Unreadable is not outdated."""
+    try:
+        text = unit_path(environment).read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return False
+    return "KillMode=process" not in (line.strip() for line in text.splitlines())
 
 
 def boot_autostart_state(environment: Mapping[str, str] | None = None) -> str:

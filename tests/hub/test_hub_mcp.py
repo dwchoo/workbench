@@ -669,9 +669,10 @@ class ResultTests(ToolCase):
                          ('Done: accuracy 0.93', 'CLOSED', 'success'))
         self.assertEqual(value['task']['runs'], [{'run_id': 'run-1', 'status': 'finished', 'exit_code': 0}])
 
-    def test_full_is_not_available_yet_but_the_summary_is(self):
+    def test_full_of_a_request_without_a_task_is_the_summary_and_an_empty_full_view(self):
+        # TI-14 fills ``full`` (tests/hub/test_inbox_results.py covers runs, raw pages and artifacts)
         value = self.r1.tool('inbox_result', request_id=self.rid, full=True)
-        self.assertIs(value['full_unavailable'], True)
+        self.assertEqual(value['full'], {'available': True, 'task': None})
         self.assertEqual((value['summary'], value['state']), (None, 'NEW'))
 
     def test_other_requesters_result_is_not_found(self):

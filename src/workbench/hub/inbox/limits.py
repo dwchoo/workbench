@@ -38,6 +38,7 @@ QUERY_MAX_CHARS = 200
 LIST_LIMIT_MAX = 100
 LIST_LIMIT_DEFAULT = 50
 _TITLE_FORBIDDEN = frozenset({"Cc", "Cf", "Zl", "Zp"})
+_TITLE_ALLOWED_FORMAT = frozenset({"\u200d"})  # ZERO WIDTH JOINER: emoji sequences (a family, a flag variant)
 _IDEMPOTENCY_KEY =re.compile(r"[A-Za-z0-9._:-]{1,128}")
 
 
@@ -57,8 +58,9 @@ def title(value: object) -> str:
         raise InboxError("invalid_input", "title is empty")
     if len(value) > TITLE_MAX_CHARS:
         raise InboxError("too_large", f"title exceeds {TITLE_MAX_CHARS} characters")
-    # Cc controls, Cf format (bidi overrides, zero-width), Zl/Zp line and paragraph separators.
-    if any(unicodedata.category(ch) in _TITLE_FORBIDDEN for ch in value):
+    # Cc controls, Cf format (bidi overrides, zero-width; the emoji joiner aside), Zl/Zp line and paragraph
+    # separators.
+    if any(unicodedata.category(ch) in _TITLE_FORBIDDEN and ch not in _TITLE_ALLOWED_FORMAT for ch in value):
         raise InboxError("invalid_input", "title contains control, format or separator characters")
     return value
 

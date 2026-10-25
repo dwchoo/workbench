@@ -96,6 +96,18 @@ class HangulRequestPageTests(request_case.RequestsCase):
                 self.assertEqual(response.status, 303, response.body_text[:300])
                 self.assertEqual(self.stored()[-1][0], title)
 
+    async def test_a_zero_width_joiner_emoji_sequence_is_a_title_but_other_format_characters_are_not(self):
+        family = '가족 \U0001f468\u200d\U0001f469\u200d\U0001f467 한글'
+        response = await self.create(family, 'b')
+        self.assertEqual(response.status, 303, response.body_text[:300])
+        self.assertEqual(self.stored()[-1][0], family)
+        for bad in ('\u200b', '\u202e', '\u2066', '\ufeff', '\u200e', '\u2028'):
+            with self.subTest(bad=ascii(bad)):
+                response = await self.create(f'제목{bad}끝', 'b')
+                self.assertEqual(response.status, 400)
+                self.assertIn('입력이 올바르지 않습니다', Page(response.body_text).body_text)
+        self.assertEqual(len(self.stored()), 1)
+
     async def test_the_title_fields_do_not_cap_utf16_units_below_the_code_point_limit(self):
         # HTML maxlength counts UTF-16 code units: maxlength=200 would stop 200 code points with an emoji.
         request_id = self.add('제목', '본문')

@@ -7,8 +7,9 @@
 - :meth:`Results.raw`: one page (≤ 128 KiB) of a raw log, only of a run or command of the request's linked Task
   (asked of the backend first) and only through the backend's ui_v1 ``raw_query`` (the Hub opens no log file).
 - :meth:`Results.artifact`: one page of a single-link regular file under the WB project root, read by the Hub itself
-  (same uid, no backend needed). The judgement (:func:`artifact_parts`) refuses ``..``, anything outside the root,
-  ``.wb``/``.git`` at any depth in any case, and any symlink on the way; the open (:func:`open_artifact`) never follows
+  (same uid, no backend needed), only of a request with a linked Task. The judgement (:func:`artifact_parts`)
+  refuses ``..``, anything outside the root, ``.wb``/``.git`` at any depth in any case, secret-looking basenames
+  (:data:`SECRET_NAMES`) and any symlink on the way; the open (:func:`open_artifact`) never follows
   a symlink, never opens a FIFO or device, and re-checks the inode it read.
 
 Every read starts with ``InboxService.get`` under the caller's principal, so a request the principal may not see is
@@ -335,6 +336,8 @@ class Results:
         (rules: :func:`artifact_parts`, :func:`open_artifact`). No backend call: the Hub reads it as the same uid."""
         request = self.request(principal, request_id)
         offset, length = page_bounds(offset, length)
+        if request["task"]["task_id"] is None:  # artifacts are a Task's results: none before one is linked
+            raise InboxError("not_found", NO_FILE)
         registered = self.root(principal, request)
         protected = protected_directories(os.environ if self.environment is None else self.environment)
         try:
@@ -359,6 +362,16 @@ class Results:
 
 # --- artifact path rules (SPEC "결과 조회" 산출물; TI-T10) ------------------------------------------------
 EXCLUDED_NAMES = frozenset({".wb", ".git"})  # matched case-insensitively at any depth
+# File names that usually hold secrets (security review fix 3): refused as ``forbidden`` wherever they are, matched
+# against the basename case-insensitively (``fnmatch`` patterns on the casefolded name).
+SECRET_NAMES = (".env", ".env.*", "*.pem", "*.key", "id_rsa*", "id_ed25519*", "*.p12", "*.pfx", ".netrc", ".npmrc",
+                ".pypirc", "credentials*", "*.kdbx")
+
+
+def secret_name(name: str) -> bool:
+    import fnmatch
+    folded = name.casefold()
+    return any(fnmatch.fnmatchcase(folded, pattern) for pattern in SECRET_NAMES)
 MAX_PATH_BYTES = 4096
 OUTSIDE = "the path is not a file this request may read"
 NOT_A_FILE = "the path is not a regular file"
@@ -394,7 +407,7 @@ def artifact_parts(root: str, registered: str, path: object) -> tuple[str, ...]:
         relative = os.path.normpath(path)
         given = os.path.join(root, path)
     parts = tuple(part for part in relative.split(os.sep) if part not in ("", "."))
-    if any(part.casefold() in EXCLUDED_NAMES for part in parts):
+    if any(part.casefold() in EXCLUDED_NAMES for part in parts) or (parts and secret_name(parts[-1])):
         raise InboxError("forbidden", OUTSIDE)
     if not parts:
         raise InboxError("invalid_input", NOT_A_FILE)

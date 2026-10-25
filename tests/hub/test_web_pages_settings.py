@@ -72,6 +72,17 @@ class KeyIssueTests(SettingsCase):
         for field in ('name="name"', 'name="grade"', 'name="scope"', 'name="expires_days"'):
             self.assertIn(field, page.body_text)
 
+    async def test_form_defaults_to_chosen_projects_with_none_preselected(self):
+        """Security review fix 3: a new key is not "every project" unless the owner picks that."""
+        import re
+        page = (await self.get('/settings/keys', cookies=self.cookies)).body_text
+        radios = {match.group(1): 'checked' in match.group(0)
+                  for match in re.finditer(r'<input[^>]*name="scope"[^>]*value="([a-z]+)"[^>]*>', page)}
+        self.assertEqual(radios, {'all': False, 'projects': True}, radios)
+        boxes = re.findall(r'<input[^>]*name="project"[^>]*>', page)
+        self.assertEqual(len(boxes), len(PROJECTS))
+        self.assertFalse(any('checked' in box for box in boxes), boxes)
+
     async def test_issue_shows_the_raw_key_once_and_only_there(self):
         response = await self.issue()
         self.assertEqual(response.status, 200, response.body_text)

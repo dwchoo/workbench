@@ -230,7 +230,64 @@ class ArtifactCase(McpResultCase):
         return self.r1.tool_error('inbox_result', request_id=self.rid, full=True, artifact_path=path, **arguments)
 
 
+class ArtifactLinkTests(McpResultCase):
+    """Security review fix 3: artifacts are a Task's results, so only a request with a linked Task reads them."""
+
+    def test_a_request_without_a_linked_task_reads_no_artifact(self):
+        (self.hub.root_a / 'inside.txt').write_text('INSIDE-PUBLIC')
+        error = self.r1.tool_error('inbox_result', request_id=self.rid, full=True, artifact_path='inside.txt')
+        self.assertEqual(error['code'], 'not_found', error)
+        self.assertNotIn('INSIDE-PUBLIC', json.dumps(error))
+        missing = self.r1.tool_error('inbox_result', request_id=self.rid, full=True, artifact_path='missing.txt')
+        self.assertEqual(missing, error, 'a file that exists reads like one that does not')
+
+    def test_the_same_request_reads_it_once_a_task_is_linked(self):
+        (self.hub.root_a / 'inside.txt').write_text('INSIDE-PUBLIC')
+        self.linked()
+        value = self.r1.tool('inbox_result', request_id=self.rid, full=True, artifact_path='inside.txt')
+        self.assertEqual(value['artifact']['text'], 'INSIDE-PUBLIC')
+
+
+SECRET_NAMES = ('.env', '.ENV', '.env.local', '.env.production', 'server.pem', 'TLS.PEM', 'private.key', 'id_rsa',
+                'id_rsa.pub', 'ID_RSA_old', 'id_ed25519', 'id_ed25519.pub', 'cert.p12', 'store.PFX', '.netrc',
+                '.npmrc', '.pypirc', 'credentials', 'credentials.json', 'Credentials.yaml', 'vault.kdbx')
+NOT_SECRET_NAMES = ('env.txt', 'my.env.txt', 'notes.key.txt', 'keys.txt', 'pem', 'netrc', 'my-credentials.txt',
+                    'id_dsa_notes.txt')
+
+
+class SecretNameTests(ArtifactCase):
+    """Security review fix 3: secret-looking file names are ``forbidden`` wherever they are (basename, any case)."""
+
+    def setUp(self):
+        super().setUp()
+        self.linked()
+        (self.hub.root_a / 'deep' / 'er').mkdir(parents=True)
+
+    def test_secret_names_are_forbidden_at_the_root_and_in_subdirectories(self):
+        for name in SECRET_NAMES:
+            for relative in (name, f'deep/er/{name}'):
+                (self.hub.root_a / relative).write_text('SECRET-VALUE')
+                for path in (relative, str(self.hub.root_a / relative)):
+                    with self.subTest(path=path):
+                        error = self.artifact_error(path)
+                        self.assertEqual(error['code'], 'forbidden', (path, error))
+                        self.assertNotIn('SECRET-VALUE', json.dumps(error))
+
+    def test_a_missing_secret_name_is_forbidden_too(self):
+        self.assertEqual(self.artifact_error('deep/.env')['code'], 'forbidden')
+
+    def test_similar_names_stay_readable(self):
+        for name in NOT_SECRET_NAMES:
+            (self.hub.root_a / name).write_text(f'PUBLIC {name}')
+            with self.subTest(name=name):
+                self.assertEqual(self.artifact(name)['artifact']['text'], f'PUBLIC {name}')
+
+
 class ArtifactTests(ArtifactCase):
+    def setUp(self):
+        super().setUp()
+        self.linked()
+
     def test_a_regular_file_under_the_root_is_read_by_relative_or_absolute_path(self):
         (self.hub.root_a / 'out').mkdir()
         data = 'metrics: accuracy 0.93\n결과\n'.encode() * 3
@@ -241,7 +298,7 @@ class ArtifactTests(ArtifactCase):
                 value = self.artifact(path)
                 self.assertEqual(value['artifact'], {'path': 'out/metrics.txt', 'offset': 0, 'length': len(data),
                                                      'size': len(data), 'next_offset': None, 'text': data.decode()})
-                self.assertEqual(value['state'], 'NEW')
+                self.assertEqual(value['state'], 'RUNNING')
 
     def test_pages_by_offset_and_length_and_binary_as_base64(self):
         data = bytes(range(256)) * 1024  # 256 KiB, not UTF-8
@@ -261,7 +318,6 @@ class ArtifactTests(ArtifactCase):
 
     def test_an_artifact_needs_no_backend_call(self):
         (self.hub.root_a / 'a.txt').write_text('A')
-        self.linked()
         self.backend.down = 'backend_not_running'
         self.assertEqual(self.artifact('a.txt')['artifact']['text'], 'A')
         self.assertEqual(self.backend.calls, [])
@@ -349,6 +405,7 @@ LEAK = ('/dev/shm', '/tmp', '/home', '.wb', 'Traceback', 'Errno', 'OUTSIDE-SECRE
 class ArtifactRefusalTests(ArtifactCase):
     def setUp(self):
         super().setUp()
+        self.linked()
         root = self.hub.root_a
         self.outside = self.hub.base / 'outside-secret.txt'
         self.outside.write_text('OUTSIDE-SECRET')
@@ -428,7 +485,8 @@ class ArtifactRefusalTests(ArtifactCase):
     def test_missing_files_bad_paths_and_the_other_project(self):
         for path, code in (('missing.txt', 'not_found'), ('sub/missing/x', 'not_found'), ('inside.txt/x', 'not_found'),
                            ('', 'invalid_input'), ('a\x00b', 'invalid_input'), ('x' * 5000, 'invalid_input'),
-                           ('%2e%2e/outside-secret.txt', 'not_found'), ('~/.ssh/id_rsa', 'not_found')):
+                           ('%2e%2e/outside-secret.txt', 'not_found'), ('~/.ssh/id_rsa', 'forbidden'),  # secret name (fix 3)
+                           ('~/.ssh/known_hosts', 'not_found')):
             with self.subTest(path=path[:40]):
                 self.assert_refused(path, code)
         self.assertEqual(self.artifact('inside.txt')['artifact']['text'], 'INSIDE-PUBLIC', 'still readable')
@@ -541,6 +599,20 @@ class WebFullTests(WebResultCase):
                 self.assertEqual(headers['X-Content-Type-Options'], 'nosniff')
                 self.assertEqual(data, body)
 
+    async def test_artifact_page_of_a_request_without_a_task_and_secret_names_are_refused(self):
+        unlinked = self.add('Plain', 'No task yet')
+        (self.root_a / 'report.txt').write_text('REPORT-TEXT')
+        (self.root_a / '.env').write_text('SECRET-VALUE')
+        status, _headers, data = await self.raw_get(f'/requests/{unlinked}/artifact?path=report.txt')
+        self.assertEqual(status, 404, data)
+        self.assertNotIn(b'REPORT-TEXT', data)
+        rid = self.linked()
+        status, _headers, data = await self.raw_get(f'/requests/{rid}/artifact?path=.env')
+        self.assertEqual(status, 403, data)
+        self.assertNotIn(b'SECRET-VALUE', data)
+        status, _headers, data = await self.raw_get(f'/requests/{rid}/artifact?path=report.txt')
+        self.assertEqual((status, data), (200, b'REPORT-TEXT'))
+
     async def test_raw_and_artifact_refusals_are_error_pages(self):
         rid = self.linked()
         (self.root_a / '.wb' / 'agent.db').write_text('WB-PRIVATE')
@@ -621,10 +693,19 @@ class ProtectedDirectoryTests(unittest.TestCase):
         self.inbox = InboxService()
         self.addCleanup(self.inbox.close)
         self.inbox.set_projects([ProjectRef(self.project_id, self.home, 'home')])
-        self.rid = self.inbox.submit(Principal.owner(), self.project_id, 'T', 'B')['request_id']
+        self.rid = self.link(self.inbox, self.project_id,
+                             self.inbox.submit(Principal.owner(), self.project_id, 'T', 'B')['request_id'])
         self.environment = {'HOME': str(self.home), 'XDG_CONFIG_HOME': str(self.home / 'xdg-config'),
                             'XDG_STATE_HOME': str(self.home / 'xdg-state')}
         self.reader = results.Results(self.inbox, port=FakeBackend(), environment=self.environment)
+
+    @staticmethod
+    def link(inbox, project_id: str, rid: str) -> str:
+        """A linked Task (artifacts are read only for one, security review fix 3), as the manager links it."""
+        manager = Principal.manager(project_id)
+        inbox.review(manager, rid, 'begin_review')
+        inbox.link_commit(manager, inbox.link_check(manager, rid)['link_token'], TASK, 1, 'running')
+        return rid
 
     def read(self, path: str) -> dict:
         return self.reader.artifact(Principal.owner(), self.rid, path, 0, 1000)
@@ -658,7 +739,7 @@ class ProtectedDirectoryTests(unittest.TestCase):
         inbox = InboxService()
         self.addCleanup(inbox.close)
         inbox.set_projects([ProjectRef(nested_id, nested, 'proj')])
-        rid = inbox.submit(Principal.owner(), nested_id, 'T', 'B')['request_id']
+        rid = self.link(inbox, nested_id, inbox.submit(Principal.owner(), nested_id, 'T', 'B')['request_id'])
         reader = results.Results(inbox, port=FakeBackend(), environment=self.environment)
         with self.assertRaises(InboxError) as caught:
             reader.artifact(Principal.owner(), rid, 'a.txt', 0, 10)

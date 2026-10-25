@@ -116,10 +116,11 @@ class KeyPages:
                 name="grade")])),
             render.tag("fieldset", render.html_join([
                 render.tag("legend", "범위"),
+                # Default "선택한 프로젝트" with nothing chosen: every-project scope is an explicit pick (fix 3).
                 render.tag("label", render.html_join([render.void(
-                    "input", type="radio", name="scope", value="all", checked=True), " 전체 프로젝트"])),
+                    "input", type="radio", name="scope", value="all"), " 전체 프로젝트"])),
                 render.tag("label", render.html_join([render.void(
-                    "input", type="radio", name="scope", value="projects"), " 선택한 프로젝트"])),
+                    "input", type="radio", name="scope", value="projects", checked=True), " 선택한 프로젝트"])),
                 *projects])),
             render.tag("label", render.html_join(["만료(일, 비우면 없음) ", render.void(
                 "input", type="number", name="expires_days", min=1, max=auth.KEY_EXPIRY_DAYS_MAX)])),

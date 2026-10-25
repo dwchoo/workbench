@@ -275,7 +275,7 @@ def author_label(kind: object, name: object) -> str:
     return f"key:{name}" if name else str(kind)
 
 
-def allowed_actions(principal: Principal, detail: dict) -> set[str]:
+def allowed_actions(principal: Principal, detail: dict, *, resends_cancel: bool = False) -> set[str]:
     """Which buttons ``principal`` gets on this request: the SPEC permission table narrowed by state.
 
     The service still decides on every POST; this only keeps buttons it would refuse out of the page.
@@ -286,7 +286,9 @@ def allowed_actions(principal: Principal, detail: dict) -> set[str]:
         allowed -= {"edit", "cancel"}
     elif state not in ("NEW", "NEEDS_INFO"):
         allowed.discard("set_state")  # only NEW <-> NEEDS_INFO and reopening a CLOSED request (D-34)
-    if detail.get("cancel_state") is not None:
+    # a cancel left ``requested`` (lost answer, Hub restart) may be asked again when the inbox can send it again
+    # (``InboxService.resends_cancel``); a started stop may not
+    if detail.get("cancel_state") is not None and not (detail.get("cancel_state") == "requested" and resends_cancel):
         allowed.discard("cancel")
     return allowed
 
@@ -362,7 +364,8 @@ def detail_page(request: web.Request, detail: dict, *, notice: str | None = None
                 comment_draft: str = "", projects: list[ProjectRef] | None = None,
                 status: int = 200) -> web.Response:
     principal = principal_of(request)
-    allowed = allowed_actions(principal, detail)
+    allowed = allowed_actions(principal, detail,
+                              resends_cancel=getattr(request.app[PORT].inbox, "resends_cancel", False))
     rid = detail["request_id"]
     names = {ref.project_id: ref.name or ref.project_id for ref in projects or ()}
     state = state_label(detail["state"])

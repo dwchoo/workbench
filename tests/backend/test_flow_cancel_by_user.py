@@ -76,6 +76,19 @@ class ExpectMismatchTests(UserCancelFixture):
         self.assertEqual(len(sleep_pids("713.1")), 1)
         self.assertEqual(self.stop(started["command_id"])["status"], "exited")  # the test ends its own command
 
+    def test_the_running_command_is_read_under_the_flow_lock_with_the_status(self):
+        """Review P1 (TOCTOU): the command compared with ``expect`` is the one seen together with the Task status."""
+        work = self.running_work()
+        held: list[bool] = []
+        provider = self.flow.host_commands
+
+        def watched(task_id):
+            held.append(self.flow._lock._is_owned())
+            return provider(task_id)
+        self.flow.host_commands = watched
+        self.user_cancel(work["task_id"], "running", None)
+        self.assertTrue(held and all(held), held)
+
     def test_an_unknown_task_is_task_changed(self):
         result = self.user_cancel(str(uuid.uuid4()), "running")
         self.assertEqual((result["status"], result["reason"]), ("rejected", "task_changed"), result)
@@ -109,6 +122,56 @@ class CancelWithRunningCommandTests(UserCancelFixture):
         self.assertEqual((again["cancel"], again["stop"], again["repeat"]), ("cancelled", None, True), again)
         self.assertTrue(wait_until(lambda: any(r["type"] == "command_stop_finished" for r in self.stop_records()), 20))
         self.assertEqual(len([r for r in self.stop_records() if r["type"] == "command_stop_requested"]), 1)
+
+
+class StopAnswerAndClosedTaskTests(UserCancelFixture):
+    def test_a_stop_refused_at_once_is_answered_as_refused_not_stopping(self):
+        work = self.running_work()
+        started = self.run_command("sleep 713.5")
+
+        class Refusing:
+            def stop(self, requested_by, command_id, *, reason=None):
+                return {"status": "refused", "reason": "not_owner", "command_id": command_id}
+        self.flow.command_stop = Refusing()
+        result = self.user_cancel(work["task_id"], "running", started["command_id"])
+        self.assertEqual(result["stop"], {"status": "refused", "reason": "not_owner",
+                                          "command_id": started["command_id"]})
+        self.assertEqual(self.stop(started["command_id"])["status"], "exited")  # the test ends its own command
+
+    def test_a_task_the_manager_closed_keeps_its_record_and_the_users_cancel_is_kept_beside_it(self):
+        work = self.running_work()
+        task_id = work["task_id"]
+        started = self.run_command("sleep 713.6")
+        self.assertEqual(self.cancel(task_id)["status"], "cancelled")  # the manager's cancel
+        notices = lambda: [m for m in self.mailbox.to(self.worker_role) if m.payload.get("cancel") is True]
+        self.assertTrue(wait_until(lambda: len(notices()) == 1, 10))
+        result = self.user_cancel(task_id, "closed", started["command_id"])
+        self.assertEqual((result["status"], result["cancel"], result["stop"]["status"]),
+                         ("accepted", "cancelled", "stopping"), result)
+        self.assertEqual([r["by"] for r in self.cancel_records()], ["manager"], "the manager's record stays")
+        self.assertEqual(self.flow.tasks[task_id].cancel_requested["by"], "manager")
+        self.assertEqual(self.flow.tasks[task_id].user_cancel["by"], "user")
+        self.assertEqual([r["type"] for r in self.ledger() if r.get("type") == "user_cancel_after_close"],
+                         ["user_cancel_after_close"])
+        time.sleep(0.3)
+        self.assertEqual(len(notices()), 1, "no second worker notice")
+        again = self.user_cancel(task_id, "closed", started["command_id"])
+        self.assertEqual(again.get("repeat"), True, again)
+        self.assertTrue(wait_until(lambda: any(r["type"] == "command_stop_finished" for r in self.stop_records()), 20))
+
+    @property
+    def worker_role(self):
+        from workbench.contracts.v1 import ActorRole
+        return ActorRole.WORKER
+
+
+class FenceTextTests(unittest.TestCase):
+    def test_the_cancel_fence_refusal_does_not_say_who_cancelled(self):
+        """A user cancel arms the same fence (FU-D03: any free-work Task cancel), so its text names no canceller."""
+        from workbench.backend.flow_terminal import CANCEL_FENCE_DETAIL
+        text = CANCEL_FENCE_DETAIL.format(task_id="t-1")
+        self.assertIn("Task t-1 was cancelled;", text)
+        self.assertNotIn("manager", text)
 
 
 class CancelWithoutCommandTests(UserCancelFixture):

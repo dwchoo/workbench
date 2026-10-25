@@ -274,7 +274,7 @@ class TaskStatusCommandTests(unittest.TestCase):
     """TI-13 (additive): each ``task_status`` item names the Task's running Workbench command as ``command``
     (``{command_id, owner, label, state}``, null when none), what the Hub's cancel confirmation shows and binds."""
 
-    def answer(self, host_commands, running=None):
+    def answer(self, host_commands, running=None, runs=(), survivors=(), task=None):
         import tempfile
         from pathlib import Path
         from types import SimpleNamespace
@@ -282,7 +282,7 @@ class TaskStatusCommandTests(unittest.TestCase):
         from workbench.tasks.repository import TaskRepository
 
         class Flow:
-            tasks: dict = {}
+            tasks: dict = {} if task is None else {TASK_ID: task}
 
             def status_view(self, task_id):
                 return {"task_id": task_id, "kind": "work", "status": "running", "revision": 1,
@@ -290,7 +290,7 @@ class TaskStatusCommandTests(unittest.TestCase):
 
         class Terminal:
             def runs_for_task(self, task_id):
-                return []
+                return [dict(item) for item in runs]
 
             def running_host_command(self):
                 return running
@@ -301,6 +301,7 @@ class TaskStatusCommandTests(unittest.TestCase):
 
             class Stub:
                 flow, terminal, layout = Flow(), Terminal(), SimpleNamespace(tasks=path)
+                survivors = SimpleNamespace(alive=lambda: [dict(item) for item in survivors])
                 task_status_budget = 2.0
                 _task_status_item = Backend._task_status_item
             return Backend.task_status(Stub(), [TASK_ID], False)["tasks"][0]
@@ -314,6 +315,24 @@ class TaskStatusCommandTests(unittest.TestCase):
                            {"command_id": command_id, "owner": "worker", "label": "sleep 300", "state": "stopping"})
         self.assertEqual(item["command"], {"command_id": command_id, "owner": "worker", "label": "sleep 300",
                                            "state": "stopping"})
+
+    def test_a_command_left_running_by_a_previous_backend_with_live_survivors_is_a_survivor(self):
+        """Verification defect A: after a backend restart the old command is no longer the terminal's current one,
+        but while a process of the previous backend is still alive the Task's command may run (never ``null``)."""
+        command_id = "3c4d5e6f-7a8b-4c9d-8e0f-1a2b3c4d5e6f"
+        runs = [{"command_id": command_id, "command": "sleep 719.7", "status": "unknown", "exit_code": None}]
+        alive = [{"survivor_id": "s1", "name": "session_member", "pid": 4242, "state": "alive"}]
+        item = self.answer([], runs=runs, survivors=alive)
+        self.assertEqual(item["command"], {"command_id": command_id, "owner": "worker", "label": "sleep 719.7",
+                                           "state": "survivor"})
+        self.assertIsNone(self.answer([], runs=runs)["command"], "no live survivor: it ended with the old backend")
+        ended = [dict(runs[0], status="exited", exit_code=0)]
+        self.assertIsNone(self.answer([], runs=ended, survivors=alive)["command"], "a run that ended is not one")
+
+    def test_a_users_cancel_beside_an_earlier_close_reports_cancel_requested_by_user(self):
+        from types import SimpleNamespace
+        task = SimpleNamespace(cancel_requested={"by": "manager"}, user_cancel={"by": "user"})
+        self.assertEqual(self.answer([], task=task)["cancel_requested_by"], "user")
 
     def test_an_experiment_command_is_labelled_by_its_run(self):
         run_id = "1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d"

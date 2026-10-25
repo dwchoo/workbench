@@ -2396,6 +2396,7 @@ class Backend:
         cancel = getattr(task, "cancel_requested", None) or {}
         last = view.get("last_result") or {}
         commands = []
+        runs: list = []
         if self.terminal is not None:
             try:
                 runs = self.terminal.runs_for_task(task_id)
@@ -2412,9 +2413,11 @@ class Backend:
                 run["log_sources"] = [{"source_kind": "run", "source_id": run["run_id"]}]
         item = {"task_id": task_id, "exists": True, "status": view.get("status"),
                 "closed_reason": view.get("closed_reason"), "revision": view.get("revision"),
-                "cancel_requested_by": cancel.get("by") if isinstance(cancel, dict) else None,
+                "cancel_requested_by": "user" if getattr(task, "user_cancel", None) else (
+                    cancel.get("by") if isinstance(cancel, dict) else None),
                 "runs": stored["runs"], "commands": commands,
-                "command": running_task_command(view, self.terminal)}
+                "command": running_task_command(view, self.terminal) or survivor_task_command(
+                    runs, getattr(self, "survivors", None))}
         if detail:
             item["reports"] = stored["reports"]
         return item
@@ -2639,6 +2642,25 @@ def running_task_command(view: Mapping[str, Any], terminal: Any) -> dict[str, An
         return {"command_id": command_id, "owner": item.get("owner"), "label": label,
                 "state": item.get("state") or "running"}
     return None
+
+
+def survivor_task_command(runs: Sequence[Mapping[str, Any]], survivors: Any) -> dict[str, Any] | None:
+    """TI-13 (verification defect A): a Task command a previous backend left without an end (the journal rebuilds it
+    as ``unknown``) while a process of that backend is still alive (``SurvivorRegistry.alive``, read from ``/proc``)
+    may still run: ``{command_id, owner, label, state: "survivor"}``, so the Hub never closes a cancelled request
+    over it. Nothing is signalled (C-D71 (1)); a survivor is stopped only by ``stop_survivor``."""
+    pending = [item for item in runs or () if isinstance(item, Mapping) and item.get("status") == "unknown"
+               and isinstance(item.get("command_id"), str)]
+    if not pending or survivors is None:
+        return None
+    try:
+        alive = survivors.alive()
+    except Exception:  # unreadable: it may still run
+        alive = [None]
+    if not alive:
+        return None
+    last = pending[-1]
+    return {"command_id": last["command_id"], "owner": "worker", "label": last.get("command"), "state": "survivor"}
 
 
 def experiment_host_command(task: dict[str, Any] | None) -> dict[str, Any] | None:

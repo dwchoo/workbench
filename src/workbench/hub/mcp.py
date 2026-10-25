@@ -477,7 +477,9 @@ class McpServer:
                 raise
             return _cancel_answer(value, stop=True)  # TI-13: the backend's command stop result
         if two_step:
-            if request["cancel_state"] is not None:
+            # a cancel left ``requested`` (lost answer, Hub restart) may be confirmed again; a started stop may not
+            if request["cancel_state"] is not None and not (request["cancel_state"] == "requested"
+                                                            and getattr(self.inbox, "resends_cancel", False)):
                 raise InboxError("invalid_transition", "cancel was already requested", state=state,
                                  version=request["version"])
             return {"status": "confirm_required", "confirm_token": self._issue_token(principal, request_id, bound),

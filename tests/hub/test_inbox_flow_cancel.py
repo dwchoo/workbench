@@ -113,6 +113,52 @@ class CancelPortTests(PortCase):
         self.assertEqual(self.calls, [])
 
 
+class ReviewCorrectionTests(PortCase):
+    def test_a_request_left_requested_may_be_cancelled_again_and_is_sent_again(self):
+        """Review P1: after an unknown answer (or a Hub restart) the request is not stuck in ``requested``."""
+        rid = self.running_with_command()
+        self.answers.append({'outcome': 'unknown'})
+        self.assertEqual(self.service.cancel(OWNER, rid)['cancel'], 'unknown')
+        self.service.observe_task(rid, 'task-1', 'cancelling', view={'command': dict(COMMAND, state='stopping')})
+        self.answers.append({'outcome': 'accepted', 'cancel': 'cancel_requested', 'stop': None, 'repeat': True})
+        again = self.service.cancel(OWNER, rid)
+        self.assertEqual(again['status'], 'cancel_requested', again)
+        self.assertEqual(self.calls[1][3], {'status': 'cancelling', 'command_id': COMMAND['command_id']},
+                         'expect is computed again from the current view')
+        self.answers.append({'outcome': 'accepted', 'cancel': 'cancelled',
+                             'stop': {'status': 'stopping', 'command_id': COMMAND['command_id']}})
+        self.service.cancel(OWNER, rid)
+        self.assertEqual(self.row(rid)[2], 'stop_requested')
+        self.assertEqual(self.code(self.service.cancel, OWNER, rid).code, 'invalid_transition',
+                         'only a started stop refuses another cancel')
+        self.assertEqual(len(self.calls), 3)
+
+    def test_a_stop_refused_at_once_is_not_reported_as_stopping(self):
+        rid = self.running_with_command()
+        self.answers.append({'outcome': 'accepted', 'cancel': 'cancelled',
+                             'stop': {'status': 'refused', 'reason': 'not_owner',
+                                      'command_id': COMMAND['command_id']}})
+        result = self.service.cancel(OWNER, rid)
+        self.assertEqual(result['stop']['status'], 'refused')
+        self.assertEqual(self.row(rid)[2], 'requested', 'no stop under way')
+        comments = self.system_comments(rid)
+        self.assertFalse(any('멈추는 중' in body for body in comments), comments)
+        self.assertTrue(any('not_owner' in body for body in comments), comments)
+
+    def test_a_survivor_of_a_previous_backend_keeps_the_request_open_with_one_comment(self):
+        rid = self.running_with_command()
+        self.answers.append({'outcome': 'accepted', 'cancel': 'cancelled',
+                             'stop': {'status': 'stopping', 'command_id': COMMAND['command_id']}})
+        self.service.cancel(OWNER, rid)
+        before = len(self.system_comments(rid))
+        for _ in range(3):
+            self.service.observe_task(rid, 'task-1', 'closed', closed_reason='cancelled', user_cancelled=True,
+                                      view={'command': dict(COMMAND, state='survivor')})
+        comments = self.system_comments(rid)[before:]
+        self.assertEqual(comments, ['명령이 아직 실행 중일 수 있습니다 — 확인 필요'])
+        self.assertEqual(self.row(rid), ('RUNNING', None, 'stop_requested'), 'never closed over a live command')
+
+
 class TaskSyncCloseTests(PortCase):
     def cancelled(self) -> str:
         rid = self.running_with_command()

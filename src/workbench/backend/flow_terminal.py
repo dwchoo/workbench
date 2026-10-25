@@ -167,7 +167,7 @@ BUSY_DETAIL = ("Nothing was run. The host terminal runs a command only when it i
                "no job, no typed line, no experiment run). Do not work around it; try again later or tell the "
                "manager with to_manager.")
 # CS-O01 (FU-D03): the one refusal of a task-less command after a free-work Task was cancelled
-CANCEL_FENCE_DETAIL = ("Task {task_id} was cancelled by the manager; this command was not run. If it is not part of "
+CANCEL_FENCE_DETAIL = ("Task {task_id} was cancelled; this command was not run. If it is not part of "
                        "the cancelled Task, call again and it runs.")
 ABORTED_DETAIL = "The call was aborted before the command started: nothing was run."
 # C-D69 (6)(c): a command too long for one host shell request runs from a script file Workbench writes

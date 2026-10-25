@@ -51,6 +51,10 @@ CANCEL_REFUSED_COMMENTS = {
     "task_changed": "확인 뒤 Task나 실행 중인 명령이 바뀌어 취소하지 않았습니다. 아무것도 멈추지 않았습니다.",
     "backend_not_running": "프로젝트 backend가 꺼져 있어 취소하지 않았습니다.",
 }
+CANCEL_STOP_NOT_STARTED_COMMENT = ("Task 취소를 요청했지만 실행 중인 명령은 멈추지 않았습니다(stop {status}: {reason}). "
+                                   "명령이 끝나고 Task가 닫혀야 이 요청이 취소로 닫힙니다.")
+# TI-13 (verification defect A): the restarted backend still sees a process of the previous one alive
+SURVIVOR_COMMENT = "명령이 아직 실행 중일 수 있습니다 — 확인 필요"
 STOP_UNKNOWN_COMMENT = ("실행 중인 명령의 stop 결과를 확인하지 못했습니다(unknown). 명령이 아직 남아 있을 수 있어 "
                         "취소가 끝난 것으로 보지 않습니다.")
 # The last event of a request that names the notice of its pending round (SPEC ``event`` values).
@@ -221,6 +225,8 @@ class InboxService:
         self._on_committed = on_committed
         self._backend_running = backend_running or (lambda project_id: False)
         self._cancel_port = cancel_port
+        # a cancel left ``requested`` may be sent again only when there is a port to send it through
+        self.resends_cancel = cancel_port is not None
         self._clock = clock
         self._idle_seconds = idle_seconds
         self._link_ttl = link_ttl
@@ -818,7 +824,11 @@ class InboxService:
                          version=new["version"])
                 return {"status": "cancelled", "state": "CLOSED", "version": new["version"]}
             if state != "CLOSED":
-                if row["cancel_state"] is not None:
+                # Review P1: a cancel left ``requested`` (its answer was lost, or the Hub restarted before it was sent)
+                # may be sent again with a fresh ``expect`` (the backend answers a user's repeat as ``repeat``); only
+                # a started stop (or a Hub that cannot send at all) refuses another one.
+                if row["cancel_state"] is not None and not (row["cancel_state"] == "requested"
+                                                            and self.resends_cancel):
                     raise self._invalid(row, "cancel was already requested")
                 if not self._backend_running(tx.project.ref.project_id):
                     raise InboxError("backend_not_running", "the project backend is not running",
@@ -867,8 +877,14 @@ class InboxService:
                 tx.event(request_id, "cancel_refused", state, state, {"task_id": task_id, "reason": refusal},
                          version=new["version"])
             elif outcome == "accepted":
-                self._comment(tx, request_id, "system", CANCEL_STOPPING_COMMENT if stop else CANCEL_ACCEPTED_COMMENT)
-                new = self._set(tx, row, cancel_state="stop_requested" if stop else "requested")
+                stopping = stop is not None and stop.get("status") == "stopping"
+                if stop is not None and not stopping:  # nothing was signalled: say so, never "멈추는 중"
+                    text = CANCEL_STOP_NOT_STARTED_COMMENT.format(status=stop.get("status"),
+                                                                  reason=stop.get("reason") or "-")
+                else:
+                    text = CANCEL_STOPPING_COMMENT if stopping else CANCEL_ACCEPTED_COMMENT
+                self._comment(tx, request_id, "system", text)
+                new = self._set(tx, row, cancel_state="stop_requested" if stopping else "requested")
                 tx.event(request_id, "cancel_accepted", state, state,
                          {"task_id": task_id, "cancel": answer.get("cancel"), "stop": stop}, version=new["version"])
             else:
@@ -1188,6 +1204,9 @@ class InboxService:
             if (row["cancel_state"] is not None and command is not None and command.get("state") == "unknown"
                     and old_command.get("state") != "unknown"):
                 self._comment(tx, request_id, "system", STOP_UNKNOWN_COMMENT)  # P2-AC-30: never a success
+            if (row["cancel_state"] is not None and command is not None and command.get("state") == "survivor"
+                    and old_command.get("state") != "survivor"):
+                self._comment(tx, request_id, "system", SURVIVOR_COMMENT)  # never closed over it, never signalled
             if status == "closed":
                 new_view.update(closed=True, closed_reason=closed_reason)
                 if user_cancelled and command is not None:

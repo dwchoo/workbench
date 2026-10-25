@@ -21,14 +21,14 @@ function element(id) {
 const terminals = [];
 class FakeTerminal {
   constructor() {
-    this.rows = 30; this.cols = 100; this.options = {}; this.written = []; this.resets = 0; this.handlers = {};
+    this.rows = 30; this.cols = 100; this.options = {}; this.written = []; this.raw = []; this.resets = 0; this.handlers = {};
     terminals.push(this);
   }
   loadAddon() {}
   open() {}
   focus() {}
   reset() { this.resets += 1; }
-  write(data) { this.written.push(new TextDecoder().decode(data)); }
+  write(data) { this.raw.push(data); this.written.push(new TextDecoder().decode(data)); }
   onData(handler) { this.handlers.data = handler; }
   onBinary(handler) { this.handlers.binary = handler; }
   onResize(handler) { this.handlers.resize = handler; }
@@ -98,6 +98,28 @@ test("attached enables input; keystrokes become binary frames with the epoch; ou
   socket.onmessage({ data: frame(0, 6, "stale") });
   assert.deepEqual(terminals[0].written, ["hello"]);
   assert.deepEqual([...timers.values()].map((timer) => timer.ms).sort((a, b) => a - b), [10000, 10000, 20000]);
+});
+
+test("Hangul output split across frames reaches xterm as bytes (its decoder streams); typed Hangul is UTF-8", () => {
+  const socket = sockets[0];
+  const bytes = new TextEncoder().encode("한글 출력");
+  const at = terminals[1].raw.length;
+  const payload = (part) => {
+    const out = new Uint8Array(5 + part.length);
+    out[0] = 1;
+    new DataView(out.buffer).setUint32(1, 7, false);
+    out.set(part, 5);
+    return out.buffer;
+  };
+  socket.onmessage({ data: payload(bytes.subarray(0, 2)) }); // inside the first syllable's 3 bytes
+  socket.onmessage({ data: payload(bytes.subarray(2)) });
+  const written = terminals[1].raw.slice(at);
+  assert.ok(written.every((item) => item instanceof Uint8Array), "never a per-frame decoded string");
+  assert.equal(new TextDecoder("utf-8", { fatal: true }).decode(Buffer.concat(written.map((item) => Buffer.from(item)))),
+    "한글 출력");
+  terminals[1].handlers.data("가ㄱ\u1100\u1161😀");
+  const sentFrame = socket.sent.filter((item) => typeof item !== "string").at(-1);
+  assert.deepEqual(Buffer.from(sentFrame.subarray(5)), Buffer.from("가ㄱ\u1100\u1161😀", "utf8"));
 });
 
 test("taken_over shows the banner and 다시 가져오기 reconnects with resume null", () => {

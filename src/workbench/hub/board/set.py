@@ -62,6 +62,13 @@ class Ring:
         self.data += chunk
         if len(self.data) > self.limit:
             del self.data[:len(self.data) - self.limit]
+            # The replay must not start inside a UTF-8 sequence (a Hangul syllable is 3 bytes): drop the cut
+            # sequence's 1-3 continuation bytes (10xxxxxx) when a lead byte follows them.
+            skip = 0
+            while skip < 3 and skip < len(self.data) and self.data[skip] & 0xC0 == 0x80:
+                skip += 1
+            if skip and (skip == len(self.data) or self.data[skip] & 0xC0 != 0x80):
+                del self.data[:skip]
 
     def snapshot(self) -> bytes:
         return bytes(self.data)

@@ -11,6 +11,8 @@ import unittest
 
 import test_board_ws as board_case  # module import: its test classes stay uncollected here
 
+from workbench.hub.board.set import Ring
+
 FRAME_LIMIT = 64 * 1024
 
 
@@ -57,6 +59,36 @@ class HangulInputTests(board_case.BoardWsCase):
         self.assertEqual(self.terminal.dropped_inputs, 0)
         self.assertEqual(self.board.status()['lease']['state'], 'connected')
         self.assertEqual(self.board.status()['lease']['epoch'], epoch)
+
+
+class ReplayBoundaryTests(unittest.TestCase):
+    """The attach replay is the ring's newest bytes: trimming must never start it inside a UTF-8 sequence."""
+
+    def test_a_trimmed_ring_starts_on_a_code_point_boundary_for_every_cut_offset(self):
+        for wide in ('한', 'ㄱ', 'ᅡ', '😀', 'é'):
+            encoded = wide.encode('utf-8')
+            for cut in range(len(encoded)):
+                with self.subTest(wide=wide, cut=cut):
+                    ring = Ring(limit=12)
+                    written = b'abc' + wide.encode('utf-8') * 8
+                    for start in range(0, len(written), 5):  # PTY reads in arbitrary chunks
+                        ring.append(written[start:start + 5])
+                    ring.append(b'x' * (12 - (len(encoded) - cut)) if cut else b'')
+                    replay = ring.snapshot()
+                    self.assertLessEqual(len(replay), 12)
+                    everything = written + (b'x' * (12 - (len(encoded) - cut)) if cut else b'')
+                    self.assertTrue(everything.endswith(replay))
+                    replay.decode('utf-8')  # strict: a cut sequence raises
+                    self.assertGreaterEqual(len(replay), 12 - 3)
+                    self.assertEqual(ring.total, len(everything))
+
+    def test_ascii_output_still_keeps_exactly_the_limit_and_non_utf8_bytes_are_not_eaten(self):
+        ring = Ring(limit=8)
+        ring.append(b'0123456789')
+        self.assertEqual(ring.snapshot(), b'23456789')
+        binary = Ring(limit=8)
+        binary.append(b'\x00' + b'\x80' * 12)  # no lead byte anywhere: not UTF-8, keep the newest bytes
+        self.assertEqual(len(binary.snapshot()), 8)
 
 
 if __name__ == '__main__':

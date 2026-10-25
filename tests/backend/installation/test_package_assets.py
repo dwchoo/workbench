@@ -97,7 +97,7 @@ print(json.dumps({'files': {str(p): sha256(p.read_bytes()).hexdigest() for p in 
     'manager': role_skill_allowlist('manager'), 'worker': role_skill_allowlist('worker')}))
 """])
         result = json.loads(output)
-        self.assertEqual(result['manager'], ['to-worker', 'workbench-recovery', 'workbench-report'])
+        self.assertEqual(result['manager'], ['to-worker', 'workbench-inbox', 'workbench-recovery', 'workbench-report'])
         self.assertEqual(result['worker'], ['to-manager'])
         self.assertEqual(result['summary'], sha256((ROOT / 'omp_bridge/skills/important-log-summary/SKILL.md').read_bytes()).hexdigest())
         for path, digest in result['files'].items():

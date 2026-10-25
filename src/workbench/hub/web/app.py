@@ -20,7 +20,7 @@ from .. import auth
 from . import middleware
 from .middleware import (PRINCIPAL, SERVICES, SESSION, api, own_auth, principal_of, public,  # noqa: F401
                          session_of)
-from .pages import login, settings
+from .pages import control, login, settings
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 # Open WebSockets (TI-17 adds each one); the listener closes them with 1001 when the Hub stops.
@@ -107,6 +107,7 @@ def create_app(services: WebServices, *, routes: Iterable[Callable[[web.Applicat
     app.router.add_static(middleware.STATIC_PREFIX, STATIC_DIR, follow_symlinks=False, show_index=False)
     login.register(app)
     settings.make_register(lambda: services.projects())(app)
+    control.register(app)
     for register in routes:
         register(app)
     return app

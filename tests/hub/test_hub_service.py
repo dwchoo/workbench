@@ -240,6 +240,122 @@ class ExecStartQuotingTests(unittest.TestCase):
         self.assertNotIn('$USER', lines[0].replace('$$USER', ''), 'a lone $ substitution must not survive')
 
 
+def systemd_environment(value: str) -> tuple[str, str]:
+    """Independent reader of one ``Environment="NAME=value"`` assignment: C escapes, ``%%`` -> ``%``,
+    ``$`` literal (systemd.exec: no variable expansion in Environment=)."""
+    assert value.startswith('"') and value.endswith('"'), value
+    body, out, index = value[1:-1], [], 0
+    while index < len(body):
+        char = body[index]
+        if char == '\\':
+            nxt = body[index + 1]
+            if nxt == 'x':
+                out.append(chr(int(body[index + 2:index + 4], 16)))
+                index += 4
+                continue
+            out.append({'n': '\n', 't': '\t'}.get(nxt, nxt))
+            index += 2
+        elif char == '%':
+            assert body[index + 1] == '%', f'a lone % specifier in {value!r}'
+            out.append('%')
+            index += 2
+        else:
+            assert char != '"', f'an unescaped quote in {value!r}'
+            out.append(char)
+            index += 1
+    name, _, text = ''.join(out).partition('=')
+    return name, text
+
+
+class UnitLifetimeTests(unittest.TestCase):
+    """TI-08 / TI-T06: ``KillMode=process`` (a Hub stop never ends the backends it started) and the
+    user environment the Hub-side power on needs (``PATH``, ``SHELL``, ``LANG``, ``LC_ALL`` when set)."""
+
+    def setUp(self):
+        self.box = ServiceSandbox(self)
+
+    def environment(self, env: dict) -> dict[str, str]:
+        result = self.box.wb('hub', 'enable', env=env)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        directives = unit_directives(self.box.unit.read_text())
+        self.assertEqual(directives['KillMode'], ['process'])
+        return dict(systemd_environment(value) for value in directives.get('Environment', []))
+
+    def test_unit_kills_only_the_hub_process_and_carries_the_user_environment(self):
+        env = self.box.with_env(SHELL='/usr/bin/zsh', LANG='ko_KR.UTF-8', LC_ALL='C.UTF-8')
+        self.assertEqual(self.environment(env), {'PATH': str(self.box.bin), 'SHELL': '/usr/bin/zsh',
+                                                 'LANG': 'ko_KR.UTF-8', 'LC_ALL': 'C.UTF-8'})
+
+    def test_only_the_variables_that_are_set_are_written(self):
+        env = self.box.with_env()
+        env.pop('LANG', None)
+        env.pop('SHELL', None)
+        env.pop('LC_ALL', None)
+        env['WORKBENCH_DATA_DIR'] = '/elsewhere'
+        self.assertEqual(self.environment(env), {'PATH': str(self.box.bin)})
+
+    def test_awkward_values_survive_the_environment_lines(self):
+        shell = '/opt/my shell/100%/$HOME/"q"\\b\tx'
+        env = self.box.with_env(SHELL=shell, LANG='%h $USER')
+        self.assertEqual(self.environment(env), {'PATH': str(self.box.bin), 'SHELL': shell, 'LANG': '%h $USER'})
+
+    def test_a_value_that_cannot_be_written_fails_without_a_traceback_or_a_unit(self):
+        env = self.box.with_env()
+        env['SHELL'] = b'/bin/\xffsh'  # not UTF-8: the child sees a surrogate escape
+        result = self.box.wb('hub', 'enable', env=env)
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertNotIn('Traceback', result.stderr)
+        self.assertIn('unit', result.stdout + result.stderr)
+        self.assertFalse(self.box.unit.exists())
+        self.assertEqual(self.box.systemctl_calls(), [('--user show-environment', 'absent')])
+
+    def test_enable_rewrites_an_old_unit(self):
+        self.box.unit.parent.mkdir(parents=True)
+        self.box.unit.write_text('[Service]\nExecStart=/old\n')
+        self.environment(self.box.with_env())
+
+
+class StatusOldUnitTests(unittest.TestCase):
+    """TI-08: ``wb hub status`` asks for ``wb hub enable`` again when the unit has no ``KillMode``."""
+    GUIDANCE = "'wb hub enable'을 다시 실행하세요"
+
+    def setUp(self):
+        self.box = ServiceSandbox(self)
+        self.hub = self.box.start_hub()
+
+    def status(self) -> tuple[str, dict]:
+        text = self.box.wb('hub', 'status')
+        self.assertEqual(text.returncode, 0, text.stderr)
+        value = self.box.wb('hub', 'status', '--json')
+        self.assertEqual(value.returncode, 0, value.stderr)
+        return text.stdout, json.loads(value.stdout)
+
+    def test_an_old_unit_gets_the_guidance_and_a_current_or_missing_one_does_not(self):
+        out, value = self.status()
+        self.assertNotIn(self.GUIDANCE, out)
+        self.assertIs(value['unit_outdated'], False)
+        self.box.unit.parent.mkdir(parents=True)
+        self.box.unit.write_text('[Service]\nExecStart=/old\nRestart=on-failure\n')
+        out, value = self.status()
+        self.assertIn(self.GUIDANCE, out)
+        self.assertIs(value['unit_outdated'], True)
+        self.assertEqual(self.box.wb('hub', 'enable').returncode, 0)
+        out, value = self.status()
+        self.assertNotIn(self.GUIDANCE, out)
+        self.assertIs(value['unit_outdated'], False)
+
+    def test_spacing_around_the_kill_mode_assignment_is_still_current(self):
+        self.box.unit.parent.mkdir(parents=True)
+        for line in ('KillMode = process', '  KillMode=\tprocess  ', 'KillMode= process\r'):
+            with self.subTest(line=line):
+                self.box.unit.write_text(f'[Service]\nExecStart=/x\n{line}\n')
+                out, value = self.status()
+                self.assertNotIn(self.GUIDANCE, out)
+                self.assertIs(value['unit_outdated'], False)
+        self.box.unit.write_text('[Service]\nKillMode=control-group\n')
+        self.assertIs(self.status()[1]['unit_outdated'], True)
+
+
 class EnableRefusalTests(unittest.TestCase):
     UNAVAILABLE = 'systemd 사용자 서비스 관리자를 쓸 수 없습니다. 설정은 바뀌지 않았습니다.'
 

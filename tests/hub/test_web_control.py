@@ -20,6 +20,7 @@ import signal
 import sqlite3
 import subprocess
 import sys
+import threading
 import time
 import unittest
 import urllib.parse
@@ -520,7 +521,13 @@ class HubLifetimeTests(unittest.TestCase):
         return hub, found[0][1]
 
     def web_power_on(self, port: int, project_id: str) -> dict:
-        """Log in over HTTP like a browser, then ``POST /api/projects/<id>/power-on`` with the CSRF token."""
+        status, text = self.web_call(port, project_id, 'power-on')
+        self.assertEqual(status, 200, text)
+        return json.loads(text)
+
+    def web_call(self, port: int, project_id: str, action: str) -> tuple[int | None, str]:
+        """Log in over HTTP like a browser, then ``POST /api/projects/<id>/<action>`` with the CSRF
+        token; ``(None, error)`` when the connection ends without a reply."""
         host = f'127.0.0.1:{port}'
 
         def request(method: str, path: str, body: str = '', headers: dict | None = None):
@@ -549,10 +556,12 @@ class HubLifetimeTests(unittest.TestCase):
         session = cookie(headers, 'wb_hub_session')
         _status, _headers, text = request('GET', '/', headers={'Cookie': f'wb_hub_session={session}'})
         csrf = re.search(r'name="csrf" value="([^"]+)"', text).group(1)
-        status, _headers, text = request('POST', f'/api/projects/{project_id}/power-on', '', {
-            'Origin': 'http://' + host, 'Cookie': f'wb_hub_session={session}', 'X-CSRF-Token': csrf})
-        self.assertEqual(status, 200, text)
-        return json.loads(text)
+        try:
+            status, _headers, text = request('POST', f'/api/projects/{project_id}/{action}', '', {
+                'Origin': 'http://' + host, 'Cookie': f'wb_hub_session={session}', 'X-CSRF-Token': csrf})
+        except (OSError, http.client.HTTPException) as exc:
+            return None, repr(exc)
+        return status, text
 
     def powered_from_the_web(self) -> tuple[subprocess.Popen, Path, int, int, dict]:
         root, project_id = self.box.project('alpha')
@@ -585,6 +594,37 @@ class HubLifetimeTests(unittest.TestCase):
         self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
         self.assertEqual(hub.wait(timeout=30), 0)
         self.assert_survived(root, pid, ticks, panes)
+
+    def test_wb_hub_stop_does_not_wait_for_a_running_control_and_audits_it_unknown(self):
+        from test_project_control import CONTRACT_BACKEND
+        root, project_id = self.box.project('slow')
+        fixture = subprocess.Popen([sys.executable, str(CONTRACT_BACKEND), str(root), '--snapshot-delay', '60'],
+                                   env=self.box.env, cwd=self.box.base, stdin=subprocess.DEVNULL,
+                                   stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True,
+                                   start_new_session=True)
+        self.box.processes.append(fixture)
+        self.assertEqual(fixture.stdout.readline().strip(), 'ready')
+        self.box.register(self.box.entry(root, project_id))
+        hub, port = self.start_hub()
+        replies: list = []
+        caller = threading.Thread(target=lambda: replies.append(self.web_call(port, project_id, 'confirm-boot')))
+        caller.start()
+        self.addCleanup(caller.join, 30)
+        time.sleep(2.0)  # confirm_boot now waits (up to its 10 s request timeout) for the slow snapshot
+        self.assertEqual(replies, [])
+        started = time.monotonic()
+        done = self.box.wb('hub', 'stop', timeout=60)
+        self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+        self.assertEqual(hub.wait(timeout=30), 0)
+        self.assertLess(time.monotonic() - started, 5.0, 'the Hub stop does not wait for the control')
+        caller.join(30)
+        connection = sqlite3.connect(self.box.hub_state / 'hub.sqlite3')
+        try:
+            rows = [json.loads(detail) for (detail,) in connection.execute(
+                "SELECT detail_json FROM audit WHERE event = 'web_control' ORDER BY id")]
+        finally:
+            connection.close()
+        self.assertEqual(rows, [{'project_id': project_id, 'action': 'confirm_boot', 'result': 'unknown'}])
 
     def test_the_backend_lives_after_the_hub_is_sigkilled(self):
         hub, root, pid, ticks, panes = self.powered_from_the_web()

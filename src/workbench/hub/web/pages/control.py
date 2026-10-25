@@ -34,14 +34,15 @@ async def post_control(request: web.Request) -> web.Response:
         token = form.get("token")
         result = await control.run("power_off", project_id, lambda: control.power_off_confirm(
             principal, project_id, token if isinstance(token, str) else "", session=session_id,
-            client_addr=address))
+            client_addr=address), client_addr=address)
     elif action == "power-off":
         result = await control.run("power_off", project_id, lambda: control.power_off_request(
-            principal, project_id, session=session_id, client_addr=address))
+            principal, project_id, session=session_id, client_addr=address), client_addr=address)
     elif action in ("power-on", "pause", "resume", "confirm-boot"):
         name = action.replace("-", "_")
         method = getattr(control, name)
-        result = await control.run(name, project_id, lambda: method(principal, project_id, client_addr=address))
+        result = await control.run(name, project_id, lambda: method(principal, project_id, client_addr=address),
+                                   client_addr=address)
     else:
         return web.json_response({"ok": False, "reason": "unknown_action"}, status=404)
     status = 403 if result.reason == web_control.FORBIDDEN else STATUS.get(result.reason, 200)
@@ -52,6 +53,12 @@ def register(app: web.Application) -> None:
     services = app[SERVICES]
     app[CONTROL] = web_control.ProjectControl(audit=services.audit, clock=services.clock)
     app.router.add_post("/api/projects/{project_id}/{action}", post_control)
+    app.on_shutdown.append(_close_control)
+
+
+async def _close_control(app: web.Application) -> None:
+    """Hub stop (runner cleanup, before open requests are awaited): abandon running controls."""
+    await app[CONTROL].close()
 
 
 def use(control: web_control.ProjectControl):

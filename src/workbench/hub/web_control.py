@@ -9,7 +9,8 @@ double-forked into its own session, never a Hub descendant).
 from __future__ import annotations
 
 import asyncio
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import Future
+import queue
 from dataclasses import dataclass, field
 import json
 import os
@@ -71,6 +72,61 @@ class _Pending:
     expires: float  # monotonic
 
 
+class _DaemonExecutor:
+    """A fixed pool of daemon worker threads (``concurrent.futures`` workers are joined at
+    interpreter exit, which would keep a stopping Hub alive for a running control)."""
+
+    def __init__(self, workers: int, name: str):
+        self._queue: queue.SimpleQueue = queue.SimpleQueue()
+        self._lock = threading.Lock()
+        self._shutdown = False
+        self._threads: list[threading.Thread] = []
+        self._workers, self._name = workers, name
+
+    def submit(self, function: Callable[[], Any]) -> Future:
+        future: Future = Future()
+        with self._lock:
+            if self._shutdown:
+                raise RuntimeError("cannot submit after shutdown")
+            if len(self._threads) < self._workers:  # started on demand, at most ``workers``
+                thread = threading.Thread(target=self._work, name=f"{self._name}-{len(self._threads)}", daemon=True)
+                self._threads.append(thread)
+                thread.start()
+            self._queue.put((future, function))
+        return future
+
+    def _work(self) -> None:
+        while True:
+            item = self._queue.get()
+            if item is None:
+                return
+            future, function = item
+            if not future.set_running_or_notify_cancel():
+                continue
+            try:
+                future.set_result(function())
+            except BaseException as exc:  # noqa: BLE001 - handed to the waiter
+                future.set_exception(exc)
+
+    def shutdown(self, wait: bool = True, *, cancel_futures: bool = False) -> None:
+        with self._lock:
+            self._shutdown = True
+            threads = list(self._threads)
+        if cancel_futures:
+            while True:
+                try:
+                    item = self._queue.get_nowait()
+                except queue.Empty:
+                    break
+                if item is not None:
+                    item[0].cancel()
+        for _thread in threads:
+            self._queue.put(None)
+        if wait:
+            for thread in threads:
+                thread.join()
+
+
 def _keep_tail(stream, tail: bytearray) -> None:
     """Read ``stream`` to its end, keeping only its last :data:`DRIVER_OUTPUT_CAP` bytes in ``tail``."""
     with stream:
@@ -118,14 +174,18 @@ class ProjectControl:
         self._busy: set[str] = set()  # project ids with a control call running
         # Controls block for seconds to minutes (a start, a shutdown result): they get their own
         # bounded workers, so the loop's default executor (sessions, logins, SQLite) never waits.
-        self._executor = ThreadPoolExecutor(CONTROL_WORKERS, thread_name_prefix="wb-control")
+        self._executor = _DaemonExecutor(CONTROL_WORKERS, "wb-control")
         self._slots = threading.BoundedSemaphore(CONTROL_WORKERS)
+        self._running: dict[int, tuple[str, str, str | None, asyncio.Future]] = {}  # awaited controls
+        self._closed = False
 
-    async def run(self, action: str, project_id: str, call: Callable[[], Result]) -> Result:
+    async def run(self, action: str, project_id: str, call: Callable[[], Result], *,
+                  client_addr: str | None = None) -> Result:
         """Run one blocking control ``call`` on the control workers; ``control_busy`` at once when
-        all :data:`CONTROL_WORKERS` are taken (nothing started, not audited). A slot is held until
-        the call itself returns, even when the awaiting request goes away."""
-        if not self._slots.acquire(blocking=False):
+        all :data:`CONTROL_WORKERS` are taken or the control is closed (nothing started, not
+        audited). A slot is held until the call itself returns, even when the awaiting request
+        goes away."""
+        if self._closed or not self._slots.acquire(blocking=False):
             return Result(False, action, project_id, CONTROL_BUSY, "every project control worker is busy; try again")
 
         def job() -> Result:
@@ -138,7 +198,24 @@ class ProjectControl:
         except RuntimeError:  # shut down
             self._slots.release()
             return Result(False, action, project_id, CONTROL_BUSY, "project control is shutting down")
-        return await asyncio.wrap_future(future)
+        waiting = asyncio.wrap_future(future)
+        key = id(waiting)
+        self._running[key] = (action, project_id, client_addr, waiting)
+        try:
+            return await waiting
+        finally:
+            self._running.pop(key, None)
+
+    async def close(self) -> None:
+        """Hub stop: queued controls are cancelled, running ones are abandoned (their worker
+        threads are daemons and their drivers run in their own sessions, so a started backend
+        still comes up on its own) and audited ``unknown``; nothing waits for them."""
+        self._closed = True
+        self._executor.shutdown(wait=False, cancel_futures=True)
+        running, self._running = list(self._running.values()), {}
+        for action, project_id, client_addr, waiting in running:
+            self._audit(action, project_id, "unknown", client_addr)
+            waiting.cancel()
 
     def _refuse(self, action: str, principal: object, project_id: str) -> Result | None:
         if not _owner(principal):
@@ -155,16 +232,21 @@ class ProjectControl:
                 return entry
         return Result(False, action, project_id, UNKNOWN_PROJECT, "no registered project has this id")
 
+    def _audit(self, action: str, project_id: str, outcome: str, client_addr: str | None) -> None:
+        """One ``web_control`` row (a failing audit never changes a control result)."""
+        if self.audit is None:
+            return
+        try:
+            self.audit.record("web_control", "owner", client_addr,
+                              {"project_id": project_id[:64], "action": action, "result": outcome},
+                              now=float(self.clock()))
+        except Exception as exc:  # noqa: BLE001 - the audit store never decides a control result
+            print(f"[workbench] web_control audit failed: {exc!r}", file=sys.stderr, flush=True)
+
     def _record(self, result: Result, client_addr: str | None) -> Result:
-        """Audit ``web_control`` (a failing audit never changes the control result)."""
-        if self.audit is not None:
-            try:
-                self.audit.record("web_control", "owner", client_addr,
-                                  {"project_id": result.project_id[:64], "action": result.action,
-                                   "result": "ok" if result.ok else str(result.reason)},
-                                  now=float(self.clock()))
-            except Exception as exc:  # noqa: BLE001 - the audit store never decides a control result
-                print(f"[workbench] web_control audit failed: {exc!r}", file=sys.stderr, flush=True)
+        """Audit the result; after :meth:`close` an abandoned control was already audited ``unknown``."""
+        if not self._closed:
+            self._audit(result.action, result.project_id, "ok" if result.ok else str(result.reason), client_addr)
         return result
 
     @staticmethod

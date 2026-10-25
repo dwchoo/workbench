@@ -95,7 +95,7 @@ CSRF·출처:
 - 로그인 form은 세션 전 double-submit token(`wb_hub_login` cookie, HttpOnly, SameSite=Strict + hidden field)을 쓴다.
 
 로그인 실패 지연:
-- 로그인 검증은 Hub 전체에서 한 번에 하나(asyncio lock)다. 연속 실패 수를 client 주소별·전체로 센다(`hub.sqlite3.login_state`, Hub 재시작에도 유지). 다음 시도의 검증 전 지연 = `max(f(ip), f(global/3))`, `f(n) = 0 (n ≤ 3), min(2^(n-4), 30) s (n > 3)`. 성공하면 그 주소와 전체 수를 0으로. 실패 응답은 `비밀번호가 맞지 않습니다`만 보인다.
+- 로그인 검증은 Hub 전체에서 한 번에 하나(asyncio lock)다. 연속 실패 수를 client 주소별·전체로 센다(`hub.sqlite3.login_state`, Hub 재시작에도 유지). 다음 시도의 검증 전 지연 = `max(f(ip), f(global/3))`, `f(n) = 0 (n ≤ 3), min(2^(n-4), 30) s (n > 3)`. 성공하면 그 주소와 전체 수를 0으로. 실패 응답은 `비밀번호가 맞지 않습니다`만 보인다. (2026-10-25 orchestrator 결정, 소유자 lockout 방지) 전체 수에 따른 지연 `f(global/3)`은 loopback client와 최근 30일 안에 로그인에 성공한 주소에는 적용하지 않고 주소별 지연만 적용한다. 지연은 lock 안에서 잠들지 않고 429 + `Retry-After`로 즉시 답한다.
 
 보안 header(모든 응답): `Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'`, `X-Content-Type-Options: nosniff`, `Referrer-Policy: same-origin`(2026-10-25 orchestrator 정정: `no-referrer`면 Fetch 규칙상 같은 출처 form POST도 `Origin: null`이 되어 Origin 검사에 모두 막힌다. Origin `null`은 계속 403), `X-Frame-Options: DENY`, 인증 page·API는 `Cache-Control: no-store`. Inline script·style 없음. 요청 본문·댓글·제목·key 이름 등 사용자 텍스트는 모두 `html.escape` 뒤 `<pre>`/text node로만 출력한다(Markdown·HTML 해석 없음, P2-AC-31).
 
@@ -245,7 +245,7 @@ Tool(이름·인자·결과):
 | `inbox_comment` | `request_id`, `body` | `{comment_id, state, version}`. NEEDS_INFO면 답변이 되어 REVIEWING | 둘 다 |
 | `inbox_update` | `request_id`, `base_version`, `title?`, `body?` | `{state, version, revision, mode:"in_place"\|"new_revision"}` | editor |
 | `inbox_set_state` | `request_id`, `base_version`, `to:"NEW"\|"NEEDS_INFO"`, `reason?` | `{state, version}`. CLOSED → NEW는 다시 열기 | editor |
-| `inbox_cancel` | `request_id`, `confirm_token?`, `reason?` | 실행 전: `{status:"cancelled", state:"CLOSED"}`. READY: `{status:"cancel_requested"}`(token 없음). RUNNING 첫 호출: `{status:"confirm_required", confirm_token, expires_in:60, impact:{task_id, task_status, command:{command_id, label, state}\|null}}`. Token 확인: `{status:"cancel_requested", stop:{status:"stopping"}\|null}`. 취소 수락은 종료가 아니다(P2-AC-30) | 둘 다 |
+| `inbox_cancel` | `request_id`, `confirm_token?`, `reason?` | 실행 전: `{status:"cancelled", state:"CLOSED"}`. READY: `{status:"cancel_requested"}`(token 없음). 웹은 READY·RUNNING 모두 확인 page와 token을 거친다(2026-10-25 orchestrator 결정: 웹은 사람이 누르는 경로라 확인을 두고, MCP READY는 바로 요청한다). RUNNING 첫 호출: `{status:"confirm_required", confirm_token, expires_in:60, impact:{task_id, task_status, command:{command_id, label, state}\|null}}`. Token 확인: `{status:"cancel_requested", stop:{status:"stopping"}\|null}`. 취소 수락은 종료가 아니다(P2-AC-30) | 둘 다 |
 | `inbox_result` | `request_id`, `full`(기본 false), `run_id?`, `offset?`, `length?`, `artifact_path?` | 기본: `{summary, state, outcome, task:{status, runs:[{run_id, status, exit_code}]}}`. `full`: 아래 "결과 조회" | 둘 다 |
 
 Board agent는 별도 내부 listener(아래)의 같은 `/mcp`를 쓴다. 외부 listener가 없어도(TLS 문제 등) Board agent의 MCP는 동작한다.
@@ -379,7 +379,7 @@ Frame:
 | 명령 | 동작 | Hub 자동 시작 |
 |---|---|---|
 | `wb hub passwd [--stdin]` | 위 비밀번호. 예약 거절을 대체 | 아니오 |
-| `wb hub tls --self-signed [--force]` | `openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 -nodes -days 825 -subj /CN=<bind 또는 hostname> -addext subjectAltName=IP:<bind>,DNS:localhost[,DNS:<server_names>…]`로 TLS 경로에 만든다. 이미 있으면 `--force` 없이 거절. openssl이 없으면 exit 2. 끝나면 지문(SHA-256)과 `Hub를 다시 시작하면 HTTPS로 열립니다`를 보인다 | 아니오 |
+| `wb hub tls --self-signed [--force]` | `openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 -nodes -days 825 -subj /CN=<bind 또는 hostname> -addext subjectAltName=IP:<bind>,DNS:localhost[,DNS:<server_names>…]`로 TLS 경로에 만든다. (2026-10-25 orchestrator 정정) wildcard bind(`0.0.0.0`/`::`)면 그 IP 대신 `IP:127.0.0.1`·`IP:::1`과 host 주소(hostname 해석·interface 주소, best effort)를 넣고, loopback bind는 두 loopback IP를 넣는다. leaf 확장(`CA:FALSE`, `serverAuth`)을 붙이고 `--force` 교체는 key·cert 쌍을 함께 바꾼다(실패 시 이전 쌍 복원). 출력에 SAN 목록을 보인다. 이미 있으면 `--force` 없이 거절. openssl이 없으면 exit 2. 끝나면 지문(SHA-256)과 `Hub를 다시 시작하면 HTTPS로 열립니다`를 보인다 | 아니오 |
 | `wb hub review-mode <PATH> [auto\|manual]` | 값 없으면 현재 값. Hub `review_mode` op(D-32). 등록되지 않은 PATH는 exit 1 | 예 |
 | `wb hub status` | `web:`, 평문 경고, `board_agent:` 줄 추가. `--json`은 hub_v1 `status` 그대로 | 아니오 |
 

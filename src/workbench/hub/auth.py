@@ -15,6 +15,7 @@ import errno
 import fcntl
 import hashlib
 import hmac
+import ipaddress
 import json
 import os
 from pathlib import Path
@@ -461,6 +462,16 @@ DELAY_CAP = 30
 GLOBAL_KEY = "global"
 LOGIN_PENDING_LIMIT = 8
 LOGIN_STATE_TTL = 24 * 3600.0
+TRUSTED_TTL = 30 * 24 * 3600.0  # an address that logged in this recently skips the global delay
+
+
+def _loopback(addr: str | None) -> bool:
+    try:
+        address = ipaddress.ip_address(addr or "")
+    except ValueError:
+        return False
+    mapped = getattr(address, "ipv4_mapped", None)
+    return address.is_loopback or (mapped is not None and mapped.is_loopback)
 
 
 def delay_seconds(failures: int) -> int:
@@ -482,6 +493,10 @@ class LoginThrottle:
     3. Verify the password (in an executor), then ``record_failure``/``record_success``.
 
     Address rows idle for :data:`LOGIN_STATE_TTL` are pruned on each failure.
+
+    Owner lockout guard (orchestrator decision 2026-10-25): the global term does not apply to a
+    loopback address or to an address with a successful login in the last :data:`TRUSTED_TTL`
+    (``ok:<addr>`` rows, ``updated_at`` = the success time). Their own per-address delay still does.
     """
 
     def __init__(self, db: HubDb, *, clock=time.time, pending_limit: int | None = None):
@@ -508,6 +523,17 @@ class LoginThrottle:
     def _key(addr: str | None) -> str:
         return f"addr:{addr or ''}"
 
+    @staticmethod
+    def _trusted_key(addr: str | None) -> str:
+        return f"ok:{addr or ''}"
+
+    def global_exempt(self, addr: str | None, now: float) -> bool:
+        """Loopback, or a successful login from ``addr`` within :data:`TRUSTED_TTL` before ``now``."""
+        if _loopback(addr):
+            return True
+        _count, succeeded_at = self._state(self._trusted_key(addr))
+        return succeeded_at > 0 and now - succeeded_at <= TRUSTED_TTL
+
     def _state(self, key: str) -> tuple[int, float]:
         rows = self.db.query("SELECT failures, updated_at FROM login_state WHERE key = ?", (key,))
         return (rows[0][0], rows[0][1]) if rows else (0, 0.0)
@@ -515,31 +541,43 @@ class LoginThrottle:
     def check(self, addr: str | None, now: float) -> float:
         """Seconds the next attempt from ``addr`` must still wait (0 = verify now). Never sleeps."""
         own_failures, own_at = self._state(self._key(addr))
+        own_wait = own_at + delay_seconds(own_failures) - now
+        if self.global_exempt(addr, now):
+            return max(0.0, own_wait)
         all_failures, all_at = self._state(GLOBAL_KEY)
-        return max(0.0, own_at + delay_seconds(own_failures) - now,
-                   all_at + delay_seconds(all_failures // 3) - now)
+        return max(0.0, own_wait, all_at + delay_seconds(all_failures // 3) - now)
 
     def _failures(self, key: str) -> int:
         rows = self.db.query("SELECT failures FROM login_state WHERE key = ?", (key,))
         return rows[0][0] if rows else 0
 
-    def delay_for(self, addr: str | None) -> int:
-        return max(delay_seconds(self._failures(self._key(addr))),
-                   delay_seconds(self._failures(GLOBAL_KEY) // 3))
+    def delay_for(self, addr: str | None, now: float | None = None) -> int:
+        now = float(self._clock() if now is None else now)
+        own = delay_seconds(self._failures(self._key(addr)))
+        if self.global_exempt(addr, now):
+            return own
+        return max(own, delay_seconds(self._failures(GLOBAL_KEY) // 3))
 
     def record_failure(self, addr: str | None, now: float | None = None) -> None:
         now = float(self._clock() if now is None else now)
 
         def steps(execute):
             execute("DELETE FROM login_state WHERE key LIKE 'addr:%' AND updated_at < ?", (now - LOGIN_STATE_TTL,))
+            execute("DELETE FROM login_state WHERE key LIKE 'ok:%' AND updated_at < ?", (now - TRUSTED_TTL,))
             for key in (self._key(addr), GLOBAL_KEY):
                 execute("INSERT INTO login_state VALUES (?, 1, ?) ON CONFLICT(key) DO UPDATE "
                         "SET failures = failures + 1, updated_at = excluded.updated_at", (key, now))
         self.db.write(steps)
 
-    def record_success(self, addr: str | None) -> None:
-        self.db.write(lambda execute: execute("DELETE FROM login_state WHERE key IN (?, ?)",
-                                              (self._key(addr), GLOBAL_KEY)))
+    def record_success(self, addr: str | None, now: float | None = None) -> None:
+        """Clear that address and the global count; remember ``addr`` as a recent owner address."""
+        now = float(self._clock() if now is None else now)
+
+        def steps(execute):
+            execute("DELETE FROM login_state WHERE key IN (?, ?)", (self._key(addr), GLOBAL_KEY))
+            execute("INSERT INTO login_state VALUES (?, 0, ?) ON CONFLICT(key) DO UPDATE "
+                    "SET updated_at = excluded.updated_at", (self._trusted_key(addr), now))
+        self.db.write(steps)
 
 
 # --- API keys ---------------------------------------------------------------------------------

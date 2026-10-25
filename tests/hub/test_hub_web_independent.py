@@ -883,22 +883,26 @@ class ThrottleTests(HubCase):
               f'slowest flood reply {max(r.elapsed for r in replies):.2f}s, slowest concurrent page {max(probes):.3f}s '
               f'({len(probes)} probes), owner login {time.monotonic() - started:.2f}s', file=sys.stderr)
 
-    async def test_distributed_failures_delay_everyone_within_the_spec_cap_and_the_owner_gets_in_afterwards(self):
-        for index in range(4):  # 4 addresses x 3 failures = 12 global; f(12 // 3) = f(4) = 1 s
+    async def test_loopback_failures_from_many_addresses_never_delay_a_loopback_owner(self):
+        # SPEC (main 38a0128): the global term f(global // 3) does not apply to loopback clients.
+        # Every sandbox client is loopback, so 4 x 3 = 12 failures must not slow the owner down;
+        # the non-loopback side of the rule is covered on LoginThrottle in ThrottlePolicyTests.
+        for index in range(4):
             attacker = self.client(source=f'127.0.0.{10 + index}')
             for _ in range(3):
                 self.assertEqual((await self.attempt(attacker, WRONG)).status, 403)
         owner = self.client(source='127.0.0.2')
         started = time.monotonic()
-        first = await self.attempt(owner, PASSWORD)
-        self.assertLess(time.monotonic() - started, 1.0, 'immediate answer, not a queue')
-        self.assertEqual(first.status, 429)
-        retry = int(first.headers['Retry-After'])
-        self.assertTrue(1 <= retry <= 30, retry)
-        time.sleep(retry + 0.5)
-        self.assertEqual((await owner.login(PASSWORD)).status, 303)
-        self.assertEqual((await self.client(source='127.0.0.12').login(PASSWORD)).status, 303,
-                         'a success resets the counters')
+        reply = await owner.login(PASSWORD)
+        self.assertEqual(reply.status, 303, 'a loopback owner gets in at once')
+        self.assertLess(time.monotonic() - started, 3.0)
+        # The per-address delay still applies to a loopback address that keeps failing.
+        repeat = self.client(source='127.0.0.20')
+        for _ in range(4):
+            self.assertEqual((await self.attempt(repeat, WRONG)).status, 403)
+        limited = await self.attempt(repeat, PASSWORD)
+        self.assertEqual(limited.status, 429)
+        self.assertTrue(1 <= int(limited.headers['Retry-After']) <= 30)
 
     async def test_the_throttle_survives_a_hub_restart(self):
         attacker = self.client(source='127.0.0.3')
@@ -913,6 +917,91 @@ class ThrottleTests(HubCase):
         self.clients.append(fresh)
         self.assertEqual((await self.attempt(fresh, PASSWORD)).status, 429)
 
+
+
+class ThrottlePolicyTests(unittest.TestCase):
+    """``LoginThrottle`` itself with non-loopback addresses (the sandbox cannot be a LAN client).
+
+    Expected values come from the SPEC: wait = max(f(addr), f(global // 3)) from the last
+    failure, f(n) = 0 for n <= 3 else min(2^(n-4), 30); the global term is skipped for loopback
+    clients and for addresses with a successful login in the last 30 days.
+    """
+
+    DAY = 86400.0
+
+    def setUp(self):
+        from workbench.hub import auth
+        self.auth = auth
+        self.temp = tempfile.TemporaryDirectory(prefix='wb-thr-')
+        self.addCleanup(self.temp.cleanup)
+        self.db = auth.HubDb.open(Path(self.temp.name) / 'hub')
+        self.addCleanup(self.db.close)
+        self.throttle = auth.LoginThrottle(self.db)
+        self.now = 1_800_000_000.0
+
+    def fail_login(self, address: str, times: int, at: float | None = None) -> None:
+        for _ in range(times):
+            self.throttle.record_failure(address, self.now if at is None else at)
+
+    def spread(self, count: int) -> None:
+        for index in range(count):
+            self.fail_login(f'203.0.113.{index + 1}', 1)
+
+    def test_a_distributed_attack_delays_unknown_lan_addresses_up_to_the_cap(self):
+        stranger = '198.51.100.7'
+        self.spread(9)  # 9 // 3 = 3 -> f(3) = 0
+        self.assertEqual(self.throttle.check(stranger, self.now), 0)
+        self.spread(3)  # 12 // 3 = 4 -> 1 s counted from the last failure
+        self.assertEqual(self.throttle.check(stranger, self.now), 1)
+        self.assertAlmostEqual(self.throttle.check(stranger, self.now + 0.4), 0.6, places=6)
+        self.assertEqual(self.throttle.check(stranger, self.now + 1.0), 0)
+        for failures in (15, 18, 21, 24, 27, 90, 300):  # the SPEC formula, cap included
+            self.db.write(lambda execute, n=failures: execute(
+                "UPDATE login_state SET failures = ?, updated_at = ? WHERE key = ?",
+                (n, self.now, self.auth.GLOBAL_KEY)))
+            expected = min(2 ** (failures // 3 - 4), 30)
+            self.assertEqual(self.throttle.check(stranger, self.now), expected, failures)
+            self.assertEqual(self.throttle.delay_for(stranger, self.now), expected)
+        self.assertEqual(expected, 30)
+
+    def test_loopback_clients_skip_the_global_delay_but_keep_their_own(self):
+        self.spread(60)
+        for address in ('127.0.0.1', '127.0.0.9', '::1', '::ffff:127.0.0.1'):
+            with self.subTest(address=address):
+                self.assertEqual(self.throttle.check(address, self.now), 0)
+                self.assertEqual(self.throttle.delay_for(address, self.now), 0)
+        self.fail_login('127.0.0.1', 5)  # f(5) = 2 s of its own
+        self.assertEqual(self.throttle.check('127.0.0.1', self.now), 2)
+        self.assertEqual(self.throttle.check('127.0.0.2', self.now), 0, 'another loopback address is unaffected')
+        self.assertGreater(self.throttle.check('198.51.100.7', self.now), 0, 'a stranger still waits')
+
+    def test_a_recent_success_exempts_an_address_for_30_days_only(self):
+        owner = '198.51.100.7'
+        self.throttle.record_success(owner, self.now - 29 * self.DAY)
+        self.spread(60)
+        self.assertEqual(self.throttle.check(owner, self.now), 0, 'success 29 days ago')
+        self.assertEqual(self.throttle.delay_for(owner, self.now), 0)
+        self.throttle.record_success(owner, self.now - 31 * self.DAY)
+        self.spread(60)
+        self.assertGreater(self.throttle.check(owner, self.now), 0, 'success 31 days ago no longer counts')
+        self.throttle.record_success(owner, self.now - 1)
+        self.spread(60)
+        self.assertEqual(self.throttle.check(owner, self.now), 0)
+        self.assertGreater(self.throttle.check('198.51.100.8', self.now), 0, 'a different address has no such history')
+
+    def test_a_trusted_address_that_keeps_failing_still_pays_its_own_delay(self):
+        owner = '198.51.100.7'
+        self.throttle.record_success(owner, self.now - 1)
+        self.fail_login(owner, 6)  # f(6) = 4 s
+        self.assertEqual(self.throttle.check(owner, self.now), 4)
+        self.assertEqual(self.throttle.delay_for(owner, self.now), 4)
+        self.assertEqual(self.throttle.check(owner, self.now + 4), 0)
+
+    def test_failures_alone_never_make_an_address_trusted(self):
+        stranger = '198.51.100.9'
+        self.fail_login(stranger, 3)
+        self.spread(60)
+        self.assertGreater(self.throttle.check(stranger, self.now), 0)
 
 if __name__ == '__main__':
     unittest.main()

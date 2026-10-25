@@ -100,11 +100,26 @@ BOARD_CHANNELS = ("agent", "shell")
 
 
 def board_routes(board: Callable[[], object | None]) -> Callable[[web.Application], None]:
-    """``POST /board/restart`` (form ``channel``): the logged-in owner restarts one Board channel (TI-16).
+    """``POST /board/restart`` (form ``channel``): the logged-in owner restarts one Board channel (TI-16), and
+    ``GET /ws/board``, the Board terminal WebSocket (TI-17).
 
     Session and CSRF are the ``session_check`` middleware's (a page route, unsafe method); API keys cannot reach
     it. ``board()`` returns the Hub's ``BoardSet`` or None (``hub.toml`` invalid). The confirm page is TI-18's.
+    The set's one :class:`~workbench.hub.board.ws.BoardTerminal` (its lease and epochs) outlives a listener
+    reopen: it is kept here, per set.
     """
+    from ..board import ws as board_ws
+    terminals: dict[str, board_ws.BoardTerminal] = {}
+
+    def terminal_for(app: web.Application) -> board_ws.BoardTerminal | None:
+        current = board()
+        if current is None:
+            return None
+        terminal = terminals.get("current")
+        if terminal is None or terminal.board is not current:
+            terminal = terminals["current"] = board_ws.BoardTerminal(current, audit=board_ws.audit_to(app[SERVICES]))
+        return terminal
+
     async def post_restart(request: web.Request) -> web.Response:
         current = board()
         if current is None:
@@ -118,6 +133,7 @@ def board_routes(board: Callable[[], object | None]) -> Callable[[web.Applicatio
 
     def register(app: web.Application) -> None:
         app.router.add_post("/board/restart", post_restart)
+        board_ws.routes(lambda: terminal_for(app))(app)
     return register
 
 

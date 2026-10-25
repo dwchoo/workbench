@@ -7,7 +7,10 @@ Run with ``discover -s tests/hub -p 'test_board_hangul.py'``.
 """
 from __future__ import annotations
 
+import asyncio
 import shutil
+import textwrap
+import time
 import unittest
 
 import test_board_ws as board_case  # module import: its test classes stay uncollected here
@@ -62,6 +65,97 @@ class HangulInputTests(board_case.BoardWsCase):
         self.assertEqual(self.terminal.dropped_inputs, 0)
         self.assertEqual(self.board.status()['lease']['state'], 'connected')
         self.assertEqual(self.board.status()['lease']['epoch'], epoch)
+
+
+STALLING_RECORDER = textwrap.dedent('''\
+    import os, sys, time, tty
+    record, stall = sys.argv[1], float(os.environ.get('STALL', '0'))
+    try:
+        tty.setraw(0)
+    except Exception:
+        pass
+    os.write(1, b"ready:" + sys.argv[2].encode() + b"\\r\\n")
+    out = os.open(record, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600)
+    first = True
+    while True:
+        data = os.read(0, 65536)
+        if not data:
+            break
+        os.write(out, data)
+        if first:  # a program busy with something else: its terminal input piles up meanwhile
+            first = False
+            time.sleep(stall)
+    ''')
+
+
+class PasteBackpressureTests(board_case.BoardWsCase):
+    """A paste bigger than the PTY takes at once is paced (the Hub stops reading the socket), never dropped."""
+
+    stall = 0.0
+
+    async def attached(self):
+        self.launcher.script.write_text(STALLING_RECORDER)  # the set starts at the first hello
+        original = self.launcher.started
+
+        def started(name):
+            launch = original(name)
+            launch.env['STALL'] = str(self.stall)
+            return launch
+        self.launcher.started = started
+        tab = self.tab()
+        epoch = (await tab.attach(self.session.csrf))['epoch']
+        await tab.wait_output('shell', b'ready:shell')
+        return tab, epoch
+
+    async def send_pastes(self, tab, epoch, pastes):
+        for paste in pastes:
+            for frame in code_point_frames(paste):
+                await tab.send_input('shell', epoch, frame)
+
+    async def test_four_three_megabyte_pastes_arrive_byte_exact_and_in_order(self):
+        tab, epoch = await self.attached()
+        unit = '가나다라 abc 😀\r'
+        pastes = [(f'[붙여넣기 {n}] ' + unit * (3 * (1 << 20) // len(unit.encode('utf-8')))) for n in range(4)]
+        await self.send_pastes(tab, epoch, pastes)
+        expected = ''.join(pastes).encode('utf-8')
+        self.assertGreater(len(expected), 12 * (1 << 20))
+        self.assertTrue(await self.eventually(lambda: len(self.recorded('shell')) >= len(expected), 60),
+                        (len(self.recorded('shell')), len(expected)))
+        self.assertEqual(self.recorded('shell'), expected)
+        self.assertEqual(self.terminal.dropped_inputs, 0)
+        self.assertNotIn('error', [event.get('t') for event in tab.events])
+        lease = self.board.status()['lease']
+        self.assertEqual((lease['state'], lease['epoch']), ('connected', epoch))
+
+
+class StalledPasteTests(PasteBackpressureTests):
+    """The program reads nothing for longer than the heartbeat limit (2 x 2 s + 1 s) while a paste waits."""
+
+    stall = 6.0
+
+    async def test_a_paste_waiting_on_a_busy_program_keeps_the_lease_and_arrives_whole(self):
+        tab, epoch = await self.attached()
+        paste = '한글 붙여넣기 ' * (3 * (1 << 20) // 20)
+        await self.send_pastes(tab, epoch, [paste])
+        expected = paste.encode('utf-8')
+        self.assertTrue(await self.eventually(lambda: len(self.recorded('shell')) >= len(expected), 60))
+        self.assertEqual(self.recorded('shell'), expected)
+        self.assertIsNone(tab.close_code)
+        self.assertEqual((self.board.status()['lease']['state'], self.terminal.dropped_inputs), ('connected', 0))
+        self.assertNotIn('terminal_timeout', [event for event, _ in self.audit()])
+
+    async def test_a_new_tab_takes_over_at_once_while_the_holders_paste_is_paced(self):
+        tab, epoch = await self.attached()
+        sending = asyncio.ensure_future(self.send_pastes(tab, epoch, ['가' * (2 << 20)]))
+        self.addAsyncCleanup(lambda: asyncio.gather(sending, return_exceptions=True))
+        await asyncio.sleep(1.0)  # the program sleeps on its first read: the paste piles up in the Hub
+        other = self.services.sessions.create('127.0.0.2', 'other', time.time(), generation=self.generation)
+        second = self.tab(other)
+        started = time.monotonic()
+        attached = await second.attach(other.csrf)
+        self.assertEqual(attached['epoch'], epoch + 1)
+        self.assertLess(time.monotonic() - started, 2)
+        self.assertEqual(await tab.wait_closed(5), 4001)
 
 
 class ReplayBoundaryTests(unittest.TestCase):

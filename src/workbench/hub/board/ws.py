@@ -18,7 +18,7 @@ from typing import Any, Callable
 from aiohttp import WSMsgType, web
 
 from ..web import middleware
-from .set import MAX_SIZE, MIN_SIZE
+from .set import INPUT_HIGH_WATER, INPUT_LOW_WATER, MAX_SIZE, MIN_SIZE
 
 PROTOCOL_VERSION = 1
 CHANNEL_IDS = {"agent": 0, "shell": 1}
@@ -167,6 +167,8 @@ class Connection:
         self.finished = asyncio.Event()  # the handler is done with this connection
         loop = asyncio.get_running_loop()
         self.last_seen = loop.time()  # any frame from the client (set again at attach)
+        self.backpressure: str | None = None  # the channel whose PTY input queue is past the high water mark
+        self.paused = False  # reads stopped until that queue drains: the client is paced by TCP, not silent
         self.tasks: list[asyncio.Task] = []  # the heartbeat watch
         self.stopper = _Stopper(self)
         services = request.app[middleware.SERVICES]
@@ -439,6 +441,30 @@ class BoardTerminal:
             if message is None or message.type in CLOSED_TYPES:
                 return
             self._received(connection, message)
+            if connection.backpressure is not None:
+                await self._paced(connection)
+
+    async def _paced(self, connection: Connection) -> None:
+        """A paste larger than the program reads at once: stop reading this socket (TCP then holds the
+        client back) until the channel's queued input drains, so no frame of the holder is ever refused for a
+        full queue. A close (takeover, logout, Hub stop) ends the wait at once; the heartbeat watch counts the
+        pause as activity."""
+        name, connection.backpressure = connection.backpressure, None
+        connection.paused = True
+        try:
+            if self.board.input_backlog(name) <= INPUT_LOW_WATER:
+                return
+            drained = asyncio.ensure_future(self.board.input_drained(name))  # low water, or the process ended
+            stop = asyncio.ensure_future(connection.close_requested.wait())
+            try:
+                await asyncio.wait({drained, stop}, return_when=asyncio.FIRST_COMPLETED)
+            finally:
+                for task in (drained, stop):
+                    task.cancel()
+                await asyncio.gather(drained, stop, return_exceptions=True)
+        finally:
+            connection.paused = False
+            connection.last_seen = asyncio.get_running_loop().time()
 
     def _may_attach(self, resume: dict | None) -> bool:
         """SPEC resume rule. No resume (a fresh tab or "다시 가져오기") always takes over. A resume takes over
@@ -499,7 +525,8 @@ class BoardTerminal:
         next_check = loop.time() + self.session_check
         while connection is self.current:
             now = loop.time()
-            remaining = connection.last_seen + limit - now
+            seen = now if connection.paused else connection.last_seen  # a paced paste is not silence
+            remaining = seen + limit - now
             if remaining <= 0:
                 self._release(connection, "terminal_timeout")
                 connection.close(CLOSE_TIMEOUT, "heartbeat timeout", drop_queue=True)
@@ -580,9 +607,12 @@ class BoardTerminal:
         if connection is not self.current or epoch != self.epoch:
             self.dropped_inputs += 1
             return
-        if not self.board.write(CHANNEL_NAMES[channel_id], data[HEADER.size:]):
+        name = CHANNEL_NAMES[channel_id]
+        if not self.board.write(name, data[HEADER.size:]):
             self.dropped_inputs += 1
-            connection.reply({"t": "error", "reason": "input_refused", "channel": CHANNEL_NAMES[channel_id]})
+            connection.reply({"t": "error", "reason": "input_refused", "channel": name})
+        elif self.board.input_backlog(name) > INPUT_HIGH_WATER:
+            connection.backpressure = name  # the read loop waits for the PTY before the next frame
 
     def _output_to(self, connection: Connection, name: str) -> Callable[[bytes], None]:
         def deliver(chunk: bytes) -> None:

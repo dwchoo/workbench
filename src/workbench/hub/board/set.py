@@ -35,7 +35,9 @@ from .launch import BoardLaunchError
 CHANNELS = ("agent", "shell")
 RING_BYTES = 1 << 20
 READ_CHUNK = 65536
-INPUT_QUEUE_BYTES = 4 << 20  # one paste beyond this is refused, never split
+INPUT_QUEUE_BYTES = 4 << 20  # a hard cap; the WebSocket's backpressure keeps a holder's input far below it
+INPUT_HIGH_WATER = 1 << 20  # queued PTY input beyond this: the WebSocket stops reading the holder's frames ...
+INPUT_LOW_WATER = 256 << 10  # ... until the program has taken the queue down to this
 TERM_GRACE = 5.0
 HUP_GRACE = 0.5
 DEFAULT_SIZE = (30, 100)
@@ -195,6 +197,7 @@ class Channel(_OwnedSession):
         self._unsignallable: dict[int, str] = {}
         self._eof = False
         self._pending = bytearray()
+        self._drain_waiters: list[asyncio.Future] = []  # :meth:`drained` callers
         self.ending = False  # set on the loop thread before its fds are closed in the executor
         self.ring = ring if ring is not None else Ring()
         os.set_blocking(master, False)
@@ -226,6 +229,7 @@ class Channel(_OwnedSession):
         never reach a closed (and possibly reused) fd number."""
         self.ending = True
         self._pending.clear()
+        self._wake_drained()
         self.stop_io()
 
     def stop_io(self) -> None:
@@ -268,6 +272,7 @@ class Channel(_OwnedSession):
             self.ring.append(data)
             self.on_output(data)
         self.poll()
+        self._wake_drained()
         self.on_exit(self)
 
     def write(self, data: bytes) -> bool:
@@ -294,6 +299,8 @@ class Channel(_OwnedSession):
             self._pending.clear()
             written = 0
         del self._pending[:written]
+        if len(self._pending) <= INPUT_LOW_WATER:
+            self._wake_drained()
         if self.loop is not None:
             if self._pending:
                 self.loop.add_writer(self.master_fd, self._flush)
@@ -368,7 +375,28 @@ class Channel(_OwnedSession):
         self.close_fds()
         return {"channel": self.name, "pid": self.pid, "exit_status": self.returncode, "survivors": survivors}
 
+    def backlog(self) -> int:
+        """Input bytes queued for the PTY (the program has not read them yet)."""
+        return len(self._pending)
+
+    def drained(self) -> "asyncio.Future[None]":
+        """Done once the queued input is at most :data:`INPUT_LOW_WATER` bytes or the channel has ended."""
+        future = asyncio.get_running_loop().create_future()
+        if (len(self._pending) <= INPUT_LOW_WATER or self.ending or self.master_fd < 0 or self._reaped
+                or self._eof):
+            future.set_result(None)
+        else:
+            self._drain_waiters.append(future)
+        return future
+
+    def _wake_drained(self) -> None:
+        waiters, self._drain_waiters = self._drain_waiters, []
+        for future in waiters:
+            if not future.done():
+                future.set_result(None)
+
     def close_fds(self) -> None:
+        self._wake_drained()
         for name in ("master_fd", "pidfd"):
             fd = getattr(self, name)
             if fd >= 0:
@@ -635,6 +663,18 @@ class BoardSet:
     def write(self, name: str, data: bytes) -> bool:
         channel = self.slots[name].channel
         return channel is not None and channel.write(data)
+
+    def input_backlog(self, name: str) -> int:
+        """Input bytes of channel ``name`` still queued for its PTY (0 without a process)."""
+        channel = self.slots[name].channel
+        return channel.backlog() if channel is not None else 0
+
+    async def input_drained(self, name: str) -> None:
+        """Return once channel ``name``'s queued input is down to :data:`INPUT_LOW_WATER` (or it has no
+        process any more: a restart or an exit never leaves a writer waiting)."""
+        channel = self.slots[name].channel
+        if channel is not None:
+            await channel.drained()
 
     def resize(self, name: str, rows: int, cols: int) -> None:
         """Set channel ``name``'s window size (kept for its restarts); :class:`ValueError` outside 1..500."""

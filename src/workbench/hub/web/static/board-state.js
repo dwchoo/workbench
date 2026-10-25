@@ -18,7 +18,7 @@ export const BACKOFF_MAX_MS = 15000;
 export const MIN_SIZE = 1;
 export const MAX_SIZE = 500;
 export const INPUT_FRAME_MAX = 64 * 1024; // SPEC 입력 한도: the server drops a bigger input frame (too_large)
-export const INPUT_MAX = 4 << 20; // the Hub's PTY input queue (board/set.py): a bigger paste would land only in part
+export const INPUT_MAX = 4 << 20; // one paste at most (the Hub paces it into the PTY; a bigger one is refused whole)
 export const BANNER_TEXT = "다른 곳에서 연결됨 — 다시 가져오기";
 const CLIENT_TIMEOUT_CODE = 4000; // our own close when no pong came (not a server code)
 // 4400-4499: the server refused this page itself (4400 bad hello, 4403 csrf mismatch, any later client error).

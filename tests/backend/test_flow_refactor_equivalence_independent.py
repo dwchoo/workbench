@@ -1607,7 +1607,9 @@ FLOW_SCENARIOS = {name: (dict(cfg), driver) for name, (cfg, driver) in FLOW_SCEN
 #     reports), so in them every record carries the defaults ``cancel_fence is None`` / ``report_seq == 0`` and the
 #     record sequence has no extra ``task`` record (the equality below proves the latter). A scenario that arms the
 #     fence or numbers a report must be given its own expectation, not slip through this normalisation.
-INTENTIONAL_TASK_FIELDS = {"cancel_fence": None, "report_seq": 0}  # field -> value of an untouched Task
+#   * TI-13 (user Task cancel, 3d4b601) added ``FlowTask.user_cancel``; it stays ``None`` unless a user cancels the Task
+#     through ``TaskFlow.cancel_by_user``, which no scenario of these suites does.
+INTENTIONAL_TASK_FIELDS = {"cancel_fence": None, "report_seq": 0, "user_cancel": None}  # field -> value of an untouched Task
 
 
 def _find_keys(value, keys, path="") -> list[str]:
@@ -1667,7 +1669,8 @@ class FlowDifferential(DifferentialBase):
 
     def test_the_normalisation_hides_only_the_two_task_fields(self):
         """Self-check of the normalisation: it removes the fields in ``task`` records and nothing else."""
-        task = {"task_id": "t", "status": "running", "cancel_fence": None, "report_seq": 0}
+        task = {"task_id": "t", "status": "running", "cancel_fence": None, "report_seq": 0,
+                "user_cancel": None}
         outcome = {"ledger": [{"type": "task", "task": dict(task)},
                               {"type": "run_started", "report_seq": 3, "task": dict(task)},
                               {"type": "task", "task": {**task, "cancel_fence": "armed"}}],
@@ -1677,18 +1680,19 @@ class FlowDifferential(DifferentialBase):
         self.assertEqual(stripped["ledger"][1], outcome["ledger"][1], "a non-task record is left alone")
         self.assertEqual(stripped["tasks"], outcome["tasks"])
         self.assertEqual(sorted(removed, key=repr), sorted(
-            [(0, "cancel_fence", None), (0, "report_seq", 0), (2, "cancel_fence", "armed"), (2, "report_seq", 0)],
+            [(0, "cancel_fence", None), (0, "report_seq", 0), (0, "user_cancel", None), (2, "cancel_fence", "armed"),
+             (2, "report_seq", 0), (2, "user_cancel", None)],
             key=repr))
         self.assertEqual(_find_keys(stripped, INTENTIONAL_TASK_FIELDS),
                          ["/ledger[1]/report_seq", "/ledger[1]/task/cancel_fence", "/ledger[1]/task/report_seq",
-                          "/tasks/t/cancel_fence"])
+                          "/ledger[1]/task/user_cancel", "/tasks/t/cancel_fence"])
         self.assertEqual(outcome["ledger"][0]["task"], task, "the input is not modified")
         # an armed fence or a numbered report, an unrelated field, a missing field or a changed record is not hidden
         base = {"ledger": [{"type": "task", "task": {"task_id": "t", "status": "running"}}]}
         good = {"ledger": [{"type": "task", "task": dict(task)}]}
         assert_identical_but_for_intentional_deltas(self, good, base)
         for label, bad_task in (("armed", {**task, "cancel_fence": "armed"}), ("lifted", {**task, "cancel_fence": "lifted:x"}),
-                                ("seq", {**task, "report_seq": 1}), ("other field", {**task, "extra": 1}),
+                                ("seq", {**task, "report_seq": 1}), ("user cancel", {**task, "user_cancel": {"by": "user"}}), ("other field", {**task, "extra": 1}),
                                 ("changed value", {**task, "status": "held"}),
                                 ("missing field", {k: v for k, v in task.items() if k != "report_seq"})):
             with self.subTest(label), self.assertRaises(AssertionError):

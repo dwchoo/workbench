@@ -24,7 +24,7 @@ wb start           # 명시한 start는 예전처럼 초기화 확인 후 시작
 
 ## Hub 목록(TUI)
 
-열은 이름, 경로, 상태, Task·단계, 명령, 대기 사유, 요청, 마지막 활동이다. 3초마다 갱신한다. 값이 없으면 `—`이고, 요청 열은 아직 제공되지 않아 항상 `—`다.
+열은 이름, 경로, 상태, Task·단계, 명령, 대기 사유, 요청, 마지막 활동이다. 3초마다 갱신한다. 값이 없으면 `—`이다. 요청 열은 `대기 N · 질문 M`(신규 N건, 추가 정보 필요 M건)이고 둘 다 0이면 `0`, 그 프로젝트의 요청 저장소를 읽지 못하면 `—`다(0이 아니다). 요청 기능은 [Task Inbox & Web Board 사용 안내](../task-inbox/USAGE.md)를 본다.
 
 | 키 | 동작 |
 |---|---|
@@ -52,7 +52,13 @@ wb hub enable | disable    # 로그인 뒤 자동 시작하는 systemd 사용자
 wb --version               # wb <release> (<commit>|editable|unknown)
 ```
 
-`wb hub passwd`와 `wb hub tls`는 Web Board 기능에서 제공할 예약 명령이다. 지금은 "제공 예정" 안내와 exit 2만 낸다. Exit code는 0 성공, 1 실패·거절, 2 요건 없음, 3 Hub 실행 중 아님이다.
+```sh
+wb hub passwd [--stdin]              # Web Board 로그인 비밀번호. Hub를 시작하지 않는다
+wb hub tls --self-signed [--force]   # 자체 서명 TLS cert·key. Hub 재시작 뒤 HTTPS
+wb hub review-mode PATH [auto|manual]  # 프로젝트의 요청 검토 방식 보기·바꾸기
+```
+
+세 명령의 설정·동작은 [Task Inbox & Web Board 사용 안내](../task-inbox/USAGE.md)에 있다. `wb hub status`는 `web:`(listening 주소 또는 `not_listening` 이유)와 평문 HTTP 경고, `board_agent:` 줄도 보인다. Exit code는 0 성공, 1 실패·거절, 2 요건 없음, 3 Hub 실행 중 아님이다.
 
 ## 자동 시작
 
@@ -73,11 +79,11 @@ backend나 실험 shell 아래(WB가 관리하는 terminal)에서 Hub를 띄우�
 
 ## `wb update`와 Hub
 
-`wb update`는 backend 종료 전에 Hub를 먼저 멈춘다. Hub가 실행 중이면 확인 목록에 "Hub(pid N, version V)를 멈춥니다"가 더해지고, Hub 정지만으로는 새 질문이 생기지 않는다. Hub를 멈추지 못하거나 상태를 알 수 없으면 어떤 backend도 종료하지 않고 업데이트를 중단한다(`wb hub stop` 안내). 업데이트가 끝나도 Hub를 다시 띄우지 않고, 다음 자동 시작 대상 `wb`가 새 설치본으로 띄운다. `wb hub status`가 새 version을 보인다.
+`wb update`는 backend 종료 전에 Hub를 먼저 멈춘다. Hub가 실행 중이면 확인 목록에 "Hub(pid N, version V)를 멈춥니다"가 더해지고(Board agent 세트가 돌고 있으면 그 목록도 함께 보이며 확인하면 세트도 끝난다), Board agent 세트가 없으면 Hub 정지만으로는 새 질문이 생기지 않는다. Hub를 멈추지 못하거나 상태를 알 수 없으면 어떤 backend도 종료하지 않고 업데이트를 중단한다(`wb hub stop` 안내). 업데이트가 끝나도 Hub를 다시 띄우지 않고, 다음 자동 시작 대상 `wb`가 새 설치본으로 띄운다. `wb hub status`가 새 version을 보인다.
 
 ## 부팅 자동 시작과 linger
 
-`wb hub enable`은 `systemd --user` 서비스(`omp-workbench-hub.service`)를 만들고 enable한다. 이미 실행 중인 Hub는 바꾸지 않는다. systemd 사용자 서비스 관리자를 쓸 수 없으면 아무것도 바꾸지 않고 exit 2다. `wb hub disable`은 서비스를 끄고 지우며 실행 중인 Hub는 멈추지 않는다. 설치나 `wb`만으로는 서비스를 만들지 않는다.
+`wb hub enable`은 `systemd --user` 서비스(`omp-workbench-hub.service`)를 만들고 enable한다. unit에는 `KillMode=process`가 있어 서비스를 멈춰도 Hub가 켠 backend·Board agent는 계속 실행되며, `enable` 시점의 `PATH`·`SHELL`·`LANG`·`LC_ALL`(있는 것)이 `Environment=`로 고정된다. 이전에 `enable`한 사용자와 `PATH`를 바꾼 사용자는 `wb hub enable`을 다시 실행한다(옛 형식이면 `wb hub status`가 안내한다). 이미 실행 중인 Hub는 바꾸지 않는다. systemd 사용자 서비스 관리자를 쓸 수 없으면 아무것도 바꾸지 않고 exit 2다. `wb hub disable`은 서비스를 끄고 지우며 실행 중인 Hub는 멈추지 않는다. 설치나 `wb`만으로는 서비스를 만들지 않는다.
 
 linger가 꺼져 있으면 서비스는 로그인한 뒤에 시작한다. 로그인 전(부팅 직후)에 시작하려면 직접 `loginctl enable-linger`를 실행한다. `wb hub enable`은 linger를 바꾸지 않고 현재 상태와 필요한 명령만 알려 준다. 관리 terminal 안이거나 `/proc`을 읽을 수 없어 Hub가 시작을 거절하면(exit 3) 서비스는 재시작을 반복하지 않는다.
 

@@ -553,6 +553,7 @@ class McpServer:
     async def _inbox_projects(self, principal: Principal, args: dict) -> dict:
         """Registered projects in the key's scope; ``query`` matches the name (and, for editors, the path)."""
         query = limits.query(args.get("query"))
+        needle = limits.search_key(query) if query else None
         rows = await self.projects() if self.projects is not None else []
         editor = principal.kind in EDITOR_KINDS
         found, untrusted = [], False
@@ -560,7 +561,7 @@ class McpServer:
             if principal.scope is not None and row.get("project_id") not in principal.scope:
                 continue
             haystack = f"{row.get('name') or ''}\n{row.get('root') or ''}" if editor else str(row.get("name") or "")
-            if query and limits.search_key(query) not in limits.search_key(haystack):
+            if needle is not None and needle not in limits.search_key(haystack):
                 continue
             if not editor:
                 found.append({"project_id": row.get("project_id"), "name": row.get("name")})

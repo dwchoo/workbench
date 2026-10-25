@@ -576,6 +576,7 @@ class InboxService:
             if not wanted <= set(STATES):
                 raise InboxError("invalid_input", f"unknown state in {sorted(wanted)}")
         offset = self._cursor(cursor)
+        needle = limits.search_key(query) if query else None  # once per call; rows are keyed only when searched
         projects = [self._project(principal, project_id)] if project_id is not None \
             else self._visible_projects(principal)
         found: list[dict] = []
@@ -590,12 +591,12 @@ class InboxService:
                     raise
                 unavailable.append({"project_id": project.ref.project_id, "code": exc.code})
                 continue
-            for row, haystack in rows:
+            for row, text in rows:
                 if wanted is not None and row["state"] not in wanted:
                     continue
                 if wanted is None and not include_closed and row["state"] == "CLOSED":
                     continue
-                if query and limits.search_key(query) not in haystack:
+                if needle is not None and needle not in limits.search_key(text):
                     continue
                 found.append(row)
         # Newest first by arrival order (seq), not by the wall clock, which can step backwards.
@@ -620,7 +621,7 @@ class InboxService:
             connection.row_factory = sqlite3.Row
             rows = connection.execute("SELECT * FROM requests ORDER BY seq").fetchall()
             untrusted = untrusted_ids(connection)
-            return [(self._summary(project, row, untrusted), limits.search_key(f"{row['title']}\n{row['body']}"))
+            return [(self._summary(project, row, untrusted), f"{row['title']}\n{row['body']}")
                     for row in rows if self._can_see(principal, row)]
         return project.store.read(fn, missing=[])
 

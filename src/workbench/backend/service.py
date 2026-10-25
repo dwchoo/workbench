@@ -1727,6 +1727,8 @@ class Backend:
             return RecordService(self.layout, project_dir=self.project_dir).handle(peer.role, request)
         if tool == "workbench_logs":
             return self._workbench_logs_tool(peer, request)
+        if tool == "workbench_inbox":
+            return self._workbench_inbox_tool(peer, request)
         watchdog = getattr(self, "watchdog", None)  # a backend built without __init__ (tests) has none
         if watchdog is not None and getattr(peer.role, "value", peer.role) == "worker" \
                 and tool in (TERMINAL_TOOL, "to_manager"):
@@ -1741,6 +1743,17 @@ class Backend:
                 return terminal.abandon(peer.role, request)
             return terminal.handle(peer.role, request)
         return self.handoffs.handle(peer.role, request)
+
+    def _workbench_inbox_tool(self, peer: Any, request: dict[str, Any]) -> dict[str, Any]:
+        """Task Inbox (TI-11): the manager's ``workbench_inbox`` over this backend's hub_v1 link (this project only).
+        Reads start no model and send nothing to an OMP (P2-AC-06)."""
+        from workbench.backend.inbox_link import manager_inbox_tool
+        parsed = HandoffService._parse(peer.role, request)
+        if isinstance(parsed, dict):
+            return parsed
+        if parsed.role is not ActorRole.MANAGER:
+            return rejected("tool_not_allowed_for_role")
+        return manager_inbox_tool(getattr(self, "inbox_link", None), parsed.args)
 
     def _workbench_logs_tool(self, peer: Any, request: dict[str, Any]) -> dict[str, Any]:
         """Read-only bridge port; mutation never enters through an agent tool."""

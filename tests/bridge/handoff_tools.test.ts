@@ -97,7 +97,9 @@ test("manager and worker retain their role tools alongside logs and records", as
 			// C-D70: the manager also has its recovery tools restart_worker and workbench_status;
 			// C-D71 (1): and stop_survivor for processes a previous backend left running.
 			assert.deepEqual([...bridge.tools.keys()], role === "worker" ? ["workbench_records", "workbench_logs", own, "terminal"]
-				: ["workbench_records", "workbench_logs", own, "restart_worker", "workbench_status", "stop_survivor", "stop_command"], `${role} tools`);
+				// Task Inbox (TI-11): and workbench_inbox for the request review results.
+				: ["workbench_records", "workbench_logs", own, "restart_worker", "workbench_status", "stop_survivor", "stop_command",
+					"workbench_inbox"], `${role} tools`);
 			assert.equal(bridge.tools.has(other), false);
 			const tool = bridge.tools.get(own)!;
 			assert.equal(tool.loadMode, "essential", "schema must reach the provider without xd:// discovery");
@@ -118,7 +120,8 @@ test("manager and worker retain their role tools alongside logs and records", as
 	const manager = await startBridge("manager");
 	try {
 		const props = manager.tools.get("to_worker")!.parameters.properties;
-		assert.deepEqual(Object.keys(props).sort(), ["analysis", "cancel", "commands", "kind", "message", "run", "spec", "task_id"]);
+		assert.deepEqual(Object.keys(props).sort(),
+			["analysis", "cancel", "commands", "kind", "message", "request_id", "run", "spec", "task_id"]);
 		assert.deepEqual(props.cancel.type, ["boolean", "null"]);
 		assert.deepEqual(Object.keys(props.spec.properties).sort(), ["execution", "goal", "instructions", "paths"]);
 		assert.deepEqual(Object.keys(props.spec.properties.execution.properties).sort(),
@@ -130,6 +133,41 @@ test("manager and worker retain their role tools alongside logs and records", as
 		const props = worker.tools.get("to_manager")!.parameters.properties;
 		assert.deepEqual(Object.keys(props).sort(),
 			["in_reply_to", "kind", "message", "reason", "request", "requires_code_change", "task_id"]);
+	} finally { await worker.close(); }
+});
+
+test("TI-11: the manager's workbench_inbox is strict and essential and to_worker takes a nullable request_id", async () => {
+	const manager = await startBridge("manager");
+	try {
+		const tool = manager.tools.get("workbench_inbox")!;
+		assert.equal(tool.strict, true);
+		assert.equal(tool.loadMode, "essential");
+		const schema = tool.parameters;
+		assert.equal(schema.additionalProperties, false);
+		assert.deepEqual(Object.keys(schema.properties).sort(), ["action", "body", "outcome", "request_id", "summary"]);
+		assert.deepEqual([...schema.required].sort(), ["action", "body", "outcome", "request_id", "summary"]);
+		assert.deepEqual(schema.properties.action.enum, ["list", "show", "begin_review", "ask", "comment", "reject", "close"]);
+		assert.deepEqual(schema.properties.outcome.enum, ["success", "failed", null]);
+		for (const name of ["request_id", "body", "summary"]) assert.ok(schema.properties[name].type.includes("null"), name);
+		assert.equal(new RegExp(schema.properties.request_id.pattern).test(randomUUID()), true);
+		assert.equal(new RegExp(schema.properties.request_id.pattern).test("not-a-uuid"), false);
+		assert.match(tool.description, /data/);
+		const requestId = manager.tools.get("to_worker")!.parameters.properties.request_id;
+		assert.deepEqual(requestId.type, ["string", "null"]);
+		assert.match(requestId.description, /request/);
+		assert.match(manager.tools.get("to_worker")!.description, /inbox/);
+		// one tool_request frame per call, the backend's result as is
+		const args = { action: "show", request_id: randomUUID(), body: null, outcome: null, summary: null };
+		const pending = tool.execute("call-inbox", args, new AbortController().signal, () => {}, {});
+		const request = await manager.waitFor(frame => frame.kind === "tool_request");
+		assert.equal(request.tool, "workbench_inbox");
+		assert.deepEqual(request.args, args);
+		manager.reply({ kind: "tool_result", requestId: request.requestId, toolCallId: "call-inbox", result: { status: "ok" } });
+		assert.deepEqual(textOf(await pending), { status: "ok" });
+	} finally { await manager.close(); }
+	const worker = await startBridge("worker");
+	try {
+		assert.equal(worker.tools.has("workbench_inbox"), false, "only the manager reviews requests");
 	} finally { await worker.close(); }
 });
 

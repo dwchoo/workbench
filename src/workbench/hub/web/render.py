@@ -61,10 +61,11 @@ def csrf_field(csrf: str | None) -> Markup:
 
 
 def layout(title: str, body: object, *, insecure_warning: bool = False, csrf: str | None = None,
-           stylesheets: tuple = (), scripts: tuple = ()) -> Markup:
+           stylesheets: tuple = (), scripts: tuple = (), refresh: int | None = None) -> Markup:
     """The page frame: plain-HTTP banner, header with the badge slot and (when logged in) logout.
 
-    ``stylesheets``/``scripts`` are extra ``/static/...`` URLs a page asks for (never inline)."""
+    ``stylesheets``/``scripts`` are extra ``/static/...`` URLs a page asks for (never inline); ``refresh`` is a
+    ``<meta http-equiv="refresh">`` interval in seconds (the status board's 10 s, no JavaScript)."""
     banner = tag("div", INSECURE_WARNING_TEXT, class_="banner insecure", role="alert") if insecure_warning else ""
     logout = (tag("form", html_join([csrf_field(csrf), tag("button", "로그아웃", type="submit")]),
                   method="post", action="/logout", class_="logout") if csrf else "")
@@ -72,6 +73,7 @@ def layout(title: str, body: object, *, insecure_warning: bool = False, csrf: st
                                       tag("span", "", id="wb-badge", class_="badge"), logout]))
     head = html_join([void("meta", charset="utf-8"),
                       void("meta", name="viewport", content="width=device-width, initial-scale=1"),
+                      *([void("meta", http_equiv="refresh", content=str(int(refresh)))] if refresh else []),
                       tag("title", f"{title} - {TITLE}" if title else TITLE),
                       void("link", rel="stylesheet", href="/static/base.css"),
                       *(void("link", rel="stylesheet", href=href) for href in stylesheets),
@@ -81,7 +83,8 @@ def layout(title: str, body: object, *, insecure_warning: bool = False, csrf: st
 
 
 def page(title: str, body: object, *, status: int = 200, insecure_warning: bool = False,
-         csrf: str | None = None, stylesheets: tuple = (), scripts: tuple = ()) -> web.Response:
+         csrf: str | None = None, stylesheets: tuple = (), scripts: tuple = (),
+         refresh: int | None = None) -> web.Response:
     return web.Response(status=status, text=layout(title, body, insecure_warning=insecure_warning, csrf=csrf,
-                                                   stylesheets=stylesheets, scripts=scripts),
+                                                   stylesheets=stylesheets, scripts=scripts, refresh=refresh),
                         content_type="text/html", charset="utf-8")

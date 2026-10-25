@@ -66,10 +66,12 @@ def cmd_hub_status(args: argparse.Namespace) -> int:
     status = {key: reply.get(key) for key in ("hub", "registry", "web", "board_agent")}
     local = installed_version()
     drift = status["hub"].get("version") != local
-    from .service_unit import boot_autostart_state
+    from .service_unit import OUTDATED_UNIT_TEXT, boot_autostart_state, unit_outdated
     boot = boot_autostart_state()
+    outdated = unit_outdated()
     if args.json:
-        _print_json({"state": "running", **status, "version_drift": drift, "boot_autostart": boot})
+        _print_json({"state": "running", **status, "version_drift": drift, "boot_autostart": boot,
+                     "unit_outdated": outdated})
         return EXIT_OK
     hub, registry = status["hub"], status["registry"] or {}
     started = hub.get("started_at")
@@ -84,10 +86,15 @@ def cmd_hub_status(args: argparse.Namespace) -> int:
     print(f"  log: {hub.get('log')}")
     print(f"  registry: {registry.get('state')}, {registry.get('count')}개 ({registry.get('path')})")
     print(f"  부팅 자동 시작: {boot}")
+    if outdated:
+        print(f"  {OUTDATED_UNIT_TEXT}")
     for line in web_status_lines(status["web"] or {}):
         print(f"  {line}")
-    if status["board_agent"] is None:  # the Board agent set (TI-16) draws its own line once it exists
+    board = status["board_agent"]
+    if board is None:
         print("  board_agent: 없음")
+    else:
+        print("  board_agent: " + board_text(board, (board.get("lease") or {}).get("state")))
     return EXIT_OK
 
 
@@ -320,11 +327,35 @@ def cmd_hub_disable(args: argparse.Namespace) -> int:
     return EXIT_OK
 
 
+LEASE_TEXT = {"connected": "연결됨", "none": "연결 없음"}
+
+
+def board_text(channels: dict, lease: str | None) -> str:
+    """``agent running(pid N) · shell running(pid M) · 연결 없음`` (SPEC "Board agent 세트" 상태)."""
+    parts = []
+    for name in ("agent", "shell"):
+        channel = channels.get(name) or {}
+        state = channel.get("state") or "unknown"
+        pid = channel.get("pid")
+        parts.append(f"{name} {state}" + (f"(pid {pid})" if pid is not None and state in ("starting", "running")
+                                          else ""))
+    if lease is not None:
+        parts.append(LEASE_TEXT.get(lease, str(lease)))
+    return " · ".join(parts)
+
+
+def active_text(item) -> str:
+    """One ``stop_request.active`` entry for the stop question."""
+    if isinstance(item, dict) and item.get("kind") == "board_agent_set":
+        return "Board agent 세트: " + board_text(item.get("channels") or {}, item.get("lease"))
+    return str(item)
+
+
 def _ask_active(args: argparse.Namespace):
     def ask(active: list) -> bool:
         print("Hub를 멈추면 다음도 끝납니다:")
         for item in active:
-            print(f"  - {item}")
+            print(f"  - {active_text(item)}")
         if args.yes:
             return True
         if not (sys.stdin.isatty() and sys.stdout.isatty()):

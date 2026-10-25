@@ -18,7 +18,7 @@ import sys
 import time
 from typing import Any, Callable, Mapping
 
-from workbench.backend.paths import read_private_json
+from workbench.backend.paths import flock_holder, read_private_json
 
 from .paths import HubLayout, hub_layout
 
@@ -103,23 +103,19 @@ class HubIdentity:
     welcome: dict[str, Any] | None = None
 
 
-def lock_holder(path: Path) -> int | None:
-    """The pid ``/proc/locks`` names for an exclusive flock on exactly this inode.
+def lock_holder(path: Path, candidate: int | None = None) -> int | None:
+    """The pid holding an exclusive flock on exactly this inode, or None when it is free.
 
-    Read-only: probing with ``flock`` could make a starting Hub lose its lock.
+    ``candidate`` (the recorded Hub pid) is confirmed from its own ``/proc/<pid>/fdinfo``; otherwise
+    ``/proc/locks`` decides, where one row is enough and absence must hold on several reads (a single
+    read can skip a row under other processes' flock churn). Read-only: probing with ``flock`` could
+    make a starting Hub lose its lock.
     """
     try:
         info = os.stat(path, follow_symlinks=False)
     except FileNotFoundError:
         return None
-    wanted = (os.major(info.st_dev), os.minor(info.st_dev), info.st_ino)
-    for row in Path("/proc/locks").read_text().splitlines():
-        parts = row.split()
-        if len(parts) >= 8 and parts[1:4] == ["FLOCK", "ADVISORY", "WRITE"]:
-            major, minor, inode = parts[5].split(":")
-            if (int(major, 16), int(minor, 16), int(inode)) == wanted:
-                return int(parts[4])
-    return None
+    return flock_holder((os.major(info.st_dev), os.minor(info.st_dev), info.st_ino), candidate=candidate)
 
 
 def verified_record(layout: HubLayout) -> dict[str, Any]:
@@ -130,7 +126,11 @@ def verified_record(layout: HubLayout) -> dict[str, Any]:
     """
     from workbench.backend.process_identity import process_state
     try:
-        holder = lock_holder(layout.lock)
+        candidate = (read_hub_record(layout) or {}).get("pid")
+    except (OSError, ValueError, AttributeError):
+        candidate = None
+    try:
+        holder = lock_holder(layout.lock, candidate if type(candidate) is int else None)
     except (OSError, ValueError, IndexError) as exc:
         raise HubUnknown("lock_unreadable") from exc
     if holder is None:
@@ -180,7 +180,7 @@ def _released(layout: HubLayout, pid: int, timeout: float) -> bool:
     deadline = time.monotonic() + timeout
     while True:
         try:
-            if lock_holder(layout.lock) != pid:
+            if lock_holder(layout.lock, pid) != pid:
                 return True
         except (OSError, ValueError, IndexError):
             pass
@@ -202,7 +202,7 @@ def _terminate(layout: HubLayout, record: dict[str, Any], reason: str) -> StopRe
     try:
         # Re-prove the identity after pinning, so a recycled pid is never signalled.
         try:
-            holder = lock_holder(layout.lock)
+            holder = lock_holder(layout.lock, pid)
         except (OSError, ValueError, IndexError):
             holder = None
         if (holder != pid or process_state(pid, record["start_ticks"], uid=record["uid"],

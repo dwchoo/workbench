@@ -57,7 +57,7 @@ def _data_dir(entry: registry.Entry) -> Path:
     return Path(entry.root) / ".wb"
 
 
-def _backend_reference(entry: registry.Entry) -> dict | None:
+def backend_reference(entry: registry.Entry) -> dict | None:
     """The verified ``running`` backend's ``{pid, start_ticks}`` (``inspect_backend``), else None."""
     from workbench.backend.paths import DataDirError, DataLayout
     from workbench.backend.process_identity import BackendIdentityError, inspect_backend
@@ -123,7 +123,7 @@ def power_on(entry: registry.Entry, attach: bool, out: TextIO | None = None) -> 
     if status != 0:
         return Outcome(False, START_REQUIREMENT if status == cli.EXIT_REQUIREMENT else START_FAILED,
                        f"wb start exit {status}")
-    data = {"backend": _backend_reference(entry)}
+    data = {"backend": backend_reference(entry)}
     if tee is not None:
         data["output"] = tee.copy.getvalue()
     if attach:
@@ -165,9 +165,81 @@ def _connect(entry: registry.Entry):
         return None, Outcome(False, UNREACHABLE, f"{type(exc).__name__}: {exc}")
 
 
+SHUTDOWN_TOKEN_MISMATCH = "shutdown_token_mismatch"  # power_off_confirm: the work changed or the token is stale
+
+
+def _request_shutdown(client) -> Outcome:
+    """``shutdown_request`` on ``client``: ``data`` = ``{token, active, expires_in, backend}``."""
+    from workbench.backend.client import ClientError
+    from workbench.contracts.ui_v1 import ClientType
+    try:
+        pending = client.request(ClientType.SHUTDOWN_REQUEST)
+    except (OSError, TimeoutError, ClientError) as exc:
+        return Outcome(False, UNREACHABLE, f"shutdown request failed (nothing was stopped): "
+                                           f"{type(exc).__name__}: {exc}")
+    if not pending.get("ok", True) or "token" not in pending:
+        return Outcome(False, pending.get("reason") or UNREACHABLE, pending.get("detail"))
+    return Outcome(True, data={"token": pending["token"], "active": pending.get("active", []),
+                               "expires_in": pending.get("expires_in"),
+                               "backend": (pending.get("processes") or {}).get("backend")})
+
+
+def _confirm_shutdown(client, token: str, out: TextIO | None, backend: object) -> Outcome:
+    """``shutdown_confirm`` on ``client`` and the ``closing`` result (``cli.confirm_shutdown``)."""
+    from workbench.backend import cli
+    from workbench.contracts.ui_v1 import Reason
+    wait = cli.confirm_shutdown(client, token, progress=out)
+    if wait.refused is not None:
+        reason = wait.refused.get("reason")
+        if reason == Reason.SHUTDOWN_TOKEN_MISMATCH.value:
+            return Outcome(False, SHUTDOWN_TOKEN_MISMATCH, wait.refused.get("detail"))
+        return Outcome(False, reason or UNREACHABLE, wait.refused.get("detail"))
+    if wait.result is None:
+        client.close()  # nothing more comes on it; watch the exact pid with the connection gone
+        state = cli._backend_state(backend, cli.BACKEND_GONE_WAIT)
+        return Outcome(False, NO_RESULT, wait.lost or "the backend sent no result", {"backend": state})
+    if wait.result.get("verified") is not True:
+        return Outcome(False, UNVERIFIED, ", ".join(wait.result.get("problems") or ["result unknown"]),
+                       {"result": wait.result})
+    return Outcome(True, data={"result": wait.result})
+
+
+def power_off_request(entry: registry.Entry) -> Outcome:
+    """Step 1 of a power off on its own connection: the backend's ``shutdown_request`` (nothing is
+    stopped). ``data`` = ``{token, active, expires_in, backend}`` (``backend`` the ``{pid,
+    start_ticks}`` the request names). The backend keeps the token for ``expires_in`` seconds
+    whatever connection confirms it (the (A) web's two-page flow, TI-08)."""
+    refused = _mismatch(entry)
+    if refused is not None:
+        return refused
+    client, failed = _connect(entry)
+    if failed is not None:
+        return failed
+    with client:
+        return _request_shutdown(client)
+
+
+def power_off_confirm(entry: registry.Entry, token: str, out: TextIO | None = None,
+                      backend: object = None) -> Outcome:
+    """Step 2 on its own connection: ``shutdown_confirm`` with a :func:`power_off_request` token
+    and the ``closing`` result. ``shutdown_token_mismatch`` (detail = the backend's: changed work vs
+    an expired or replaced token) stops nothing. Only ``verified is True`` is ``ok``
+    (``data.result``); ``no_result`` (``data.backend`` = ``ended``/``alive``/``unknown`` of
+    ``backend``, the request's ``data.backend``) and ``unverified`` are not."""
+    refused = _mismatch(entry)
+    if refused is not None:
+        return refused
+    client, failed = _connect(entry)
+    if failed is not None:
+        return failed
+    with client:
+        return _confirm_shutdown(client, token, out, backend)
+
+
 def power_off(entry: registry.Entry, ask: Callable[[list], bool], out: TextIO) -> Outcome:
     """The backend's own full shutdown (``shutdown_request`` → ``ask(active)`` → ``shutdown_confirm``
-    → the ``closing`` result, ``cli.confirm_shutdown``, shared with ``wb shutdown``).
+    → the ``closing`` result, ``cli.confirm_shutdown``, shared with ``wb shutdown``), on one
+    connection, through the same steps as :func:`power_off_request`/:func:`power_off_confirm`.
 
     ``ask`` gets the ``active`` list of that request; False stops nothing (``declined``). When the
     confirm is refused with ``shutdown_token_mismatch`` (the work changed, or the token expired or
@@ -183,46 +255,28 @@ def power_off(entry: registry.Entry, ask: Callable[[list], bool], out: TextIO) -
     refused = _mismatch(entry)
     if refused is not None:
         return refused
-    from workbench.backend import cli
-    from workbench.backend.client import ClientError
-    from workbench.contracts.ui_v1 import ClientType, Reason
     client, failed = _connect(entry)
     if failed is not None:
         return failed
     refusals: list = []  # each refused confirm's backend detail (expired token vs changed work)
     with client:
         for attempt in range(1 + MAX_WORK_CHANGE_RETRIES):
-            try:
-                pending = client.request(ClientType.SHUTDOWN_REQUEST)
-            except (OSError, TimeoutError, ClientError) as exc:
-                return Outcome(False, UNREACHABLE, f"shutdown request failed (nothing was stopped): "
-                                                   f"{type(exc).__name__}: {exc}")
-            if not pending.get("ok", True) or "token" not in pending:
-                return Outcome(False, pending.get("reason") or UNREACHABLE, pending.get("detail"))
-            backend_ref = (pending.get("processes") or {}).get("backend")
-            active = pending.get("active", [])
+            pending = _request_shutdown(client)
+            if not pending.ok:
+                return pending
+            active = pending.data["active"]
             if not ask(active):
                 return Outcome(False, DECLINED, data={"active": active})
-            wait = cli.confirm_shutdown(client, pending["token"], progress=out)
-            if wait.refused is None:
-                break
-            if wait.refused.get("reason") != Reason.SHUTDOWN_TOKEN_MISMATCH.value:
-                return Outcome(False, wait.refused.get("reason") or UNREACHABLE, wait.refused.get("detail"))
-            detail = wait.refused.get("detail")
+            confirmed = _confirm_shutdown(client, pending.data["token"], out, pending.data["backend"])
+            if confirmed.reason != SHUTDOWN_TOKEN_MISMATCH:
+                return confirmed
+            detail = confirmed.detail
             refusals.append(detail)
             if attempt < MAX_WORK_CHANGE_RETRIES:  # a new list follows only while asks remain
                 cause = f" ({detail})" if isinstance(detail, str) and detail else ""
                 print(f"{WORK_CHANGED_TEXT}{cause}. {RE_ASK_TEXT}", file=out, flush=True)
-        else:
-            print(WORK_KEPT_CHANGING_TEXT, file=out, flush=True)
-            return Outcome(False, WORK_KEPT_CHANGING, refusals[-1], {"active": active, "refusals": refusals})
-    if wait.result is None:
-        backend = cli._backend_state(backend_ref, cli.BACKEND_GONE_WAIT)
-        return Outcome(False, NO_RESULT, wait.lost or "the backend sent no result", {"backend": backend})
-    if wait.result.get("verified") is not True:
-        return Outcome(False, UNVERIFIED, ", ".join(wait.result.get("problems") or ["result unknown"]),
-                       {"result": wait.result})
-    return Outcome(True, data={"result": wait.result})
+    print(WORK_KEPT_CHANGING_TEXT, file=out, flush=True)
+    return Outcome(False, WORK_KEPT_CHANGING, refusals[-1], {"active": active, "refusals": refusals})
 
 
 _REPLY_ENVELOPE = ("v", "id", "type", "ok")

@@ -436,5 +436,119 @@ class MaintenanceScanTests(UpdateHubFixture):
         self.assertEqual(flock_holder(self.hub_lock), hub.pid)
 
 
+class BoardSetUpdateTests(UpdateHubFixture):
+    """TI-T07: a running Board agent set joins the one update question (``stop_request.active``)."""
+
+    PASSWORD = 'correct horse battery staple'
+
+    def start_hub_with_board_shell(self) -> tuple[subprocess.Popen, int]:
+        """A real Hub whose Board shell channel runs (started through ``POST /board/restart``)."""
+        import http.client
+        import re
+        from urllib.parse import urlencode
+        shell = self.home / 'board-shell'
+        shell.write_text('#!/bin/sh\nexec /bin/sleep 600\n')
+        shell.chmod(0o755)
+        config = self.home / '.config' / 'omp-workbench'
+        config.mkdir(parents=True, mode=0o700, exist_ok=True)
+        (config / 'hub.toml').write_text(f'[web]\nbind = "127.0.0.1"\nport = 0\n[board_agent]\nshell = "{shell}"\n')
+        passwd = subprocess.run([sys.executable, '-m', 'workbench', 'hub', 'passwd', '--stdin'], env=self.hub_env(),
+                                input=self.PASSWORD + '\n', capture_output=True, text=True, timeout=40)
+        self.assertEqual(passwd.returncode, 0, passwd)
+        hub = self.start_hub()
+
+        def web_status() -> dict:
+            result = subprocess.run([sys.executable, '-m', 'workbench', 'hub', 'status', '--json'],
+                                    env=self.hub_env(), capture_output=True, text=True, timeout=40)
+            return json.loads(result.stdout)
+
+        self.assertTrue(wait_until(lambda: web_status()['web'].get('state') == 'listening', 15))
+        host, port = '127.0.0.1', web_status()['web']['port']
+        cookies: dict[str, str] = {}
+
+        def request(method, path, data=None):
+            headers = {'Cookie': '; '.join(f'{k}={v}' for k, v in cookies.items())} if cookies else {}
+            body = None
+            if data is not None:
+                body = urlencode(data)
+                headers.update({'Content-Type': 'application/x-www-form-urlencoded',
+                                'Origin': f'http://{host}:{port}'})
+            connection = http.client.HTTPConnection(host, port, timeout=15)
+            try:
+                connection.request(method, path, body=body, headers=headers)
+                response = connection.getresponse()
+                text = response.read().decode()
+                for header in response.headers.get_all('Set-Cookie') or []:
+                    name, _, rest = header.partition('=')
+                    value = rest.split(';')[0]
+                    if value:
+                        cookies[name] = value
+                return response.status, text
+            finally:
+                connection.close()
+
+        _, page = request('GET', '/login')
+        token = re.search(r'name="login_token" value="([^"]+)"', page).group(1)
+        self.assertEqual(request('POST', '/login', {'login_token': token, 'password': self.PASSWORD})[0], 303)
+        _, page = request('GET', '/settings')
+        csrf = re.search(r'name="csrf" value="([^"]+)"', page).group(1)
+        self.assertEqual(request('POST', '/board/restart', {'csrf': csrf, 'channel': 'shell'})[0], 303)
+        board = web_status()['board_agent']
+        self.assertEqual(board['shell']['state'], 'running')
+        return hub, board['shell']['pid']
+
+    def test_the_question_lists_the_set_and_a_decline_keeps_hub_and_set(self):
+        hub, shell = self.start_hub_with_board_shell()
+        project, data, backend = self.recorded_project('project-a', [])
+        status, output, error = self.invoke(stdin=Tty('n\n'), tool=self.recording_tool)
+        self.assertEqual(status, 1, output + error)
+        question = output[:output.index('[y/N]')]
+        self.assertIn('Board agent 세트', question)
+        self.assertIn(f'shell running(pid {shell})', question)
+        self.assertIn(f'Hub(pid {hub.pid}', question)
+        self.assertEqual(self.events, [])
+        self.assertIsNone(hub.poll())
+        self.assertTrue(alive(shell))
+        self.assertIsNone(backend.poll())
+
+    def test_without_a_terminal_the_update_is_cancelled_and_nothing_stops(self):
+        hub, shell = self.start_hub_with_board_shell()
+        project, data, backend = self.recorded_project('project-a', [])
+        status, output, error = self.invoke(tool=self.recording_tool)
+        self.assertEqual(status, 1, output + error)
+        self.assertIn('업데이트 취소', output)
+        self.assertEqual(self.events, [])
+        self.assertIsNone(hub.poll())
+        self.assertTrue(alive(shell))
+
+    def test_a_hub_process_that_outlives_its_lock_release_aborts_before_any_backend(self):
+        from unittest import mock
+        from workbench.backend import update
+        hub = self.start_hub()
+        project, data, backend = self.recorded_project('project-a', [])
+        real = update.process_state
+
+        def state(pid, ticks, **kwargs):  # the Hub process still "runs" after it released hub.lock
+            return 'alive' if pid == hub.pid else real(pid, ticks, **kwargs)
+        with mock.patch.object(update, 'process_state', state), mock.patch.object(update, 'HUB_EXIT_WAIT', 0.3):
+            status, output, error = self.invoke(tool=self.recording_tool)
+        self.assertEqual(status, 1, output + error)
+        self.assertIn(f'Hub(pid {hub.pid})', error)
+        self.assertEqual(self.events, [])  # no backend shutdown, no install
+        self.assertIsNone(backend.poll())
+        self.assertGreaterEqual(update.HUB_EXIT_WAIT, 10.0)  # covers the Hub's own stop budget
+
+    def test_a_confirmed_question_stops_the_hub_with_the_set_before_backends_and_install(self):
+        hub, shell = self.start_hub_with_board_shell()
+        project, data, backend = self.recorded_project('project-a', [])
+        status, output, error = self.invoke(stdin=Tty('y\n'), tool=self.recording_tool)
+        self.assertEqual(status, 0, output + error)
+        self.assertEqual(hub.wait(timeout=20), 0)
+        self.assertFalse(alive(shell))
+        self.assertEqual([name for name, _ in self.events], ['backend_shutdown', 'install'])
+        for _name, view in self.events:
+            self.assertEqual(view, {'lock_holder': None, 'hub_alive': []})
+
+
 if __name__ == '__main__':
     unittest.main()

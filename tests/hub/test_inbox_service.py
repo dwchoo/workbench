@@ -448,7 +448,7 @@ class CancelTests(ServiceCase):
                 self.assertEqual([e.type for e in emitted], ['cancel_requested'])
                 self.assertEqual((emitted[0].request_id, emitted[0].project_id), (rid, self.a))
                 self.assertEqual(emitted[0].detail, {'task_id': 'task-1', 'reason': 'stop',
-                                                     'expect': {'status': status}})
+                                                     'expect': {'status': status, 'command_id': None}})
                 self.assertEqual(self.state(rid)[:2], (state, None))
 
     def test_a_failing_notification_does_not_undo_the_commit(self):

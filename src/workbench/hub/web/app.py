@@ -20,7 +20,7 @@ from .. import auth
 from . import middleware
 from .middleware import (PRINCIPAL, SERVICES, SESSION, api, own_auth, principal_of, public,  # noqa: F401
                          session_of)
-from .pages import login, settings
+from .pages import control, login, settings
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 # Open WebSockets (TI-17 adds each one); the listener closes them with 1001 when the Hub stops.
@@ -96,6 +96,31 @@ async def flush_last_used(app: web.Application):
     await asyncio.gather(*in_flight, return_exceptions=True)
 
 
+BOARD_CHANNELS = ("agent", "shell")
+
+
+def board_routes(board: Callable[[], object | None]) -> Callable[[web.Application], None]:
+    """``POST /board/restart`` (form ``channel``): the logged-in owner restarts one Board channel (TI-16).
+
+    Session and CSRF are the ``session_check`` middleware's (a page route, unsafe method); API keys cannot reach
+    it. ``board()`` returns the Hub's ``BoardSet`` or None (``hub.toml`` invalid). The confirm page is TI-18's.
+    """
+    async def post_restart(request: web.Request) -> web.Response:
+        current = board()
+        if current is None:
+            return web.Response(status=503, text="board_unavailable")
+        form = await request.post()
+        channel = form.get("channel")
+        if channel not in BOARD_CHANNELS:
+            return web.Response(status=400, text="bad_channel")
+        await current.restart(channel, actor="owner", address=request.remote)
+        return middleware.see_other("/board")
+
+    def register(app: web.Application) -> None:
+        app.router.add_post("/board/restart", post_restart)
+    return register
+
+
 def create_app(services: WebServices, *, routes: Iterable[Callable[[web.Application], None]] = ()) -> web.Application:
     app = web.Application(middlewares=[middleware.host_check, middleware.body_limit, middleware.origin_check,
                                        middleware.session_check],
@@ -107,6 +132,7 @@ def create_app(services: WebServices, *, routes: Iterable[Callable[[web.Applicat
     app.router.add_static(middleware.STATIC_PREFIX, STATIC_DIR, follow_symlinks=False, show_index=False)
     login.register(app)
     settings.make_register(lambda: services.projects())(app)
+    control.register(app)
     for register in routes:
         register(app)
     return app

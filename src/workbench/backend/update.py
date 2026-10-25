@@ -265,21 +265,68 @@ def hub_stop_notice(identity):
 HUB_STOPPED_TEXT = 'Hub는 멈춘 상태입니다. 다음 `wb` 실행 때 다시 시작됩니다.'
 
 
-def hub_active_confirmed(active):
-    """(A) extension point: Hub-owned live things (``stop_request.active``) join the update
-    question. (B) never lists any, so an unexpected entry is refused and nothing stops."""
-    return False
+def hub_active(identity):
+    """Live Hub-owned things (``stop_request.active``, e.g. the Board agent set) for the update question.
+
+    Read once before the question; only a running, answering Hub is asked (an unresponsive one is
+    left to :func:`stop_hub_for_update`). Any failure stops the update before any backend.
+    """
+    if identity is None or identity.state != hub_process.RUNNING:
+        return []
+    try:
+        with HubClient(identity.layout, name='workbench-update', timeout=hub_process.RESPONSE_TIMEOUT) as client:
+            offer = client.request('stop_request')
+    except hub_process.HubNotRunning:
+        return []
+    except (hub_process.HubUnknown, hub_process.HubUnresponsive) as exc:
+        raise DataDirError(f"Hub 상태를 확인하지 못해({exc.reason}) 업데이트를 중단합니다; 어떤 backend도 종료하지 "
+                           "않았습니다. 'wb hub stop'으로 Hub를 멈춘 뒤 다시 실행하세요.") from exc
+    active = offer.get('active') if offer.get('ok') else None
+    if not isinstance(active, list):
+        raise DataDirError("Hub의 정지 확인을 준비할 수 없어 업데이트를 중단합니다; 어떤 backend도 종료하지 않았습니다.")
+    return active
 
 
-def stop_hub_for_update(identity, *, announced=False):
-    """Stop the Hub before any backend; any failure stops the update first."""
+def hub_active_confirmed(confirmed):
+    """``stop_hub``'s ``ask``: yes only for exactly the Hub-owned things the user confirmed in the
+    update question. A set that changed meanwhile is refused and nothing stops (fail-safe)."""
+    def ask(active):
+        return bool(confirmed) and active == confirmed
+    return ask
+
+
+def stop_hub_for_update(identity, *, announced=False, confirmed=()):
+    """Stop the Hub (and the Hub-owned things in ``confirmed``) before any backend; any failure
+    stops the update first."""
     if not announced:
         print(hub_stop_notice(identity))
-    result = hub_process.stop_hub(hub_active_confirmed, identity.layout)
+    result = hub_process.stop_hub(hub_active_confirmed(list(confirmed)), identity.layout)
     if result.status not in ('stopped', 'not_running'):
         raise DataDirError(f"Hub(pid {result.pid})를 멈추지 못해 업데이트를 중단합니다 ({result.status}: {result.reason}); "
                            "어떤 backend도 종료하지 않았습니다. 'wb hub stop'으로 Hub를 멈춘 뒤 다시 실행하세요.")
+    if result.status == 'stopped' and not _wait_hub_exit(identity.record or {}):
+        raise DataDirError(f"Hub(pid {result.pid})가 lock을 놓은 뒤에도 끝나지 않아 업데이트를 중단합니다; 어떤 backend도 "
+                           "종료하지 않았습니다. Hub가 끝난 것을 확인한 뒤 다시 실행하세요.")
     return result
+
+
+# The Hub's own stop budget (Board set: SIGHUP 0.5 s + SIGTERM grace 5 s + SIGKILL/reap) plus a margin.
+HUB_EXIT_WAIT = 10.0
+
+
+def _wait_hub_exit(record):
+    """The lock is released last, just before the Hub process exits: wait (bounded) for that exit so no
+    backend is touched while the Hub process still runs. Only the exact recorded process is read; False when
+    it still runs after :data:`HUB_EXIT_WAIT`."""
+    pid, ticks = record.get('pid'), record.get('start_ticks')
+    uid, boot = record.get('uid'), record.get('boot_id')
+    deadline = time.monotonic() + HUB_EXIT_WAIT
+    while True:
+        if process_state(pid, ticks, uid=uid, boot_id=boot) != 'alive':
+            return True
+        if time.monotonic() >= deadline:
+            return False
+        time.sleep(0.02)
 
 
 def _run(args, fence_descriptor):
@@ -289,6 +336,7 @@ def _run(args, fence_descriptor):
         identities = discover(args)
         refuse_managed_caller(identities)
         hub = hub_to_stop()
+        owned = hub_active(hub)  # e.g. the Board agent set: joins the one question below
         projects, live, active = [], [], []
         for identity in identities:
             item = {'data_root':str(identity.layout.root), 'project_root':str(identity.project_root or identity.layout.root.parent),
@@ -310,9 +358,15 @@ def _run(args, fence_descriptor):
             live.append((identity, client, pending, item))
             if pending['active']:
                 active.append({'project':item['project_root'], 'active':pending['active']})
-        if active:
+        if active or owned:
             print('업데이트를 위해 다음 작업과 backend·양 역할 OMP·host shell을 종료합니다:')
-            print(json.dumps(active, ensure_ascii=False, sort_keys=True))
+            if active:
+                print(json.dumps(active, ensure_ascii=False, sort_keys=True))
+            if owned:
+                from workbench.hub.cli import active_text
+                print('Hub를 멈추면 다음도 끝납니다:')
+                for item in owned:
+                    print(f'  - {active_text(item)}')
             if hub is not None:
                 # The Hub joins an existing question; it never asks one by itself.
                 print(hub_stop_notice(hub))
@@ -332,7 +386,7 @@ def _run(args, fence_descriptor):
                 raise DataDirError('backup root가 프로젝트 source와 겹칩니다.')
         hub_note = ''
         if hub is not None:
-            stop_hub_for_update(hub, announced=bool(active))
+            stop_hub_for_update(hub, announced=bool(active or owned), confirmed=owned)
             hub_note = '\n' + HUB_STOPPED_TEXT  # every abort from here on leaves the Hub stopped
         try:
             base.mkdir(mode=0o700, parents=True, exist_ok=True)

@@ -16,6 +16,7 @@ WAIT_LABELS = {"paused": "일시정지",
                "boot_confirmation_required": "재부팅 확인 전 보류",
                "manager_editor_not_empty": "manager 입력창에 글이 있어 알림 대기",
                "manager_session_not_connected": "manager 세션 연결 없음(알림 대기)",
+               "manager_busy": "manager 작업 중이라 요청 전달 대기",
                "metadata_unavailable": "metadata 저장 장애로 보류",
                "model_hold": "모델 오류로 보류",
                "task_held": "Task 보류"}

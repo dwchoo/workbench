@@ -152,8 +152,10 @@ def _snapshot_fields(snapshot: dict) -> dict:
 
 # SPEC "대기 사유" order; the codes are presentation's WAIT_LABELS keys.
 WAIT_CODES = ("paused", "boot_confirmation_required", "manager_editor_not_empty", "manager_session_not_connected",
-              "metadata_unavailable", "model_hold", "task_held")
+              "manager_busy", "metadata_unavailable", "model_hold", "task_held")
 REPORT_WAITS = ("manager_editor_not_empty", "manager_session_not_connected")
+# Task Inbox (TI-10): the waits of request notices (snapshot ``inbox.notices[].wait``); ``paused`` is shown once
+INBOX_WAITS = ("manager_editor_not_empty", "manager_session_not_connected", "manager_busy")
 MODEL_HOLD_PREFIX = "model_hold:"
 
 
@@ -177,6 +179,14 @@ def _waits(snapshot: dict) -> list[dict]:
     report = _dict(_dict(snapshot.get("recovery")).get("report_wait"))
     if report.get("reason") in REPORT_WAITS:
         waits.append(_wait(report["reason"], report.get("since")))
+    notices = [item for item in _dict(snapshot.get("inbox")).get("notices") or () if isinstance(item, dict)]
+    for code in INBOX_WAITS:
+        since = [item.get("queued_at") for item in notices if item.get("wait") == code]
+        if since and all(wait["code"] != code for wait in waits):
+            moments = [moment for moment in map(_epoch, since) if moment is not None]
+            waits.append(_wait(code, min(moments) if moments else None))
+    if any(item.get("wait") == "paused" for item in notices) and all(wait["code"] != "paused" for wait in waits):
+        waits.insert(0, _wait("paused"))
     if (found := hold(lambda reason: reason == "metadata_unavailable")) is not None:
         waits.append(_wait("metadata_unavailable", found.get("since"), found.get("detail")))
     if (found := hold(lambda reason: reason.startswith(MODEL_HOLD_PREFIX))) is not None:

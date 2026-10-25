@@ -223,5 +223,169 @@ class AutoReviewFlowTests(FlowCase):
         self.assertEqual(self.box.status(root)['inbox'], {'notices': []})
 
 
+class OrderFlowTests(FlowCase):
+    def test_requests_made_while_off_are_noticed_in_seq_order_once_the_project_is_on(self):
+        root, project_id = self.box.project('alpha')
+        self.box.register(self.box.entry(root, project_id))
+        ids = self.seed(root, project_id, 'first', 'second', 'third')
+        self.box.start_hub()
+        import time
+        time.sleep(5.0)  # more than two dispatcher passes while the project is off
+        self.assertEqual(([self.row(root, rid)['delivery_state'] for rid in ids], self.inbox_notices()),
+                         (['pending'] * 3, []), 'P2-AC-23: nothing goes to a project that is off')
+        self.box.power_on(root, project_id)
+        self.until(lambda: all(self.row(root, rid)['state'] == 'REVIEWING' for rid in ids), 60)
+        self.assertEqual([(item['request_id'], item['seq']) for item in self.inbox_notices()],
+                         [(rid, seq) for seq, rid in enumerate(ids, start=1)])
+
+    def test_a_worker_task_and_a_host_command_are_untouched_by_a_notice(self):
+        from test_inbox_flow_channel import ChannelCase
+        root, _project_id, (rid,) = self.on('alpha', 'Something new')
+        ui = self.box.attach(root)
+        self.box.attach_client = ui
+        made = ChannelCase.manager_tool(self, ui, 'to_worker', {'kind': 'work', 'message': 'collect TI10-MARK',
+                                                                'spec': {'goal': 'facts', 'paths': []}})
+        task_id = made.get('task_id')
+        self.assertTrue(task_id, made)
+        sleeper = self.box.sleeper(root, 87)
+        from test_project_control import start_ticks
+        ticks = start_ticks(sleeper)
+        before = self.box.status(root)['task']
+        self.box.start_hub()
+        self.until(lambda: self.row(root, rid)['state'] == 'REVIEWING', 40)
+        after = self.box.status(root)['task']
+        self.assertEqual({key: after[key] for key in ('task_id', 'status', 'revision')},
+                         {key: before[key] for key in ('task_id', 'status', 'revision')}, 'P2-AC-24: Task unchanged')
+        self.assertEqual(start_ticks(sleeper), ticks, 'the host command still runs')
+
+    def records(self, name: str) -> list[dict]:
+        import json
+        path = Path(self.box.env[name])
+        return [json.loads(line) for line in path.read_text().splitlines()] if path.exists() else []
+
+    def tool_results(self) -> list[dict]:
+        return [item['frame'] for item in self.records('FAKE_FRAMES')
+                if item['role'] == 'manager' and item['frame'].get('kind') == 'tool_result']
+
+
+class RestartFlowTests(FlowCase):
+    def offered(self, root: Path, rid: str):
+        """The notice is queued at the backend and deferred (the manager composer is not empty)."""
+        ui = self.box.attach(root)
+        self.manager_input(ui, 'editor draft')
+        self.box.start_hub()
+        self.until(lambda: self.row(root, rid)['delivery_state'] == 'offered', 40)
+        self.until(lambda: [item['wait'] for item in (self.box.status(root) or {}).get('inbox', {}).get('notices', [])]
+                   == ['manager_editor_not_empty'], 30)
+        return ui
+
+    def test_a_backend_restart_while_offered_offers_again_with_a_reason_comment(self):
+        root, project_id, (rid,) = self.on('alpha', 'Fix the build')
+        self.offered(root, rid)
+        old_backend = self.row(root, rid)['delivery_backend']
+        done = self.box.wb('shutdown', '--yes', cwd=root, timeout=120)
+        self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+        pid, ticks = self.box.power_on(root, project_id)  # a new manager OMP: its composer is empty
+        self.until(lambda: self.row(root, rid)['state'] == 'REVIEWING', 60, 'P2-AC-12: offered again and delivered')
+        row = self.row(root, rid)
+        self.assertEqual((row['delivery_state'], row['delivery_backend']), ('delivered', f'{pid}:{ticks}'))
+        self.assertNotEqual(old_backend, row['delivery_backend'])
+        comments = self.comments(root, rid)
+        self.assertEqual([kind for kind, _ in comments], ['system'], comments)
+        self.assertIn('backend가 다시 시작되어', comments[0][1])
+        self.assertEqual([item['request_id'] for item in self.inbox_notices()], [rid])
+
+    def test_a_delivery_reported_while_the_hub_is_stopped_is_recorded_after_it_is_back(self):
+        root, _project_id, (rid,) = self.on('alpha', 'Fix the build')
+        ui = self.offered(root, rid)
+        done = self.box.wb('hub', 'stop', '--yes', timeout=60)
+        self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+        self.manager_input(ui, 'editor-clear')
+        self.until(lambda: len(self.inbox_notices()) == 1, 30, 'the manager got it while the Hub is away')
+        import time
+        time.sleep(3.0)
+        self.assertEqual((self.row(root, rid)['state'], self.row(root, rid)['delivery_state']), ('NEW', 'offered'))
+        self.box.start_hub()
+        self.until(lambda: self.row(root, rid)['state'] == 'REVIEWING', 40, 'P2-AC-12: reported after reconnect')
+        self.assertEqual(self.row(root, rid)['delivery_state'], 'delivered')
+        self.assertEqual(self.comments(root, rid), [], 'no restart comment: the backend did not change')
+        self.assertEqual(len(self.inbox_notices()), 1)
+
+
+class ReviewModeCliTests(FlowCase):
+    def meta(self, root: Path) -> str | None:
+        import sqlite3
+        connection = sqlite3.connect(f'file:{root / ".wb" / "inbox.sqlite3"}?mode=ro', uri=True)
+        try:
+            row = connection.execute("SELECT value FROM meta WHERE key = 'review_mode'").fetchone()
+            return row[0] if row else None
+        finally:
+            connection.close()
+
+    def mode(self, *args: str):
+        return self.box.wb('hub', 'review-mode', *args, timeout=60)
+
+    def test_wb_hub_review_mode_reads_and_sets_the_project_mode_and_it_persists(self):
+        root, project_id = self.box.project('alpha')
+        self.box.register(self.box.entry(root, project_id))
+        self.box.start_hub()
+        shown = self.mode(str(root))
+        self.assertEqual((shown.returncode, shown.stdout.strip()), (0, '검토 방식: auto'), shown.stderr)
+        changed = self.mode(str(root), 'manual')
+        self.assertEqual((changed.returncode, changed.stdout.strip()), (0, '검토 방식: manual'), changed.stderr)
+        self.assertEqual(self.meta(root), 'manual', 'P2-AC-40: stored in .wb/inbox.sqlite3')
+        done = self.box.wb('hub', 'stop', '--yes', timeout=60)
+        self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+        self.box.start_hub()
+        self.assertEqual(self.mode(str(root)).stdout.strip(), '검토 방식: manual', 'kept across a Hub restart')
+        for action in ('remove', 'add'):
+            done = self.box.wb('hub', action, str(root), timeout=60)
+            self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+        self.assertEqual(self.mode(str(root)).stdout.strip(), '검토 방식: manual', 'kept across remove/add')
+        self.assertEqual(self.mode(str(root), 'auto').stdout.strip(), '검토 방식: auto')
+        missing = self.mode(str(self.box.folder('elsewhere')))
+        self.assertEqual(missing.returncode, 1, missing.stdout + missing.stderr)
+        wrong = self.mode(str(root), 'sometimes')
+        self.assertEqual(wrong.returncode, 2, wrong.stdout + wrong.stderr)
+        self.assertEqual(self.meta(root), 'auto')
+
+
+class WaitFlowTests(FlowCase):
+    def waits(self, root: Path) -> list[str]:
+        return [wait['code'] for wait in self.box.hub_row(root)['waits']]
+
+    def test_a_non_empty_manager_composer_defers_the_notice_and_shows_the_wait_until_it_is_cleared(self):
+        root, _project_id, (rid,) = self.on('alpha', 'Fix the build')
+        ui = self.box.attach(root)
+        self.manager_input(ui, 'editor half-written text')
+        self.box.start_hub()
+        self.until(lambda: [item['wait'] for item in (self.box.status(root) or {}).get('inbox', {}).get('notices', [])]
+                   == ['manager_editor_not_empty'], 40, 'the deferred notice names its wait')
+        self.until(lambda: 'manager_editor_not_empty' in self.waits(root), 20, 'P2-AC-22: wb hub list shows it')
+        self.assertEqual(self.waits(root).count('manager_editor_not_empty'), 1)
+        row = self.row(root, rid)
+        self.assertEqual((row['state'], row['delivery_state']), ('NEW', 'offered'), 'not REVIEWING before delivery')
+        self.assertEqual(self.inbox_notices(), [])
+        listed = self.box.wb('hub', 'list')
+        self.assertIn('manager 입력창에 글이 있어 알림 대기', listed.stdout)
+        self.manager_input(ui, 'editor-clear')
+        self.until(lambda: self.row(root, rid)['state'] == 'REVIEWING', 40, 'delivered once the composer is empty')
+        self.assertEqual(len(self.inbox_notices()), 1)
+        self.until(lambda: 'manager_editor_not_empty' not in self.waits(root), 20, 'the wait is gone')
+
+    def test_a_busy_manager_defers_the_notice_as_manager_busy(self):
+        root, _project_id, (rid,) = self.on('alpha', 'Fix the build')
+        ui = self.box.attach(root)
+        self.manager_input(ui, 'busy')
+        self.box.start_hub()
+        self.until(lambda: 'manager_busy' in self.waits(root), 40, 'P2-AC-10: busy manager -> deferred')
+        self.assertEqual((self.row(root, rid)['state'], self.inbox_notices()), ('NEW', []))
+        listed = self.box.wb('hub', 'list')
+        self.assertIn('manager 작업 중이라 요청 전달 대기', listed.stdout)
+        self.manager_input(ui, 'idle')
+        self.until(lambda: self.row(root, rid)['state'] == 'REVIEWING', 40)
+        self.until(lambda: 'manager_busy' not in self.waits(root), 20)
+
+
 if __name__ == '__main__':
     unittest.main()

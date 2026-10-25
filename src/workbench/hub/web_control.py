@@ -8,6 +8,8 @@ double-forked into its own session, never a Hub descendant).
 """
 from __future__ import annotations
 
+import asyncio
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 import json
 import os
@@ -28,6 +30,8 @@ from .status import check_entry
 FORBIDDEN = "forbidden"  # not an owner session principal (API keys, MCP, backends, local CLI)
 UNKNOWN_PROJECT = "unknown_project"  # no registry entry has this project id
 CONTROL_IN_PROGRESS = "control_in_progress"  # another control call of this project is still running
+CONTROL_BUSY = "control_busy"  # every control worker is busy (other projects): try again later
+INTERNAL_ERROR = "internal_error"  # the library raised; the state is unknown (audited, slot released)
 REGISTRY_INVALID = "registry_invalid"  # the registry could not be read
 CONFIRM_REQUIRED = "confirm_required"  # power off step 1: shown, nothing stopped (data.token/active)
 CONFIRM_TOKEN_INVALID = "confirm_token_invalid"  # unknown/used/expired, or another session's/project's
@@ -35,6 +39,9 @@ WORK_CHANGED = "work_changed"  # the confirm was refused: a new page with the ne
 TOKEN_TTL = 120.0  # a web confirm token lives as long as the backend's (``expires_in``, else this)
 # The driver waits for ``cmd_start`` (its own ``START_TIMEOUT`` is 120 s) plus process start-up.
 DRIVER_TIMEOUT = 180.0
+DRIVER_OUTPUT_CAP = 256 * 1024  # bytes of each driver stream kept (the outcome is its last stdout line)
+DETAIL_TAIL = 500  # characters of driver output in a start_failed detail
+CONTROL_WORKERS = 4  # control calls running at once (own executor); more is ``control_busy``
 
 
 @dataclass(frozen=True)
@@ -62,6 +69,15 @@ class _Pending:
     refusals: list  # backend details of the refused confirms that led to this page
     active: list
     expires: float  # monotonic
+
+
+def _keep_tail(stream, tail: bytearray) -> None:
+    """Read ``stream`` to its end, keeping only its last :data:`DRIVER_OUTPUT_CAP` bytes in ``tail``."""
+    with stream:
+        while chunk := stream.read1(65536):
+            tail += chunk
+            if len(tail) > DRIVER_OUTPUT_CAP:
+                del tail[:len(tail) - DRIVER_OUTPUT_CAP]
 
 
 def _owner(principal: object) -> bool:
@@ -96,9 +112,33 @@ class ProjectControl:
         self.environment = dict(os.environ if environment is None else environment)
         self.audit = audit
         self.clock = clock or time.time
+        self.driver_timeout = DRIVER_TIMEOUT
         self._lock = threading.Lock()
         self._pending: dict[str, _Pending] = {}  # web confirm token -> the shutdown request it stands for
         self._busy: set[str] = set()  # project ids with a control call running
+        # Controls block for seconds to minutes (a start, a shutdown result): they get their own
+        # bounded workers, so the loop's default executor (sessions, logins, SQLite) never waits.
+        self._executor = ThreadPoolExecutor(CONTROL_WORKERS, thread_name_prefix="wb-control")
+        self._slots = threading.BoundedSemaphore(CONTROL_WORKERS)
+
+    async def run(self, action: str, project_id: str, call: Callable[[], Result]) -> Result:
+        """Run one blocking control ``call`` on the control workers; ``control_busy`` at once when
+        all :data:`CONTROL_WORKERS` are taken (nothing started, not audited). A slot is held until
+        the call itself returns, even when the awaiting request goes away."""
+        if not self._slots.acquire(blocking=False):
+            return Result(False, action, project_id, CONTROL_BUSY, "every project control worker is busy; try again")
+
+        def job() -> Result:
+            try:
+                return call()
+            finally:
+                self._slots.release()
+        try:
+            future = self._executor.submit(job)
+        except RuntimeError:  # shut down
+            self._slots.release()
+            return Result(False, action, project_id, CONTROL_BUSY, "project control is shutting down")
+        return await asyncio.wrap_future(future)
 
     def _refuse(self, action: str, principal: object, project_id: str) -> Result | None:
         if not _owner(principal):
@@ -131,24 +171,43 @@ class ProjectControl:
     def _outcome(action: str, project_id: str, outcome: projects.Outcome) -> Result:
         return Result(outcome.ok, action, project_id, outcome.reason, outcome.detail, dict(outcome.data))
 
+    def _driver_command(self, spec: dict) -> list[str]:
+        return [sys.executable, "-I", "-c", _driver_source(), json.dumps(spec)]
+
     def _run_driver(self, entry: registry.Entry) -> projects.Outcome:
-        spec = {"entry": entry.to_json()}
+        """The driver's outcome (its last stdout line). Only the last :data:`DRIVER_OUTPUT_CAP`
+        bytes of each stream are kept; a driver past ``driver_timeout`` is killed (``start_failed``,
+        the backend state unknown)."""
         try:
-            done = subprocess.run([sys.executable, "-I", "-c", _driver_source(), json.dumps(spec)],
-                                  env=hub_environment(self.environment), cwd="/", stdin=subprocess.DEVNULL,
-                                  capture_output=True, text=True, errors="replace", timeout=DRIVER_TIMEOUT,
-                                  start_new_session=True)
-        except subprocess.TimeoutExpired:
-            return projects.Outcome(False, projects.START_FAILED, f"no start result within {DRIVER_TIMEOUT:.0f} s")
+            process = subprocess.Popen(self._driver_command({"entry": entry.to_json()}),
+                                       env=hub_environment(self.environment), cwd="/", stdin=subprocess.DEVNULL,
+                                       stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True)
         except OSError as exc:
             return projects.Outcome(False, projects.START_FAILED, f"driver: {type(exc).__name__}: {exc}")
-        lines = [line for line in done.stdout.splitlines() if line.strip()]
+        tails = [bytearray(), bytearray()]
+        readers = [threading.Thread(target=_keep_tail, args=(stream, tail), daemon=True)
+                   for stream, tail in ((process.stdout, tails[0]), (process.stderr, tails[1]))]
+        for reader in readers:
+            reader.start()
+        try:
+            returncode = process.wait(timeout=self.driver_timeout)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.wait()
+            return projects.Outcome(False, projects.START_FAILED,
+                                    f"no start result within {self.driver_timeout:g} s; the backend state is "
+                                    "unknown: recheck the project before turning it on again")
+        finally:
+            for reader in readers:
+                reader.join(5)
+        stdout, stderr = (bytes(tail).decode("utf-8", "replace") for tail in tails)
+        lines = [line for line in stdout.splitlines() if line.strip()]
         try:
             value = json.loads(lines[-1])
             return projects.Outcome(value["ok"], value.get("reason"), value.get("detail"), value.get("data") or {})
         except (IndexError, ValueError, KeyError, TypeError):
-            tail = (done.stderr or done.stdout).strip()[-500:]
-            return projects.Outcome(False, projects.START_FAILED, f"driver exit {done.returncode}: {tail}")
+            tail = (stderr or stdout).strip()[-DETAIL_TAIL:]
+            return projects.Outcome(False, projects.START_FAILED, f"driver exit {returncode}: {tail}")
 
     def _guarded(self, action: str, principal: object, project_id: str, client_addr: str | None,
                  body: Callable[[registry.Entry], Result]) -> Result:
@@ -167,6 +226,9 @@ class ProjectControl:
         try:
             entry = self._entry(action, project_id)
             result = entry if isinstance(entry, Result) else body(entry)
+        except Exception as exc:  # noqa: BLE001 - a library surprise is a result, never a 500 or a stuck slot
+            print(f"[workbench] web_control {action} failed: {exc!r}", file=sys.stderr, flush=True)
+            result = Result(False, action, project_id, INTERNAL_ERROR, f"{type(exc).__name__}: {exc}"[:500])
         finally:
             with self._lock:
                 self._busy.discard(project_id)
@@ -187,7 +249,7 @@ class ProjectControl:
 
         def body(entry: registry.Entry) -> Result:
             if check_entry(entry) is None:
-                running = projects._backend_reference(entry)
+                running = projects.backend_reference(entry)
                 if running is not None:
                     return Result(True, action, project_id, data={"backend": running, "already_running": True})
             result = self._outcome(action, project_id, self._run_driver(entry))
@@ -197,33 +259,27 @@ class ProjectControl:
         return self._guarded(action, principal, project_id, client_addr, body)
 
     def _ask_shutdown(self, entry: registry.Entry, session: str, refusals: list) -> Result:
-        """A ``shutdown_request`` (nothing is stopped): ``confirm_required`` with a web token bound
-        to ``session`` and this project, the ``active`` list and ``expires_in``; the backend's
-        token stays here."""
-        from workbench.backend.client import ClientError
-        from workbench.contracts.ui_v1 import ClientType
+        """``projects.power_off_request`` (nothing is stopped): ``confirm_required`` with a web
+        token bound to ``session`` and this project, the ``active`` list and ``expires_in``; the
+        backend's token stays here."""
         action, project_id = "power_off", entry.project_id
-        client, failed = projects._connect(entry)
-        if failed is not None:
-            return self._outcome(action, project_id, failed)
-        with client:
-            try:
-                pending = client.request(ClientType.SHUTDOWN_REQUEST)
-            except (OSError, TimeoutError, ClientError) as exc:
-                return Result(False, action, project_id, projects.UNREACHABLE,
-                              f"shutdown request failed (nothing was stopped): {type(exc).__name__}: {exc}")
-        if not pending.get("ok", True) or not isinstance(pending.get("token"), str):
-            return Result(False, action, project_id, pending.get("reason") or projects.UNREACHABLE,
-                          pending.get("detail"))
-        expires_in = pending.get("expires_in")
+        pending = projects.power_off_request(entry)
+        if not pending.ok:
+            return self._outcome(action, project_id, pending)
+        if not isinstance(pending.data.get("token"), str):
+            return Result(False, action, project_id, projects.UNREACHABLE, "the shutdown request carried no token")
+        expires_in = pending.data.get("expires_in")
         expires_in = float(expires_in) if type(expires_in) in (int, float) and expires_in > 0 else TOKEN_TTL
-        active = pending.get("active", [])
+        active = pending.data.get("active") or []
         token = secrets.token_urlsafe(32)
         with self._lock:
             self._drop_expired()
-            self._pending[token] = _Pending(session, project_id, pending["token"],
-                                            (pending.get("processes") or {}).get("backend"), list(refusals),
-                                            active, time.monotonic() + expires_in)
+            # one shown page per session and project: an earlier one confirms a replaced request
+            for earlier in [key for key, item in self._pending.items()
+                            if item.session == session and item.project_id == project_id]:
+                del self._pending[earlier]
+            self._pending[token] = _Pending(session, project_id, pending.data["token"], pending.data.get("backend"),
+                                            list(refusals), active, time.monotonic() + expires_in)
         return Result(False, action, project_id, CONFIRM_REQUIRED, None,
                       {"token": token, "active": active, "expires_in": expires_in, "refusals": list(refusals)})
 
@@ -238,14 +294,8 @@ class ProjectControl:
         ``shutdown_request`` only. ``reason: confirm_required`` with ``data.token`` (for this
         ``session`` and project only), ``data.active`` and ``data.expires_in``. Nothing stops
         until :meth:`power_off_confirm`; not confirming (the page's cancel) changes nothing."""
-        action = "power_off"
-
-        def body(entry: registry.Entry) -> Result:
-            mismatch = check_entry(entry)
-            if mismatch is not None:
-                return Result(False, action, project_id, projects.MISMATCH, mismatch)
-            return self._ask_shutdown(entry, session, [])
-        return self._guarded(action, principal, project_id, client_addr, body)
+        return self._guarded("power_off", principal, project_id, client_addr,
+                             lambda entry: self._ask_shutdown(entry, session, []))
 
     def _take(self, token: object, session: str, project_id: str) -> _Pending | None:
         """The pending confirm of ``token`` when it is this session's for this project (used up)."""
@@ -262,7 +312,7 @@ class ProjectControl:
     def power_off_confirm(self, principal: Principal, project_id: str, token: str, *, session: str,
                           client_addr: str | None = None) -> Result:
         """The confirm of a shown power-off page: the backend's ``shutdown_confirm`` with the token
-        of that page's request, then its ``closing`` result (``cli.confirm_shutdown``, as HB-07).
+        of that page's request, then its ``closing`` result (``projects.power_off_confirm``).
 
         A token of another session or project, an unknown, used or expired one is
         ``confirm_token_invalid`` (nothing sent). ``shutdown_token_mismatch`` (the work changed, or
@@ -273,43 +323,24 @@ class ProjectControl:
         action = "power_off"
 
         def body(entry: registry.Entry) -> Result:
-            from workbench.backend import cli
-            from workbench.contracts.ui_v1 import Reason
             item = self._take(token, session, project_id)
             if item is None:
                 return Result(False, action, project_id, CONFIRM_TOKEN_INVALID,
                               "this confirm is unknown, used, expired or not this session's")
-            mismatch = check_entry(entry)
-            if mismatch is not None:
-                return Result(False, action, project_id, projects.MISMATCH, mismatch)
-            client, failed = projects._connect(entry)
-            if failed is not None:
-                return self._outcome(action, project_id, failed)
-            with client:
-                wait = cli.confirm_shutdown(client, item.backend_token, progress=None)
-            if wait.refused is not None:
-                reason, detail = wait.refused.get("reason"), wait.refused.get("detail")
-                if reason != Reason.SHUTDOWN_TOKEN_MISMATCH.value:
-                    return Result(False, action, project_id, reason or projects.UNREACHABLE, detail)
-                refusals = [*item.refusals, detail]
-                if len(refusals) > projects.MAX_WORK_CHANGE_RETRIES:
-                    return Result(False, action, project_id, projects.WORK_KEPT_CHANGING, detail,
-                                  {"active": item.active, "refusals": refusals,
-                                   "text": projects.WORK_KEPT_CHANGING_TEXT})
-                asked = self._ask_shutdown(entry, session, refusals)
-                if asked.reason != CONFIRM_REQUIRED:
-                    return asked
-                cause = f" ({detail})" if isinstance(detail, str) and detail else ""
-                return Result(False, action, project_id, WORK_CHANGED,
-                              f"{projects.WORK_CHANGED_TEXT}{cause}. {projects.RE_ASK_TEXT}", asked.data)
-            if wait.result is None:  # never a success (C-AC-22)
-                backend = cli._backend_state(item.backend, cli.BACKEND_GONE_WAIT)
-                return Result(False, action, project_id, projects.NO_RESULT,
-                              wait.lost or "the backend sent no result", {"backend": backend})
-            if wait.result.get("verified") is not True:
-                return Result(False, action, project_id, projects.UNVERIFIED,
-                              ", ".join(wait.result.get("problems") or ["result unknown"]), {"result": wait.result})
-            return Result(True, action, project_id, data={"result": wait.result})
+            confirmed = projects.power_off_confirm(entry, item.backend_token, None, item.backend)
+            if confirmed.reason != projects.SHUTDOWN_TOKEN_MISMATCH:
+                return self._outcome(action, project_id, confirmed)
+            detail = confirmed.detail
+            refusals = [*item.refusals, detail]
+            if len(refusals) > projects.MAX_WORK_CHANGE_RETRIES:
+                return Result(False, action, project_id, projects.WORK_KEPT_CHANGING, detail,
+                              {"active": item.active, "refusals": refusals, "text": projects.WORK_KEPT_CHANGING_TEXT})
+            asked = self._ask_shutdown(entry, session, refusals)
+            if asked.reason != CONFIRM_REQUIRED:
+                return asked
+            cause = f" ({detail})" if isinstance(detail, str) and detail else ""
+            return Result(False, action, project_id, WORK_CHANGED,
+                          f"{projects.WORK_CHANGED_TEXT}{cause}. {projects.RE_ASK_TEXT}", asked.data)
         return self._guarded(action, principal, project_id, client_addr, body)
 
     def _library(self, action: str, call: Callable[[registry.Entry], projects.Outcome], principal: object,

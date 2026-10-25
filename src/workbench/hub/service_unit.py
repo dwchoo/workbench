@@ -178,8 +178,11 @@ def enable(environment: Mapping[str, str] | None = None) -> Outcome:
     except OSError as exc:
         return Outcome("failed", f"기존 unit을 읽지 못해 바꾸지 않았습니다: {path}: {exc}")
     try:
-        unit = render_unit(hub_argv(), os.environ if environment is None else environment)
-        _write_atomic(path, unit.encode("utf-8"))
+        payload = render_unit(hub_argv(), os.environ if environment is None else environment).encode("utf-8")
+    except ValueError as exc:  # UnicodeEncodeError: a path or variable that is not UTF-8 text
+        return Outcome("failed", f"unit 내용을 만들지 못해 바꾸지 않았습니다(UTF-8이 아닌 경로나 환경 변수): {exc}")
+    try:
+        _write_atomic(path, payload)
     except OSError as exc:
         return Outcome("failed", f"unit 파일을 쓰지 못했습니다: {path}: {exc}")
     reload_result = _systemctl("daemon-reload")
@@ -222,7 +225,11 @@ def unit_outdated(environment: Mapping[str, str] | None = None) -> bool:
         text = unit_path(environment).read_text(encoding="utf-8", errors="replace")
     except OSError:
         return False
-    return "KillMode=process" not in (line.strip() for line in text.splitlines())
+    for line in text.splitlines():
+        key, sep, value = line.partition("=")
+        if sep and key.strip() == "KillMode" and value.strip() == "process":  # systemd allows spaces around '='
+            return False
+    return True
 
 
 def boot_autostart_state(environment: Mapping[str, str] | None = None) -> str:

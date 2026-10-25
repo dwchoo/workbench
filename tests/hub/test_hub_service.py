@@ -297,6 +297,16 @@ class UnitLifetimeTests(unittest.TestCase):
         env = self.box.with_env(SHELL=shell, LANG='%h $USER')
         self.assertEqual(self.environment(env), {'PATH': str(self.box.bin), 'SHELL': shell, 'LANG': '%h $USER'})
 
+    def test_a_value_that_cannot_be_written_fails_without_a_traceback_or_a_unit(self):
+        env = self.box.with_env()
+        env['SHELL'] = b'/bin/\xffsh'  # not UTF-8: the child sees a surrogate escape
+        result = self.box.wb('hub', 'enable', env=env)
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertNotIn('Traceback', result.stderr)
+        self.assertIn('unit', result.stdout + result.stderr)
+        self.assertFalse(self.box.unit.exists())
+        self.assertEqual(self.box.systemctl_calls(), [('--user show-environment', 'absent')])
+
     def test_enable_rewrites_an_old_unit(self):
         self.box.unit.parent.mkdir(parents=True)
         self.box.unit.write_text('[Service]\nExecStart=/old\n')
@@ -331,6 +341,17 @@ class StatusOldUnitTests(unittest.TestCase):
         out, value = self.status()
         self.assertNotIn(self.GUIDANCE, out)
         self.assertIs(value['unit_outdated'], False)
+
+    def test_spacing_around_the_kill_mode_assignment_is_still_current(self):
+        self.box.unit.parent.mkdir(parents=True)
+        for line in ('KillMode = process', '  KillMode=\tprocess  ', 'KillMode= process\r'):
+            with self.subTest(line=line):
+                self.box.unit.write_text(f'[Service]\nExecStart=/x\n{line}\n')
+                out, value = self.status()
+                self.assertNotIn(self.GUIDANCE, out)
+                self.assertIs(value['unit_outdated'], False)
+        self.box.unit.write_text('[Service]\nKillMode=control-group\n')
+        self.assertIs(self.status()[1]['unit_outdated'], True)
 
 
 class EnableRefusalTests(unittest.TestCase):

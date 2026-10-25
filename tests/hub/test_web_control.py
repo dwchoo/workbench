@@ -201,6 +201,44 @@ class PowerOnTests(WebControlCase):
         self.assertFalse([name for name in names if name.startswith(b'WORKBENCH_G3_')], names)
         self.assertIn(b'WORKBENCH_OMP', names)
 
+    def stub_driver(self, source: str, timeout: float) -> None:
+        """The controller's driver replaced by ``python -c source`` (no backend is started)."""
+        control = self.control
+        control.driver_timeout = timeout
+        control._driver_command = lambda _spec: [sys.executable, '-I', '-c', source]
+
+    async def test_a_driver_timeout_is_start_failed_with_an_unknown_state_to_recheck(self):
+        root, project_id = self.registered()
+        self.stub_driver('import time; time.sleep(30)', timeout=1.0)
+        session = await self.login()
+        started = time.monotonic()
+        status, body = await self.control_call(session, project_id, 'power-on')
+        self.assertLess(time.monotonic() - started, 10)
+        self.assertEqual((status, body['ok'], body['reason']), (200, False, 'start_failed'), body)
+        self.assertIn('unknown', body['detail'])
+        self.assertIn('recheck', body['detail'])
+        def sleepers() -> list[int]:
+            found = []
+            for pid in self.box.ours():
+                try:
+                    if b'time.sleep(30)' in Path(f'/proc/{pid}/cmdline').read_bytes():
+                        found.append(pid)
+                except OSError:
+                    pass
+            return found
+        self.assertTrue(wait_until(lambda: not sleepers(), 10), 'the timed-out driver is ended')
+
+    async def test_a_driver_that_floods_its_output_is_reported_with_a_bounded_tail(self):
+        root, project_id = self.registered()
+        flood = ("import sys; sys.stdout.write('y' * (8 << 20)); sys.stderr.write('x' * (8 << 20)); "
+                 "sys.stderr.write('END-OF-OUTPUT')")
+        self.stub_driver(flood, timeout=60)
+        session = await self.login()
+        status, body = await self.control_call(session, project_id, 'power-on')
+        self.assertEqual((status, body['ok'], body['reason']), (200, False, 'start_failed'), body)
+        self.assertLessEqual(len(body['detail']), 1000)
+        self.assertTrue(body['detail'].endswith('END-OF-OUTPUT'), body['detail'][-80:])
+
     async def test_an_unregistered_project_id_is_unknown_and_starts_nothing(self):
         root, project_id = self.box.project('alpha')  # initialized, not registered
         session = await self.login()
@@ -289,6 +327,22 @@ class PowerOffTests(WebControlCase):
         self.assertTrue(alive(pid, ticks))
         self.assertEqual(self.box.status(root)['phase'], 'ready')
 
+    async def test_a_new_first_step_of_the_same_session_and_project_drops_the_earlier_token(self):
+        root, project_id, pid, ticks = await self.running()
+        panes = self.box.pane_processes(self.box.status(root))
+        session = await self.login()
+        _status, first = await self.control_call(session, project_id, 'power-off')
+        _status, second = await self.control_call(session, project_id, 'power-off')
+        self.assertEqual((first['reason'], second['reason']), ('confirm_required', 'confirm_required'))
+        status, body = await self.control_call(session, project_id, 'power-off-confirm',
+                                               {'token': first['data']['token']})
+        self.assertEqual((status, body['reason']), (409, 'confirm_token_invalid'), body)
+        self.unchanged(root, pid, ticks, panes)
+        status, body = await self.control_call(session, project_id, 'power-off-confirm',
+                                               {'token': second['data']['token']})
+        self.assertEqual((status, body['ok']), (200, True), body)
+        self.assertTrue(wait_until(lambda: not alive(pid, ticks), 15))
+
     async def test_the_confirm_returns_the_verified_result_and_only_its_own_session_and_project_may_send_it(self):
         root, project_id, pid, ticks = await self.running()
         other_root, other_id = self.box.project('beta')
@@ -337,6 +391,21 @@ class AutomationControlTests(WebControlCase):
         self.assertEqual([(detail['action'], detail['result']) for _event, _actor, detail in self.audit()],
                          [('pause', 'ok'), ('resume', 'ok'), ('confirm_boot', 'boot_confirmation_not_required')])
 
+    async def test_an_unexpected_library_error_is_an_audited_result_and_frees_the_project(self):
+        from unittest import mock
+        from workbench.hub import projects
+        root, project_id = self.registered()
+        session = await self.login()
+        with mock.patch.object(projects, 'pause', side_effect=RuntimeError('boom')):
+            status, body = await self.control_call(session, project_id, 'pause')
+        self.assertEqual((status, body['ok'], body['action'], body['reason']),
+                         (200, False, 'pause', 'internal_error'), body)
+        self.assertIn('RuntimeError', body['detail'])
+        self.assertEqual(self.audit()[-1][2], {'project_id': project_id, 'action': 'pause',
+                                               'result': 'internal_error'})
+        status, body = await self.control_call(session, project_id, 'pause')  # the slot was released
+        self.assertEqual((status, body['reason']), (200, 'not_running'), body)
+
     async def test_a_project_that_is_off_is_not_running_for_every_backend_call(self):
         root, project_id = self.registered()
         session = await self.login()
@@ -347,20 +416,22 @@ class AutomationControlTests(WebControlCase):
         self.assertEqual(self.box.ours(), {})
 
 
-class ConcurrentControlTests(WebControlCase):
-    """Ticket: a second control of the same project while one runs is ``control_in_progress``."""
-
-    def slow_fixture(self, name: str) -> tuple[Path, str]:
-        """A registered project served by the contract fixture backend whose snapshots take 3 s."""
+class SlowFixtureCase(WebControlCase):
+    def slow_fixture(self, name: str, delay: float = 3) -> tuple[Path, str]:
+        """A project served by the contract fixture backend whose snapshots take ``delay`` s."""
         from test_project_control import CONTRACT_BACKEND
-        root, project_id = self.registered(name)
-        process = subprocess.Popen([sys.executable, str(CONTRACT_BACKEND), str(root), '--snapshot-delay', '3'],
+        root, project_id = self.box.project(name)
+        process = subprocess.Popen([sys.executable, str(CONTRACT_BACKEND), str(root), '--snapshot-delay', str(delay)],
                                    env=self.box.env, cwd=self.box.base, stdin=subprocess.DEVNULL,
                                    stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True,
                                    start_new_session=True)
         self.box.processes.append(process)
         self.assertEqual(process.stdout.readline().strip(), 'ready')
         return root, project_id
+
+
+class ConcurrentControlTests(SlowFixtureCase):
+    """Ticket: a second control of the same project while one runs is ``control_in_progress``."""
 
     async def test_a_second_control_of_the_same_project_is_refused_while_the_first_runs(self):
         root, project_id = self.slow_fixture('alpha')
@@ -382,6 +453,45 @@ class ConcurrentControlTests(WebControlCase):
         self.assertNotEqual(body['reason'], 'control_in_progress', body)
         status, body = await self.control_call(session, project_id, 'pause')  # free again
         self.assertNotEqual(body['reason'], 'control_in_progress', body)
+
+
+class ControlExecutorTests(SlowFixtureCase):
+    """Security review P2: long controls run on the control's own bounded executor, never on the
+    loop's shared default executor that session checks and logins use; a full one is ``control_busy``."""
+
+    async def asyncSetUp(self):
+        # a small shared default executor: controls running there would starve logins and sessions
+        from concurrent.futures import ThreadPoolExecutor
+        asyncio.get_running_loop().set_default_executor(ThreadPoolExecutor(4))
+        await super().asyncSetUp()
+
+    async def test_login_and_pages_answer_while_the_control_executor_is_full(self):
+        size = self.web_control.CONTROL_WORKERS
+        self.assertGreaterEqual(size, 4)
+        projects = [self.slow_fixture(f'slow{index}', delay=8) for index in range(size + 1)]
+        self.box.register(*(self.box.entry(root, project_id) for root, project_id in projects))
+        session = await self.login()
+        running = [asyncio.ensure_future(self.control_call(session, project_id, 'confirm-boot'))
+                   for _root, project_id in projects[:size]]
+        await asyncio.sleep(1.0)  # every control now waits for its fixture's 8 s snapshot
+        self.assertFalse(any(task.done() for task in running))
+        started = time.monotonic()
+        status, body = await self.control_call(session, projects[size][1], 'confirm-boot')
+        self.assertEqual((status, body['ok'], body['reason']), (503, False, 'control_busy'), body)
+        self.assertLess(time.monotonic() - started, 1.5, 'a full control executor answers at once')
+        started = time.monotonic()
+        fresh = await self.login()  # scrypt and the session store run on the shared executor
+        async with self.http.get(self.base + '/settings', headers={
+                'Host': self.host, 'Cookie': f'wb_hub_session={fresh[0]}'}, allow_redirects=False) as response:
+            self.assertEqual(response.status, 200)
+        self.assertLess(time.monotonic() - started, 4, 'login and session pages do not wait for controls')
+        self.assertFalse(any(task.done() for task in running))
+        for task in running:
+            status, body = await task
+            self.assertEqual(status, 200, body)
+            self.assertNotEqual(body['reason'], 'control_busy', body)
+        status, body = await self.control_call(session, projects[size][1], 'pause')  # free again
+        self.assertNotEqual(body['reason'], 'control_busy', body)
 
 
 class HubLifetimeTests(unittest.TestCase):

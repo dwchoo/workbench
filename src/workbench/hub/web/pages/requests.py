@@ -196,7 +196,7 @@ async def get_list(request: web.Request) -> web.Response:
         _select("state", [(name, STATE_LABELS[name]) for name in STATES], state, blank="모든 상태"),
         render.tag("label", render.html_join([render.void("input", type="checkbox", name="archive", value="1",
                                                           checked=archive), " 보관함(닫힘 포함)"])),
-        render.void("input", type="search", name="q", value=text or "", maxlength=200, placeholder="검색어"),
+        render.void("input", type="search", name="q", value=text or "", placeholder="검색어"),
         render.tag("button", "찾기", type="submit")]), method="get", action="/requests", class_="filters")
     body = [render.tag("h1", "요청"), render.tag("p", render.tag("a", "새 요청", href="/requests/new")), form]
     if error is not None:

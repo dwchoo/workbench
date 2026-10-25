@@ -18,6 +18,7 @@ from dataclasses import dataclass, field
 import errno
 import os
 import pty
+import re
 import select
 import signal
 import sys
@@ -67,29 +68,94 @@ def _set_iutf8(fd: int) -> None:
         pass
 
 
+ESC = 0x1B
+ESCAPE_LOOKBACK = 4096  # how far before a cut a still-open escape sequence is looked for (longer strings: no)
+_STRING_INTRODUCERS = frozenset(b"]P_^X")  # OSC, DCS, APC, PM, SOS: ended by ST (ESC \\) or, for OSC, BEL
+# DEC private modes the page needs back after its reset: alternate screen, mouse reporting and encodings, focus
+# events, bracketed paste, application cursor keys.
+REPLAY_MODES = frozenset({1, 47, 1047, 1049, 1000, 1002, 1003, 1004, 1005, 1006, 1015, 2004})
+_DEC_MODE = re.compile(rb"\x1b\[\?([0-9;]*)([hl])|\x1bc")
+
+
+def _sequence_end(data: bytearray, start: int) -> int | None:
+    """The index just past the escape sequence that starts with ESC at ``start``; None while it is incomplete."""
+    size = len(data)
+    if start + 1 >= size:
+        return None
+    kind = data[start + 1]
+    if kind == 0x5B:  # CSI: parameters and intermediates (0x20-0x3F), then one final byte (0x40-0x7E)
+        index = start + 2
+        while index < size and 0x20 <= data[index] <= 0x3F:
+            index += 1
+        if index >= size:
+            return None
+        return index + 1 if 0x40 <= data[index] <= 0x7E else index
+    if kind in _STRING_INTRODUCERS:
+        index = start + 2
+        while index < size:
+            if data[index] == 0x07 and kind == 0x5D:
+                return index + 1
+            if data[index] == ESC:
+                return index + 2 if index + 1 < size and data[index + 1] == 0x5C else index
+            index += 1
+        return None
+    index = start + 1  # ESC, intermediates (0x20-0x2F), one final byte: ``ESC ( B``, ``ESC 7``, ``ESC c``
+    while index < size and 0x20 <= data[index] <= 0x2F:
+        index += 1
+    return index + 1 if index < size else None
+
+
+def _safe_cut(data: bytearray, cut: int) -> int:
+    """``cut`` moved off the inside of an escape sequence (past its end, or back to its ESC while it is still
+    incomplete) and then off the inside of a UTF-8 sequence (forward over 1-3 continuation bytes 10xxxxxx)."""
+    escape = data.rfind(bytes([ESC]), max(0, cut - ESCAPE_LOOKBACK), cut)
+    if escape >= 0:
+        end = _sequence_end(data, escape)
+        if end is None:
+            return escape
+        if end > cut:
+            cut = end
+    skip = 0
+    while skip < 3 and cut + skip < len(data) and data[cut + skip] & 0xC0 == 0x80:
+        skip += 1
+    if skip and (cut + skip == len(data) or data[cut + skip] & 0xC0 != 0x80):
+        cut += skip
+    return cut
+
+
 class Ring:
-    """The newest ``limit`` bytes of a channel's output; ``total`` counts every byte ever appended."""
+    """The newest ``limit`` bytes of a channel's output; ``total`` counts every byte ever appended.
+
+    The page resets xterm before every replay, so the window never starts inside an escape or UTF-8 sequence
+    (a Hangul syllable is 3 bytes) and :meth:`snapshot` first sets again the :data:`REPLAY_MODES` that bytes
+    trimmed off had left on (an OMP TUI's alternate screen, mouse reporting, bracketed paste)."""
 
     def __init__(self, limit: int = RING_BYTES):
         self.limit = limit
         self.data = bytearray()
         self.total = 0
+        self.modes: set[int] = set()  # REPLAY_MODES on at the start of ``data``
 
     def append(self, chunk: bytes) -> None:
         self.total += len(chunk)
         self.data += chunk
         if len(self.data) > self.limit:
-            del self.data[:len(self.data) - self.limit]
-            # The replay must not start inside a UTF-8 sequence (a Hangul syllable is 3 bytes): drop the cut
-            # sequence's 1-3 continuation bytes (10xxxxxx) when a lead byte follows them.
-            skip = 0
-            while skip < 3 and skip < len(self.data) and self.data[skip] & 0xC0 == 0x80:
-                skip += 1
-            if skip and (skip == len(self.data) or self.data[skip] & 0xC0 != 0x80):
-                del self.data[:skip]
+            cut = _safe_cut(self.data, len(self.data) - self.limit)
+            self._track(self.data[:cut])
+            del self.data[:cut]
+
+    def _track(self, trimmed: bytearray) -> None:
+        for match in _DEC_MODE.finditer(trimmed):
+            if match.group(2) is None:  # ESC c: a full reset
+                self.modes.clear()
+                continue
+            for value in match.group(1).split(b";"):
+                if value.isdigit() and int(value) in REPLAY_MODES:
+                    (self.modes.add if match.group(2) == b"h" else self.modes.discard)(int(value))
 
     def snapshot(self) -> bytes:
-        return bytes(self.data)
+        prefix = b"".join(b"\x1b[?%dh" % mode for mode in sorted(self.modes))
+        return prefix + bytes(self.data)
 
 
 class Channel(_OwnedSession):

@@ -9,7 +9,7 @@ with ``principal_of(request)`` so the service stays the one place that decides w
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import secrets
 import time
 from typing import Callable, Iterable
@@ -20,7 +20,7 @@ from aiohttp import web
 from ...inbox.limits import InboxError
 from ...inbox.service import PERMISSIONS, STATES, Principal, ProjectRef
 from .. import render
-from ..middleware import SERVICES, principal_of, see_other, session_of
+from ..middleware import SERVICES, api, principal_of, see_other, session_of
 
 # -- labels: the one place for 출처/상태/outcome/comment-kind text --------------------------------
 STATE_LABELS = {"NEW": "신규", "REVIEWING": "검토 중", "NEEDS_INFO": "추가 정보 필요", "READY": "실행 준비",
@@ -32,6 +32,9 @@ AUTHOR_LABELS = {"owner": "소유자", "board_agent": "Board agent", "manager": 
                  "hub": "시스템"}
 EMPTY = "—"
 PAGE_SIZE = 50
+STYLESHEETS = ("/static/app.css",)
+SCRIPTS = ("/static/badge.js",)  # header badge + tab title (D-24); no inline script
+CANCEL_TOKEN_TTL = 60.0  # SPEC 취소: token 60 s
 UTC_FORMAT = "%Y-%m-%d %H:%M:%S"
 
 
@@ -41,6 +44,7 @@ class RequestsPort:
 
     inbox: object
     projects: Callable[[], Iterable[ProjectRef]]
+    cancel_tokens: dict = field(default_factory=dict)  # token -> (binding, expires_at); in memory only
 
 
 PORT: web.AppKey = web.AppKey("requests_port", RequestsPort)
@@ -68,7 +72,8 @@ def _query_url(path: str, **params: object) -> str:
 # -- shared page pieces ---------------------------------------------------------------------------
 def _frame(request: web.Request, title: str, body: object, *, status: int = 200) -> web.Response:
     services, session = request.app[SERVICES], session_of(request)
-    return render.page(title, body, status=status, insecure_warning=services.insecure_warning, csrf=session.csrf)
+    return render.page(title, body, status=status, insecure_warning=services.insecure_warning, csrf=session.csrf,
+                       stylesheets=STYLESHEETS, scripts=SCRIPTS)
 
 
 async def _projects(request: web.Request) -> list[ProjectRef]:
@@ -256,10 +261,8 @@ def allowed_actions(principal: Principal, detail: dict) -> set[str]:
     allowed = {action for action in ("edit", "comment", "set_state", "cancel") if kind in PERMISSIONS[action]}
     if state == "CLOSED":
         allowed -= {"edit", "cancel"}
-    elif state in ("NEW", "NEEDS_INFO"):
-        pass
-    else:
-        allowed.discard("set_state")
+    elif state not in ("NEW", "NEEDS_INFO"):
+        allowed.discard("set_state")  # only NEW <-> NEEDS_INFO and reopening a CLOSED request (D-34)
     if detail.get("cancel_state") is not None:
         allowed.discard("cancel")
     return allowed
@@ -446,6 +449,109 @@ async def post_edit(request: web.Request) -> web.Response:
     notice = "revised" if done["mode"] == "new_revision" else "edited"
     return see_other(_query_url(request_url(rid), notice=notice))
 
+# -- comments and state -------------------------------------------------------------------------------
+async def post_comment(request: web.Request) -> web.Response:
+    port, rid, form = request.app[PORT], request.match_info["rid"], await request.post()
+    body = _form_text(form, "body")
+    try:
+        before = await _detail(request, rid)
+        done = await _call(request, port.inbox.comment, principal_of(request), rid, body)
+    except InboxError as exc:
+        try:
+            detail = await _detail(request, rid)
+        except InboxError:
+            return error_page(request, exc)
+        return detail_page(request, detail, comment_error=exc, comment_draft=body, projects=await _projects(request),
+                           status=_error_status(exc))
+    return see_other(_query_url(request_url(rid), notice="answered" if done["state"] != before["state"] else "commented"))
+
+
+async def post_state(request: web.Request) -> web.Response:
+    port, rid, form = request.app[PORT], request.match_info["rid"], await request.post()
+    target, base = _form_text(form, "to"), _form_text(form, "base_version")
+    try:
+        if not base.isdigit():
+            raise InboxError("invalid_input", "base_version")
+        before = await _detail(request, rid)
+        await _call(request, port.inbox.set_state, principal_of(request), rid, int(base), target)
+    except InboxError as exc:
+        return error_page(request, exc, back=request_url(rid))
+    return see_other(_query_url(request_url(rid), notice="reopened" if before["state"] == "CLOSED" else "state_set"))
+
+# -- cancel -----------------------------------------------------------------------------------------
+def _is_linked(detail: dict) -> bool:
+    """A live Task is attached: the cancel stops it (READY/RUNNING, or a re-asked request that still links one)."""
+    return detail["state"] != "CLOSED" and detail["task"]["task_id"] is not None
+
+
+def _binding(principal: Principal, detail: dict) -> tuple:
+    """What a cancel token is tied to: who, which request and version, the Task status and its command."""
+    view = detail["task"]["view"] or {}
+    return (principal.kind, principal.key_id, detail["request_id"], detail["version"], view.get("status"),
+            view.get("command_id"))
+
+
+def issue_cancel_token(request: web.Request, detail: dict) -> str:
+    port, now = request.app[PORT], float(request.app[SERVICES].clock())
+    port.cancel_tokens = {token: entry for token, entry in port.cancel_tokens.items() if entry[1] > now}
+    token = secrets.token_urlsafe(24)
+    port.cancel_tokens[token] = (_binding(principal_of(request), detail), now + CANCEL_TOKEN_TTL)
+    return token
+
+
+def take_cancel_token(request: web.Request, token: str, detail: dict) -> bool:
+    """Single use: the token disappears even when it no longer matches."""
+    port = request.app[PORT]
+    entry = port.cancel_tokens.pop(token, None) if token else None
+    return (entry is not None and entry[1] > float(request.app[SERVICES].clock())
+            and entry[0] == _binding(principal_of(request), detail))
+
+
+async def get_cancel(request: web.Request) -> web.Response:
+    try:
+        detail = await _detail(request, request.match_info["rid"])
+        if detail["state"] == "CLOSED":
+            raise InboxError("invalid_transition", "이미 닫힌 요청입니다", state="CLOSED", version=detail["version"])
+    except InboxError as exc:
+        return error_page(request, exc, back=request_url(request.match_info["rid"]))
+    rid, linked = detail["request_id"], _is_linked(detail)
+    parts = [render.tag("h1", "요청 취소"),
+             render.tag("p", render.html_join(["이 요청을 취소할까요? ", render.tag("bdi", f"#{detail['seq']} {detail['title']}")]))]
+    fields = {"base_version": detail["version"]}
+    if linked:
+        view = detail["task"]["view"] or {}
+        parts.append(render.tag("section", render.html_join([
+            render.tag("h2", "영향"),
+            render.tag("p", "연결된 Task와 실행 중인 명령을 멈추고, Task가 닫혀야 이 요청이 취소로 닫힙니다."),
+            render.tag("dl", render.html_join([_definition("Task", detail["task"]["task_id"]),
+                                               _definition("진행", view.get("status") or EMPTY),
+                                               _definition("상태", state_label(detail["state"]))]))]), id="impact"))
+        fields["token"] = issue_cancel_token(request, detail)
+    parts.append(_post_form(request, request_url(rid, "/cancel"), fields, "확인", class_="inline"))
+    parts.append(render.tag("p", render.tag("a", "취소", href=request_url(rid))))
+    return _frame(request, "요청 취소", render.html_join(parts))
+
+
+async def post_cancel(request: web.Request) -> web.Response:
+    port, rid, form = request.app[PORT], request.match_info["rid"], await request.post()
+    base, token = _form_text(form, "base_version"), _form_text(form, "token")
+    try:
+        detail = await _detail(request, rid)
+        if not base.isdigit():
+            raise InboxError("invalid_input", "base_version")
+        if _is_linked(detail) and not take_cancel_token(request, token, detail):
+            raise InboxError("token_mismatch", "", state=detail["state"], version=detail["version"])
+        done = await _call(request, port.inbox.cancel, principal_of(request), rid, base_version=int(base))
+    except InboxError as exc:
+        return error_page(request, exc, back=request_url(rid))
+    return see_other(_query_url(request_url(rid), notice="cancelled" if done["status"] == "cancelled" else "cancel_requested"))
+
+
+@api
+async def get_badge(request: web.Request) -> web.Response:
+    """``{pending: NEW 수, needs_info: NEEDS_INFO 수}`` over everything the session may see (D-24)."""
+    return web.json_response(await _call(request, request.app[PORT].inbox.badge, principal_of(request)))
+
 
 def routes(inbox, projects: Callable[[], Iterable[ProjectRef]]) -> Callable[[web.Application], None]:
     """``create_app(..., routes=[routes(inbox, projects)])``: the request pages over ``inbox``.
@@ -455,9 +561,14 @@ def routes(inbox, projects: Callable[[], Iterable[ProjectRef]]) -> Callable[[web
     def register(app: web.Application) -> None:
         app[PORT] = RequestsPort(inbox, projects)
         app.router.add_get("/requests", get_list)
+        app.router.add_get("/api/badge", get_badge)
         app.router.add_get("/requests/new", get_new)
         app.router.add_post("/requests", post_create)
         app.router.add_get("/requests/{rid}", get_detail)
         app.router.add_get("/requests/{rid}/edit", get_edit)
         app.router.add_post("/requests/{rid}/edit", post_edit)
+        app.router.add_post("/requests/{rid}/comments", post_comment)
+        app.router.add_post("/requests/{rid}/state", post_state)
+        app.router.add_get("/requests/{rid}/cancel", get_cancel)
+        app.router.add_post("/requests/{rid}/cancel", post_cancel)
     return register

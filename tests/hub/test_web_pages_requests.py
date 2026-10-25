@@ -15,7 +15,7 @@ import sqlite3
 import sys
 import tempfile
 import unittest
-from urllib.parse import parse_qs, urlsplit
+from urllib.parse import parse_qs, urlencode, urlsplit
 import uuid
 
 REPO = Path(__file__).resolve().parents[2]
@@ -618,6 +618,380 @@ class EditTests(RequestsCase):
         self.assertEqual(self.request_row(request_id)[0], 'T')
         response, _ = await self.page(f'/requests/{uuid.uuid4()}/edit')
         self.assertEqual(response.status, 404)
+
+
+class CommentTests(RequestsCase):
+    def comments(self, request_id):
+        return self.db_rows('SELECT kind, body, author_kind FROM comments WHERE request_id = ? ORDER BY seq', request_id)
+
+    def state_of(self, request_id):
+        return self.db_rows('SELECT state, review_round, delivery_state FROM requests WHERE request_id = ?',
+                            request_id)[0]
+
+    async def test_comment_on_a_new_request_is_a_plain_comment(self):
+        request_id = self.add('T', 'b')
+        response = await self.submit(f'/requests/{request_id}/comments', {'body': 'first\r\nsecond'})
+        self.assertEqual((response.status, response.headers['Location']),
+                         (303, f'/requests/{request_id}?notice=commented'))
+        self.assertEqual(self.comments(request_id), [('comment', 'first\nsecond', 'owner')])
+        self.assertEqual(self.state_of(request_id)[0], 'NEW')
+        _, page = await self.page(response.headers['Location'])
+        self.assertIn('댓글을 남겼습니다', page.body_text)
+        self.assertIn('first\nsecond', page.pre)
+
+    async def test_answer_to_a_question_returns_the_request_to_review(self):
+        request_id = self.add('T', 'b')
+        self.inbox.review(Principal.manager(self.a), request_id, 'ask', body='which one?')
+        _, page = await self.page(f'/requests/{request_id}')
+        self.assertIn('답변 쓰기', page.body_text)
+        response = await self.submit(f'/requests/{request_id}/comments', {'body': 'the first'})
+        self.assertEqual(response.headers['Location'], f'/requests/{request_id}?notice=answered')
+        self.assertEqual(self.comments(request_id)[-1][:2], ('answer', 'the first'))
+        self.assertEqual(self.state_of(request_id), ('REVIEWING', 2, 'pending'))
+
+    async def test_rejected_comment_is_shown_again_with_the_draft_and_saves_nothing(self):
+        request_id = self.add('T', 'b')
+        for name, body, reason in (('empty', '', '입력이 올바르지 않습니다'),
+                                   ('too large', 'c' * (16 * 1024 + 1), '입력이 한도를 넘었습니다')):
+            with self.subTest(name):
+                response = await self.submit(f'/requests/{request_id}/comments', {'body': body})
+                page = Page(response.body_text)
+                self.assertEqual(response.status, 400)
+                self.assertIn(reason, page.body_text)
+                self.assertIsNotNone(page.form(f'/requests/{request_id}/comments'))
+                self.assertEqual(self.comments(request_id), [])
+        self.assertIn('c' * (16 * 1024 + 1), page.body_text)
+
+    async def test_comment_on_an_unknown_request_is_not_found(self):
+        response = await self.submit(f'/requests/{uuid.uuid4()}/comments', {'body': 'x'})
+        self.assertEqual(response.status, 404)
+
+
+class StateTests(RequestsCase):
+    def row(self, request_id):
+        return self.db_rows('SELECT state, outcome, version, task_id FROM requests WHERE request_id = ?',
+                            request_id)[0]
+
+    async def test_new_to_needs_info_and_back(self):
+        request_id = self.add('T', 'b')
+        response = await self.submit(f'/requests/{request_id}/state', {'to': 'NEEDS_INFO', 'base_version': '1'})
+        self.assertEqual((response.status, response.headers['Location']),
+                         (303, f'/requests/{request_id}?notice=state_set'))
+        self.assertEqual(self.row(request_id)[:3], ('NEEDS_INFO', None, 2))
+        await self.submit(f'/requests/{request_id}/state', {'to': 'NEW', 'base_version': '2'})
+        self.assertEqual(self.row(request_id)[:3], ('NEW', None, 3))
+
+    async def test_reopening_a_closed_request_clears_the_link(self):
+        request_id = self.add('T', 'b')
+        self.inbox.cancel(OWNER, request_id)
+        version = self.row(request_id)[2]
+        response = await self.submit(f'/requests/{request_id}/state', {'to': 'NEW', 'base_version': str(version)})
+        self.assertEqual(response.headers['Location'], f'/requests/{request_id}?notice=reopened')
+        self.assertEqual(self.row(request_id)[:2], ('NEW', None))
+        _, page = await self.page(response.headers['Location'])
+        self.assertIn('요청을 다시 열었습니다', page.body_text)
+
+    async def test_direct_posts_to_other_transitions_are_refused_and_change_nothing(self):
+        request_id = self.add('T', 'b')
+        for target in ('READY', 'RUNNING', 'REVIEWING', 'CLOSED', 'bogus', ''):
+            response = await self.submit(f'/requests/{request_id}/state', {'to': target, 'base_version': '1'})
+            self.assertEqual(response.status, 400, target)
+        self.inbox.review(Principal.manager(self.a), request_id, 'begin_review')
+        response = await self.submit(f'/requests/{request_id}/state', {'to': 'NEEDS_INFO', 'base_version': '2'})
+        self.assertEqual(response.status, 409)
+        self.assertIn('지금 상태에서는 할 수 없는 동작입니다', response.body_text)
+        self.assertEqual(self.row(request_id)[:3], ('REVIEWING', None, 2))
+
+    async def test_stale_version_shows_the_changed_elsewhere_page(self):
+        request_id = self.add('T', 'b')
+        self.inbox.comment(OWNER, request_id, 'bump')
+        response = await self.submit(f'/requests/{request_id}/state', {'to': 'NEEDS_INFO', 'base_version': '1'})
+        page = Page(response.body_text)
+        self.assertEqual(response.status, 409)
+        self.assertIn('다른 곳에서 바뀌었습니다', page.body_text)
+        self.assertIn(f'/requests/{request_id}', page.links())
+        self.assertEqual(self.row(request_id)[0], 'NEW')
+
+
+class CancelTests(RequestsCase):
+    def row(self, request_id):
+        return self.db_rows('SELECT state, outcome, cancel_state, version FROM requests WHERE request_id = ?',
+                            request_id)[0]
+
+    async def confirm(self, request_id):
+        response, page = await self.page(f'/requests/{request_id}/cancel')
+        self.assertEqual(response.status, 200)
+        form = page.form(f'/requests/{request_id}/cancel')
+        self.assertIsNotNone(form)
+        return page, form
+
+    async def confirm_post(self, request_id, form, **override):
+        data = {name: value for name, value in form['fields'].items() if value is not None}
+        data.update(override)
+        return await self.post(f'/requests/{request_id}/cancel', data, cookies=self.cookies)
+
+    async def test_pre_run_confirmation_page_changes_nothing_and_cancel_link_goes_back(self):
+        request_id = self.add('Plan it', 'b')
+        page, form = await self.confirm(request_id)
+        self.assertIn('Plan it', page.body_text)
+        self.assertEqual(set(form['fields']), {'csrf', 'base_version'})
+        self.assertIn(f'/requests/{request_id}', page.links())
+        back = next(a for a in page.tags('a') if a.get('href') == f'/requests/{request_id}')
+        self.assertEqual(self.row(request_id)[:2], ('NEW', None))
+        await self.page(back['href'])
+        self.assertEqual(self.row(request_id)[:2], ('NEW', None))
+        self.assertEqual(len(self.db_rows('SELECT * FROM events WHERE type = ?', 'cancelled', )), 0)
+
+    async def test_confirm_closes_pre_run_requests_in_every_pre_dispatch_state(self):
+        manager = Principal.manager(self.a)
+        for state in ('NEW', 'REVIEWING', 'NEEDS_INFO'):
+            with self.subTest(state):
+                request_id = self.add(f't {state}')
+                if state == 'REVIEWING':
+                    self.inbox.review(manager, request_id, 'begin_review')
+                elif state == 'NEEDS_INFO':
+                    self.inbox.set_state(OWNER, request_id, 1, 'NEEDS_INFO')
+                _, form = await self.confirm(request_id)
+                response = await self.confirm_post(request_id, form)
+                self.assertEqual((response.status, response.headers['Location']),
+                                 (303, f'/requests/{request_id}?notice=cancelled'))
+                self.assertEqual(self.row(request_id)[:2], ('CLOSED', 'cancelled'))
+
+    async def test_stale_confirmation_shows_changed_elsewhere_and_cancels_nothing(self):
+        request_id = self.add('T', 'b')
+        _, form = await self.confirm(request_id)
+        self.inbox.comment(OWNER, request_id, 'new info')
+        response = await self.confirm_post(request_id, form)
+        self.assertEqual(response.status, 409)
+        self.assertIn('다른 곳에서 바뀌었습니다', response.body_text)
+        self.assertEqual(self.row(request_id)[:2], ('NEW', None))
+
+    async def test_closed_request_has_no_confirmation(self):
+        request_id = self.add('T', 'b')
+        self.inbox.cancel(OWNER, request_id)
+        response, page = await self.page(f'/requests/{request_id}/cancel')
+        self.assertEqual(response.status, 409)
+        self.assertIsNone(page.form(f'/requests/{request_id}/cancel'))
+        response = await self.submit(f'/requests/{request_id}/cancel', {'base_version': '2'})
+        self.assertEqual(response.status, 409)
+
+    async def test_running_confirmation_shows_impact_and_token_then_requests_the_cancel(self):
+        request_id = self.add('Long job', 'b')
+        self.link(request_id, 'running', task_id='task-55')
+        self.backend_up = True
+        page, form = await self.confirm(request_id)
+        for fact in ('task-55', 'running'):
+            self.assertIn(fact, page.body_text)
+        self.assertTrue(form['fields']['token'])
+        self.assertEqual(self.row(request_id)[2], None)
+        response = await self.confirm_post(request_id, form)
+        self.assertEqual((response.status, response.headers['Location']),
+                         (303, f'/requests/{request_id}?notice=cancel_requested'))
+        self.assertEqual(self.row(request_id)[:3], ('RUNNING', None, 'requested'))
+        self.assertIn('cancel_requested', [event.type for event in self.events])
+
+    async def test_ready_request_also_needs_the_token_and_it_works_once(self):
+        request_id = self.add('Queued', 'b')
+        self.link(request_id, 'dispatched')
+        self.backend_up = True
+        _, form = await self.confirm(request_id)
+        response = await self.confirm_post(request_id, form)
+        self.assertEqual(response.status, 303)
+        again = await self.confirm_post(request_id, form)
+        self.assertEqual(again.status, 409)
+
+    async def test_missing_wrong_changed_or_expired_token_cancels_nothing(self):
+        request_id = self.add('Job', 'b')
+        self.link(request_id, 'running')
+        self.backend_up = True
+        _, form = await self.confirm(request_id)
+        version = form['fields']['base_version']
+        for name, override in (('missing', {'token': ''}), ('wrong', {'token': 'nope'})):
+            response = await self.confirm_post(request_id, form, **override)
+            self.assertEqual(response.status, 409, name)
+            self.assertIn('작업이 바뀌었습니다', response.body_text, name)
+        self.inbox.comment(OWNER, request_id, 'bump')  # request version moves on
+        response = await self.confirm_post(request_id, form)
+        self.assertEqual(response.status, 409)
+        self.assertIsNone(self.row(request_id)[2])
+        _, fresh = await self.confirm(request_id)
+        self.now[0] += 61
+        response = await self.confirm_post(request_id, fresh)
+        self.assertEqual(response.status, 409)
+        self.assertIsNone(self.row(request_id)[2])
+        self.assertNotEqual(version, fresh['fields']['base_version'])
+
+    async def test_backend_off_refuses_a_running_cancel_with_the_reason(self):
+        request_id = self.add('Job', 'b')
+        self.link(request_id, 'running')
+        self.backend_up = False
+        _, form = await self.confirm(request_id)
+        response = await self.confirm_post(request_id, form)
+        self.assertEqual(response.status, 409)
+        self.assertIn('backend가 꺼져 있어', response.body_text)
+        self.assertIsNone(self.row(request_id)[2])
+
+
+HOSTILE_TITLE = '<script>alert(1)</script> "><img src=x onerror=alert(2)> \'x\' &amp; <svg onload=alert(3)>'
+HOSTILE_BODY = ('<script>alert(1)</script>\n<img src=x onerror=alert(1)>\n"><b onmouseover=alert(2)>bold</b>\n'
+                '[click](javascript:alert(1)) <a href="javascript:alert(1)">x</a>\n'
+                '\u202e txt-after-rlo \u2066\u2069 \u200b zero-width\n' + 'L' * 60000)
+HOSTILE_COMMENT = HOSTILE_BODY[:HOSTILE_BODY.index('L')] + 'L' * 12000
+SCRIPT_SRCS = {'/static/badge.js'}
+
+
+class SafetyTests(RequestsCase):
+    """P2-AC-31 / TI-T02: hostile text is only ever text; every page carries the CSP and no inline script/style."""
+
+    def assert_safe(self, response, page: Page, where: str):
+        self.assertIn("script-src 'self'", response.headers.get('Content-Security-Policy', ''), where)
+        for attrs in page.tags('script'):
+            self.assertIn(attrs.get('src'), SCRIPT_SRCS, f'{where}: only the shipped script, no inline script')
+        for tag, attrs in page.elements:
+            self.assertNotIn(tag, ('img', 'svg', 'b', 'iframe', 'object', 'embed', 'style'), f'{where}: <{tag}>')
+            self.assertEqual([name for name in attrs if name.startswith('on')], [], f'{where}: {tag} {attrs}')
+            self.assertNotIn('style', attrs, f'{where}: inline style on {tag}')
+            for name in ('href', 'src', 'action'):
+                self.assertFalse(str(attrs.get(name, '')).lower().startswith('javascript:'), f'{where}: {name}')
+        self.assertNotIn('<script>alert', response.body_text, where)
+        self.assertNotIn('onerror=alert(2)>', response.body_text.replace('&gt;', ''), where)
+
+    async def hostile_request(self):
+        manager = Principal.manager(self.a)
+        request_id = self.add(HOSTILE_TITLE, HOSTILE_BODY, principal=Principal.editor('k0editor00', '<i>k</i>"', None))
+        self.inbox.review(manager, request_id, 'ask', body=HOSTILE_COMMENT)
+        self.inbox.comment(OWNER, request_id, HOSTILE_COMMENT)
+        self.inbox.review(manager, request_id, 'comment', body='<script>alert(9)</script>')
+        return request_id
+
+    async def test_detail_shows_hostile_text_only_as_text_and_round_trips_it(self):
+        request_id = await self.hostile_request()
+        response, page = await self.page(f'/requests/{request_id}')
+        self.assertEqual(response.status, 200)
+        self.assert_safe(response, page, 'detail')
+        self.assertEqual(page.pre[0], HOSTILE_BODY)
+        self.assertEqual(page.pre[1], HOSTILE_COMMENT)
+        self.assertEqual(page.pre[2], HOSTILE_COMMENT)
+        self.assertEqual(page.pre[3], '<script>alert(9)</script>')
+        self.assertIn(HOSTILE_TITLE, page.sections['summary'])
+        self.assertIn('key:<i>k</i>"', page.sections['summary'])
+
+    async def test_list_with_hostile_title_project_name_and_query(self):
+        self.refs[0] = ProjectRef(self.a, self.root_a, '<script>alert(1)</script>')
+        self.add(HOSTILE_TITLE, 'b')
+        query = '"><script>alert(1)</script>&x=1'
+        response, page = await self.page('/requests?' + urlencode({'q': query, 'archive': '1', 'state': 'NEW'}))
+        self.assert_safe(response, page, 'list')
+        response, page = await self.page('/requests?' + urlencode({'q': 'Title'}))
+        self.assertEqual(response.status, 200)
+        response, page = await self.page('/requests')
+        self.assert_safe(response, page, 'list')
+        row = page.data_rows()[0]
+        self.assertEqual((row[1], row[2]), ('<script>alert(1)</script>', HOSTILE_TITLE))
+        response, page = await self.page('/requests?' + urlencode({'q': query}))
+        self.assertEqual([a['value'] for a in page.tags('input') if a.get('name') == 'q'], [query])
+
+    async def test_pager_links_keep_the_filter_url_encoded(self):
+        for number in range(51):
+            self.add(f'n{number}')
+        query = '"><script>'
+        response, page = await self.page('/requests?' + urlencode({'q': ''}))
+        response, page = await self.page('/requests?' + urlencode({'state': 'NEW', 'archive': '1'}))
+        link = next(href for href in page.links() if 'page=2' in href)
+        self.assertEqual(parse_qs(urlsplit(link).query), {'state': ['NEW'], 'archive': ['1'], 'page': ['2']})
+
+    async def test_forms_redisplay_hostile_input_inside_attribute_and_textarea_contexts(self):
+        request_id = self.add('T', 'b')
+        form_page = await self.page(f'/requests/{request_id}/edit')
+        form = form_page[1].form(f'/requests/{request_id}/edit')
+        evil_title = '" autofocus onfocus="alert(1)" x="'
+        evil_body = '</textarea><script>alert(1)</script>'
+        response = await self.post(f'/requests/{request_id}/edit',
+                                   {'csrf': form['fields']['csrf'], 'base_version': '9', 'title': evil_title,
+                                    'body': evil_body}, cookies=self.cookies)
+        page = Page(response.body_text)
+        self.assertEqual(response.status, 409)
+        self.assert_safe(response, page, 'edit conflict')
+        self.assertEqual(page.form(f'/requests/{request_id}/edit')['fields']['title'], evil_title)
+        self.assertIn(evil_body, page.body_text)
+        _, create = await self.page('/requests/new')
+        cform = create.form('/requests')
+        response = await self.post('/requests', {'csrf': cform['fields']['csrf'], 'project': self.a,
+                                                 'nonce': cform['fields']['nonce'], 'title': evil_title,
+                                                 'body': evil_body + 'x' * 70000}, cookies=self.cookies)
+        page = Page(response.body_text)
+        self.assertEqual(response.status, 400)
+        self.assert_safe(response, page, 'create error')
+        self.assertEqual(page.form('/requests')['fields']['title'], evil_title)
+
+    async def test_comment_and_confirm_pages_are_safe(self):
+        request_id = await self.hostile_request()
+        response = await self.submit(f'/requests/{request_id}/comments', {'body': ''})
+        self.assert_safe(response, Page(response.body_text), 'comment error')
+        response, page = await self.page(f'/requests/{request_id}/cancel')
+        self.assert_safe(response, page, 'cancel confirm')
+        self.assertIn(HOSTILE_TITLE, page.body_text)
+        self.assertEqual(page.form(f'/requests/{request_id}/cancel') is not None, True)
+
+    async def test_every_page_has_csp_and_headers(self):
+        request_id = self.add('T', 'b')
+        for path in ('/requests', '/requests/new', f'/requests/{request_id}', f'/requests/{request_id}/edit',
+                     f'/requests/{request_id}/cancel', f'/requests/{uuid.uuid4()}'):
+            response, page = await self.page(path)
+            self.assertEqual(response.headers['Content-Security-Policy'], web_auth.CSP, path)
+            self.assertEqual(response.headers['Cache-Control'], 'no-store', path)
+            self.assertTrue(response.headers['Content-Type'].startswith('text/html'), path)
+            self.assertEqual([a.get('src') for a in page.tags('script')], ['/static/badge.js'], path)
+            self.assertIn('/static/app.css', [a.get('href') for a in page.tags('link')], path)
+            self.assertEqual([n for _, attrs in page.elements for n in attrs if n.startswith('on')], [], path)
+            self.assertEqual([a for a in page.tags('style')], [], path)
+
+    async def test_every_post_form_on_the_pages_carries_the_csrf_field(self):
+        request_id = self.add('T', 'b')
+        self.inbox.set_state(OWNER, request_id, 1, 'NEEDS_INFO')
+        for path in ('/requests/new', f'/requests/{request_id}', f'/requests/{request_id}/edit',
+                     f'/requests/{request_id}/cancel'):
+            _, page = await self.page(path)
+            posts = [f for f in page.forms if f['attrs'].get('method') == 'post']
+            self.assertTrue(posts, path)
+            for form in posts:
+                self.assertTrue(form['fields'].get('csrf'), (path, form['attrs']))
+
+
+class BadgeAndAssetTests(RequestsCase):
+    async def test_badge_counts_new_and_needs_info_over_every_project(self):
+        self.add('a')
+        self.add('b', project=self.b)
+        needs = self.add('c')
+        self.inbox.set_state(OWNER, needs, 1, 'NEEDS_INFO')
+        closed = self.add('d')
+        self.inbox.cancel(OWNER, closed)
+        response = await self.get('/api/badge', cookies=self.cookies)
+        self.assertEqual(response.status, 200)
+        self.assertTrue(response.headers['Content-Type'].startswith('application/json'))
+        self.assertEqual(json.loads(response.body_text), {'pending': 2, 'needs_info': 1})
+        self.assertEqual(response.headers['Cache-Control'], 'no-store')
+
+    async def test_badge_without_a_session_is_401_json(self):
+        response = await self.get('/api/badge')
+        self.assertEqual(response.status, 401)
+        self.assertEqual(json.loads(response.body_text), {'ok': False, 'reason': 'unauthorized'})
+
+    async def test_static_assets_are_public_and_badge_js_polls_every_30_seconds(self):
+        script = await self.get('/static/badge.js')
+        css = await self.get('/static/app.css')
+        self.assertEqual((script.status, css.status), (200, 200))
+        self.assertIn('/api/badge', script.body_text)
+        self.assertIn('30000', script.body_text)
+        self.assertIn('WB Hub', script.body_text)
+        self.assertIn('wb-badge', script.body_text)
+        for forbidden in ('eval(', 'innerHTML', 'document.write'):
+            self.assertNotIn(forbidden, script.body_text)
+        self.assertTrue(script.headers['Content-Type'].startswith(('application/javascript', 'text/javascript')))
+
+    async def test_layout_has_the_badge_slot_for_the_script(self):
+        _, page = await self.page('/requests')
+        self.assertIn('wb-badge', [a.get('id') for _, a in page.elements])
 
 
 if __name__ == '__main__':

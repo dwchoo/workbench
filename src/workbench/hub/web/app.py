@@ -20,7 +20,7 @@ from .. import auth
 from . import middleware
 from .middleware import (PRINCIPAL, SERVICES, SESSION, api, own_auth, principal_of, public,  # noqa: F401
                          session_of)
-from .pages import login
+from .pages import login, settings
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 # Open WebSockets (TI-17 adds each one); the listener closes them with 1001 when the Hub stops.
@@ -58,6 +58,8 @@ class WebServices:
     password_lock: asyncio.Lock = field(init=False, default_factory=asyncio.Lock)
     throttle_factory: Callable | None = None
     flush_interval: float = 10.0  # API key ``last_used_at`` (SPEC: every 10 s and at Hub stop)
+    # ``(project_id, name)`` of the registered projects (blocking read; the Hub supplies the registry view).
+    projects: Callable[[], Iterable[tuple[str, str]]] = lambda: ()
 
     def __post_init__(self) -> None:
         self.sessions = auth.SessionStore(self.db, self.passwords)
@@ -97,6 +99,7 @@ def create_app(services: WebServices, *, routes: Iterable[Callable[[web.Applicat
     app.cleanup_ctx.append(flush_last_used)
     app.router.add_static(middleware.STATIC_PREFIX, STATIC_DIR, follow_symlinks=False, show_index=False)
     login.register(app)
+    settings.make_register(lambda: services.projects())(app)
     for register in routes:
         register(app)
     return app

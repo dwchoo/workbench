@@ -115,6 +115,13 @@ class Hub:
         self.backend_tasks: dict[str, asyncio.Task] = {}
         self.web: WebListener | None = None
 
+    def project_pairs(self) -> list[tuple[str, str]]:
+        """``(project_id, name)`` of the registered projects for the web settings pages; executor only."""
+        try:
+            return [(entry.project_id, entry.name) for entry in registry.read(self.layout)]
+        except registry.RegistryError:
+            return []
+
     def load_web(self, environment=None) -> None:
         """Read ``hub.toml`` and decide TLS once, at start (changes need a Hub restart)."""
         try:
@@ -126,6 +133,7 @@ class Hub:
         cert, key = hub_config.tls_paths(loaded.web, environment)
         tls = hub_config.decide_tls(loaded.web, cert, key)
         self.web = WebListener(self.layout.state_dir, config=loaded, config_error=None, tls=tls)
+        self.web.projects = self.project_pairs
 
     def bind(self) -> None:
         path = prepare_socket_path()

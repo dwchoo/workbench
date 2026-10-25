@@ -17,6 +17,8 @@ export const BACKOFF_FIRST_MS = 1000;
 export const BACKOFF_MAX_MS = 15000;
 export const MIN_SIZE = 1;
 export const MAX_SIZE = 500;
+export const INPUT_FRAME_MAX = 64 * 1024; // SPEC 입력 한도: the server drops a bigger input frame (too_large)
+export const INPUT_MAX = 4 << 20; // the Hub's PTY input queue (board/set.py): a bigger paste would land only in part
 export const BANNER_TEXT = "다른 곳에서 연결됨 — 다시 가져오기";
 const CLIENT_TIMEOUT_CODE = 4000; // our own close when no pong came (not a server code)
 // 4400-4499: the server refused this page itself (4400 bad hello, 4403 csrf mismatch, any later client error).
@@ -176,12 +178,35 @@ function onTimer(state, name) {
   return NONE(state);
 }
 
+// UTF-8 continuation bytes are 10xxxxxx: a cut before one would split a code point.
+const isContinuation = (byte) => (byte & 0xc0) === 0x80;
+
+// ``bytes`` in order as pieces of at most ``limit`` bytes, each cut on a code point boundary (a long paste stays
+// valid UTF-8 in every frame). Bytes that are not UTF-8 (onBinary) are cut at the limit after at most 3 steps back.
+export function splitInput(bytes, limit = INPUT_FRAME_MAX) {
+  const pieces = [];
+  let start = 0;
+  while (bytes.length - start > limit) {
+    let end = start + limit;
+    for (let back = 0; back < 3 && isContinuation(bytes[end]); back += 1) end -= 1;
+    if (isContinuation(bytes[end])) end = start + limit;
+    pieces.push(bytes.subarray(start, end));
+    start = end;
+  }
+  pieces.push(bytes.subarray(start));
+  return pieces;
+}
+
 // Only the holder with its current epoch sends input (D-28 (2)); anything else is dropped here, not sent.
 function onInput(state, event) {
   if (state.phase !== "attached" || event.bytes.length === 0) return NONE(state);
+  if (event.bytes.length > INPUT_MAX) {
+    return { state, effects: [{ type: "notice", reason: "too_large", channel: event.channel }] };
+  }
   return {
     state,
-    effects: [{ type: "send_binary", bytes: encodeFrame(event.channel, state.epoch, event.bytes) }],
+    effects: splitInput(event.bytes).map((piece) => (
+      { type: "send_binary", bytes: encodeFrame(event.channel, state.epoch, piece) })),
   };
 }
 

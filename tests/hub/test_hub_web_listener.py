@@ -96,6 +96,7 @@ class HubTomlTests(ConfigCase):
         self.assert_invalid('[web]\ntls_cert = "relative.pem"\n', 'web.tls_cert')
         self.assert_invalid('[web]\nbind = "127.0.0.1"\nbind = "127.0.0.2"\n', 'toml')
         self.assert_invalid('[web\n', 'toml')
+        self.assert_invalid('[web]\nbind = "fe80::1%eth0"\n', 'web.bind')  # scoped IPv6: refused
         self.assert_invalid('web = 1\n', 'web')
 
     def test_explicit_any_address_is_accepted(self):
@@ -175,6 +176,13 @@ class StatusLineTests(unittest.TestCase):
                             'insecure_warning': True})
         self.assertEqual(lines[0], 'web: listening http://10.8.0.2:8780')
         self.assertIn(WARNING, lines[1])
+
+    def test_tls_key_mode_warning_line(self):
+        lines = self.lines({'state': 'listening', 'url': 'https://127.0.0.1:8780', 'tls': True,
+                            'insecure_warning': False, 'warnings': ['tls_key_mode:0644']})
+        self.assertEqual(lines[0], 'web: listening https://127.0.0.1:8780')
+        self.assertIn('0644', lines[1])
+        self.assertIn('chmod 600', lines[1])
 
     def test_closed_states_name_the_reason(self):
         self.assertEqual(self.lines({'state': 'password_not_set'}),
@@ -327,11 +335,12 @@ class InProcessListenerTests(unittest.IsolatedAsyncioTestCase):
         self.now = [1000.0]
         self.WebListener = WebListener
 
-    def listener(self, port: int):
+    def listener(self, port: int, *, tls_pair: tuple | None = None, **options):
         loaded = config.parse_config(f'[web]\nbind = "127.0.0.1"\nport = {port}\n'.encode())
-        decision = config.decide_tls(loaded.web, Path('/nonexistent/c'), Path('/nonexistent/k'))
+        cert, key = tls_pair or (Path('/nonexistent/c'), Path('/nonexistent/k'))
+        decision = config.decide_tls(loaded.web, cert, key)
         web = self.WebListener(self.state, config=loaded, config_error=None, tls=decision,
-                               monotonic=lambda: self.now[0], bind_retry=30.0)
+                               monotonic=lambda: self.now[0], bind_retry=30.0, **options)
         self.addAsyncCleanup(web.stop)
         return web
 
@@ -381,6 +390,79 @@ class InProcessListenerTests(unittest.IsolatedAsyncioTestCase):
         await listener.poll()
         self.assertEqual(changes()[1:], [('cli', {'source': 'cli', 'invalidated_sessions': 1})])
         self.assertEqual(listener.status()['state'], 'listening')
+
+    async def test_an_unusable_hub_db_is_retried_like_a_bind_failure(self):
+        db_path = self.state / 'hub.sqlite3'
+        db_path.write_bytes(b'')
+        os.chmod(db_path, 0o644)  # unsafe mode: HubDb.open refuses it
+        listener = self.listener(0)
+        await listener.start()
+        self.assertEqual(listener.status()['state'], 'hub_db_invalid')
+        self.assertIsNone(listener.runner)
+        os.chmod(db_path, 0o600)  # the transient problem is gone
+        self.now[0] += 29.0
+        await listener.poll()
+        self.assertEqual(listener.status()['state'], 'hub_db_invalid')  # not yet due
+        self.now[0] += 1.5
+        await listener.poll()
+        self.assertEqual(listener.status()['state'], 'listening')
+
+    async def wait_closed(self, reader, timeout: float) -> bool:
+        try:
+            return await asyncio.wait_for(reader.read(65536), timeout) == b''
+        except (asyncio.TimeoutError, ConnectionError):
+            return False
+
+    async def test_idle_and_slow_header_connections_are_closed_after_the_keepalive_timeout(self):
+        listener = self.listener(0, keepalive_timeout=0.5)
+        await listener.start()
+        port = listener.status()['port']
+        idle_reader, idle_writer = await asyncio.open_connection('127.0.0.1', port)
+        slow_reader, slow_writer = await asyncio.open_connection('127.0.0.1', port)
+        slow_writer.write(b'GET /login HTTP/1.1\r\nHost: 127.0.0.1')  # headers never finish
+        await slow_writer.drain()
+        try:
+            self.assertTrue(await self.wait_closed(idle_reader, 5), 'idle connection stayed open')
+            self.assertTrue(await self.wait_closed(slow_reader, 5), 'slow-header connection stayed open')
+        finally:
+            idle_writer.close()
+            slow_writer.close()
+
+    async def test_connections_over_the_cap_are_closed_at_once(self):
+        listener = self.listener(0, max_connections=2)
+        await listener.start()
+        port = listener.status()['port']
+        held = [await asyncio.open_connection('127.0.0.1', port) for _ in range(2)]
+        await asyncio.sleep(0.2)
+        try:
+            extra_reader, extra_writer = await asyncio.open_connection('127.0.0.1', port)
+            self.assertTrue(await self.wait_closed(extra_reader, 3), 'third connection was served')
+            extra_writer.close()
+            for reader, _writer in held:
+                self.assertFalse(await self.wait_closed(reader, 0.3), 'held connection was closed')
+        finally:
+            for _reader, writer in held:
+                writer.close()
+        await asyncio.sleep(0.3)
+        reader, writer = await asyncio.open_connection('127.0.0.1', port)
+        try:
+            writer.write(f'GET /login HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nConnection: close\r\n\r\n'.encode())
+            await writer.drain()
+            self.assertTrue((await asyncio.wait_for(reader.read(65536), 5)).startswith(b'HTTP/1.1 200'))
+        finally:
+            writer.close()
+
+    async def test_a_tls_key_readable_by_others_is_served_with_a_warning(self):
+        cert, key = self_signed(Path(self.temp.name))
+        os.chmod(key, 0o644)
+        listener = self.listener(0, tls_pair=(cert, key))
+        await listener.start()
+        status = listener.status()
+        self.assertEqual((status['state'], status['tls']), ('listening', True))
+        self.assertEqual(status['warnings'], ['tls_key_mode:0644'])
+        os.chmod(key, 0o600)
+        decision = config.decide_tls(config.parse_config(b'').web, cert, key)
+        self.assertEqual((decision.state, decision.warnings), ('tls', ()))
 
     async def test_a_corrupt_auth_json_never_opens_the_listener(self):
         (self.state / 'auth.json').write_text('{"schema_version": 1}')

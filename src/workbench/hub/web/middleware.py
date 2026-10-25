@@ -21,7 +21,7 @@ SERVICES: web.AppKey = web.AppKey("services", object)
 CSP = ("default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; "
        "object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'")
 SECURITY_HEADERS = {"Content-Security-Policy": CSP, "X-Content-Type-Options": "nosniff",
-                    "Referrer-Policy": "no-referrer", "X-Frame-Options": "DENY"}
+                    "Referrer-Policy": "same-origin", "X-Frame-Options": "DENY"}
 STATIC_PREFIX = "/static/"
 BODY_LIMIT = 256 * 1024  # SPEC 입력 한도: HTTP 요청 body (form, ``/mcp``) -> 413
 STATIC_CACHE = "public, max-age=3600"

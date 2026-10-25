@@ -33,6 +33,7 @@ from .process import (READY_LOST, READY_MANAGED, READY_STARTED, RECORD_SCHEMA_VE
 LOCAL_PRINCIPAL = Principal.local()
 STOP_SIGNALS = (signal.SIGTERM, signal.SIGINT)
 WATCHDOG_INTERVAL = 2.0
+WEB_POLL_TIMEOUT = 20.0  # one listener poll (auth.json read, audit note, open) never stalls the watchdog
 
 
 def registry_summary(layout: HubLayout) -> dict:
@@ -188,8 +189,8 @@ class Hub:
                 print(f"[workbench] inbox idle close failed: {exc!r}", file=sys.stderr, flush=True)
             if self.web is not None and reason is None:
                 try:
-                    await self.web.poll()
-                except Exception as exc:  # a web problem never stops the Hub
+                    await asyncio.wait_for(self.web.poll(), WEB_POLL_TIMEOUT)
+                except Exception as exc:  # a web problem (or a stuck poll) never stops the Hub
                     print(f"[workbench] web listener poll failed: {exc!r}", file=sys.stderr, flush=True)
             if reason is not None:
                 self.watchdog_reason = reason

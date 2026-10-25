@@ -8,6 +8,7 @@ attacker cannot make the owner queue behind a sleeping lock holder.
 """
 from __future__ import annotations
 
+from dataclasses import dataclass
 import hmac
 import math
 import secrets
@@ -66,43 +67,59 @@ async def get_login(request: web.Request) -> web.Response:
     return login_page(request)
 
 
-def _too_many(request: web.Request, wait: float) -> web.Response:
-    seconds = max(1, math.ceil(wait))
-    return login_page(request, status=429, error=WAIT_TEXT.format(seconds=seconds),
-                      headers={"Retry-After": str(seconds)})
+@dataclass(frozen=True, slots=True)
+class Verdict:
+    """Outcome of :func:`verify_password`: ``generation`` when the password matched, else ``None``
+    with ``retry_after`` (throttled, not verified) or ``unavailable`` (``auth.json`` unreadable)."""
+
+    generation: int | None = None
+    delay: int = 0
+    retry_after: int | None = None
+    unavailable: bool = False
 
 
-async def verify_password(request: web.Request, password: object, *, actor: str = "anonymous"):
+def wait_headers(verdict: Verdict) -> dict:
+    return {"Retry-After": str(verdict.retry_after)}
+
+
+def wait_text(verdict: Verdict) -> str:
+    return WAIT_TEXT.format(seconds=verdict.retry_after)
+
+
+async def verify_password(request: web.Request, password: object, *, actor: str = "anonymous") -> Verdict:
     """The throttled, serialized password check shared by login and the web password change.
 
-    Returns the matched generation, or a ready response (429 wait, 403 wrong password, 503).
-    A wrong password counts as a login failure and is audited ``login_failure``.
+    A wrong password counts as a login failure and is audited ``login_failure``; a throttled
+    attempt is not verified at all. The caller renders the page for the verdict.
     """
     services = request.app[SERVICES]
     throttle, address = services.throttle, request.remote
     if not throttle.try_enter():
-        return _too_many(request, 1)
+        return Verdict(retry_after=1)
     try:
         async with services.login_lock:
             now = float(services.clock())
             wait = await services.blocking(throttle.check, address, now)
             if wait > 0:
-                return _too_many(request, wait)
-            delay = await services.blocking(throttle.delay_for, address)
+                return Verdict(retry_after=max(1, math.ceil(wait)))
+            delay = await services.blocking(throttle.delay_for, address, now)
             try:
                 generation = await services.blocking(services.passwords.verify,
                                                      password if isinstance(password, str) else "")
             except auth.AuthInvalid:
-                return web.Response(status=503, text="password_unavailable")
+                return Verdict(unavailable=True)
             if generation is None:
                 await services.blocking(throttle.record_failure, address, now)
                 await services.blocking(lambda: services.audit.record(
                     "login_failure", actor, address, {"delay_seconds": delay}, now=now))
-                return None, delay
-            await services.blocking(throttle.record_success, address)
-            return generation, delay
+                return Verdict(delay=delay)
+            await services.blocking(throttle.record_success, address, now)
+            return Verdict(generation, delay)
     finally:
         throttle.leave()
+
+
+UNAVAILABLE = "password_unavailable"
 
 
 @public
@@ -111,10 +128,12 @@ async def post_login(request: web.Request) -> web.Response:
     form = await request.post()
     if not _same(request.cookies.get(LOGIN_COOKIE), form.get(LOGIN_FIELD)):
         return refuse(request, 403, "csrf_failed")
-    outcome = await verify_password(request, form.get("password"))
-    if isinstance(outcome, web.StreamResponse):
-        return outcome
-    generation, delay = outcome
+    verdict = await verify_password(request, form.get("password"))
+    if verdict.unavailable:
+        return web.Response(status=503, text=UNAVAILABLE)
+    if verdict.retry_after is not None:
+        return login_page(request, status=429, error=wait_text(verdict), headers=wait_headers(verdict))
+    generation, delay = verdict.generation, verdict.delay
     if generation is None:
         return login_page(request, status=403, error=WRONG_PASSWORD)
     now = float(services.clock())
@@ -192,10 +211,14 @@ async def post_password(request: web.Request) -> web.Response:
         return settings_page(request, status=400, error=MISMATCH_TEXT)
     if auth.password_problem(new) is not None:
         return settings_page(request, status=400, error=LENGTH_TEXT)
-    outcome = await verify_password(request, current, actor="owner")
-    if isinstance(outcome, web.StreamResponse):
-        return outcome
-    generation, _delay = outcome
+    verdict = await verify_password(request, current, actor="owner")
+    if verdict.unavailable:
+        return settings_page(request, status=503, error=UNAVAILABLE)
+    if verdict.retry_after is not None:
+        response = settings_page(request, status=429, error=wait_text(verdict))
+        response.headers.update(wait_headers(verdict))
+        return response
+    generation = verdict.generation
     if generation is None:
         return settings_page(request, status=403, error=WRONG_PASSWORD)
     token, address = request[SESSION_TOKEN], request.remote

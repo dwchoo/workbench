@@ -100,6 +100,12 @@ def web_status_lines(web: dict) -> list[str]:
         lines = [f"web: listening {web.get('url')}"]
         if web.get("insecure_warning"):
             lines.append(f"경고: {INSECURE_WARNING_TEXT}")
+        for warning in web.get("warnings") or ():
+            kind, _, value = str(warning).partition(":")
+            if kind == "tls_key_mode":
+                lines.append(f"경고: TLS key 파일 권한이 {value}입니다. 'chmod 600 <key>'로 본인만 읽게 하세요.")
+            else:
+                lines.append(f"경고: {warning}")
         return lines
     reason = f"{state}:{detail}" if detail else f"{state}"
     line = f"web: not_listening ({reason})"

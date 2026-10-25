@@ -28,7 +28,7 @@ PASSWORD = 'correct horse battery'
 CSP = ("default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; "
        "object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'")
 COMMON_HEADERS = {'Content-Security-Policy': CSP, 'X-Content-Type-Options': 'nosniff',
-                  'Referrer-Policy': 'no-referrer', 'X-Frame-Options': 'DENY'}
+                  'Referrer-Policy': 'same-origin', 'X-Frame-Options': 'DENY'}
 
 
 class WebAppCase(unittest.IsolatedAsyncioTestCase):
@@ -290,7 +290,18 @@ class LoginFailureTests(WebAppCase):
         self.assertEqual(ok.status, 303)
         self.assertEqual(self.audit()[-1][:2], ('login_success', 'owner'))
         self.assertEqual(self.audit()[-1][3], {'delay_seconds': 2})
-        self.assertEqual(self.rows("SELECT count(*) FROM login_state WHERE key NOT LIKE 'meta:%'"), [(0,)])
+        self.assertEqual(self.rows("SELECT count(*) FROM login_state WHERE key LIKE 'addr:%' OR key = 'global'"),
+                         [(0,)])
+
+    async def test_hostile_addresses_raising_the_global_delay_do_not_lock_out_the_owner(self):
+        for _ in range(3):
+            for host in range(1, 10):
+                self.services.throttle.record_failure(f'10.66.0.{host}', now=self.now[0])
+        self.assertEqual(self.services.throttle.check('10.8.0.7', self.now[0]), 30)
+        response = await self.login(PASSWORD)  # this client is 127.0.0.1 (loopback)
+        self.assertEqual(response.status, 303, response.body_text)
+        self.assertEqual(self.rows("SELECT updated_at FROM login_state WHERE key = 'ok:127.0.0.1'"),
+                         [(self.now[0],)])
 
 
 class SessionValidityTests(WebAppCase):
@@ -455,6 +466,17 @@ class WebPasswordChangeTests(WebAppCase):
         self.assertEqual((await self.change(token, csrf, PASSWORD, 'short')).status, 400)
         self.assertEqual(self.passwords.verify(PASSWORD), self.generation)
         self.assertNotIn('password_changed', [row[0] for row in self.audit()])
+
+    async def test_a_throttled_change_re_renders_the_settings_page(self):
+        token, _other, csrf = await self.setup_sessions()
+        for _ in range(4):
+            self.assertEqual((await self.change(token, csrf, 'not the password', self.NEW)).status, 403)
+        response = await self.change(token, csrf, PASSWORD, self.NEW)
+        self.assertEqual((response.status, response.headers.get('Retry-After')), (429, '1'))
+        self.assertIn('action="/settings/password"', response.body_text)
+        self.assertNotIn('action="/login"', response.body_text)
+        self.assertIsNone(set_cookie(response, 'wb_hub_login'))
+        self.assertEqual(self.passwords.verify(PASSWORD), self.generation)
 
     async def test_change_needs_csrf(self):
         token, _other, _csrf = await self.setup_sessions()

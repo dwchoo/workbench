@@ -338,6 +338,41 @@ class LoginDelayTests(DbCase):
         self.assertEqual(throttle.check('10.0.0.9', T0 + 10), 16, 'global 25 // 3 = 8 -> f(8) = 16 s')
         self.assertLess(real_time.monotonic() - started, 1.0, 'check never sleeps')
 
+    def hostile(self, throttle, now: float, rounds: int = 3) -> None:
+        """Nine LAN addresses fail ``rounds`` times each: 27 failures, global 27 // 3 = 9 -> f(9) = 30 s."""
+        for _ in range(rounds):
+            for host in range(1, 10):
+                throttle.record_failure(f'10.66.0.{host}', now=now)
+
+    def test_a_recent_successful_address_skips_the_global_delay_but_not_its_own(self):
+        throttle = auth.LoginThrottle(self.db)
+        throttle.record_success('10.8.0.2', now=T0)
+        self.assertEqual(self.rows("SELECT updated_at FROM login_state WHERE key = 'ok:10.8.0.2'"), [(T0,)])
+        self.hostile(throttle, T0 + 10)
+        self.assertEqual(throttle.check('10.8.0.7', T0 + 10), 30, 'an unknown address waits for the global count')
+        self.assertEqual(throttle.check('10.8.0.2', T0 + 10), 0, 'the owner address logs in at once')
+        self.assertEqual(throttle.delay_for('10.8.0.2', now=T0 + 10), 0)
+        for _ in range(5):
+            throttle.record_failure('10.8.0.2', now=T0 + 20)
+        self.assertEqual(throttle.check('10.8.0.2', T0 + 20), 2, 'its own failures still count: f(5) = 2')
+        self.assertEqual(throttle.delay_for('10.8.0.2', now=T0 + 20), 2)
+
+    def test_a_success_older_than_30_days_no_longer_exempts(self):
+        throttle = auth.LoginThrottle(self.db)
+        throttle.record_success('10.8.0.2', now=T0)
+        later = T0 + 30 * DAY + 1
+        self.hostile(throttle, later)
+        self.assertEqual(throttle.check('10.8.0.2', later), 30)
+        self.assertEqual(throttle.delay_for('10.8.0.2', now=later), 30)
+
+    def test_loopback_addresses_skip_the_global_delay(self):
+        throttle = auth.LoginThrottle(self.db)
+        self.hostile(throttle, T0)
+        for addr in ('127.0.0.1', '127.0.0.2', '::1'):
+            self.assertEqual(throttle.check(addr, T0), 0, addr)
+            self.assertEqual(throttle.delay_for(addr, now=T0), 0, addr)
+        self.assertEqual(throttle.check('10.8.0.7', T0), 30)
+
     def test_at_most_a_bounded_number_of_logins_wait_for_verification(self):
         throttle = auth.LoginThrottle(self.db)
         admitted = [throttle.try_enter() for _ in range(auth.LOGIN_PENDING_LIMIT)]

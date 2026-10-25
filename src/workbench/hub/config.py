@@ -202,6 +202,7 @@ class TlsDecision:
     state: str
     context: ssl.SSLContext | None = None
     detail: str | None = None
+    warnings: tuple[str, ...] = ()  # served anyway, shown in status (e.g. ``tls_key_mode:0644``)
 
     @property
     def opens(self) -> bool:
@@ -221,7 +222,14 @@ def decide_tls(web: WebConfig, cert: Path, key: Path) -> TlsDecision:
         context.load_cert_chain(str(cert), str(key))
     except (OSError, ssl.SSLError, ValueError):
         return TlsDecision("tls_invalid", detail="load_failed")
-    return TlsDecision("tls", context)
+    warnings = []
+    try:
+        mode = stat.S_IMODE(os.stat(key).st_mode)
+    except OSError:
+        mode = None
+    if mode is not None and mode != 0o600:
+        warnings.append(f"tls_key_mode:{mode:04o}")  # SPEC: key 0600; a warning, not a refusal
+    return TlsDecision("tls", context, warnings=tuple(warnings))
 
 
 def is_loopback(bind: str) -> bool:

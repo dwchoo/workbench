@@ -24,6 +24,10 @@ from .app import WEBSOCKETS, OriginPolicy, WebServices, create_app
 
 BIND_RETRY = 30.0
 SHUTDOWN_TIMEOUT = 3.0
+KEEPALIVE_TIMEOUT = 15.0  # also closes a connection whose request headers never finish
+MAX_CONNECTIONS = 256
+TLS_HANDSHAKE_TIMEOUT = 10.0
+RETRIED_STATES = frozenset({"bind_failed", "hub_db_invalid"})  # transient: retried every BIND_RETRY s
 
 
 def _log(text: str) -> None:
@@ -42,16 +46,49 @@ def listen_url(scheme: str, host: str, port: int) -> str:
     return f"{scheme}://[{host}]:{port}" if ":" in host else f"{scheme}://{host}:{port}"
 
 
+class _Refuse(asyncio.Protocol):
+    """Over the connection cap: close at once without reading anything."""
+
+    def connection_made(self, transport) -> None:
+        transport.abort()
+
+
+class GuardedSite(web.BaseSite):
+    """``TCPSite`` with a connection cap and a TLS handshake timeout (aiohttp has neither)."""
+
+    __slots__ = ("_host", "_port", "_max_connections")
+
+    def __init__(self, runner: web.BaseRunner, host: str, port: int, *, ssl_context=None,
+                 max_connections: int = MAX_CONNECTIONS):
+        super().__init__(runner, ssl_context=ssl_context)
+        self._host, self._port, self._max_connections = host, port, max_connections
+
+    @property
+    def name(self) -> str:
+        return listen_url("https" if self._ssl_context else "http", self._host, self._port)
+
+    async def start(self) -> None:
+        await super().start()
+        server, limit = self._runner.server, self._max_connections
+
+        def factory():
+            return _Refuse() if len(server.connections) >= limit else server()
+        self._server = await asyncio.get_running_loop().create_server(
+            factory, self._host, self._port, ssl=self._ssl_context, backlog=self._backlog, reuse_address=True,
+            ssl_handshake_timeout=TLS_HANDSHAKE_TIMEOUT if self._ssl_context else None)
+
+
 class WebListener:
     def __init__(self, state_dir: Path, *, config: HubConfig | None, config_error: ConfigInvalid | None,
                  tls: TlsDecision | None, clock: Callable[[], float] = time.time,
                  monotonic: Callable[[], float] = time.monotonic, bind_retry: float = BIND_RETRY,
-                 routes=()):
+                 routes=(), keepalive_timeout: float = KEEPALIVE_TIMEOUT, max_connections: int = MAX_CONNECTIONS):
         self.state_dir = Path(state_dir)
         self.config, self.config_error, self.tls = config, config_error, tls
         self.passwords = auth.PasswordStore(self.state_dir)
         self.clock, self.monotonic, self.bind_retry = clock, monotonic, bind_retry
         self.routes = tuple(routes)
+        self.keepalive_timeout, self.max_connections = keepalive_timeout, max_connections
         self._state: dict = {"state": "password_not_set"}
         self._signature: tuple | None = None
         self._retry_at: float | None = None
@@ -102,7 +139,7 @@ class WebListener:
             return
         signature = await self._blocking(_signature, self.passwords.path)
         changed = signature != self._signature
-        retry_due = (self._state.get("state") == "bind_failed" and self._retry_at is not None
+        retry_due = (self._state.get("state") in RETRIED_STATES and self._retry_at is not None
                      and self.monotonic() >= self._retry_at)
         if changed or retry_due:
             await self._evaluate()
@@ -153,8 +190,9 @@ class WebListener:
         try:
             db = await self._blocking(self._open_db)
         except (auth.HubDbError, OSError) as exc:
-            _log(f"hub.sqlite3 unavailable: {exc}")
-            self._state = {"state": "hub_db_invalid"}
+            _log(f"hub.sqlite3 unavailable: {exc}; retrying in {self.bind_retry:g} s")
+            self._retry_at = self.monotonic() + self.bind_retry
+            self._state = {"state": "hub_db_invalid", "retry_in": self.bind_retry}
             return
         tls = self.tls.state == "tls"
         warn = insecure_warning(web_config.bind, tls=tls)
@@ -162,9 +200,11 @@ class WebListener:
             self.services = WebServices(self.passwords, db, OriginPolicy(web_config.bind, tls, web_config.server_names),
                                         insecure_warning=warn, clock=self.clock)
         runner = web.AppRunner(create_app(self.services, routes=self.routes), access_log=None,
-                               handle_signals=False, shutdown_timeout=SHUTDOWN_TIMEOUT)
+                               handle_signals=False, shutdown_timeout=SHUTDOWN_TIMEOUT,
+                               keepalive_timeout=self.keepalive_timeout)
         await runner.setup()
-        site = web.TCPSite(runner, web_config.bind, web_config.port, ssl_context=self.tls.context)
+        site = GuardedSite(runner, web_config.bind, web_config.port, ssl_context=self.tls.context,
+                           max_connections=self.max_connections)
         try:
             await site.start()
         except BaseException as exc:
@@ -180,7 +220,7 @@ class WebListener:
         port = runner.addresses[0][1]
         url = listen_url("https" if tls else "http", web_config.bind, port)
         self._state = {"state": "listening", "url": url, "tls": tls, "insecure_warning": warn,
-                       "bind": web_config.bind, "port": port}
+                       "bind": web_config.bind, "port": port, "warnings": list(self.tls.warnings)}
         _log(f"listening {url}")
 
     async def stop(self) -> None:

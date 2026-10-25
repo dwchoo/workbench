@@ -105,7 +105,7 @@ class Hub:
         self.early_stop = False  # a stop signal that arrived before the event loop ran
         self.state_identity: tuple[int, int] | None = None
         self.watchdog_reason: str | None = None
-        self.lister = Lister(layout)
+        self.lister = Lister(layout, requests=self._row_requests)
         # TI-10: every inbox commit wakes the dispatcher (it only marks work; it never calls back in)
         self.inbox = InboxService(on_committed=lambda event: self.dispatcher.committed(event))
         self.dispatcher = Dispatcher(self.inbox, self._dispatch_targets)
@@ -254,6 +254,26 @@ class Hub:
         self.inbox.set_projects(ProjectRef(entry.project_id, Path(entry.root), entry.name, check_entry(entry))
                                 for entry in entries)
         return entries
+
+    def _row_requests(self, entries: list[registry.Entry]) -> dict[str, dict]:
+        """``list`` rows (TI-10): each readable project's open request counts and review mode; an inbox that cannot
+        be read (a mismatched entry, a busy or broken file) is ``null`` for both. Executor only."""
+        try:
+            self.sync_projects()
+        except (registry.RegistryError, OSError):
+            return {}
+        rows = {}
+        for entry in entries:
+            counts = mode = None
+            if check_entry(entry) is None:
+                counts = self.inbox.pending_requests(entry.project_id)
+                if counts is not None:
+                    try:
+                        mode = self.inbox.review_mode(LOCAL_PRINCIPAL, entry.project_id)["review_mode"]
+                    except InboxError:
+                        counts = None
+            rows[entry.root] = {"pending_requests": counts, "review_mode": mode}
+        return rows
 
     def _dispatch_targets(self) -> list[ProjectRef]:
         """The registered projects for the dispatcher (its thread); an unreadable registry gives none."""

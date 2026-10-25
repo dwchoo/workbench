@@ -30,6 +30,18 @@ class PendingRequestsTests(unittest.TestCase):
         self.assertEqual(cells[presentation.COLUMNS.index('요청')], '—')
         self.assertNotIn('0', cells[presentation.COLUMNS.index('요청')])
 
+    def test_counts_show_waiting_and_questions_and_none_is_zero(self):
+        def cell(counts) -> str:
+            return presentation.row_cells(row(pending_requests=counts), NOW)[presentation.COLUMNS.index('요청')]
+        counts = {'new': 3, 'reviewing': 1, 'needs_info': 2, 'ready': 0, 'running': 4}
+        self.assertEqual(cell(counts), '대기 3 · 질문 2')
+        self.assertEqual(cell({**counts, 'new': 0, 'needs_info': 0}), '0')
+        self.assertEqual(cell({'new': 'x', 'needs_info': 1}), '—')
+
+    def test_manager_busy_has_its_label(self):
+        cells = presentation.row_cells(row(waits=[{'code': 'manager_busy', 'since': None}]), NOW)
+        self.assertEqual(cells[presentation.COLUMNS.index('대기 사유')], 'manager 작업 중이라 요청 전달 대기')
+
 
 class LabelTests(unittest.TestCase):
     def cell(self, value: dict, column: str) -> str:

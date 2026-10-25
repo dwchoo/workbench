@@ -32,7 +32,7 @@ def _row(entry: registry.Entry, power: str, detail: str | None = None, **fields)
     """A row with SPEC defaults: every field not observed is ``null``/``[]``."""
     row = {"root": entry.root, "name": entry.name, "project_id": entry.project_id, "power": power,
            "power_detail": detail, "task": None, "command": None, "waits": [], "pending_requests": None,
-           "last_activity": None, "backend": None, "observed_at": time.time()}
+           "review_mode": None, "last_activity": None, "backend": None, "observed_at": time.time()}
     row.update(fields)
     return row
 
@@ -260,8 +260,11 @@ class Lister:
     """
 
     def __init__(self, layout: HubLayout, *, workers: int = MAX_WORKERS, timeout: float = OBSERVE_TIMEOUT,
-                 cache_seconds: float = CACHE_SECONDS, clock=time.monotonic):
+                 cache_seconds: float = CACHE_SECONDS, clock=time.monotonic, requests=None):
+        """``requests(entries)`` (TI-10, blocking, run in an executor): ``{root: {pending_requests, review_mode}}``
+        from the project inboxes, laid over the observed rows (never cached with them)."""
         self.layout = layout
+        self.requests = requests
         self.timeout = timeout
         self.cache_seconds = cache_seconds
         self.clock = clock
@@ -282,6 +285,12 @@ class Lister:
         for stale in set(self.cache) - set(entries):
             del self.cache[stale]
         rows = await asyncio.gather(*(self.row(entry, fresh) for entry in entries))
+        if self.requests is not None:
+            try:
+                extra = await loop.run_in_executor(None, self.requests, entries)
+            except Exception:  # an inbox problem leaves the counts unknown, never the list
+                extra = {}
+            rows = [{**row, **extra.get(row["root"], {})} for row in rows]
         return {"observed_at": time.time(), "registry": summary, "rows": list(rows)}
 
     async def row(self, entry: registry.Entry, fresh: bool) -> dict:

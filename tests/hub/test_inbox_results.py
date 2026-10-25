@@ -568,6 +568,110 @@ class WebFullTests(WebResultCase):
                 response = await self.get(f'/requests/{rid}{suffix}')
                 self.assertEqual((response.status, response.headers['Location']), (303, '/login'))
 
+    async def test_non_utf8_pages_are_downloads_and_text_pages_stay_inline(self):
+        rid = self.linked()
+        binary = bytes(range(256))
+        self.backend.logs[('run', RUN)] = binary
+        (self.root_a / 'model.bin').write_bytes(binary)
+        (self.root_a / 'notes.txt').write_text('plain notes\n')
+        for path, body, kind, disposition in (
+                (f'/requests/{rid}/raw?run_id={RUN}', binary, 'application/octet-stream', 'attachment'),
+                (f'/requests/{rid}/artifact?path=model.bin', binary, 'application/octet-stream', 'attachment'),
+                (f'/requests/{rid}/artifact?path=notes.txt', b'plain notes\n', 'text/plain; charset=utf-8', 'inline')):
+            with self.subTest(path=path):
+                status, headers, data = await self.raw_get(path)
+                self.assertEqual((status, data), (200, body))
+                self.assertEqual(headers['Content-Type'], kind)
+                self.assertEqual(headers['Content-Disposition'], disposition)
+                self.assertEqual(headers['X-Content-Type-Options'], 'nosniff')
+
+    async def test_a_malformed_backend_answer_is_an_error_page_without_a_traceback(self):
+        rid = self.linked()
+        self.backend.raw_query = lambda *a, **k: {'status': 'available', 'observed_bytes': 3,
+                                                  'read': {'dataBase64': '!!'}, 'next_offset': None}
+        status, headers, data = await self.raw_get(f'/requests/{rid}/raw?run_id={RUN}')
+        self.assertEqual(status, 503)
+        self.assertNotIn(b'Traceback', data)
+        self.assertTrue(headers['Content-Type'].startswith('text/html'))
+
+
+# --- P2-3: Workbench and credential directories are never served, even under a project root ----------
+
+class ProtectedDirectoryTests(unittest.TestCase):
+    """The project root is a temp HOME holding the hub config/state dirs, ``.omp`` and ``.ssh``; the reader's
+    environment points there (HOME and XDG dirs), so every one of them lies inside the root."""
+
+    def setUp(self):
+        import tempfile
+        from workbench.hub.inbox.service import InboxService, ProjectRef
+        from support.mcp_hub import make_project
+        base = Path(tempfile.mkdtemp(prefix='wb-p23-')).resolve()
+        self.addCleanup(__import__('shutil').rmtree, base, True)
+        self.home, self.project_id = make_project(base, 'home')
+        self.files = {}
+        for relative in ('.config/omp-workbench/hub.toml', '.local/state/omp-workbench/hub/auth.json',
+                         '.omp/agent/agent.db', '.ssh/id_ed25519', 'xdg-config/omp-workbench/hub.toml',
+                         'xdg-state/omp-workbench/hub/hub.sqlite3'):
+            path = self.home / relative
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(f'SECRET {relative}')
+            self.files[relative] = path
+        (self.home / 'work').mkdir()
+        (self.home / 'work' / 'ok.txt').write_text('PUBLIC')
+        self.inbox = InboxService()
+        self.addCleanup(self.inbox.close)
+        self.inbox.set_projects([ProjectRef(self.project_id, self.home, 'home')])
+        self.rid = self.inbox.submit(Principal.owner(), self.project_id, 'T', 'B')['request_id']
+        self.environment = {'HOME': str(self.home), 'XDG_CONFIG_HOME': str(self.home / 'xdg-config'),
+                            'XDG_STATE_HOME': str(self.home / 'xdg-state')}
+        self.reader = results.Results(self.inbox, port=FakeBackend(), environment=self.environment)
+
+    def read(self, path: str) -> dict:
+        return self.reader.artifact(Principal.owner(), self.rid, path, 0, 1000)
+
+    def test_files_under_the_protected_directories_are_forbidden(self):
+        from workbench.hub.inbox.limits import InboxError
+        paths = list(self.files) + ['.ssh', '.omp/agent', str(self.files['.ssh/id_ed25519'])]
+        for path in paths:
+            with self.subTest(path=path):
+                with self.assertRaises(InboxError) as caught:
+                    self.read(path)
+                self.assertEqual(caught.exception.code, 'forbidden')
+                self.assertNotIn('SECRET', str(caught.exception))
+        self.assertEqual(self.read('work/ok.txt')['text'], 'PUBLIC')
+
+    def test_a_protected_directory_is_known_by_identity_not_by_name(self):
+        """``~/.ssh`` reached under another name (a bind-like rename): the opened directory's dev/ino decides."""
+        from workbench.hub.inbox.limits import InboxError
+        os.rename(self.home / '.ssh', self.home / 'keys')
+        os.symlink(self.home / 'keys', self.home / '.ssh')  # ~/.ssh still resolves to the same directory
+        with self.assertRaises(InboxError) as caught:
+            self.read('keys/id_ed25519')
+        self.assertEqual(caught.exception.code, 'forbidden')
+
+    def test_a_project_root_inside_a_protected_directory_serves_nothing(self):
+        from workbench.hub.inbox.service import InboxService, ProjectRef
+        from support.mcp_hub import make_project
+        from workbench.hub.inbox.limits import InboxError
+        nested, nested_id = make_project(self.home / '.ssh', 'proj')
+        (nested / 'a.txt').write_text('INSIDE-SSH')
+        inbox = InboxService()
+        self.addCleanup(inbox.close)
+        inbox.set_projects([ProjectRef(nested_id, nested, 'proj')])
+        rid = inbox.submit(Principal.owner(), nested_id, 'T', 'B')['request_id']
+        reader = results.Results(inbox, port=FakeBackend(), environment=self.environment)
+        with self.assertRaises(InboxError) as caught:
+            reader.artifact(Principal.owner(), rid, 'a.txt', 0, 10)
+        self.assertEqual(caught.exception.code, 'forbidden')
+
+    def test_the_service_names_a_visible_projects_root(self):
+        from workbench.hub.inbox.limits import InboxError
+        self.assertEqual(self.inbox.project_root(Principal.owner(), self.project_id), self.home)
+        outsider = Principal.requester('k', 'r', ['other-project'])
+        with self.assertRaises(InboxError) as caught:
+            self.inbox.project_root(outsider, self.project_id)
+        self.assertEqual(caught.exception.code, 'not_found')
+
 
 # --- T6: the raw page through a real backend's ui_v1 raw_query --------------------------------------
 

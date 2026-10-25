@@ -13,6 +13,7 @@ from __future__ import annotations
 import base64
 from dataclasses import dataclass, field
 import secrets
+import sys
 import time
 from typing import Callable, Iterable
 from urllib.parse import quote, urlencode
@@ -604,15 +605,25 @@ def _page_query(request: web.Request) -> tuple[int, int]:
     return page_bounds(offset, length)
 
 
-def _page_bytes(page: dict) -> bytes:
+def _page_response(page: dict) -> web.Response:
+    """The original bytes: UTF-8 text as inline ``text/plain``, anything else as an ``application/octet-stream``
+    download (never rendered as HTML; ``nosniff`` comes from the middleware)."""
     if "text" in page:
-        return page["text"].encode("utf-8")
-    return base64.b64decode(page["data_base64"])
+        return web.Response(body=page["text"].encode("utf-8"),
+                            headers={"Content-Type": "text/plain; charset=utf-8", **TEXT_HEADERS})
+    return web.Response(body=base64.b64decode(page["data_base64"]),
+                        headers={"Content-Type": "application/octet-stream", "Content-Disposition": "attachment"})
 
 
-def _text_response(data: bytes) -> web.Response:
-    """The original bytes as inline ``text/plain`` (never rendered as HTML; ``nosniff`` comes from the middleware)."""
-    return web.Response(body=data, headers={"Content-Type": "text/plain; charset=utf-8", **TEXT_HEADERS})
+async def _result_call(request: web.Request, function, *args):
+    """A result read off the loop; an unexpected failure is ``internal_error`` (its type goes to the Hub log only)."""
+    try:
+        return await _call(request, function, *args)
+    except InboxError:
+        raise
+    except Exception as exc:
+        print(f"[workbench] result page failed: {type(exc).__name__}", file=sys.stderr, flush=True)
+        raise InboxError("internal_error", "the result could not be read") from None
 
 
 def _raw_link(rid: str, source_id: object) -> render.Markup:
@@ -691,7 +702,7 @@ def full_page(request: web.Request, value: dict, rid: str) -> web.Response:
 async def get_full(request: web.Request) -> web.Response:
     rid = request.match_info["rid"]
     try:
-        value = await _call(request, request.app[PORT].results.full, principal_of(request), rid)
+        value = await _result_call(request, request.app[PORT].results.full, principal_of(request), rid)
     except InboxError as exc:
         return error_page(request, exc)
     return full_page(request, value, rid)
@@ -701,22 +712,22 @@ async def get_raw(request: web.Request) -> web.Response:
     rid = request.match_info["rid"]
     try:
         offset, length = _page_query(request)
-        page = await _call(request, request.app[PORT].results.raw, principal_of(request), rid,
-                           request.query.get("run_id", ""), offset, length)
+        page = await _result_call(request, request.app[PORT].results.raw, principal_of(request), rid,
+                                  request.query.get("run_id", ""), offset, length)
     except InboxError as exc:
         return _result_error(request, exc, rid)
-    return _text_response(_page_bytes(page))
+    return _page_response(page)
 
 
 async def get_artifact(request: web.Request) -> web.Response:
     rid = request.match_info["rid"]
     try:
         offset, length = _page_query(request)
-        page = await _call(request, request.app[PORT].results.artifact, principal_of(request), rid,
-                           request.query.get("path", ""), offset, length)
+        page = await _result_call(request, request.app[PORT].results.artifact, principal_of(request), rid,
+                                  request.query.get("path", ""), offset, length)
     except InboxError as exc:
         return _result_error(request, exc, rid)
-    return _text_response(_page_bytes(page))
+    return _page_response(page)
 
 
 @api

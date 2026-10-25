@@ -21,7 +21,7 @@ import base64
 import os
 from pathlib import Path
 import stat
-from typing import Any
+from typing import Any, Mapping
 import uuid
 
 from .limits import InboxError
@@ -108,28 +108,68 @@ def _page_data(data: bytes) -> dict:
         return {"data_base64": base64.b64encode(data).decode("ascii")}
 
 
-def _raw_piece(result: dict, start: int) -> tuple[bytes, list[dict], int, int | None]:
-    """(bytes, missing ranges, end offset, observed size) of one ``raw_query`` answer (legacy file or segmented)."""
-    read = result.get("read") if isinstance(result.get("read"), dict) else {}
+class _Malformed(ValueError):
+    """A ``raw_query`` answer that does not have the contract's shape."""
+
+
+def _int(value: object) -> int:
+    if type(value) is not int or value < 0:
+        raise _Malformed("not a non-negative integer")
+    return value
+
+
+def _b64(value: object) -> bytes:
+    if not isinstance(value, str):
+        raise _Malformed("dataBase64 is not a string")
+    try:
+        return base64.b64decode(value, validate=True)
+    except ValueError:
+        raise _Malformed("dataBase64 is not base64") from None
+
+
+def _raw_piece(result: dict, start: int, want: int) -> tuple[bytes, list[dict], int, int | None]:
+    """(bytes, missing ranges, end offset, observed size) of one ``raw_query`` answer (legacy file or segmented),
+    clipped to ``[start, start + want)`` whatever the backend sent. A malformed answer raises :class:`_Malformed`."""
+    read = result.get("read")
+    if not isinstance(read, dict):
+        raise _Malformed("read is not an object")
     size = result.get("observed_bytes")
-    if not isinstance(size, int):
-        status = result.get("source_status")
-        size = status.get("observed_bytes") if isinstance(status, dict) else None
-    if isinstance(read.get("dataBase64"), str):
-        data = base64.b64decode(read["dataBase64"], validate=True)
-        return data, [], start + len(data), size if isinstance(size, int) else None
+    if size is None and isinstance(result.get("source_status"), dict):
+        size = result["source_status"].get("observed_bytes")
+    size = None if size is None else _int(size)
+    stop = start + want
+    if "dataBase64" in read:  # legacy file: one run of bytes from ``start``
+        data = _b64(read["dataBase64"])[:want]
+        return data, [], start + len(data), size
+    chunks, gaps = read.get("chunks") or [], read.get("missing") or []
+    if not isinstance(chunks, list) or not isinstance(gaps, list):
+        raise _Malformed("chunks/missing are not lists")
+    pieces = []
+    for chunk in chunks:
+        if not isinstance(chunk, dict) or not isinstance(chunk.get("range"), dict):
+            raise _Malformed("chunk without a range")
+        lo, hi, data = _int(chunk["range"].get("start")), _int(chunk["range"].get("end")), _b64(chunk.get("dataBase64"))
+        if hi - lo != len(data):
+            raise _Malformed("chunk range and data differ")
+        pieces.append((lo, hi, data, None))
+    for gap in gaps:
+        if not isinstance(gap, dict):
+            raise _Malformed("gap is not an object")
+        lo, hi = _int(gap.get("start")), _int(gap.get("end"))
+        if hi < lo:
+            raise _Malformed("gap ends before it starts")
+        pieces.append((lo, hi, None, str(gap.get("reason"))))
     data, missing, end = bytearray(), [], start
-    pieces = [("chunk", chunk["range"]["start"], chunk) for chunk in read.get("chunks") or []
-              if isinstance(chunk, dict) and isinstance(chunk.get("range"), dict)]
-    pieces += [("gap", gap["start"], gap) for gap in read.get("missing") or [] if isinstance(gap, dict)]
-    for kind, _, item in sorted(pieces, key=lambda piece: piece[1]):
-        if kind == "chunk":
-            data += base64.b64decode(item["dataBase64"], validate=True)
-            end = max(end, int(item["range"]["end"]))
+    for lo, hi, chunk, reason in sorted(pieces, key=lambda piece: piece[0]):
+        clip_lo, clip_hi = max(lo, start), min(hi, stop)
+        if clip_hi <= clip_lo:
+            continue
+        if chunk is not None:
+            data += chunk[clip_lo - lo:clip_hi - lo]
         else:
-            missing.append({"start": int(item["start"]), "end": int(item["end"]), "reason": str(item.get("reason"))})
-            end = max(end, int(item["end"]))
-    return bytes(data), missing, end, size if isinstance(size, int) else None
+            missing.append({"start": clip_lo, "end": clip_hi, "reason": reason})
+        end = max(end, clip_hi)
+    return bytes(data), missing, end, size
 
 
 def _last_view(request: dict) -> dict | None:
@@ -152,9 +192,10 @@ class Results:
 
     ``port`` answers ``task_status(root, task_ids, detail=)`` like :class:`BackendResults` (the default)."""
 
-    def __init__(self, inbox, *, port: Any = None):
+    def __init__(self, inbox, *, port: Any = None, environment: Mapping[str, str] | None = None):
         self.inbox = inbox
         self.port = port if port is not None else BackendResults()
+        self.environment = environment  # HOME/XDG for the protected directories (None: ``os.environ`` per read)
 
     summary = staticmethod(summary)
     max_page = MAX_PAGE
@@ -165,9 +206,7 @@ class Results:
 
     def root(self, principal, request: dict) -> Path:
         """The WB project root of a request the principal can see (the inbox's registered project)."""
-        # Package-internal: the service's project table is the one place that knows registered roots and their
-        # availability (a mismatched registry entry is ``project_unavailable``).
-        return Path(self.inbox._project(principal, request["project_id"]).ref.root)
+        return Path(self.inbox.project_root(principal, request["project_id"]))
 
     def _task(self, principal, request: dict, *, detail: bool) -> dict | None:
         """The backend's ``task_status`` item of the linked Task; ``None`` when the backend does not know it."""
@@ -259,27 +298,34 @@ class Results:
         if kind is None:
             raise InboxError("not_found", NOT_FOUND_SOURCE)
         root = self.root(principal, request)
-        data, missing, cursor, size, next_offset = bytearray(), [], offset, None, None
+        data, missing, cursor, size, more, reached = bytearray(), [], offset, None, False, offset
         while cursor < offset + length:
+            want = min(BACKEND_PAGE, offset + length - cursor)
             try:
-                result = self.port.raw_query(root, kind, run_id, cursor, min(BACKEND_PAGE, offset + length - cursor))
+                result = self.port.raw_query(root, kind, run_id, cursor, want)
             except Exception as exc:
                 raise _backend_error(exc) from None
             if not isinstance(result, dict) or result.get("status") not in ("available", "partial"):
                 raise InboxError("not_found", "the raw log of this run is not available")
-            piece, gaps, end, observed = _raw_piece(result, cursor)
+            try:
+                piece, gaps, end, observed = _raw_piece(result, cursor, want)
+                backend_next = result.get("next_offset")
+                backend_next = None if backend_next is None else _int(backend_next)
+            except _Malformed:
+                raise InboxError("backend_unreachable", "the project's backend gave an answer that is not readable") \
+                    from None
             size = observed if observed is not None else size
             if cursor == offset and size is not None and offset > size:
                 raise InboxError("invalid_input", "offset is past the end of the log")
             data += piece
             missing += gaps
-            next_offset = result.get("next_offset") if isinstance(result.get("next_offset"), int) else None
-            if next_offset is None or end <= cursor:
-                next_offset = None
+            reached = max(reached, end)
+            # more after ``end``: the size says so, else the backend's own next offset does
+            more = end < size if size is not None else backend_next is not None and backend_next >= end
+            if not more or end <= cursor:
                 break
             cursor = end
-        if next_offset is not None and next_offset >= offset + length:
-            next_offset = offset + length
+        next_offset = reached if more and reached > offset else None
         return {"run_id": run_id, "source_kind": kind, "offset": offset, "length": len(data), "size": size,
                 "next_offset": next_offset, **_page_data(bytes(data)), "missing": missing}
 
@@ -290,16 +336,22 @@ class Results:
         request = self.request(principal, request_id)
         offset, length = page_bounds(offset, length)
         registered = self.root(principal, request)
-        root = os.path.realpath(registered)
-        parts = artifact_parts(root, str(registered), path)
-        fd = open_artifact(root, parts)
+        protected = protected_directories(os.environ if self.environment is None else self.environment)
         try:
-            size = os.fstat(fd).st_size
-            if offset > size:
-                raise InboxError("invalid_input", "offset is past the end of the file")
-            data = os.pread(fd, min(length, size - offset), offset)
-        finally:
-            os.close(fd)
+            root = os.path.realpath(registered)
+            parts = artifact_parts(root, str(registered), path)
+            refuse_protected(root, parts, protected)  # before the open: a protected directory is never "a file"
+            fd = open_artifact(root, parts)
+            try:
+                refuse_protected(root, parts, protected, opened=fd)  # the opened file's real ancestors
+                size = os.fstat(fd).st_size
+                if offset > size:
+                    raise InboxError("invalid_input", "offset is past the end of the file")
+                data = os.pread(fd, min(length, size - offset), offset)
+            finally:
+                os.close(fd)
+        except OSError:  # a path changing under the judgement or the open: nothing was read
+            raise InboxError("not_found", NO_FILE) from None
         end = offset + len(data)
         return {"path": "/".join(parts), "offset": offset, "length": len(data), "size": size,
                 "next_offset": end if end < size else None, **_page_data(data)}
@@ -321,8 +373,11 @@ def artifact_parts(root: str, registered: str, path: object) -> tuple[str, ...]:
     depth (any case), or when resolving it differs from its lexical form (a symlink anywhere on the way, wherever it
     points). Empty, NUL or over-long paths, and the root itself, are ``invalid_input``.
     """
-    if (not isinstance(path, str) or not path or "\x00" in path
-            or len(path.encode("utf-8", "surrogatepass")) > MAX_PATH_BYTES):
+    try:
+        encoded = path.encode("utf-8") if isinstance(path, str) else None  # a lone surrogate cannot name a file
+    except UnicodeEncodeError:
+        encoded = None
+    if encoded is None or not encoded or b"\x00" in encoded or len(encoded) > MAX_PATH_BYTES:
         raise InboxError("invalid_input", "artifact_path must be a path under the project root")
     if ".." in path.split(os.sep):  # never resolved: ``a/../b`` may cross a symlink at ``a``
         raise InboxError("forbidden", OUTSIDE)
@@ -343,7 +398,11 @@ def artifact_parts(root: str, registered: str, path: object) -> tuple[str, ...]:
         raise InboxError("forbidden", OUTSIDE)
     if not parts:
         raise InboxError("invalid_input", NOT_A_FILE)
-    if os.path.realpath(given) != os.path.join(root, *parts):  # judged on the resolved path: no symlink on the way
+    try:
+        resolved = os.path.realpath(given)
+    except OSError:  # the path changed while it was resolved
+        raise InboxError("not_found", NO_FILE) from None
+    if resolved != os.path.join(root, *parts):  # judged on the resolved path: no symlink on the way
         raise InboxError("forbidden", OUTSIDE)
     return parts
 
@@ -422,3 +481,86 @@ def open_artifact(root: str, parts: tuple[str, ...]) -> int:
 def _same_file(now: os.stat_result, judged: os.stat_result) -> bool:
     return (stat.S_ISREG(now.st_mode) and now.st_nlink == 1
             and (now.st_dev, now.st_ino) == (judged.st_dev, judged.st_ino))
+
+
+# --- protected directories (security review P2-3) ---------------------------------------------------------
+def protected_directories(environment: Mapping[str, str]) -> frozenset[tuple[int, int]]:
+    """``(st_dev, st_ino)`` of the Hub config and state directories, ``~/.omp`` and ``~/.ssh`` (those that exist).
+
+    Identity, not names: a directory reached under another name or through a project root is still the same one."""
+    from ..config import config_dir
+    from ..paths import hub_layout
+    home = environment.get("HOME") or os.path.expanduser("~")
+    candidates = [config_dir(environment), Path(home) / ".config" / "omp-workbench",
+                  hub_layout(environment).state_dir.parent, Path(home) / ".local" / "state" / "omp-workbench",
+                  Path(home) / ".omp", Path(home) / ".ssh"]
+    found = set()
+    for candidate in candidates:
+        try:
+            info = os.stat(candidate)
+        except (OSError, ValueError):
+            continue
+        if stat.S_ISDIR(info.st_mode):
+            found.add((info.st_dev, info.st_ino))
+    return frozenset(found)
+
+
+def _identity(info: os.stat_result) -> tuple[int, int]:
+    return info.st_dev, info.st_ino
+
+
+def refuse_protected(root: str, parts: tuple[str, ...], protected: frozenset, *, opened: int | None = None) -> None:
+    """``forbidden`` when the root, any directory above it, or any directory on ``parts`` (the leaf too, when it is
+    a directory) is a protected directory. With ``opened`` (the artifact's descriptor) the walk also confirms that the
+    directory entry it reaches is that same single-link file, so the checked chain is the file's real ancestry."""
+    if not protected:
+        return
+    flags = os.O_PATH | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
+    try:
+        current = os.open(root, flags)
+    except OSError:
+        if opened is not None:
+            raise InboxError("forbidden", OUTSIDE) from None
+        return
+    try:
+        # the root and its ancestors, by walking ``..`` until it stops changing (``/``)
+        probe = os.dup(current)
+        try:
+            seen = None
+            while True:
+                info = os.fstat(probe)
+                if _identity(info) in protected:
+                    raise InboxError("forbidden", OUTSIDE)
+                if _identity(info) == seen:
+                    break
+                seen = _identity(info)
+                parent = os.open("..", os.O_PATH | os.O_DIRECTORY | os.O_CLOEXEC, dir_fd=probe)
+                os.close(probe)
+                probe = parent
+        finally:
+            os.close(probe)
+        for index, name in enumerate(parts):
+            try:
+                info = os.stat(name, dir_fd=current, follow_symlinks=False)
+            except OSError:
+                if opened is not None:
+                    raise InboxError("forbidden", OUTSIDE) from None
+                return  # the open reports a missing path
+            if stat.S_ISDIR(info.st_mode) and _identity(info) in protected:
+                raise InboxError("forbidden", OUTSIDE)
+            if index == len(parts) - 1:
+                if opened is not None and _identity(info) != _identity(os.fstat(opened)):
+                    raise InboxError("forbidden", OUTSIDE)
+                return
+            try:
+                child = os.open(name, flags, dir_fd=current)
+            except OSError:
+                if opened is not None:
+                    raise InboxError("forbidden", OUTSIDE) from None
+                return
+            os.close(current)
+            current = child
+            if _identity(os.fstat(current)) in protected:
+                raise InboxError("forbidden", OUTSIDE)
+    finally:
+        os.close(current)

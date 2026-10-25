@@ -303,6 +303,11 @@ class InboxService:
             raise InboxError("project_unavailable", project.ref.unavailable)
         return project
 
+    def project_root(self, principal: Principal, project_id: str) -> Path:
+        """The registered root of a project ``principal`` may use (``not_found`` outside its scope,
+        ``project_unavailable`` for a mismatched registry entry). TI-14 artifact reads start here."""
+        return Path(self._project(principal, project_id).ref.root)
+
     def _locate(self, principal: Principal, request_id: object) -> _Project:
         if not isinstance(request_id, str):
             raise InboxError("not_found", _NOT_FOUND)

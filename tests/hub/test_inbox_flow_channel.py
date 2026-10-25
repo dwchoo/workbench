@@ -25,7 +25,8 @@ from workbench.backend.client import UiClient  # noqa: E402
 from workbench.contracts.ui_v1 import ClientType  # noqa: E402
 
 RUN_KEYS = {'run_id', 'status', 'exit_code', 'started_at', 'ended_at', 'stopped_by', 'log_sources'}
-TASK_KEYS = {'task_id', 'exists', 'status', 'closed_reason', 'revision', 'cancel_requested_by', 'runs', 'commands'}
+TASK_KEYS = {'task_id', 'exists', 'status', 'closed_reason', 'revision', 'cancel_requested_by', 'runs', 'commands',
+             'command'}  # TI-13: the running command (additive)
 
 
 class ChannelCase(unittest.TestCase):

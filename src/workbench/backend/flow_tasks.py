@@ -103,6 +103,7 @@ import functools
 import json
 import os
 from pathlib import Path
+import sys
 import threading
 import time
 from typing import Any, Callable, Iterator, Mapping
@@ -271,6 +272,15 @@ CANCEL_NOTICE_AFTER_RESUME_DETAIL = ("Workbench is paused: the worker is told of
 CANCEL_NOTICE_AFTER_HOLD_DETAIL = ("Automatic delivery to the worker is held: the worker is told of the cancel once "
                                    "the hold lifts (the notice was not sent yet and is delivered once).")
 CANCEL_NOTICE_FAILED_DETAIL = "The Task is cancelled, but the cancel notice could not be queued for the worker."
+USER_CANCEL_CHANGED_DETAIL = ("The Task or its running command changed after the user confirmed the cancel; "
+                              "nothing was cancelled or stopped.")
+USER_CANCEL_MESSAGE = "cancelled by the user"
+# a user stop that ended at once: nothing was signalled, so the cancel answer must not say "stopping"
+USER_STOP_NOT_STOPPING = frozenset({"refused", "not_found", "already_exited", "error"})
+
+
+def _flow_log(text: str) -> None:
+    print(f"[workbench] {text}", file=sys.stderr, flush=True)
 HOST_COMMAND_NOTE = "Cancel does not stop the command; stop it with terminal stop / stop_command."
 
 
@@ -410,6 +420,8 @@ class FlowTask:
     # CS-O01 (FU-D03): "armed" from the manager's cancel of this free-work Task that sent the worker a cancel
     # notice, until the notice reached the worker, one task-less terminal command was refused or a newer Task exists
     cancel_fence: str | None = None
+    # TI-13: the user's cancel of a Task that was already closed otherwise (the earlier close and record stay)
+    user_cancel: dict[str, Any] | None = None
     report_seq: int = 0  # CS-O02 (FU-D01): the last ``report_seq`` given to a worker to_manager message of this Task
 
     def set_status(self, status: str) -> None:
@@ -493,6 +505,7 @@ class TaskFlow:
         self._lifecycle = lifecycle
         self._poll_interval = poll_interval
         self._collect_slice = collect_slice
+        self.user_stop_answer_wait = 0.5  # TI-13: how long a user stop that ends at once is waited for
         self._lock = threading.RLock()
         self._wake = threading.Condition(self._lock)
         self._stop = False
@@ -1437,19 +1450,13 @@ class TaskFlow:
             return HandoffDecision(rejected("unknown_task", detail=UNKNOWN_TASK_DETAIL))
         if task.status == "closed":
             return HandoffDecision(rejected("task_closed") | {"closed_reason": task.closed_reason})
+        if (task.cancel_requested or {}).get("by") == "user":  # TI-13: the user's cancel is under way; it stays
+            return HandoffDecision({"status": "cancel_requested", "task_id": task_id, "detail": CANCEL_WAIT_DETAIL})
         record = {"by": "manager", "message": request.args["message"][:SUMMARY_MAX], "at": _now(),
                   **self._standing(request)}
-        self._record({"type": "cancel_requested", "task_id": task_id, **record})
-        if self._following == task_id:  # the runner drives a host run: it ends the Task after the exit
-            self._withdraw(task_id)
-            task.cancel_requested = record
-            task.set_status("cancelling")
-            task.held_reason = "cancel_waiting_for_host_exit"
-            self._save_task(task)
-            self._wake.notify_all()
+        cancel, notice = self._apply_cancel(task, record)
+        if cancel == "cancel_requested":
             return HandoffDecision({"status": "cancel_requested", "task_id": task_id, "detail": CANCEL_WAIT_DETAIL})
-        task.cancel_requested = record
-        notice = self._finish_cancel(task, task.run_id, fence=task.kind == "work")
         result: dict[str, Any] = {"status": "cancelled", "task_id": task_id, "worker_notified": notice == "queued"}
         if notice not in ("queued", "not_needed"):
             # CW-16 fix-02 (P2-1): the notice waits (never submitted, so no replay) and goes once the pause/hold
@@ -1459,6 +1466,94 @@ class TaskFlow:
                                 else CANCEL_NOTICE_AFTER_HOLD_DETAIL if notice.startswith("after_hold")
                                 else CANCEL_NOTICE_FAILED_DETAIL)
         return HandoffDecision(result)
+
+    def _apply_cancel(self, task: FlowTask, record: dict[str, Any]) -> tuple[str, str | None]:
+        """Under the flow lock: the cancel procedure for ``task`` (manager or user, ``record["by"]``). A host run the
+        runner drives is ``cancelling`` until its exit (``("cancel_requested", None)``); otherwise the Task closes at
+        once (``("cancelled", <worker notice state>)``)."""
+        task_id = task.task_id
+        self._record({"type": "cancel_requested", "task_id": task_id, **record})
+        if self._following == task_id:  # the runner drives a host run: it ends the Task after the exit
+            self._withdraw(task_id)
+            task.cancel_requested = record
+            task.set_status("cancelling")
+            task.held_reason = "cancel_waiting_for_host_exit"
+            self._save_task(task)
+            self._wake.notify_all()
+            return "cancel_requested", None
+        task.cancel_requested = record
+        return "cancelled", self._finish_cancel(task, task.run_id, fence=task.kind == "work")
+
+    # -- the user's cancel (Task Inbox TI-13, SPEC "취소") ------------------------------------------
+    def cancel_by_user(self, task_id: str, reason: str | None, expect: Mapping[str, Any], *,
+                       request_id: str | None = None) -> dict[str, Any]:
+        """The user's cancel of one Task (the Hub's ``cancel_task``): ``expect`` is what the user confirmed,
+        ``{status, command_id}`` (the Task status and its running Workbench command, or None). Anything else now is
+        ``rejected: task_changed`` and nothing is cancelled or stopped. The command is read under the flow lock
+        together with the status (review P1: no window between the check and the cancel).
+
+        A Task already closed otherwise (the manager's cancel, a replacement) keeps its close and its earlier
+        cancel record: ``_apply_cancel`` is not run again (no second worker notice, ``by`` is not rewritten); the
+        user's cancel is recorded beside it (``user_cancel``) so the request can close as the user's cancel, and the
+        confirmed command that still runs gets the user's stop."""
+        with self._lock:
+            running = self._running_command_id(task_id)
+            task = self.tasks.get(task_id)
+            if task is None:
+                return rejected("task_changed", detail="task_id: no such Task", task_status=None, command_id=None)
+            if (task.cancel_requested or {}).get("by") == "user" or task.user_cancel is not None:
+                # asked again: the same answer, nothing more (no second record, no second stop)
+                return {"status": "accepted", "cancel": "cancelled" if task.status == "closed" else "cancel_requested",
+                        "stop": None, "repeat": True}
+            if task.status != expect.get("status") or running != expect.get("command_id"):
+                return rejected("task_changed", detail=USER_CANCEL_CHANGED_DETAIL, task_status=task.status,
+                                command_id=running)
+            record = {"by": "user", "message": (reason or USER_CANCEL_MESSAGE)[:SUMMARY_MAX], "at": _now(),
+                      "request_id": request_id}
+            if task.status == "closed":
+                self._record({"type": "user_cancel_after_close", "task_id": task_id,
+                              "closed_reason": task.closed_reason, **record})
+                task.user_cancel = record
+                self._save_task(task)
+                cancel = "cancelled"
+            else:
+                cancel, _notice = self._apply_cancel(task, record)
+        stop = None if running is None else self._start_user_stop(task_id, running)
+        return {"status": "accepted", "cancel": cancel, "stop": stop}
+
+    def _start_user_stop(self, task_id: str, command_id: str) -> dict[str, Any]:
+        """CS-O10: the user's stop of the command the user confirmed (``requested_by: user``, the same escalation and
+        records as the UI stop key), on its own thread: the stop waits up to its call time and the caller does not.
+        A stop that ends at once (refused, not_found, already exited: nothing was signalled) is answered as that
+        within ``user_stop_answer_wait`` seconds; otherwise ``stopping``. Every outcome is logged."""
+        service = self.command_stop
+        if service is None:
+            _flow_log(f"user stop of {command_id} (Task {task_id}): command_stop_unavailable")
+            return {"status": "refused", "reason": "command_stop_unavailable", "command_id": command_id}
+        done = threading.Event()
+        outcome: dict[str, Any] = {}
+
+        def run() -> None:
+            try:
+                result = service.stop("user", command_id, reason=f"user cancel of Task {task_id}")
+            except Exception as exc:  # never raises by contract; logged when it does
+                result = {"status": "error", "reason": f"stop_failed:{type(exc).__name__}"}
+            outcome.update(result if isinstance(result, Mapping) else {"status": "error"})
+            done.set()
+            _flow_log(f"user stop of {command_id} (Task {task_id}): {outcome.get('status')}"
+                      + (f" ({outcome.get('reason')})" if outcome.get("reason") else ""))
+        threading.Thread(target=run, name="user-cancel-stop", daemon=True).start()
+        if done.wait(self.user_stop_answer_wait) and outcome.get("status") in USER_STOP_NOT_STOPPING:
+            return {"status": outcome.get("status"), "reason": outcome.get("reason"), "command_id": command_id}
+        return {"status": "stopping", "command_id": command_id}
+
+    def _running_command_id(self, task_id: str) -> str | None:
+        """The id of the Task's Workbench command that has not ended (worker terminal or experiment), else None.
+        Called under the flow lock (an RLock; the terminal service's view takes only its own lock)."""
+        for item in self._host_command_fields(task_id)["host_commands"]:
+            if isinstance(item.get("command_id"), str):
+                return item["command_id"]
+        return None
 
     def _cancel_notice_state(self) -> str:
         """Where a cancel notice queued now stands: ``queued`` (the lane delivers it now), ``after_resume`` (paused)
@@ -1479,7 +1574,8 @@ class TaskFlow:
             with self._repository() as repository:
                 current = repository.get_current_run(task.task_id)
                 if current is not None and current.get("run_id") == run_id:
-                    repository.cancel_run(run_id, "cancelled_by_manager")
+                    repository.cancel_run(run_id, "cancelled_by_user" if record.get("by") == "user"
+                                          else "cancelled_by_manager")
                 cancelled_run = repository.get_run(run_id)
         task.last_result = {"run_id": run_id, "outcome": "cancelled"}
         revision = task.run_revision

@@ -253,7 +253,9 @@ slot and push no ``state``. An older backend answers ``unsupported_type``.
   closed_reason, revision, cancel_requested_by, runs: [{run_id, status,
   exit_code, started_at, ended_at, stopped_by, log_sources: [{source_kind,
   source_id}]}], commands: [{command_id, owner, exit_code, log_path}],
-  reports}]`` in request order; ``reports`` (``[{message_id, kind, at, text}]``,
+  command, reports}]`` in request order; ``command`` (TI-13, additive) is the
+  Task's Workbench command that has not ended, ``{command_id, owner, label,
+  state (running | stopping | unknown)}``, or null; ``reports`` (``[{message_id, kind, at, text}]``,
   ``text`` <= 64 KiB) only with ``detail``; an unknown id is ``{task_id,
   exists: false}``. Read only: no model call, no bridge frame. The whole call
   has a bounded time (the backend's UI loop is not held): an id not read in
@@ -261,8 +263,12 @@ slot and push no ``state``. An older backend answers ``unsupported_type``.
   true`` (a partial answer; ask again for those ids).
 - ``cancel_task{task_id, request_id, expect: {status (one of
   :data:`TASK_STATUSES`), command_id (canonical UUID or null)}, reason (<= 1000
-  chars or null)}`` -> ``{cancel, stop}`` (a backend without it answers
-  ``unsupported_type``).
+  chars or null)}`` -> ``{cancel ("cancelled" | "cancel_requested"), stop
+  (null | {status: "stopping", command_id})}`` (a backend without it answers
+  ``unsupported_type``). A Task whose status or running Workbench command is
+  not ``expect`` is refused with ``task_changed`` and nothing is cancelled or
+  stopped; a repeated cancel of a Task the user already cancelled answers the
+  same ``cancel`` with ``stop: null`` and ``repeat: true``.
 
 Automation state (CW-18 U3; additive)
 -------------------------------------
@@ -417,6 +423,7 @@ class Reason(StrEnum):
     INTERNAL_ERROR = "internal_error"
     HOST_SHELL_AUTOMATION = "host_shell_automation"
     RESUME_NOT_RECONCILED = "resume_not_reconciled"
+    TASK_CHANGED = "task_changed"  # Task Inbox cancel_task: the Task or its command is not what was confirmed
 
 
 # Requests whose ``id`` is mandatory. ``hello`` is answered by welcome/reject.

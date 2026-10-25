@@ -19,6 +19,7 @@ from workbench.backend.paths import (BackendLocked, DataDirError, InstanceLock, 
 from workbench.contracts import hub_v1
 
 from . import registry
+from .inbox.dispatch import Dispatcher
 from .inbox.limits import InboxError
 from .inbox.service import OPEN_STATES, InboxService, Principal, ProjectRef
 from .status import Lister, check_entry
@@ -105,7 +106,9 @@ class Hub:
         self.state_identity: tuple[int, int] | None = None
         self.watchdog_reason: str | None = None
         self.lister = Lister(layout)
-        self.inbox = InboxService()
+        # TI-10: every inbox commit wakes the dispatcher (it only marks work; it never calls back in)
+        self.inbox = InboxService(on_committed=lambda event: self.dispatcher.committed(event))
+        self.dispatcher = Dispatcher(self.inbox, self._dispatch_targets)
         # Verified backend connections by project id (one each): outside ``tasks`` and its limit (hub_v1).
         self.backend_tasks: dict[str, asyncio.Task] = {}
 
@@ -252,6 +255,14 @@ class Hub:
                                 for entry in entries)
         return entries
 
+    def _dispatch_targets(self) -> list[ProjectRef]:
+        """The registered projects for the dispatcher (its thread); an unreadable registry gives none."""
+        try:
+            entries = self.sync_projects()
+        except (registry.RegistryError, OSError):
+            return []
+        return [ProjectRef(entry.project_id, Path(entry.root), entry.name, check_entry(entry)) for entry in entries]
+
     def _registered_project(self, root: object) -> str:
         """The project id of the registry entry for ``root`` (an absolute path; resolved like the registry)."""
         if not isinstance(root, str) or not os.path.isabs(root):
@@ -353,6 +364,7 @@ class Hub:
             self.request_stop()
         server = await asyncio.start_unix_server(self.connection, sock=self.listener)
         watchdog = asyncio.create_task(self.watchdog())
+        self.dispatcher.start()  # TI-10: request notices to each running project's manager
         await self.stop_event.wait()
         watchdog.cancel()
         server.close()
@@ -361,6 +373,7 @@ class Hub:
             task.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
         self.lister.close()
+        await loop.run_in_executor(None, self.dispatcher.close)  # before the inbox closes under it
         await loop.run_in_executor(None, self.inbox.close)  # releases every inbox.lock
 
     def new_owner_possible(self) -> bool:

@@ -362,7 +362,9 @@ const TERMINAL_ABANDON_TOOL = "terminal_wait_abandoned";
 const NOTICE_TYPES: Record<Role, Set<unknown>> = {
 	worker: new Set(["terminal_check", "terminal_done", "status_check"]),
 	manager: new Set(["worker_stalled", "report_delivery_unknown", "worker_restarted", "manager_recovery",
-		"worker_terminal_done", "backend_restarted"]),
+		"worker_terminal_done", "backend_restarted",
+		// Task Inbox (TI-10): a request for the manager to review; the same idle/empty-composer rule applies
+		"inbox_request"]),
 };
 // p27-cd68-fix-01 P2-2, measured on OMP 18.6.1 (fake provider, /tmp/cd68fix-probe): each subagent session runs its
 // own instance of this extension (factory and session_start again, same process) and its ExtensionContext has

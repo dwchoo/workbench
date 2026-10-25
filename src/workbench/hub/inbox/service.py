@@ -36,6 +36,13 @@ TASK_VIEW_MAX_BYTES = 256 * 1024  # SPEC schema: task_view ≤ 256 KiB
 # Task statuses (SPEC "Task 동기화") that make a linked request RUNNING rather than READY.
 RUNNING_TASK_STATUSES = frozenset({"running", "waiting_report", "held", "cancelling", "finished", "blocked"})
 REVIEW_ACTIONS = ("begin_review", "ask", "comment", "reject", "close")
+UNKNOWN_DELIVERY_COMMENT = "manager 전달 여부 확인 불명"
+REQUEUED_COMMENT = ("backend가 다시 시작되어(이전 manager 전달은 확인되지 않음) 이 요청을 manager에게 다시 전달합니다.")
+EXCERPT_MAX = 1000  # SPEC ``inbox_notice`` fields.excerpt
+# The last event of a request that names the notice of its pending round (SPEC ``event`` values).
+NOTICE_EVENT_SOURCES = {"submitted": "new", "reopened": "new", "state_set": "new", "link_voided": "new",
+                        "answered": "answered", "updated": "updated", "revised": "revised",
+                        "linked_task_closed": "linked_task_closed", "cancelled": "cancelled"}
 _NOT_FOUND = "request not found"
 
 # SPEC "Principal과 권한". Reading is checked first (hidden → not_found), then the operation.
@@ -893,13 +900,16 @@ class InboxService:
         return self._run(project, lambda: self._write(project, None, change), wait)
 
     def mark_offered(self, request_id: str, delivery_id: str, backend: str, *, event: str | None = None,
-                     wait: bool = True) -> Any:
+                     version: int | None = None, wait: bool = True) -> Any:
         """Dispatcher: the pending round's notice (``event``: new, answered, updated, revised, cancelled,
         linked_task_closed) was queued by ``backend`` (``pid:start_ticks``). A CLOSED request can only
-        be offered as its ``cancelled`` notice (SPEC "취소": the manager hears of a delivered round)."""
+        be offered as its ``cancelled`` notice (SPEC "취소": the manager hears of a delivered round).
+        ``version``: the row version :meth:`reserve_delivery` returned; any change since refuses."""
         def fn(tx: _Tx, row: sqlite3.Row) -> dict:
             if row["delivery_state"] != "pending":
                 raise self._invalid(row, "no pending round to offer")
+            if version is not None and (row["version"] != version or row["delivery_id"] != delivery_id):
+                raise self._invalid(row, "the request changed after the delivery was reserved")
             if row["state"] == "CLOSED" and event != "cancelled":
                 raise self._invalid(row, "a closed request is only offered as a cancelled notice")
             new = self._set(tx, row, delivery_state="offered", delivery_id=delivery_id, delivery_backend=backend,
@@ -916,20 +926,90 @@ class InboxService:
             raise InboxError("invalid_input", f"unknown delivery outcome {outcome!r}")
 
         def fn(tx: _Tx, row: sqlite3.Row) -> dict:
-            if row["delivery_state"] != "offered" or row["delivery_id"] != delivery_id:
+            # The result may come before the dispatcher marked the reserved notice offered (pending with
+            # this delivery id), and after a notice call whose answer was lost (unknown, TI-10).
+            if row["delivery_state"] not in ("offered", "pending", "unknown") or row["delivery_id"] != delivery_id:
                 raise self._invalid(row, "the delivery is not the one on offer")
             state = row["state"]
+            if outcome == "unknown" and row["delivery_state"] == "unknown":
+                return {"state": state, "version": row["version"]}  # already recorded
             to = "REVIEWING" if state == "NEW" and outcome in ("delivered", "unknown") else state
             if outcome == "unknown":
-                self._comment(tx, request_id, "system", "manager 전달 여부 확인 불명")
+                self._comment(tx, request_id, "system", UNKNOWN_DELIVERY_COMMENT)
             elif outcome in ("rejected", "dropped"):
                 self._comment(tx, request_id, "system", f"manager 전달 실패({outcome}). 다시 보냅니다.")
             delivery = {"delivered": "delivered", "unknown": "unknown"}.get(outcome, "pending")
-            new = self._set(tx, row, state=to, delivery_state=delivery)
+            extra = {"delivery_id": None} if delivery == "pending" else {}
+            new = self._set(tx, row, state=to, delivery_state=delivery, **extra)
             tx.event(request_id, "delivery", state, to, {"delivery_id": delivery_id, "outcome": outcome},
                      version=new["version"])
             return {"state": to, "version": new["version"]}
         return self._hub_change(request_id, fn, wait)
+
+    def reserve_delivery(self, request_id: str, delivery_id: str, version: int, *, wait: bool = True) -> Any:
+        """Dispatcher: give the pending round ``delivery_id`` before its notice is sent, so a result that comes
+        back before :meth:`mark_offered` (or after a Hub restart in between) still finds its round. Returns
+        ``{state, version}`` (the version :meth:`mark_offered` expects)."""
+        def fn(tx: _Tx, row: sqlite3.Row) -> dict:
+            if row["version"] != version or row["delivery_state"] != "pending" or row["delivery_id"] is not None:
+                raise self._invalid(row, "the round changed before its delivery was reserved")
+            new = self._set(tx, row, delivery_id=delivery_id)
+            return {"state": new["state"], "version": new["version"]}
+        return self._hub_change(request_id, fn, wait)
+
+    def requeue_offer(self, request_id: str, delivery_id: str, reason: str, *, wait: bool = True) -> Any:
+        """Dispatcher: the backend that queued this offered notice is gone (its queue was memory): the round
+        is pending again with a system comment (P2-AC-12); the manager may hear of it twice."""
+        def fn(tx: _Tx, row: sqlite3.Row) -> dict:
+            if row["delivery_state"] != "offered" or row["delivery_id"] != delivery_id:
+                raise self._invalid(row, "the delivery is not the one on offer")
+            self._comment(tx, request_id, "system", REQUEUED_COMMENT)
+            new = self._set(tx, row, delivery_state="pending", delivery_id=None, delivery_backend=None,
+                            delivery_at=None)
+            tx.event(request_id, "requeued", row["state"], row["state"],
+                     {"delivery_id": delivery_id, "reason": reason, "backend": row["delivery_backend"]},
+                     version=new["version"])
+            return {"state": new["state"], "version": new["version"]}
+        return self._hub_change(request_id, fn, wait)
+
+    def delivery_view(self, project_id: str) -> dict:
+        """Dispatcher read: ``{review_mode, requests}`` where ``requests`` are the rows with a pending or
+        offered round in ``seq`` order, each with its notice ``event``, ``excerpt`` and ``marked`` (the owner's
+        "검토 시작" for this round). A missing inbox is ``auto`` with no requests."""
+        project = self._project(Principal("hub"), project_id)
+
+        def fn(connection: sqlite3.Connection) -> dict:
+            connection.row_factory = sqlite3.Row
+            mode = connection.execute("SELECT value FROM meta WHERE key = 'review_mode'").fetchone()
+            rows = connection.execute(
+                "SELECT * FROM requests WHERE delivery_state IN ('pending', 'offered') ORDER BY seq").fetchall()
+            sources = tuple(NOTICE_EVENT_SOURCES)
+            marks = ",".join("?" * len(sources))
+            requests = []
+            for row in rows:
+                last = connection.execute(
+                    f"SELECT type FROM events WHERE request_id = ? AND type IN ({marks}) "
+                    "ORDER BY event_id DESC LIMIT 1", (row["request_id"], *sources)).fetchone()
+                marked = connection.execute(
+                    "SELECT 1 FROM events WHERE request_id = ? AND type = 'review_started' "
+                    "AND json_extract(detail, '$.review_round') = ? LIMIT 1",
+                    (row["request_id"], row["review_round"])).fetchone() is not None
+                event = NOTICE_EVENT_SOURCES.get(last["type"] if last else "submitted", "new")
+                if row["state"] == "CLOSED":
+                    event = "cancelled"
+                elif row["state"] in LINKED and event not in ("revised", "linked_task_closed"):
+                    event = "revised"
+                elif row["state"] in PRE_DISPATCH and event in ("revised", "linked_task_closed", "cancelled"):
+                    event = "new"
+                requests.append({
+                    "request_id": row["request_id"], "seq": row["seq"], "state": row["state"],
+                    "version": row["version"], "title": row["title"], "excerpt": row["body"][:EXCERPT_MAX],
+                    "origin": origin_json(row["origin_kind"], row["origin_key_id"], row["origin_name"]),
+                    "review_round": row["review_round"], "delivery_state": row["delivery_state"],
+                    "delivery_id": row["delivery_id"], "delivery_backend": row["delivery_backend"],
+                    "event": event, "marked": marked})
+            return {"review_mode": mode[0] if mode else "auto", "requests": requests}
+        return self._run(project, lambda: project.store.read(fn, missing={"review_mode": "auto", "requests": []}))
 
     def observe_task(self, request_id: str, task_id: str, status: str, *, closed_reason: str | None = None,
                      user_cancelled: bool = False, view: dict | None = None, wait: bool = True) -> Any:

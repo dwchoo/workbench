@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import shutil
+import subprocess
 import textwrap
 import time
 import unittest
@@ -206,22 +207,46 @@ class BoardLocaleTests(launch_case.LauncherCase):
             self.assertEqual(env.get('LANG'), 'C.UTF-8')
             self.assertNotIn('LC_ALL', env)
 
-    def test_a_non_utf8_locale_in_effect_is_replaced_where_it_is_set(self):
-        cases = [({'LANG': 'C'}, {'LANG': 'C.UTF-8'}),
-                 ({'LANG': 'POSIX', 'LC_ALL': ''}, {'LANG': 'C.UTF-8', 'LC_ALL': ''}),
-                 ({'LANG': 'ko_KR.UTF-8', 'LC_ALL': 'C'}, {'LANG': 'ko_KR.UTF-8', 'LC_ALL': 'C.UTF-8'}),
-                 ({'LANG': 'ko_KR.UTF-8', 'LC_CTYPE': 'C'}, {'LANG': 'ko_KR.UTF-8', 'LC_CTYPE': 'C.UTF-8'})]
+    def locale_view(self, env: dict) -> dict:
+        return {key: env[key] for key in LOCALE_KEYS + ('LC_MESSAGES',) if key in env}
+
+    def test_a_non_utf8_character_type_gets_lc_ctype_and_the_other_categories_stay(self):
+        cases = [({'LANG': 'C'}, {'LANG': 'C', 'LC_CTYPE': 'C.UTF-8'}),
+                 ({'LANG': 'POSIX', 'LC_ALL': ''}, {'LANG': 'POSIX', 'LC_ALL': '', 'LC_CTYPE': 'C.UTF-8'}),
+                 ({'LANG': 'ko_KR.EUC-KR'}, {'LANG': 'ko_KR.EUC-KR', 'LC_CTYPE': 'C.UTF-8'}),
+                 ({'LANG': 'C.UTF-8', 'LC_CTYPE': 'C'}, {'LANG': 'C.UTF-8', 'LC_CTYPE': 'C.UTF-8'})]
         for given, expected in cases:
             with self.subTest(given=given):
                 for env in self.environments(**given):
-                    self.assertEqual({key: env[key] for key in LOCALE_KEYS if key in env}, expected)
+                    self.assertEqual(self.locale_view(env), expected)
 
-    def test_the_users_utf8_locale_is_kept(self):
-        for given in ({'LANG': 'ko_KR.UTF-8'}, {'LANG': 'en_US.utf8'}, {'LANG': 'C', 'LC_ALL': 'ko_KR.UTF-8'},
-                      {'LC_CTYPE': 'C.UTF-8'}):
+    def test_a_non_utf8_lc_all_is_unset_and_its_value_kept_for_the_other_categories(self):
+        # LC_ALL masked every LC_* variable: its value moves to LANG, only the character type becomes UTF-8.
+        given = {'LANG': 'C.UTF-8', 'LC_ALL': 'C', 'LC_MESSAGES': 'C.UTF-8'}
+        for env in self.environments(**given):
+            self.assertEqual(self.locale_view(env), {'LANG': 'C', 'LC_CTYPE': 'C.UTF-8'})
+
+    def test_a_utf8_locale_that_is_not_installed_falls_back_to_c_utf8(self):
+        cases = [({'LANG': 'xx_YY.UTF-8'}, {'LANG': 'xx_YY.UTF-8', 'LC_CTYPE': 'C.UTF-8'}),
+                 ({'LANG': 'C', 'LC_CTYPE': 'xx_YY.utf8'}, {'LANG': 'C', 'LC_CTYPE': 'C.UTF-8'}),
+                 ({'LC_ALL': 'xx_YY.UTF-8'}, {'LANG': 'xx_YY.UTF-8', 'LC_CTYPE': 'C.UTF-8'})]
+        for given, expected in cases:
             with self.subTest(given=given):
                 for env in self.environments(**given):
-                    self.assertEqual({key: env[key] for key in LOCALE_KEYS if key in env}, given)
+                    self.assertEqual(self.locale_view(env), expected)
+                    done = subprocess.run(['locale', 'charmap'], env={'PATH': '/usr/bin:/bin', **env},
+                                          capture_output=True, text=True, timeout=10, stdin=subprocess.DEVNULL)
+                    self.assertEqual(done.stdout.strip(), 'UTF-8')
+
+    def test_the_users_installed_utf8_locale_is_kept(self):
+        installed = subprocess.run(['locale', '-a'], capture_output=True, text=True).stdout.split()
+        cases = [{'LC_CTYPE': 'C.UTF-8'}, {'LANG': 'C', 'LC_ALL': 'C.utf8'}]
+        cases += [{'LANG': name} for name in ('ko_KR.UTF-8', 'en_US.utf8')
+                  if name.replace('UTF-8', 'utf8') in installed]
+        for given in cases:
+            with self.subTest(given=given):
+                for env in self.environments(**given):
+                    self.assertEqual(self.locale_view(env), given)
 
 
 class BoardShellHangulTests(set_case.SetCase):

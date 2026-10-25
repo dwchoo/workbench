@@ -6,10 +6,12 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass, field
+import functools
 import json
 import os
 from pathlib import Path
 import re
+import subprocess
 import threading
 import time
 from typing import Any, Callable, Mapping
@@ -186,14 +188,50 @@ def isolation_failure(result: Mapping[str, Any]) -> str | None:
     return ("leak:" + ",".join(leaks))[:REASON_LIMIT]
 
 
+@functools.lru_cache(maxsize=1)
+def installed_locales() -> frozenset[str] | None:
+    """``locale -a`` once per Hub process, names normalized (:func:`_locale_key`); None when it cannot run."""
+    try:
+        done = subprocess.run(["locale", "-a"], capture_output=True, text=True, timeout=10,
+                              stdin=subprocess.DEVNULL, env={"PATH": "/usr/bin:/bin", "LC_ALL": "C"})
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if done.returncode != 0:
+        return None
+    return frozenset(_locale_key(name) for name in done.stdout.split())
+
+
+def _locale_key(name: str) -> str:
+    """glibc's normalized codeset: ``ko_KR.UTF-8`` and ``ko_KR.utf8`` name the same locale."""
+    language, dot, rest = name.partition(".")
+    codeset, at, modifier = rest.partition("@")
+    return language + dot + "".join(ch for ch in codeset.lower() if ch.isalnum()) + at + modifier
+
+
+def _usable_utf8(name: str) -> bool:
+    if not _UTF8_LOCALE.search(name):
+        return False
+    installed = installed_locales()
+    return installed is None or _locale_key(name) in installed  # unknown: trust the name
+
+
 def utf8_locale(env: dict[str, str]) -> dict[str, str]:
     """``env`` with a UTF-8 character type: the browser terminal sends and shows UTF-8 (Hangul input, readline
-    erase). The user's UTF-8 locale stays; a non-UTF-8 one in effect (``LC_ALL`` > ``LC_CTYPE`` > ``LANG``, the
-    first non-empty) becomes :data:`FALLBACK_LOCALE` in that variable, and no locale at all sets ``LANG``."""
-    for key in LOCALE_KEYS:
+    erase). The user's installed UTF-8 locale stays. Otherwise only the character type changes, to
+    :data:`FALLBACK_LOCALE` through ``LC_CTYPE``, so the other categories survive: a non-UTF-8 ``LC_ALL`` (which
+    masked every ``LC_*``) is unset and its value moves to ``LANG``; no locale at all sets ``LANG``."""
+    lc_all = env.get("LC_ALL")
+    if lc_all:
+        if _usable_utf8(lc_all):
+            return env
+        for key in [key for key in env if key.startswith("LC_")]:
+            del env[key]
+        env["LANG"], env["LC_CTYPE"] = lc_all, FALLBACK_LOCALE
+        return env
+    for key in ("LC_CTYPE", "LANG"):
         if env.get(key):
-            if not _UTF8_LOCALE.search(env[key]):
-                env[key] = FALLBACK_LOCALE
+            if not _usable_utf8(env[key]):
+                env["LC_CTYPE"] = FALLBACK_LOCALE
             return env
     env["LANG"] = FALLBACK_LOCALE
     return env

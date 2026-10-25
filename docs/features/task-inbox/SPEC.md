@@ -379,7 +379,7 @@ Frame:
 | 명령 | 동작 | Hub 자동 시작 |
 |---|---|---|
 | `wb hub passwd [--stdin]` | 위 비밀번호. 예약 거절을 대체 | 아니오 |
-| `wb hub tls --self-signed [--force]` | `openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 -nodes -days 825 -subj /CN=<bind 또는 hostname> -addext subjectAltName=IP:<bind>,DNS:localhost[,DNS:<server_names>…]`로 TLS 경로에 만든다. 이미 있으면 `--force` 없이 거절. openssl이 없으면 exit 2. 끝나면 지문(SHA-256)과 `Hub를 다시 시작하면 HTTPS로 열립니다`를 보인다 | 아니오 |
+| `wb hub tls --self-signed [--force]` | `openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 -nodes -days 825 -subj /CN=<bind 또는 hostname> -addext subjectAltName=IP:<bind>,DNS:localhost[,DNS:<server_names>…]`로 TLS 경로에 만든다. (2026-10-25 orchestrator 정정) wildcard bind(`0.0.0.0`/`::`)면 그 IP 대신 `IP:127.0.0.1`·`IP:::1`과 host 주소(hostname 해석·interface 주소, best effort)를 넣고, loopback bind는 두 loopback IP를 넣는다. leaf 확장(`CA:FALSE`, `serverAuth`)을 붙이고 `--force` 교체는 key·cert 쌍을 함께 바꾼다(실패 시 이전 쌍 복원). 출력에 SAN 목록을 보인다. 이미 있으면 `--force` 없이 거절. openssl이 없으면 exit 2. 끝나면 지문(SHA-256)과 `Hub를 다시 시작하면 HTTPS로 열립니다`를 보인다 | 아니오 |
 | `wb hub review-mode <PATH> [auto\|manual]` | 값 없으면 현재 값. Hub `review_mode` op(D-32). 등록되지 않은 PATH는 exit 1 | 예 |
 | `wb hub status` | `web:`, 평문 경고, `board_agent:` 줄 추가. `--json`은 hub_v1 `status` 그대로 | 아니오 |
 

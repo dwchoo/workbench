@@ -175,22 +175,19 @@ class InstanceLock:
             raise DataDirError("caller-owned lock reservation identity changed")
 
     def held_elsewhere(self) -> bool:
-        """Probe without keeping the lock (used by status/start checks)."""
+        """Whether some process holds this lock (used by status/start checks).
+
+        Read-only: never takes the lock, not even briefly. A probe that took ``LOCK_EX|LOCK_NB`` made a starting
+        backend's own non-blocking acquire fail and showed the prober as the holder
+        (``startup_lock_owner_mismatch``). The kernel's flock table decides (:func:`flock_holder`).
+        """
         try:
-            descriptor = os.open(self.path, os.O_RDWR | os.O_CLOEXEC | os.O_NOFOLLOW)
+            info = self.path.stat(follow_symlinks=False)
         except FileNotFoundError:
             return False
-        try:
-            fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except OSError as exc:
-            if exc.errno in {errno.EWOULDBLOCK, errno.EAGAIN}:
-                return True
-            raise
-        else:
-            fcntl.flock(descriptor, fcntl.LOCK_UN)
-            return False
-        finally:
-            os.close(descriptor)
+        if stat.S_ISLNK(info.st_mode):  # as the former O_NOFOLLOW open: never judged through a link
+            raise OSError(errno.ELOOP, "lock path is a symlink", str(self.path))
+        return flock_holder(_lock_key(info)) is not None
 
     def held_by(self, pid: int) -> bool:
         """Linux kernel flock owner for this exact inode; never a lock bypass."""

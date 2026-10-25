@@ -142,6 +142,50 @@ class LockReadRaceTests(unittest.TestCase):
         with self.skip_rows(1000):  # /proc/<pid>/fdinfo proves the recorded candidate
             self.assertEqual(lock_holder(self.lock, os.getpid()), os.getpid())
 
+    def held_in_child(self, path: Path):
+        holder = subprocess.Popen([sys.executable, '-c', 'import fcntl,sys,time\n'
+                                   'f=open(sys.argv[1],"w"); fcntl.flock(f, fcntl.LOCK_EX)\n'
+                                   'print("held", flush=True); time.sleep(60)\n', str(path)],
+                                  stdout=subprocess.PIPE, text=True)
+        self.addCleanup(lambda: (holder.kill(), holder.wait(), holder.stdout.close()))
+        self.assertEqual(holder.stdout.readline().strip(), 'held')
+        return holder
+
+    def test_held_elsewhere_is_a_read_only_probe(self):
+        """``startup_lock_owner_mismatch`` root cause: a probe that briefly took LOCK_EX|LOCK_NB made a starting
+        backend's own acquire fail and showed the prober as the holder. The probe must never take the lock."""
+        from unittest import mock
+        from workbench.backend import paths
+        other = self.directory / 'backend.lock'
+        other.write_text('')
+        os.chmod(other, 0o600)
+        free = self.directory / 'free.lock'
+        free.write_text('')
+        self.held_in_child(other)
+        with mock.patch.object(paths.fcntl, 'flock', side_effect=AssertionError('the probe took the lock')):
+            self.assertTrue(paths.InstanceLock(other).held_elsewhere())
+            self.assertFalse(paths.InstanceLock(free).held_elsewhere())
+            self.assertFalse(paths.InstanceLock(self.directory / 'missing.lock').held_elsewhere())
+
+    def test_held_elsewhere_survives_a_skipped_row(self):
+        from workbench.backend.paths import InstanceLock
+        other = self.directory / 'backend.lock'
+        other.write_text('')
+        self.held_in_child(other)
+        real, inode, calls = Path.read_text, os.stat(other).st_ino, {'n': 0}
+        from unittest import mock
+
+        def read_text(path, *args, **kwargs):
+            text = real(path, *args, **kwargs)
+            if str(path) == '/proc/locks':
+                calls['n'] += 1
+                if calls['n'] <= 2:
+                    return '\n'.join(row for row in text.splitlines()
+                                     if not (len(row.split()) >= 6 and row.split()[5].split(':')[-1] == str(inode)))
+            return text
+        with mock.patch.object(Path, 'read_text', read_text):
+            self.assertTrue(InstanceLock(other).held_elsewhere())
+
     def test_a_free_lock_is_not_held_by_anyone(self):
         from workbench.backend.paths import InstanceLock
         from workbench.hub.process import lock_holder

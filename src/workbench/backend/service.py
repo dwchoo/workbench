@@ -2348,7 +2348,22 @@ class Backend:
             return None
 
     def cancel_task(self, task_id: str, request_id: str, expect: dict[str, Any], reason: str | None) -> dict[str, Any]:
-        raise Held(Reason.UNSUPPORTED_TYPE, "cancel_task is not served by this backend yet")  # TI-13
+        """ui_v1 ``cancel_task`` (TI-13): the user's cancel of one Task (``TaskFlow.cancel_by_user``) and, when the
+        confirmed command runs, its user stop (CS-O10) on a thread of its own. Runs on the UI loop thread: it only
+        takes the flow lock briefly and never waits for the stop."""
+        flow = getattr(self, "flow", None)
+        if flow is None:
+            raise Held(Reason.UNSUPPORTED_TYPE, "this backend has no Task flow")
+        answer = flow.cancel_by_user(task_id, reason, expect, request_id=request_id)
+        if answer.get("status") != "accepted":
+            raise Held(Reason.TASK_CHANGED, str(answer.get("detail") or "the Task changed"))
+        result = {"cancel": answer["cancel"], "stop": answer["stop"]}
+        if answer.get("repeat"):
+            result["repeat"] = True
+        stop = answer["stop"]
+        _log(f"user cancel of Task {task_id} (request {request_id}): {answer['cancel']}"
+             + ("" if stop is None else f", stop {stop.get('status')} {stop.get('command_id')}"))
+        return result
 
     task_status_budget = TASK_STATUS_BUDGET
 
@@ -2398,7 +2413,8 @@ class Backend:
         item = {"task_id": task_id, "exists": True, "status": view.get("status"),
                 "closed_reason": view.get("closed_reason"), "revision": view.get("revision"),
                 "cancel_requested_by": cancel.get("by") if isinstance(cancel, dict) else None,
-                "runs": stored["runs"], "commands": commands}
+                "runs": stored["runs"], "commands": commands,
+                "command": running_task_command(view, self.terminal)}
         if detail:
             item["reports"] = stored["reports"]
         return item
@@ -2602,6 +2618,27 @@ def _read_task_rows(connection: sqlite3.Connection, task_id: str, detail: bool) 
             reports.append({"message_id": message_id, "kind": payload.get("kind") or content.get("kind"),
                             "at": created_at, "text": encoded.decode("utf-8", "ignore")})
     return {"runs": runs, "reports": reports}
+
+
+def running_task_command(view: Mapping[str, Any], terminal: Any) -> dict[str, Any] | None:
+    """TI-13: a Task view's Workbench command that has not ended (its ``host_commands``) as ``{command_id, owner,
+    label, state}``, else None; what the Hub shows and binds a cancel confirmation to (``task_status.command``)."""
+    for item in view.get("host_commands") or ():
+        if not isinstance(item, Mapping) or not isinstance(item.get("command_id"), str):
+            continue
+        command_id = item["command_id"]
+        if item.get("kind") == "experiment":
+            label = f"experiment {command_id[:8]}"
+        else:
+            try:
+                running = terminal.running_host_command() if terminal is not None else None
+            except Exception:  # a view: an unreadable label stays unknown
+                running = None
+            label = running.get("label") if isinstance(running, Mapping) and \
+                running.get("command_id") == command_id else None
+        return {"command_id": command_id, "owner": item.get("owner"), "label": label,
+                "state": item.get("state") or "running"}
+    return None
 
 
 def experiment_host_command(task: dict[str, Any] | None) -> dict[str, Any] | None:

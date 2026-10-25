@@ -270,5 +270,101 @@ class TaskStatusBudgetTests(unittest.TestCase):
         self.assertEqual((answer["tasks"][0]["task_id"], answer["tasks"][0]["exists"]), (TASK_ID, True))
 
 
+class TaskStatusCommandTests(unittest.TestCase):
+    """TI-13 (additive): each ``task_status`` item names the Task's running Workbench command as ``command``
+    (``{command_id, owner, label, state}``, null when none), what the Hub's cancel confirmation shows and binds."""
+
+    def answer(self, host_commands, running=None):
+        import tempfile
+        from pathlib import Path
+        from types import SimpleNamespace
+        from workbench.backend.service import Backend
+        from workbench.tasks.repository import TaskRepository
+
+        class Flow:
+            tasks: dict = {}
+
+            def status_view(self, task_id):
+                return {"task_id": task_id, "kind": "work", "status": "running", "revision": 1,
+                        "closed_reason": None, "host_commands": host_commands}
+
+        class Terminal:
+            def runs_for_task(self, task_id):
+                return []
+
+            def running_host_command(self):
+                return running
+
+        with tempfile.TemporaryDirectory(prefix="ti13-status-") as base:
+            path = Path(base) / "tasks.sqlite3"
+            TaskRepository(path).close()
+
+            class Stub:
+                flow, terminal, layout = Flow(), Terminal(), SimpleNamespace(tasks=path)
+                task_status_budget = 2.0
+                _task_status_item = Backend._task_status_item
+            return Backend.task_status(Stub(), [TASK_ID], False)["tasks"][0]
+
+    def test_no_running_command_is_null(self):
+        self.assertIsNone(self.answer([])["command"])
+
+    def test_a_worker_terminal_command_has_its_label_and_state(self):
+        command_id = "9d8c7b6a-5f4e-4d3c-8b2a-1f0e9d8c7b6a"
+        item = self.answer([{"command_id": command_id, "kind": "terminal", "owner": "worker", "state": "stopping"}],
+                           {"command_id": command_id, "owner": "worker", "label": "sleep 300", "state": "stopping"})
+        self.assertEqual(item["command"], {"command_id": command_id, "owner": "worker", "label": "sleep 300",
+                                           "state": "stopping"})
+
+    def test_an_experiment_command_is_labelled_by_its_run(self):
+        run_id = "1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d"
+        item = self.answer([{"command_id": run_id, "kind": "experiment", "owner": "manager", "state": "unknown"}])
+        self.assertEqual(item["command"], {"command_id": run_id, "owner": "manager", "label": "experiment 1a2b3c4d",
+                                           "state": "unknown"})
+
+
+class CancelTaskControllerTests(unittest.TestCase):
+    """TI-13: ``Backend.cancel_task`` is ``TaskFlow.cancel_by_user``: ``{cancel, stop}`` or ``task_changed``."""
+
+    def backend(self, answer):
+        from types import SimpleNamespace
+        calls = []
+
+        class Flow:
+            def cancel_by_user(self, task_id, reason, expect, *, request_id=None):
+                calls.append((task_id, reason, expect, request_id))
+                return answer
+        return SimpleNamespace(flow=Flow()), calls
+
+    def test_an_accepted_cancel_answers_cancel_and_stop(self):
+        from workbench.backend.service import Backend
+        stub, calls = self.backend({"status": "accepted", "cancel": "cancelled",
+                                    "stop": {"status": "stopping", "command_id": TASK_ID}})
+        expect = {"status": "running", "command_id": TASK_ID}
+        self.assertEqual(Backend.cancel_task(stub, TASK_ID, REQUEST_ID, expect, "owner"),
+                         {"cancel": "cancelled", "stop": {"status": "stopping", "command_id": TASK_ID}})
+        self.assertEqual(calls, [(TASK_ID, "owner", expect, REQUEST_ID)])
+
+    def test_a_changed_task_is_refused_as_task_changed(self):
+        from workbench.backend.service import Backend
+        from workbench.backend.ui_server import Held
+        stub, _calls = self.backend({"status": "rejected", "reason": "task_changed", "detail": "changed",
+                                     "task_status": "finished", "command_id": None})
+        with self.assertRaises(Held) as raised:
+            Backend.cancel_task(stub, TASK_ID, REQUEST_ID, {"status": "running", "command_id": None}, None)
+        self.assertEqual(raised.exception.reason.value, "task_changed")
+
+
+class CancelTaskRefusalTests(InboxFixture):
+    def test_the_refusal_reaches_the_hub_as_reason_task_changed(self):
+        from workbench.backend.ui_server import Held
+        from workbench.contracts.ui_v1 import Reason
+
+        def refuse(task_id, request_id, expect, reason):
+            raise Held(Reason.TASK_CHANGED, "changed")
+        self.controller.cancel_task = refuse
+        answer = self.client().request(ClientType.CANCEL_TASK, **REQUESTS[2][1])
+        self.assertEqual((answer["ok"], answer["reason"]), (False, "task_changed"), answer)
+
+
 if __name__ == "__main__":
     unittest.main()

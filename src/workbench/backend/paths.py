@@ -7,6 +7,7 @@ import errno
 import fcntl
 import json
 import os
+import time
 from pathlib import Path
 import stat
 from typing import Any, Mapping
@@ -194,14 +195,7 @@ class InstanceLock:
     def held_by(self, pid: int) -> bool:
         """Linux kernel flock owner for this exact inode; never a lock bypass."""
         info = self.path.stat(follow_symlinks=False)
-        expected = (os.major(info.st_dev), os.minor(info.st_dev), info.st_ino)
-        for row in Path('/proc/locks').read_text().splitlines():
-            parts = row.split()
-            if len(parts) >= 8 and parts[1:4] == ['FLOCK', 'ADVISORY', 'WRITE']:
-                major, minor, inode = parts[5].split(':')
-                if (int(major, 16), int(minor, 16), int(inode)) == expected:
-                    return int(parts[4]) == pid
-        return False
+        return flock_holder(_lock_key(info), candidate=pid) == pid
 
     def release(self) -> None:
         if self._fd is not None:
@@ -210,6 +204,67 @@ class InstanceLock:
             finally:
                 os.close(self._fd)
                 self._fd = None
+
+
+# ``/proc/locks`` is a seq_file read in chunks, not atomically: while other processes take and drop flocks
+# one read can skip a held lock's row. A row seen once proves the holder; absence must hold on every one of
+# LOCK_READ_ATTEMPTS reads.
+LOCK_READ_ATTEMPTS = 4
+LOCK_READ_PAUSE = 0.005
+
+
+def _lock_key(info: os.stat_result) -> tuple[int, int, int]:
+    return os.major(info.st_dev), os.minor(info.st_dev), info.st_ino
+
+
+def _flock_row_holder(parts: list[str], expected: tuple[int, int, int]) -> int | None:
+    """The pid of an exclusive flock row (``FLOCK ADVISORY WRITE <pid> <maj:min:ino>``) on ``expected``."""
+    if len(parts) >= 5 and parts[:3] == ['FLOCK', 'ADVISORY', 'WRITE']:
+        try:
+            major, minor, inode = parts[4].split(':')
+            if (int(major, 16), int(minor, 16), int(inode)) == expected:
+                return int(parts[3])
+        except ValueError:
+            return None
+    return None
+
+
+def fdinfo_flock_held(pid: int, expected: tuple[int, int, int]) -> bool:
+    """Whether ``pid`` itself holds the exclusive flock on ``expected`` (its ``/proc/<pid>/fdinfo`` ``lock:``
+    lines, read per process, so other processes' lock churn cannot hide it). False when unreadable."""
+    base = Path('/proc') / str(pid) / 'fdinfo'
+    try:
+        names = os.listdir(base)
+    except OSError:
+        return False
+    for name in names:
+        try:
+            text = (base / name).read_text()
+        except OSError:
+            continue
+        for line in text.splitlines():
+            parts = line.split()
+            if parts[:1] == ['lock:'] and _flock_row_holder(parts[2:], expected) == pid:
+                return True
+    return False
+
+
+def flock_holder(expected: tuple[int, int, int], *, candidate: int | None = None) -> int | None:
+    """The pid holding the exclusive flock on ``(major, minor, inode)``, or None when it is free.
+
+    A ``candidate`` (e.g. the recorded owner) is first confirmed from its own fdinfo; otherwise
+    ``/proc/locks`` decides: one row is enough, absence must hold on :data:`LOCK_READ_ATTEMPTS` reads.
+    """
+    if candidate is not None and type(candidate) is int and candidate > 0 and fdinfo_flock_held(candidate, expected):
+        return candidate
+    for attempt in range(LOCK_READ_ATTEMPTS):
+        if attempt:
+            time.sleep(LOCK_READ_PAUSE)
+        for row in Path('/proc/locks').read_text().splitlines():
+            holder = _flock_row_holder(row.split()[1:], expected)
+            if holder is not None:
+                return holder
+    return None
 
 
 def write_private_json(path: Path, value: dict[str, Any], *, dir_fd: int | None = None,

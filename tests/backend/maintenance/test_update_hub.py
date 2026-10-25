@@ -521,6 +521,23 @@ class BoardSetUpdateTests(UpdateHubFixture):
         self.assertIsNone(hub.poll())
         self.assertTrue(alive(shell))
 
+    def test_a_hub_process_that_outlives_its_lock_release_aborts_before_any_backend(self):
+        from unittest import mock
+        from workbench.backend import update
+        hub = self.start_hub()
+        project, data, backend = self.recorded_project('project-a', [])
+        real = update.process_state
+
+        def state(pid, ticks, **kwargs):  # the Hub process still "runs" after it released hub.lock
+            return 'alive' if pid == hub.pid else real(pid, ticks, **kwargs)
+        with mock.patch.object(update, 'process_state', state), mock.patch.object(update, 'HUB_EXIT_WAIT', 0.3):
+            status, output, error = self.invoke(tool=self.recording_tool)
+        self.assertEqual(status, 1, output + error)
+        self.assertIn(f'Hub(pid {hub.pid})', error)
+        self.assertEqual(self.events, [])  # no backend shutdown, no install
+        self.assertIsNone(backend.poll())
+        self.assertGreaterEqual(update.HUB_EXIT_WAIT, 10.0)  # covers the Hub's own stop budget
+
     def test_a_confirmed_question_stops_the_hub_with_the_set_before_backends_and_install(self):
         hub, shell = self.start_hub_with_board_shell()
         project, data, backend = self.recorded_project('project-a', [])

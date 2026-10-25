@@ -5,7 +5,7 @@ Task Inbox SPEC "Board agent 세트", ADR-0003 and the TI-15 probe (PROBE-OMP-MC
 from __future__ import annotations
 
 import asyncio
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import json
 import os
 from pathlib import Path
@@ -52,9 +52,9 @@ class AgentLaunch:
     """One Board agent start. ``env`` carries the system key; never log or audit it."""
 
     argv: list[str]
-    env: dict[str, str]
-    cwd: str
-    key_id: str
+    env: dict[str, str] = field(repr=False)  # holds the raw system key
+    cwd: str = ""
+    key_id: str = ""
 
 
 @dataclass(frozen=True, slots=True)

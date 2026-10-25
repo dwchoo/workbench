@@ -634,7 +634,11 @@ async def _internal_host(request: web.Request, handler):
     port = listening_port(request)
     if port is None or hosts != [f"{INTERNAL_HOST}:{port}"]:
         return web.Response(status=421, text="misdirected_request")
-    return await handler(request)
+    try:
+        return await handler(request)
+    except ConnectionResetError:  # the Board agent ended mid-request (restart, stop): one line, no traceback
+        print("[workbench] board mcp: connection reset by the client during a request", file=sys.stderr, flush=True)
+        return web.Response(status=400, text="connection_reset")
 
 
 def create_internal_app(api_keys: auth.ApiKeyStore, server: McpServer, *, clock: Callable[[], float] = time.time,

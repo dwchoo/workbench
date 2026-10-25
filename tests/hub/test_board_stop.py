@@ -101,6 +101,56 @@ class BoardHub:
         return [{'actor': actor, **json.loads(detail)} for actor, detail in rows]
 
 
+class LockReadRaceTests(unittest.TestCase):
+    """``/proc/locks`` is not read atomically: a read can skip a held lock's row under flock churn. Holder
+    checks must not take one skipped row for a free lock (Hub status rc=3, a false 'released', a backend's
+    ``startup_lock_owner_mismatch``)."""
+
+    def setUp(self):
+        import fcntl
+        import tempfile
+        self.directory = Path(tempfile.mkdtemp(prefix='wbr-'))
+        self.addCleanup(lambda: __import__('shutil').rmtree(self.directory, ignore_errors=True))
+        self.lock = self.directory / 'x.lock'
+        stream = open(self.lock, 'w')
+        self.addCleanup(stream.close)
+        fcntl.flock(stream, fcntl.LOCK_EX)
+        os.chmod(self.lock, 0o600)
+
+    def skip_rows(self, reads: int):
+        from unittest import mock
+        real, inode, calls = Path.read_text, os.stat(self.lock).st_ino, {'n': 0}
+
+        def read_text(path, *args, **kwargs):
+            text = real(path, *args, **kwargs)
+            if str(path) != '/proc/locks':
+                return text
+            calls['n'] += 1
+            if calls['n'] > reads:
+                return text
+            return '\n'.join(row for row in text.splitlines()
+                             if not (len(row.split()) >= 6 and row.split()[5].split(':')[-1] == str(inode))) + '\n'
+        return mock.patch.object(Path, 'read_text', read_text)
+
+    def test_instance_lock_held_by_survives_a_skipped_row(self):
+        from workbench.backend.paths import InstanceLock
+        with self.skip_rows(2):
+            self.assertTrue(InstanceLock(self.lock).held_by(os.getpid()))
+
+    def test_lock_holder_with_the_recorded_pid_survives_every_read_skipping_the_row(self):
+        from workbench.hub.process import lock_holder
+        with self.skip_rows(1000):  # /proc/<pid>/fdinfo proves the recorded candidate
+            self.assertEqual(lock_holder(self.lock, os.getpid()), os.getpid())
+
+    def test_a_free_lock_is_not_held_by_anyone(self):
+        from workbench.backend.paths import InstanceLock
+        from workbench.hub.process import lock_holder
+        free = self.directory / 'free.lock'
+        free.write_text('')
+        self.assertIsNone(lock_holder(free, os.getpid()))
+        self.assertFalse(InstanceLock(free).held_by(os.getpid()))
+
+
 class HubStopTests(unittest.TestCase):
     def test_stop_without_yes_and_without_a_terminal_stops_nothing_and_yes_ends_the_set_then_the_hub(self):
         hub = BoardHub(self)

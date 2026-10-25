@@ -104,6 +104,63 @@ def environ(pid: int) -> dict[str, str]:
     return dict(item.split('=', 1) for item in raw.decode().split('\0') if '=' in item)
 
 
+def child_pids() -> set[int]:
+    found: set[int] = set()
+    for task in os.listdir('/proc/self/task'):
+        try:
+            found.update(int(item) for item in Path(f'/proc/self/task/{task}/children').read_text().split())
+        except OSError:
+            pass
+    return found
+
+
+class FailurePathTests(SetCase):
+    def test_a_failed_pidfd_after_fork_leaves_no_child_and_the_channel_failed(self):
+        from unittest import mock
+        before = child_pids()
+        with mock.patch('os.pidfd_open', side_effect=OSError(24, 'Too many open files')):
+            self.arun(self.board.restart('shell'))
+        shell = self.board.status()['shell']
+        self.assertEqual((shell['state'], shell['detail']), ('failed', 'spawn_failed:Too many open files'))
+        self.assertTrue(self.wait(lambda: child_pids() <= before, 5), child_pids() - before)
+
+    def test_a_shell_that_cannot_start_notifies_the_watchers(self):
+        self.box.env['SHELL'] = str(self.box.root / 'no-such-shell')
+        self.launcher = self.make_launcher(self.config)
+        self.board = self.make_board()
+        changes = []
+        self.board.watch(lambda: changes.append(self.board.status()['shell']['state']))
+        self.arun(self.board.restart('shell'))
+        self.assertEqual(self.board.status()['shell']['detail'], 'shell_unavailable')
+        self.assertIn('failed', changes)
+
+    def test_the_launch_repr_never_shows_the_key(self):
+        started = self.prepare()
+        self.assertNotIn(started.env['WB_BOARD_MCP_KEY'], repr(started))
+
+    def test_a_reset_mcp_connection_is_one_log_line_not_a_traceback(self):
+        import contextlib
+        import io
+        import socket
+        import struct
+        started = self.prepare()
+        port = self.listener.port
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err), self.assertNoLogs('aiohttp.server', level='ERROR'):
+            sock = socket.create_connection(('127.0.0.1', port))
+            sock.sendall((f'POST /mcp HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nContent-Type: application/json\r\n'
+                          f'Accept: application/json, text/event-stream\r\n'
+                          f'Authorization: Bearer {started.env["WB_BOARD_MCP_KEY"]}\r\n'
+                          'Content-Length: 1000\r\n\r\n{"jsonrpc"').encode())
+            self.spin(0.3)
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_LINGER, struct.pack('ii', 1, 0))
+            sock.close()  # RST while the body is being read
+            self.spin(0.5)
+        self.assertNotIn('Traceback', err.getvalue())
+        self.assertEqual(len([line for line in err.getvalue().splitlines() if 'reset' in line.lower()]), 1,
+                         err.getvalue())
+
+
 class ShellChannelTests(SetCase):
     def test_shell_is_the_users_shell_in_home_leading_its_own_session_with_the_hub_environment(self):
         self.start()
@@ -180,6 +237,41 @@ class RestartTests(SetCase):
         self.assertIn('--continue', self.tty_records()[1]['argv'])
         self.assertIn(('board_restart', 'owner', {'channel': 'agent', 'pid': old, 'reason': 'owner'}), self.audits)
         self.assertEqual(self.board.status()['shell']['state'], 'running')  # the other channel is untouched
+
+    def begin_restart(self, name: str):
+        """A restart task stopped right after it began ending the old channel (its fd still open)."""
+        channel = self.board.slots[name].channel
+        task = self.loop.create_task(self.board.restart(name))
+        for _ in range(200):
+            self.loop.run_until_complete(asyncio.sleep(0))
+            if channel.ending:
+                break
+        self.assertTrue(channel.ending)
+        return channel, task
+
+    def test_writes_are_refused_while_a_channel_is_ending(self):
+        self.start()
+        channel, task = self.begin_restart('shell')
+        self.assertFalse(channel.write(b'echo late\n'))
+        self.assertFalse(self.board.write('shell', b'echo late\n'))
+        self.arun(task)
+        self.pids.add(self.board.status()['shell']['pid'])
+        self.assertTrue(self.board.write('shell', b'echo fresh-$((2+3))\n'))
+        self.assertTrue(self.wait(lambda: b'fresh-5' in self.board.replay('shell')))
+
+    def test_a_cancelled_restart_still_ends_the_old_channel_and_starts_the_new_one(self):
+        self.start()
+        old = self.board.status()['shell']['pid']
+        channel, task = self.begin_restart('shell')
+        task.cancel()
+        try:
+            self.arun(task)
+        except asyncio.CancelledError:
+            pass
+        self.assertTrue(self.wait(lambda: self.board.status()['shell']['pid'] != old
+                                  and self.board.status()['shell']['state'] == 'running'))
+        self.pids.add(self.board.status()['shell']['pid'])
+        self.assertFalse(alive(old))
 
     def test_an_exited_shell_restarts_with_a_new_pid(self):
         self.start()
@@ -268,6 +360,19 @@ class TerminalIoTests(SetCase):
         replay = self.board.replay('agent')
         self.assertEqual(len(replay), 1 << 20)
         self.assertGreater(self.board.output_total('agent'), len(replay))
+
+    def test_out_of_range_sizes_are_refused_and_never_break_a_restart(self):
+        self.start()
+        for rows, cols in ((0, 80), (24, 0), (501, 80), (24, 501), (-1, 80), (24, 70000), (True, 80), (24.0, 80)):
+            with self.assertRaises(ValueError, msg=(rows, cols)):
+                self.board.resize('shell', rows, cols)
+        self.board.resize('shell', 500, 500)
+        self.arun(self.board.restart('shell'))
+        shell = self.board.status()['shell']
+        self.pids.add(shell['pid'])
+        self.assertEqual(shell['state'], 'running')
+        self.board.write('shell', b'stty size\n')
+        self.assertTrue(self.wait(lambda: b'500 500' in self.board.replay('shell')))
 
     def test_resize_changes_the_pty_window_size(self):
         self.start()

@@ -304,23 +304,28 @@ def stop_hub_for_update(identity, *, announced=False, confirmed=()):
     if result.status not in ('stopped', 'not_running'):
         raise DataDirError(f"Hub(pid {result.pid})를 멈추지 못해 업데이트를 중단합니다 ({result.status}: {result.reason}); "
                            "어떤 backend도 종료하지 않았습니다. 'wb hub stop'으로 Hub를 멈춘 뒤 다시 실행하세요.")
-    if result.status == 'stopped':
-        _wait_hub_exit(identity.record or {})
+    if result.status == 'stopped' and not _wait_hub_exit(identity.record or {}):
+        raise DataDirError(f"Hub(pid {result.pid})가 lock을 놓은 뒤에도 끝나지 않아 업데이트를 중단합니다; 어떤 backend도 "
+                           "종료하지 않았습니다. Hub가 끝난 것을 확인한 뒤 다시 실행하세요.")
     return result
 
 
-HUB_EXIT_WAIT = 5.0
+# The Hub's own stop budget (Board set: SIGHUP 0.5 s + SIGTERM grace 5 s + SIGKILL/reap) plus a margin.
+HUB_EXIT_WAIT = 10.0
 
 
 def _wait_hub_exit(record):
     """The lock is released last, just before the Hub process exits: wait (bounded) for that exit so no
-    backend is touched while the Hub process still runs. Only the exact recorded process is read."""
+    backend is touched while the Hub process still runs. Only the exact recorded process is read; False when
+    it still runs after :data:`HUB_EXIT_WAIT`."""
     pid, ticks = record.get('pid'), record.get('start_ticks')
     uid, boot = record.get('uid'), record.get('boot_id')
     deadline = time.monotonic() + HUB_EXIT_WAIT
-    while time.monotonic() < deadline:
+    while True:
         if process_state(pid, ticks, uid=uid, boot_id=boot) != 'alive':
-            return
+            return True
+        if time.monotonic() >= deadline:
+            return False
         time.sleep(0.02)
 
 

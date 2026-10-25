@@ -37,6 +37,7 @@ INPUT_QUEUE_BYTES = 4 << 20  # one paste beyond this is refused, never split
 TERM_GRACE = 5.0
 HUP_GRACE = 0.5
 DEFAULT_SIZE = (30, 100)
+MIN_SIZE, MAX_SIZE = 1, 500  # rows/cols accepted by resize (TIOCSWINSZ takes 16-bit values)
 LIVE_STATES = frozenset({"starting", "running"})
 LEASE_STATES = frozenset({"connected", "none"})
 ACTIVE_KIND = "board_agent_set"
@@ -90,6 +91,9 @@ class Channel(_OwnedSession):
                     os.write(2, f"workbench: cannot start the Board {name}: {exc}\n".encode("utf-8", "replace"))
                 finally:
                     os._exit(127)
+        # pty.fork's master is inheritable: a later channel would otherwise keep this PTY's master open, so a
+        # Hub SIGKILL would not hang up this channel's session.
+        os.set_inheritable(master, False)
         self.pid, self.master_fd = pid, master
         self.size = size
         self.started_at = time.time()
@@ -99,10 +103,21 @@ class Channel(_OwnedSession):
         self._unsignallable: dict[int, str] = {}
         self._eof = False
         self._pending = bytearray()
+        self.ending = False  # set on the loop thread before its fds are closed in the executor
         self.ring = ring if ring is not None else Ring()
         os.set_blocking(master, False)
         self.ref = process_ref(f"board_{name}", pid)
-        self.pidfd = os.pidfd_open(pid)
+        try:
+            self.pidfd = os.pidfd_open(pid)
+        except OSError:
+            # Without a pidfd the exit cannot be observed: end the unreaped child (its pid is still ours).
+            try:
+                os.kill(pid, signal.SIGKILL)
+            except OSError:
+                pass
+            os.waitpid(pid, 0)
+            os.close(master)
+            raise
         self.loop: asyncio.AbstractEventLoop | None = None
         self.on_output: Callable[[bytes], None] = lambda chunk: None
         self.on_exit: Callable[["Channel"], None] = lambda channel: None
@@ -113,6 +128,13 @@ class Channel(_OwnedSession):
         self.loop = loop
         loop.add_reader(self.master_fd, self._readable)
         loop.add_reader(self.pidfd, self._exited)
+
+    def begin_end(self) -> None:
+        """Loop thread, before :meth:`terminate` runs in the executor: no more writes or reads, so a write can
+        never reach a closed (and possibly reused) fd number."""
+        self.ending = True
+        self._pending.clear()
+        self.stop_io()
 
     def stop_io(self) -> None:
         if self.loop is None:
@@ -158,7 +180,7 @@ class Channel(_OwnedSession):
 
     def write(self, data: bytes) -> bool:
         """Queue ``data`` for the PTY; False when the channel has ended or the queue is full."""
-        if self.master_fd < 0 or self._reaped or self._eof:
+        if self.ending or self.master_fd < 0 or self._reaped or self._eof:
             return False
         if len(self._pending) + len(data) > INPUT_QUEUE_BYTES:
             return False
@@ -333,9 +355,11 @@ class BoardSet:
             channel = self._spawn(slot, started.argv, started.env, started.cwd)
         except BoardLaunchError as exc:
             slot.state, slot.detail, slot.channel, slot.pid = "failed", exc.reason, None, None
+            self._changed()
             return
         except OSError as exc:
             slot.state, slot.detail, slot.channel, slot.pid = "failed", f"spawn_failed:{exc.strerror}", None, None
+            self._changed()
             return
         slot.state = "running"
         self._changed()
@@ -367,6 +391,7 @@ class BoardSet:
             channel = self._spawn(slot, started.argv, started.env, started.cwd)
         except OSError as exc:
             slot.state, slot.detail, slot.channel, slot.pid = "failed", f"spawn_failed:{exc.strerror}", None, None
+            self._changed()
             return
         await self._audit("board_start", actor, address, {"channel": slot.name, "pid": channel.pid, "reason": reason})
         cancel = threading.Event()
@@ -423,7 +448,7 @@ class BoardSet:
         return lambda: callback in self.watchers and self.watchers.remove(callback)
 
     async def _end(self, slot: Slot, channel: Channel) -> dict[str, Any]:
-        channel.stop_io()
+        channel.begin_end()
         result = await asyncio.get_running_loop().run_in_executor(None, channel.terminate, self.grace)
         if result["survivors"]:
             _log(f"{slot.name} session members left after the end: {result['survivors']}")
@@ -437,6 +462,10 @@ class BoardSet:
         agent continues its previous OMP session. Returns the channel view."""
         if name not in self.slots:
             raise KeyError(name)
+        # A cancelled caller (e.g. a closed HTTP request) never leaves the channel half ended.
+        return await asyncio.shield(self._restart(name, actor, address, reason))
+
+    async def _restart(self, name: str, actor: str, address: str | None, reason: str) -> dict[str, Any]:
         async with self.lock:
             slot = self.slots[name]
             if self.closed:
@@ -516,6 +545,10 @@ class BoardSet:
         return channel is not None and channel.write(data)
 
     def resize(self, name: str, rows: int, cols: int) -> None:
+        """Set channel ``name``'s window size (kept for its restarts); :class:`ValueError` outside 1..500."""
+        for value in (rows, cols):
+            if type(value) is not int or not MIN_SIZE <= value <= MAX_SIZE:
+                raise ValueError(f"terminal size must be integers in {MIN_SIZE}..{MAX_SIZE}")
         slot = self.slots[name]
         slot.size = (rows, cols)
         if slot.channel is not None:

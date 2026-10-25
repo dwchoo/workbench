@@ -302,7 +302,9 @@ class SummaryDefaultTests(McpCase):
                           {'artifact_path': 'out.txt'}, {'run_id': COMMAND, 'artifact_path': 'out.txt'}):
             with self.subTest(arguments=arguments):
                 value = self.result(**arguments)
-                self.assertEqual(set(value), {'summary', 'state', 'outcome', 'task'})
+                # requester-authored text: the summary may carry the untrusted marking (and nothing else new)
+                self.assertEqual(set(value) - {'untrusted_text', 'note'}, {'summary', 'state', 'outcome', 'task'})
+                self.assertLessEqual(set(value) & {'untrusted_text', 'note'}, {'untrusted_text', 'note'})
                 text = json.dumps(value)
                 for secret in (VIEW_LOG, REPORT, 'ARTIFACT-CONTENT', 'epoch 1', 'accuracy'):
                     self.assertNotIn(secret, text)

@@ -1048,7 +1048,7 @@ class ResultTests(Case):
 
     def test_default_is_the_summary_only(self):
         result = self.r1.ok('inbox_result', request_id=self.rid)
-        self.assertEqual(set(result), {'summary', 'state', 'outcome', 'task'})
+        self.assertEqual(set(result) - {'untrusted_text', 'note'}, {'summary', 'state', 'outcome', 'task'})
         self.assertEqual(result['task']['runs'], [{'run_id': 'run-1', 'status': 'finished', 'exit_code': 0}])
         self.assertEqual(result, self.r1.ok('inbox_result', request_id=self.rid, full=False))
         self.assert_no_secret(result)

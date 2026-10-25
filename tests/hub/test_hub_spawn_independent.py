@@ -597,13 +597,21 @@ class ExemptCommandTests(unittest.TestCase):
         (("hub", "enable"), None), (("hub", "disable"), None),
         (("setup", "--omp", "/nonexistent/omp-for-hub-test"), {1}),
         (("update",), {1}),  # refused: a development checkout is not a uv Git install
-        (("doctor",), None), (("--help",), {0}), (("--version",), None),
+        (("doctor",), None),
+        # diagnostic log reads (security fix): like doctor, they start no Hub
+        # (each with arguments valid for the parser, so the exemption - not an argparse error - ends it before auto-start)
+        (("logs", "raw-status"), None), (("logs", "important", "status"), None),
+        (("logs", "raw", "--run", "00000000-0000-4000-8000-000000000001"), None),
+        (("logs", "raw-rotation", "activate", "--evidence", "00000000-0000-4000-8000-000000000002"), None),
+        (("logs", "summary-compat", "status"), None),
+        (("--help",), {0}), (("--version",), None),
         (("hub", "--help"), {0}), (("status", "--help"), {0}),
         # argparse errors end before the handler, so before auto-start
         (("status", "--no-such-option"), {2}), (("no-such-command",), {2}), (("hub",), {2}),
     )
-    # Every other command starts the Hub (HB-D05); run before its handler, whatever the handler does.
-    AUTOSTARTING = (("status",), ("shutdown",), ("confirm-boot",), ("logs", "raw-status"), ("attach",))
+    # Every other command starts the Hub (HB-D05); run before its handler, whatever the handler does. The exempt
+    # ``wb logs <kind>`` set is listed in EXEMPT above; ``logs raw-status`` moved there (security fix).
+    AUTOSTARTING = (("status",), ("shutdown",), ("confirm-boot",), ("attach",))
 
     def test_every_exempt_command_starts_no_hub(self):
         for args, accepted in self.EXEMPT:

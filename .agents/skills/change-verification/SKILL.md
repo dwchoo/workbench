@@ -17,15 +17,17 @@ Diagnosis-only authorizes neither production fixes nor this repair pipeline.
 
 ## Independent tests
 
-In authorized implementation mode, transfer the workspace mutation lease only after the
-previous writer and subprocesses stop. Dispatch `test_designer` with acceptance IDs,
-requirements and test-only write scope. Expected outcomes come from contracts first.
-`test_designer` must add/update meaningful tests for new behavior or uncovered regressions; proven
-existing coverage can be reused with named evidence. Documentation-only work may need
-no executable test changes. Audit test delta against its baseline.
+After the previous writer/subprocesses stop, transfer the mutation lease to `test_designer`
+with requirements, acceptance IDs and test-only scope. It derives scenarios/expected values
+before worker code/tests, then reuses or extends meaningful coverage. Worker GREEN is not
+independent assessment; author identity does not invalidate tests. Documentation can justify
+no executable addition. Audit against baseline.
 
-Classify failures by implementation/test/environment/contract using evidence. For a valid
-failing test Root assigns a production fix to the caller-selected writer (`worker_senior` for investigate-bug), preserving independent acceptance tests.
+Classify implementation/test/environment/contract failures. Apply section 7's supported-scenario,
+consequence and evidence judgment before work: labels/assertions alone do not expand guarantees.
+Preserve real rare defects; investigate material uncertain premises and consider scope-preserving
+simplification. Keep findings/dispositions separate. Assign accepted fixes to the caller-selected
+writer (`worker_senior` for investigate-bug), preserving independent acceptance tests.
 For a hard diagnosis Root may consult Oracle under the common budget. Do not let fixes
 silently alter the desired behavior or turn failed tests into skipped tests.
 Budgets, retry checkpoints and reassessment follow contract section 8; reserve the next
@@ -33,25 +35,38 @@ correction, independent tests and review together.
 
 ## Frozen review
 
-Optional early review addresses one feasibility question, consumes call budget and never
-replaces final review. Failed required checks or missing decisive runtime evidence require
-a bounded experiment/fix before final review.
+Early review addresses one feasibility question and consumes budget, never replacing final
+review. Resolve required failures/missing decisive evidence through a bounded experiment/fix first.
 
-After tests/fixes, freeze code+tests. Give a fresh `reviewer` SPEC/criteria, the complete relevant
-diff (including new files), base/candidate identity and source context, excluding worker
-self-evaluation. In relevant_contracts, include only instructions and standards applicable
-to candidate paths (including CODING_STANDARDS.md and CONTRIBUTING.md). Read-only reviews of separate
-stable candidates may run concurrently; writers must not mutate reviewed inputs.
+After tests/fixes, freeze code+tests. Follow section 7 and `references/review-axes.md`:
 
-Root adjudicates findings. Route accepted bounded fixes to a writer. If requirements
-or accepted design change, pause affected work. Material deltas need delta/impact review and
-affected checks; if impact cannot be bounded, review the unit again. No repeat reviews without
-new code, evidence or uncovered scope. Carry forward unaffected original coverage and give delta
-reviewers the original findings, dispositions, changed inputs and affected contracts. Record an
-impact reason before another full review. Optional improvements never block unless tied
-to an approved criterion. Passing coverage ends the cycle and returns to integration.
-Repeated failures without progress follow contract section 8; return the blocker and preserved
-findings to Root rather than repeating an unchanged cycle.
+| Entry/stage | General review |
+|---|---|
+| implement intermediate coherent unit | one fresh reviewer; label both axes, no independent-context claim |
+| implement final feature / authorized bug repair final | Standards and Spec in two fresh separate contexts |
+| entire feature equals one unit/candidate/scope | final pair also satisfies unit review |
+| quick-change | existing one fresh reviewer; preserve risk/tester rules |
+| repository development / standalone tdd | implement distinction / caller's existing lane |
+| corrections | section 7 mechanical exception or bounded combined delta; otherwise affected axes; justify carry-forward |
+
+Root gives each required reviewer the same frozen candidate/full relevant diff (including
+new/dirty files), SPEC/incident criteria, base and applicable standards/source context, never
+worker self-evaluation or the sibling axis's answer. Include relevant CODING_STANDARDS.md/
+CONTRIBUTING.md. Optional packet review_axis is standards|spec, separate from review_kind;
+no spawn/journal keys. Use concurrent/sequential fresh invocations within actual limits.
+Keep findings/evidence/unknowns per axis. Repository rules override `references/code-smells.md`
+heuristics. No writer mutates reviewed inputs.
+
+Apply section 7 correction rules: Root may apply a reviewer's exact semantics-neutral wording
+and inspect the diff without new tester/reviewer calls; substantive document review stays in
+the unit. For bounded combined delta review use `references/review-axes.md`. Requirements/design
+changes hold affected work and reopen affected independent axes. Full-unit review needs an
+impact reason. Supply original findings/dispositions and current inputs; justify coverage reuse,
+never relabel it as fresh. Assess fixture expectations/affected cases, rerun environment-failed
+subsets, and reopen installation checks for packaging/entrypoint/asset-resolution changes.
+Stop when required coverage passes; optional hypotheses do not keep the unit open.
+Passing coverage returns to integration; no-progress failures follow section 8 and return
+preserved findings/blocker to Root.
 
 ## Security review
 
@@ -62,33 +77,23 @@ Without a trigger, note "no security signal" in the review record.
 
 ## Integration and final evidence
 
-Isolated unit verification is provisional until integrated. Root integrates under exclusive
-integration ownership, audits the delta, checks cross-ticket contracts and runs relevant
-integration tests. New merge/conflict changes require review coverage. Include final feature
-acceptance and required whole-repository checks where the approved verification plan requires.
-Record candidate before/after each check, command/cwd/environment/exit code/result/log and
-acceptance coverage. Stale or missing evidence cannot become a final pass by relabeling.
-Link structured gate results in ledger `checks` and compare them with the approved required
-items and evidence levels. Reject a fixture-only pass for a runtime requirement; report a
-missing project validator as an enforcement gap, not as validated gate execution.
-Return evidence and gaps; Root declares the contract's final status. No remote publication.
+Verification remains provisional until Root integrates: audit/test cross-ticket contracts and
+review merge/conflict deltas. Include approved final acceptance/repository checks. Record each
+check's before/after candidate, command/cwd/environment/exit/result/log and acceptance coverage.
+Link ledger checks to approved gate items/evidence levels; missing validators are enforcement
+gaps. Never relabel stale/missing evidence or fixture success as runtime pass. Return evidence
+and gaps to Root; no remote publication.
 
 ## What the evidence establishes
 
-`test_designer` exercises the agreed public behavior with contract-derived expectations,
-including a relevant failure or regression; avoid assertions that recompute the implementation or
-mock away the behavior under test. Use doubles only at external or nondeterministic boundaries
-and state what integration stays untested. Reuse approved test seams without new approval.
+Use agreed public seams, independent expectations and meaningful regression sensitivity.
+Avoid tautologies or mocking away behavior; name integration limits of external/nondeterministic
+doubles. GREEN does not establish worker RED-first chronology. Distinguish static parsing,
+fixture execution, model/tool behavior and actual host runtime evidence; none proves the next
+level. Prompting guides do not waive independent testing/frozen review or acceptance.
 
-Label parser and file checks as static, controlled helper executions as fixture tests,
-model responses and tool actions as skill behavior evidence, and actual host sessions as
-runtime evidence. A result at one level does not establish a result at the next level.
-Keep independent testing and frozen review even when a newer prompting guide recommends
-less; scale checks without weakening acceptance.
-
-Use `scripts/verify.py check` to record authorized check execution and `gate` to compare all
-current evidence with approved required items, inside the phase `batch`; print examples with
-`workflow_tools.py formats --actions check,batch`. Exit code 0
-is not an acceptance assertion. Preserve execution records and add explicit item observations,
-unknowns and evidence in a new record. Record the result path/hash through workflow-ledger.
-Read-only review/navigation uses recorded evidence only and never runs the check command.
+Record authorized execution with `scripts/verify.py check` and compare current evidence to
+approved required items with `gate`, inside the phase `batch` (examples:
+`workflow_tools.py formats --actions check,batch`). Exit 0 alone is not acceptance. Preserve
+execution records; add item observations, unknowns and evidence in a new record. Link path/hash
+through workflow-ledger. Read-only review/navigation never executes checks.

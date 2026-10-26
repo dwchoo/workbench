@@ -27,16 +27,25 @@ planning. Do not dispatch implementation workers or write product/tests.
 Use `references/spec-template.md`: problem, solution, relevant user stories, scope/non-goals,
 public contracts and invariants, module/interface decisions, failure behavior, compatibility,
 acceptance IDs and test seams/commands. Preserve decisions from the brief. Prefer existing
-behavior-level test seams; explain new ones. Scale detail to the feature instead of forcing
-a long story list. Keep stable design intent separate from volatile dispatch file scopes.
+behavior-level public test seams with independent expected-value sources. For a new seam,
+explain what it catches/misses and settle material choices with the user; reuse agreed seams.
+If interface shape is uncertain, consult `../tdd/references/codebase-design.md`, not another
+mandatory design session. Scale detail to the feature instead of forcing a long story list. Keep stable design intent separate from volatile dispatch file scopes.
 Cite the input brief revision and any genuinely new technical elaboration.
+Use scope/non-goals to preserve supported environments and relevant input assumptions. Do not
+promote hypothetical edge cases to acceptance merely because they are possible. Select
+representative important failures with distinct causes; compare simpler states/rejection
+before adding recovery obligations. A change to promised behavior/compatibility needs a user
+decision; technical elaboration must not silently expand or shrink that promise.
 
 ## Create tickets and PLAN.json
 
 Create one independently understandable Markdown file per ticket, each with delivered
 behavior, acceptance IDs, contracts, testing requirement and stop conditions. Prefer small
-verifiable vertical slices, not arbitrary layers or files. Shared contract work is a real
-prerequisite when necessary. Preserve compatible refactors through expand/migrate/contract
+verifiable vertical slices: one worker pairs each behavior's failing test with its minimum
+implementation before the next behavior. Do not split all tests from all production work or
+make test_designer the bulk test-first author. Identify documentation, probes or pure refactors
+and their justified alternatives. Shared contract work is a real prerequisite when necessary. Preserve compatible refactors through expand/migrate/contract
 where appropriate. Include explicit final cross-ticket integration/verification work.
 
 PLAN.json is the canonical graph. Use `references/plan-template.json`. Record real dependency

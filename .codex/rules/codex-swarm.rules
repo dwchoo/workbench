@@ -1,0 +1,7 @@
+prefix_rule(
+    pattern = ["git", "worktree", ["add", "remove", "list", "prune"]],
+    decision = "allow",
+    justification = "codex-swarm Root-managed isolated worktrees under .worktrees/",
+    match = ["git worktree add .worktrees/w1 -d HEAD", "git worktree remove --force .worktrees/w1"],
+    not_match = ["git commit -m x", "git worktree move a b"],
+)

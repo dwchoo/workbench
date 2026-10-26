@@ -12,7 +12,7 @@ automatically during development. Keep ordinary short progress reports unchanged
 
 `$brief-workflow` alone is the normal invocation. A feature name/path is optional.
 Explain the project to a reader who knows neither the project nor its documents. Write in
-the user's language (Korean by default), with short tables and enough context to decide.
+the user's language unless explicitly requested otherwise, with short tables and enough context to decide.
 Read [the fixed output template](references/briefing-format.md) on every invocation.
 Preserve its five sections, field labels, table columns and empty-state rows. Do not
 reconstruct or abbreviate the format from memory.

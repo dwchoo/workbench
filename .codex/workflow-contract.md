@@ -22,7 +22,7 @@ section with `sed -n '/^## 5\./,/^## 6\./p' .codex/workflow-contract.md`.
 | 11 | Operational tools (ledger, evidence, plan/gate), requested handoff, helper output |
 | 12 | Limits |
 
-## 1. Three phases, seven public entry points and internal procedures
+## 1. Three phases, eight public entry points, a methodology and internal procedures
 
 - `refine-spec`: user-selected Astra session; interview and document agreed intent.
 - `to-tickets`: fresh user-selected Sol XHigh/Max session; compile the persisted brief
@@ -40,12 +40,40 @@ section with `sed -n '/^## 5\./,/^## 6\./p' .codex/workflow-contract.md`.
 - `quick-change`: explicit user invocation only; a small low-risk single-writer change
   whose acceptance fits one or two sentences. The invocation is the approval; no BRIEF,
   SPEC or PLAN, and independent review stays mandatory (section 7). Ask-workflow may only recommend it.
+- `improve-codebase-architecture`: explicit user invocation only; scope, survey and report
+  deepening candidates. Report-only/no-candidate is a normal finish. After one selection,
+  use the shared discovery method within this skill for grilling, domain decisions and an
+  agreed BRIEF. Do not re-enter refine-spec or start implementation automatically.
+- `tdd`: public methodology with implicit invocation allowed, not a workflow entry lane.
+  Root explicitly supplies it to applicable development assignments; discovery is not required.
+  Calling it grants no implementation authority and never bypasses another skill's explicit invocation.
 - `handoff`: not a public entry point; used only when the user explicitly requests a
   handoff of workflow state to a new session.
 - Root-internal procedures, not entry points: `change-verification` (implement and
   authorized bug repair, also usable for explicit verification), `workflow-ledger` and
   `workspace-evidence`. Root uses them during implement/investigate-bug; they are not
   selected for general review or status questions.
+
+Refine-spec and architecture share `refine-spec/references/discovery-method.md`: resolve
+facts from the codebase, ask the current decision frontier, maintain accepted vocabulary and
+selective ADRs, then close BRIEF. Architecture writes an owned unique OS-temp HTML report
+with inline CSS/SVG before/after diagrams, files, friction, benefits, ADR conflicts,
+uncertainty and recommendation strength. Honor no-write requests with an inline report.
+Do not change product code/tests, design a detailed interface before selection, or claim
+visual verification/browser opening without observation. Accepted terms use existing glossary
+conventions; unresolved repository proposals remain in its authorized plan location.
+BRIEF approval authorizes fresh-session planning, not implementation (section 3).
+
+In shared discovery rounds, number questions `1.`, `2.` and label each question's real
+alternatives `a.`, `b.`, `c.`. Identify the recommended letter and reason, and show the
+compact answer form `1.a, 2.b` and explicitly offer answering in the user's own words instead.
+Accept free-form answers too; do not invent alternatives
+or treat unanswered questions as accepted recommendations. Preserve the shown mapping
+when interpreting replies; dependent questions still wait for their prerequisites.
+
+Model-facing skills, MCP instructions and agent references default to English. Write
+user-facing plans, specifications, reports and explanations in the user's language.
+An explicit user language request takes precedence.
 
 Skills do not select/switch the active model. Accept the user's stated model selection;
 inspect authoritative host metadata when available. Label unavailable metadata unverified,
@@ -88,6 +116,9 @@ Honor existing repository documentation layout. Defaults:
 - `docs/features/<feature>/SPEC.md`: executable behavior, interfaces, invariants,
   failure semantics and verification requirements derived from that brief.
 - `docs/features/<feature>/PLAN.json`: canonical ticket graph and scheduling constraints.
+  Establish behavior, public test seams and independent expected values before making
+  vertical tickets that each pair a tested behavior with its implementation. Keep pure
+  refactors/probes explicit; do not split all tests from all implementation.
 - `docs/features/<feature>/tickets/<id>.md`: one self-contained narrative per ticket.
 - `.workflow/<feature>/state.json` and `runs/<run-id>/`: Root-owned operational records,
   in an authorized writable location. Relocate if repository policy requires it.
@@ -298,12 +329,72 @@ gate. The shared helper validates required evidence records; project-specific ru
 
 ## 7. Mandatory tests, review and integration
 
+### Judge findings before creating work
+
+Root adjudicates each finding against the supported scenario, consequence and evidence before
+assigning a fix or another test. Keep the original finding and a brief disposition in existing
+result/issue evidence; do not add a checklist, approval phase or journal schema. A tester status,
+severity label or failing assertion alone is not a required defect. Explicit acceptance IDs are
+not necessary to establish concrete correctness, data-loss or security violations.
+
+- Accept violations of approved behavior or concrete correctness/data/security invariants in
+  supported paths, including rare failures. Preserve the relevant regression checks.
+- If a concrete material failure path has one uncertain premise, investigate that premise with
+  a bounded check. Lack of a runnable reproducer alone does not justify dismissal.
+- If an existing entry boundary/invariant excludes the premise, cite that boundary and close
+  the finding; do not add redundant guards/tests. Check actual producers and bypass paths.
+- Correct unsupported test expectations/fixtures rather than expanding product guarantees;
+  retain coverage of real supported inputs. Fix environment failures and rerun the failed subset.
+- Dismiss or defer unsupported assumptions, optional hardening and immaterial style suggestions
+  without mandatory follow-up tickets. Reopen only on new material evidence.
+
+Before accepting more defensive states, consider a smaller state space, single source of truth
+or clear rejection that preserves approved behavior. Do not silently remove promised behavior,
+compatibility or data preservation; ask only for the material product choice when needed.
+This is implementation judgment, not a mandatory refactoring phase in every RED/GREEN cycle.
+Existing structural cleanup remains bounded accepted review work or an approved pure refactor.
+
+### Build and independently assess the agreed behavior
+
 `implement` includes independent `test_designer` test assessment/code and fresh `reviewer` review for
 each coherent verification unit, followed by feature integration verification. Group small
 tickets where justified, but make a dependency gate explicit. Worker TDD does not replace
 `test_designer`; passing tests do not replace reviewer analysis. Reviewer is not Root self-review.
 
-`test_designer` derives expected outcomes from approved behavior before inspecting implementation.
+For testable new behavior and regression repair, the assigned worker/worker_senior runs
+one public-behavior test to a meaningful RED, makes only the implementation needed for
+GREEN, then selects the next behavior. Do not write all tests first, add speculative next
+features, or call an environment/import failure unrelated to the behavior a valid RED.
+An existing exact regression failure may supply RED. An absent proposed public interface
+may be a meaningful failure when it directly establishes the agreed behavior.
+
+Root supplies packet content: actual resolved `method_reference` path and file/candidate
+identity, `seam_refs`, observed behavior/independent expected-value source, authorized test
+and production paths, and exact check commands. These are packet contents, not new spawn
+arguments or journal schema keys. Resolve scope/receipt and actual file identity: project
+`<project>/.agents/skills/tdd/SKILL.md`; global the selected actual home's
+`.agents/skills/tdd/SKILL.md`. The global contract separately uses actual CODEX_HOME.
+Never guess CODEX_HOME/skills or cwd. Conflicting/missing references or exact-role capability
+gaps return to Root without silent model/role fallback.
+
+Use agreed seams without repeated approval. Without an agreed seam, the Root/caller proposes
+what each public interface check catches/misses and obtains user confirmation before tests;
+a standalone tdd call does not itself agree a seam or expand authority. A leaf returns new
+material seam/requirements gaps to Root. Tests use public behavior and independent expected
+values, avoiding internal helper/call-count assertions as primary proof. Doubles isolate
+external/nondeterministic dependencies and expose untested integration limits.
+
+Reuse result/check/candidate records to link behavior/seam, RED command/cause/then-candidate,
+minimal production delta and GREEN command/candidate. No per-cycle snapshot or new timing
+schema is mandatory. Missing chronology is unverified; post-hoc old-fail/new-pass proves
+sensitivity, not RED-first development. Documentation/comments, necessary probes and approved
+pure refactors use appropriate checks; pure refactors retain the existing GREEN safety net
+rather than fabricate RED. Record the behavior, exception reason, alternative verification and
+uncertainty. Config/migration/performance labels alone are no exception. If no harness exists,
+consider a small authorized fixture; do not add out-of-scope dependencies or infrastructure.
+
+`test_designer` derives scenarios and expected outcomes from approved behavior before
+inspecting worker tests or implementation, then assesses and reuses/extends meaningful coverage.
 Add meaningful tests for new behavior/uncovered regressions; reuse proven existing coverage
 with named evidence. Documentation-only work can justify no executable test addition.
 Do not weaken acceptance tests to fit an implementation. Test failure may arise from code,
@@ -329,10 +420,13 @@ found at any point stops the change and reports the need for refine-spec/to-tick
 is reduced but independent: one frozen `reviewer` review and the required checks are mandatory;
 `test_designer` may be skipped only by naming existing coverage.
 
-Security review: security triggers, judged on the candidate diff, are authentication or
-authorization; external input parsing or deserialization; file path, shell or SQL execution;
-network boundary; cryptography, tokens or secrets; dependency, lockfile or CI changes;
-permission or sandbox settings. When triggered, Root runs a separate `reviewer` invocation
+Security review: security triggers are changes to authentication/authorization, attacker-
+controlled parsing/deserialization, path/shell/SQL execution semantics, network trust boundaries,
+cryptography or secret handling, dependency/lockfile resolution, CI execution, permissions or
+sandbox settings. Judge changed behavior, input control and reachable execution boundaries,
+not the presence of path/SQL/network words or a filename alone. Cite unchanged semantics and
+prior evidence when reusing security coverage; uncertainty about a material boundary needs
+focused investigation, not an unsupported no-trigger claim. When triggered, Root runs a separate `reviewer` invocation
 with `review_kind: security` and a threat packet, plus deterministic checks (secret scan of the
 diff; dependency audit when a lockfile changed) recorded through `verify.py check`. A missing
 tool, unavailable network or blocked execution is `not_run` with unknowns, never a pass; do
@@ -340,12 +434,52 @@ not install tools automatically. A model security review is hypothesis-level evi
 proof of safety. Without a trigger, note "no security signal" in the review record.
 Procedure: the change-verification skill's `references/security-review.md`.
 
-Within each workspace/unit: decisive experiment when needed -> implement and quick checks -> independent tests -> necessary
-production fix -> frozen code+tests review -> bounded corrections and delta review -> checks.
+Within each workspace/unit: decisive experiment when needed -> worker behavior-by-behavior
+RED/minimal GREEN (or justified alternative) -> independent test assessment/completion ->
+necessary production fix -> frozen code+tests review -> bounded corrections/delta review -> checks.
+
+| Entry/stage | Required general review | Reuse and scope |
+|---|---|---|
+| implement intermediate coherent unit | one fresh general reviewer | Label Standards/Spec findings, but do not claim independent contexts. |
+| implement final integrated feature | two fresh reviewer invocations, Standards and Spec | Same frozen candidate/scope for both; if the unit is the entire feature, this pair also fulfills its unit review. |
+| investigate-bug authorized repair final | two fresh axis invocations | Incident expected behavior is the Spec; diagnosis alone never enters repair. |
+| quick-change | existing one fresh general reviewer | Preserve risk gate and named-coverage condition for skipping tester; no independent-two-axis claim. |
+| repository development | implement unit/final distinction | Actual roles/tools/authority must be available; instruction presence alone does not prove TDD. |
+| standalone tdd | caller's existing path above | No new execution lane or review exemption. |
+| accepted correction/delta | affected axes; bounded combined delta permitted below | Carry unaffected original coverage with impact evidence; do not relabel it as a fresh pass. |
+
+For an independent pair, Root invokes the same reviewer persona in separate fresh contexts,
+concurrently or sequentially within actual limits. Both inspect the same frozen code+tests
+and full relevant diff, including new/dirty files; neither receives the other answer or worker
+self-assessment. Optional packet `review_axis: standards|spec` differs from existing
+`review_kind: general|security`; no host/journal schema change follows. Preserve each axis's
+findings/evidence/unknowns. Repository standards override Fowler smell heuristics; label smells
+as judgment, not hard rules. Accepted bounded corrections/refactors belong to a worker and
+need affected checks/delta review, except the mechanical correction below. Optional cleanup does not block acceptance. Security review
+uses the existing separate trigger/invocation above. Budget actual invocations (section 8).
 Different units may pipeline concurrently in separate verified workspaces. Never review a
 moving target simply because the reviewer itself is read-only. Final integration gets
 cross-ticket tests and review coverage of integration deltas before required final checks.
 Every approved acceptance ID must map to implementation and current verification evidence.
+
+### Corrections and stopping
+
+A reviewer-prescribed exact wording/typo correction with no product or contract meaning change
+may be applied by Root under the single-writer lease, followed by exact diff inspection. Reuse
+the original review and record the delta; no new tester/reviewer call is needed. New semantic
+judgment is not this exception. Group substantive document review into the existing unit;
+document-only changes do not by themselves require runtime tests.
+
+For a bounded correction whose original Standards and Spec conclusions remain valid, one
+fresh general reviewer may check the delta under both labelled headings. Preserve both original
+results and candidate identities separately; this is not a new independent full pair or a
+merged score. Changed requirement interpretation/design or uncertain impact requires separate
+affected-axis contexts (full-unit scope only when impact warrants it). Required security delta
+review stays separate. Fixture-only changes need affected expectations/cases assessed; carry
+installation evidence only if its product/package inputs are unchanged. Environment correction
+reruns the failed subset, not TDD or the full pipeline. Reopen installation checks when
+packaging, entrypoints or asset resolution change. Scanner evidence is independently reusable
+only while each scanner's relevant inputs/configuration remain unchanged.
 
 Early technical review is optional, narrowly scoped to a concrete feasibility uncertainty,
 and never final acceptance. Do not submit partial candidates to repeated final review while
@@ -398,9 +532,11 @@ increase concurrency. Incident tracking and resource locks remain procedural unl
 
 Use 2 worker attempts per unresolved issue, 2 corrective review cycles per unit, and 2 Oracle
 calls per incident / 4 per run as Root reassessment checkpoints, not user-approval gates.
-At a checkpoint compare failed scenarios, causes and observations. A new reproducer, ruled-out
-cause or verified affected behavior is progress; a restated hypothesis or new incident ID is
-not. If progress supports another attempt, allocate a finite correction-and-verification batch
+At a checkpoint reassess whether the scenario is required and whether a scope-preserving
+design simplification removes its cause, then compare failed scenarios and observations.
+A new reproducer, ruled-out cause or verified affected behavior is progress only when it moves
+a required acceptance decision forward; expanding hypothetical cases, restating a hypothesis
+or assigning a new incident ID is not. Apply section 7 adjudication from the first finding. If progress supports another attempt, allocate a finite correction-and-verification batch
 with a specific next action and success/stop criteria. Further Oracle calls need a concrete
 unresolved question and new evidence or a discriminating experiment, not another opinion.
 Without progress, change approach through a smaller reproducer, the existing senior worker
@@ -442,6 +578,12 @@ Final result:
   hide an observed required failure here.
 - blocked: known required failure, contract/scope/permission/capability/recovery blocker,
   exhausted explicit user/host limit, or a no-progress impasse; not a depleted internal estimate.
+
+Once required behavior and current evidence are sufficient, stop. Do not add experiments to
+refute every nonblocking hypothesis. Classify pre-existing test failures by regression and
+required-evidence impact; never delete an approved required gate for convenience. Preserve
+original findings separately from Root dispositions; a dismissed finding is not a reviewer
+retraction. Unresolved accepted required findings still prevent completion.
 
 Additional done_verified conditions: no unresolved High-or-above security finding and no
 required security check left `not_run`.
@@ -565,7 +707,7 @@ Handoff may describe a feature, incident or planning task without a PLAN or ledg
 project conventions, otherwise create a new `.workflow/handoffs/<id>/HANDOFF.md` and manifest.
 Never overwrite an earlier handoff. Include purpose, goals, authority and decision evidence,
 partial/failed/unverified results, active work, failed attempts, next actions and purposeful links.
-Use Korean prose by default. Exclude secrets. Capture candidate and referenced record identities;
+Use the user's language unless explicitly requested otherwise. Exclude secrets. Capture candidate and referenced record identities;
 mark active writers, changing input, missing records and contradictions explicitly.
 Generation does not resume work, change models, stop processes or run checks. At reception,
 compare actual files, authority, ledger and evidence before acting. Reading/status requests

@@ -5,7 +5,7 @@ description: "Investigate a specific bug through reproduction and discriminating
 
 # Investigate bug
 
-Print sections 5, 6, 8–11 of `.codex/workflow-contract.md` (`python3 ../workflow-ledger/scripts/workflow_tools.py contract --sections 5,6,8-11`, relative to this skill). Start only when the user
+Print sections 5–11 of `.codex/workflow-contract.md` (`python3 ../workflow-ledger/scripts/workflow_tools.py contract --sections 5-11`, relative to this skill). Start only when the user
 invokes this skill, not on an ordinary error report, a question about skills, or an implement
 failure. Another skill must not bypass this boundary by loading these instructions internally.
 
@@ -89,15 +89,23 @@ For diagnosis-only, clean up temporary changes/resources and report supported ca
 hypotheses, evidence, the smallest repair direction and remaining experiments. Diagnosis complete
 does not mean the product bug is fixed.
 
-For repair, assign the smallest supported fix to `worker_senior`. Where possible, demonstrate
-the real regression failing before the fix and passing afterward. Do not weaken expected
-behavior, skip failing tests, or include unrelated refactors. A missing test seam is a coverage
-gap; it does not waive required evidence. A wider design decision needs the user's decision.
+For authorized repair, give worker_senior the actual scope/receipt-resolved tdd reference/
+identity, agreed public seam, expected-value source, allowed test/production paths and commands.
+Reuse the exact observed regression as RED or run one meaningful failing behavior test, then
+make the minimum GREEN fix before the next behavior. Preserve command/cause/then-candidate,
+minimum delta and GREEN evidence; missing chronology remains unverified. A missing harness
+needs a small authorized fixture or a reported gap, not blanket exemption. Apply section 7's
+justified alternatives for probes/documentation/pure refactors. Do not weaken expectations,
+skip failures or include unrelated refactors. New material seams/design decisions return to
+the user through Root; agreed seams need no repeated approval. Diagnosis alone never starts TDD repair.
 
 Apply `../change-verification/SKILL.md` with the incident's behavior criteria, scope and evidence
 requirements in place of a ticket SPEC. Keep `worker_senior` for production corrections.
-Independent tests assess whether the real defect is detectable; review a stable code+tests
-candidate only after required checks pass. Rerun affected checks and delta review as needed.
+Independent tester derives expected scenarios before seeing worker tests/code, then assesses
+real defect detection. After required checks pass, Root reviews one frozen final candidate in
+two fresh separate Standards/Spec contexts with incident criteria; no sibling-answer or worker
+self-assessment input. Preserve separate security triggers, affected-axis delta checks/review
+and justified unaffected coverage; apply the section 7 table.
 Clean up temporary instrumentation before final verification, rerun the original unminimized
 scenario and relevant integration behavior, and identify the final candidate including dirty files.
 

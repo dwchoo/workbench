@@ -33,9 +33,21 @@ agreed BRIEF plus glossary/selective ADR updates, not product code. In the fresh
 Sol XHigh/Max planning session, `$to-tickets <brief>` creates SPEC and the dependency/resource
 aware ticket bundle in one command. Do not implement or invent missing product decisions.
 
+Use `$improve-codebase-architecture [scope]` only on explicit user invocation. Survey and
+report deepening candidates; report-only is a normal finish. A selected candidate continues
+through grilling/domain decisions to BRIEF within that skill, without restarting refine-spec
+or automatically authorizing implementation.
+
+`tdd` is a public methodology, not another execution lane. In authorized behavior/regression
+development, Root passes its actual scope/receipt-resolved reference and agreed seam; workers
+run one behavior's RED -> minimum GREEN before the next. Missing harness is assessed, not a
+blanket exemption. Preserve justified exceptions and chronology evidence under contract §7.
+
 Use `$implement <feature>` for authorized development. Sol owns ready-ticket scheduling,
-safe parallel workspaces, integration, independent `test_designer` tests, fresh `reviewer` review,
-necessary fixes and final checks. Do not ask separately whether to test/review. Skills do
+safe workspaces, worker TDD, independent test_designer assessment, integration, corrections
+and final checks. Intermediate units need one fresh general review; final features and bug
+repairs need fresh independent Standards/Spec contexts. quick-change keeps one review; apply
+contract §7's whole-unit reuse, affected-axis delta and separate security rules. Do not ask separately whether to test/review. Skills do
 not switch models; development defaults to GPT-5.6 Sol High unless the user selects otherwise.
 
 Use `$ask-workflow` when asked what stage/command comes next. Inspect artifacts/evidence,

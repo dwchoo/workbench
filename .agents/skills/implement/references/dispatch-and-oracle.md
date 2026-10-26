@@ -7,6 +7,10 @@ Keep immutable packets with existing attempt evidence; no separate routing ledge
 - feature_id, ticket_id, attempt_id, invocation, approved_bundle_digest
 - actual_workspace (absolute worktree path when Root created one), repository_identity, baseline_snapshot, effective_write_capability
 - acceptance_ids, relevant_contracts, allowed_write_paths, prohibited_paths
+- method_reference: scope/receipt-resolved absolute tdd path and file identity; seam_refs,
+  behavior and independent expected-value source, authorized test_paths/production_paths
+- exact_checks include RED/GREEN commands; agreed seam or Root-return condition; justified
+  TDD exception when needed. Missing reference/harness is a reported gap, not blanket exemption.
 - generated_outputs, resource_claims, mutation_owner, checkpoint_ref
 - exact_checks, reserved_budget, stop_conditions; review_kind (`general` or `security`) for reviewers
 - feasibility assumption/experiment/result reference when applicable
@@ -28,19 +32,23 @@ lacking invocation against host evidence; never invent connections.
   worker: candidate_ready (verify) / needs_reroute (reassess) / needs_oracle / blocked;
   reviewer: no_material_findings (pass) / findings (adjudicate) / needs_oracle / blocked;
   test_designer: tests_ready (review) / coverage_sufficient (review) / implementation_defect
-  (worker fix) / needs_oracle / blocked
+  (Root adjudication under contract section 7, then accepted fix) / needs_oracle / blocked
 - actual_workspace, base_snapshot, candidate_id, attributable_output_bundle
 - changed_paths, scope_audit, checks with command/cwd/exit_code/result/evidence
+- findings: supported premises, consequence, invariant/evidence; distinguish uncertainty and suggestions
 - active_or_stopped_subprocesses, remaining_gaps
 - for blockers: cause/evidence, direct ticket and acceptance/gate impact, partial delta,
   needed decision or prerequisite and resume condition; reference an existing issue when known
-- gate_result_refs, original_review_ref, delta_review_scope when applicable
+- tdd_evidence: behavior/seam, RED command/cause/then-candidate, minimal implementation delta,
+  GREEN command/candidate; or exception behavior/reason/alternative check/uncertainty.
+  Missing chronology is unverified; post-hoc sensitivity is not RED-first.
+- gate_result_refs, original_review_ref, delta_review_scope and affected review_axis when applicable
 - for needs_reroute: requested_role, reason_code, remaining_problem, evidence_refs
 
 ## Accounting and gates
 
 Use journal v1 [formats](../../workflow-ledger/references/formats.md) and contract section 8.
-No routing fields or task statuses enter the journal schema. Transition evidence links packets
+All assignment/result fields above are packet content, not spawn arguments or new journal keys. No routing fields or task statuses enter the journal schema. Transition evidence links packets
 and host observations; Root checks packet invocation/selected_role against the journal call.
 A result status does not establish process termination or ticket integration.
 Required gate results retain PLAN item IDs, candidate identity, evidence level,

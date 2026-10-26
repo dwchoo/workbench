@@ -18,8 +18,8 @@ models or resuming implementation. Check actual writer observations where availa
 say so. Do not copy secrets or raw environment/log dumps.
 
 Use the project's handoff location or `.workflow/handoffs/<new-id>/`. Preserve earlier handoffs
-and link them as history without requiring the receiver to traverse the chain. Draft Korean
-prose with the [request format](../workflow-ledger/references/formats.md):
+and link them as history without requiring the receiver to traverse the chain. Draft in the
+user's language unless explicitly requested otherwise, with the [request format](../workflow-ledger/references/formats.md):
 - Goal, current position, handoff purpose and expected next-session result.
 - User decisions, reasons, constraints and request/authorization evidence; distinguish proposals.
 - Complete, partial, failed and unverified work tied to candidates and checks. A past pass is

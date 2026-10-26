@@ -12,17 +12,13 @@ High, but honor an explicitly selected supported higher effort. Do not switch mo
 
 ## Entry and resume
 
-Establish explicit authorization for the current plan/scope, recording its `bundle-digest` and
-approval reference. Reconcile state with files, candidates, evidence and host execution status;
-do not duplicate an active/unknown assignment. A plan-only or review-only request is not
-permission to implement. If no valid ticket bundle exists, return the need for to-tickets
-(for a tiny change the user may invoke `$quick-change`; never switch automatically).
-
-Check availability of the named workers, `test_designer`, `reviewer` and workspace capabilities.
-Do not declare supported isolation/model/effort merely because the config names it. Reserve
-finite capacity and record every started call under contract section 8 and
-`../workflow-ledger/SKILL.md`. Reconcile unknown usage before spending. Missing instructions block affected dispatch; never silently substitute another
-installation scope. Report progress at events per `references/progress-report.md`. Write run records only under `.workflow/`, never `.codex-swarm/`.
+Record current scope authorization, `bundle-digest` and approval reference. Reconcile files,
+evidence, candidates and host execution; active/unknown assignments forbid duplicate dispatch.
+Plan/review-only is not implementation authority. Missing valid tickets means to-tickets;
+never switch automatically to quick-change. Verify exact workers/test_designer/reviewer and actual
+workspace capabilities; config names alone prove no isolation/model/effort. Reserve finite
+capacity and record calls under section 8 and `../workflow-ledger/SKILL.md`; reconcile unknown
+usage first. Missing instructions block affected dispatch; never substitute installation scopes. Report progress at events per `references/progress-report.md`. Write run records only under `.workflow/`, never `.codex-swarm/`.
 Helpers: never read helper source. Follow the brief's setup/dispatch/result/integration examples:
 one `batch --input /dev/stdin` per phase (reserve+starting before dispatch); `git apply`, other Git commands and `restore` stay standalone.
 
@@ -50,7 +46,8 @@ Classify worker results: candidate_ready needs independent verification; needs_r
 implementation reassessment; needs_oracle needs a concrete diagnostic/design question;
 blocked needs its authority/environment/contract prerequisite resolved. Apply the retry,
 progress and budget rules of contract section 8; do not repeat an unchanged failing approach.
-Handle partial blocking through the frontier procedure below.
+Apply section 7 finding adjudication and scope-preserving simplification before creating work.
+At section 8 checkpoints reassess necessity; hypothetical expansion is not progress.
 
 Before reassignment, confirm the previous writer and child processes stopped, inspect the partial
 delta and release safe leases; unknown state forbids another writer in that workspace. Link the
@@ -65,18 +62,16 @@ explicit blocker, not a larger candidate.
 
 ## Continue through decisions and blockers
 
-Apply contract sections 3, 4 and 9: classify the discovery, resolve technical/factual questions
-within authority, and preserve material blockers in their canonical record. Link direct ticket
-and gate impact; derive downstream impact from PLAN and actual consumers, including integrated
-prerequisites. Unknown impact holds affected work. Never split tickets or rewrite approval bytes
-to manufacture readiness.
+Under sections 3, 4 and 9, resolve authorized facts/technical choices and preserve material
+blockers canonically. Link direct ticket/gate impact; derive downstream impact from PLAN and
+actual consumers, including integrated prerequisites. Unknown impact holds affected work.
+Never split tickets or rewrite approval bytes to invent readiness.
 
-After each result, integration, blocker or answer, select work with validated integrated inputs,
-current contracts/candidate and available resources/leases/capacity; no global wave barrier.
-Continue independent implementation, tests, review and integration. Use permitted asynchronous
-questions; otherwise record the question and ask after independent work is exhausted. Follow
-section 9 for active-result waits, answer reconciliation and final status, without duplicate
-questions or treating silence as approval.
+After every result/integration/blocker/answer, select validated integrated inputs with current
+contracts/candidate and free resources/leases/capacity; no wave barriers. Continue independent
+implementation/tests/review/integration. Use permitted asynchronous questions; otherwise record
+and ask after independent work ends. Section 9 governs waits, answer reconciliation and status;
+no duplicate questions or silence-as-approval.
 
 Before concurrent mutation, verify workspace binding, inputs, config, permissions and resource
 claims under contract sections 4–5. Default pilot: two writers, within the effective thread cap;
@@ -86,39 +81,40 @@ live exclusive resources serialize. Never invent tool parameters or hidden alter
 For non-worktree workspaces require the binding smoke. Root-created detached worktrees use
 `references/worktrees.md` and detective audits instead; failed creation means serial fallback.
 
-Delegate each bounded ticket using the selection criteria and assignment packet.
-Workers use small relevant red/green/refactor checks where practical. Root audits each
-assignment against its own recoverable checkpoint and collects attributable output only.
+Delegate bounded tickets with the assignment packet and explicitly resolved tdd reference
+(scope/receipt, absolute path and file identity), agreed seams, independent expectation sources,
+authorized test/production paths and commands. Follow section 7: one behavior's real RED ->
+minimal GREEN -> next behavior; retain chronology or a justified exception, never blanket
+stable-harness exemption. Audit against each recoverable checkpoint; collect attributable output only.
 
 ## Verification is automatic, not another user command
 
 For each coherent verification unit, apply `../change-verification/SKILL.md` automatically.
-Root dispatches independent `test_designer` and a fresh `reviewer`; no user stage-start request.
-Use `../change-verification/references/security-review.md` when contract section 7 triggers.
-Tests must meaningfully cover behavior or establish sufficient existing coverage. Workers fix
-production code; reviewers inspect frozen code+tests. Rerun affected checks and review changed
-impact. Pipeline units only in safe separate workspaces. Never final-review a moving candidate,
-known required failure or missing decisive gate evidence.
+Root dispatches independent test_designer and required reviewers without stage-start questions.
+Use section 7's intermediate-one/final-two review table and separate security trigger
+(`../change-verification/references/security-review.md`). Workers fix production; reviewers inspect
+frozen code+tests. Section 7 permits Root's exact semantics-neutral reviewer wording correction
+and bounded combined delta review; neither replaces the initial final pair. Recheck affected changes. Pipeline only isolated workspaces; never final-review
+moving candidates, known required failures or missing decisive evidence.
 
-Root integrates one verified attributable output at a time into the integration workspace.
-Take a checkpoint before each integration and a manifest after it. Recheck the new integrated
-candidate; integration/conflict deltas receive affected tests and review. Only then satisfy
-dependency gates. If a required check fails because of this integration, restore only that
-delta per `references/rollback.md` (dry run first, apply when its conditions hold, record it; never reset, clean or stash). Dependent work starts from that integrated base,
-not an earlier parent commit that lacks the prerequisite. Final feature verification must
-cover cross-ticket behavior, not only isolated successes.
+Integrate verified attributable outputs serially, checkpointing before and manifesting after.
+Test/review integration/conflict deltas on the integrated candidate before satisfying dependency
+gates or starting dependents from that base. Integration-caused required failures use only
+`references/rollback.md`'s delta restore: dry-run first, conditions checked, recorded, never
+reset/clean/stash. Final verification covers cross-ticket behavior and the two independent axes.
 
 ## Handle deep blockers through Oracle
 
 Workers/testers/reviewers return `needs_oracle` evidence to Root; they do not spawn.
-Root may identify the question itself. After process/lease reconciliation, consult an Oracle
+After process/lease reconciliation, consult an Oracle
 sibling under contract section 8, relay guidance, delegate the experiment/fix and repeat
 required tests/review. Advice alone never resolves an issue; use the frontier procedure.
 
 ## Close or pause
 
 Record current candidate, acceptance coverage, tests, review/delta review, integration and
-scope-audit evidence. Declare only contract section 9 status; preserve every blocker.
+scope-audit evidence. Declare only contract section 9 status; preserve every required blocker.
+Stop when required scope/evidence is satisfied; optional hypotheses need no exhaustive rebuttal.
 On interruption persist resumable state and pending assignments;
 do not promise future execution. No commit/push/PR/deploy/production migration without authorization.
 
@@ -128,7 +124,6 @@ In an existing PLAN or ticket read `luna_worker` as `worker`, `luna_worker_max` 
 `complex_worker` as `worker_senior`, `deep_oracle` as `oracle_senior`. Dispatch only the
 current identifier without rewriting stored tickets; report an unknown identifier, never guess.
 
-Use `../workflow-ledger/SKILL.md` for durable invocation/reservation records and
-`../workspace-evidence/SKILL.md` for checkpoints, candidates and scope audits. On resume compare
-host assignments/processes and retained checks; unknown starts hold capacity. Read a supplied
-handoff as evidence, preserving prior authority, never as a new authorization by itself.
+Use workflow-ledger for invocation/reservation records and workspace-evidence for checkpoints,
+candidates and audits. Reconcile host/process state on resume; unknown starts hold capacity.
+A handoff preserves prior authority as evidence, never new authorization.

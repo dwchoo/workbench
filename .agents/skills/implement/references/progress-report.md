@@ -1,7 +1,7 @@
 # Progress report to the user
 
 Shared by implement, quick-change and investigate-bug. Write the report in the user's language
-(Korean by default) and keep it to about twelve lines. Read state from the ledger summary and
+unless explicitly requested otherwise, and keep it to about twelve lines. Read state from the ledger summary and
 the PLAN/incident records; never estimate. Do not invent a figure you did not read.
 
 ## When

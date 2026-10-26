@@ -32,6 +32,11 @@ role:reviewer 1, role:test_designer 1; unknown usage is never zero) + baseline `
 (3) worker: one dispatch batch (`reserve`+`starting` events), then dispatch a bounded `worker` by exact name with the
 assignment fields of `../implement/references/dispatch-and-oracle.md`, then one result batch (`running`+`finished` events +
 `snapshot` + `audit` against the baseline). Budget, retry and reassessment follow contract section 8.
+For eligible behavior/regression, explicitly supply the actual scope/receipt-resolved tdd
+reference/identity, agreed seam, expectation source and test/production paths. Worker follows
+section 7's one-behavior RED -> minimal GREEN and returns chronology or justified exception.
+Missing harness is a scoped-fixture/gap assessment, not blanket exemption. New material seam
+or risk signal stops the lane; no routine reapproval of agreed seams.
 A worker that reports `needs_reroute`, `needs_oracle` or `blocked`, or a delta reaching a risk
 signal, ends the quick lane: report it rather than growing the change.
 
@@ -40,10 +45,13 @@ signal, ends the quick lane: report it rather than growing the change.
 Freeze code and tests and run the required checks as plain commands, recording command, cwd, exit code and log excerpt in
 CHANGE.md (use the `check` action only when a requirements file exists). Skip `test_designer` only when CHANGE.md names existing
 coverage of the behavior with evidence, or states that the change cannot alter behavior (documentation or comment text);
-otherwise dispatch it (one dispatch batch, one result batch). A fresh `reviewer` is always mandatory: one dispatch batch, then
+otherwise dispatch it (one dispatch batch, one result batch). A fresh general `reviewer` is always mandatory: exactly the existing one-review path, not
+an independent Standards/Spec pair. Use one dispatch batch, then
 one result batch whose final `snapshot` must equal the frozen candidate (see `../change-verification/SKILL.md`).
-A worker's tests or Root self-review never substitute. Apply corrections through a worker and
-review only the delta. Missing verification is not a pass.
+A worker's tests or Root self-review never substitute for that initial review. Apply accepted
+corrections under section 7: worker fix and affected delta review, except reviewer-prescribed
+exact semantics-neutral wording, which Root may apply under the sole mutation lease and
+verify by exact diff without another tester/reviewer. Missing required verification is not a pass.
 
 ## Close
 

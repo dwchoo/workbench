@@ -34,19 +34,3 @@ manifest, and writes (`apply: true`) only if every delta path still matches that
 Root applies it during implement after a failed integration (see the implement skill's rollback reference). Checkpoints contain sensitive
 project bytes: keep them in local private operational storage. Unknown input or collection
 changes invalidate stability. Report scope violations and preserve evidence for safe attribution.
-
-## Bounded evidence storage
-
-Follow the repository's storage rules and [local storage maintenance](references/storage-maintenance.md).
-Exclude `.workflow` and `graphify-out` from source recovery copies; observe required
-operational inputs individually, without recursively capturing generated homes or evidence.
-This excludes runtime outputs, not source tests, fixtures or configuration. Keep the
-same explicit watch/exclude policy across comparable observations.
-
-Use byte checkpoints only before changes needing recovery, not for every test or
-review observation. Reuse a stable checkpoint for the same unchanged candidate.
-The helper's 32 MiB unique-blob limit is a hard failure, never permission to silently
-omit inputs or increase the limit. Repository guidance requires a storage check
-before fresh isolated runs, and serial cache cleanup after owned processes stop,
-including failure/interruption. The total 10 GiB threshold is currently an owner
-instruction, not an automatic runner limit; do not claim otherwise.

@@ -3,6 +3,9 @@
 Read only when the candidate diff hits a contract section 7 security trigger. This is a
 separate step from the general review, uses `reviewer` (a leaf, read-only) and adds no new
 persona. A pass is hypothesis-level evidence, never a proof of safety.
+Judge changed trust/execution/permission boundaries and input control, not keywords or a file
+path alone. Cite preserved semantics and prior coverage for a no-trigger/reuse decision;
+investigate a material uncertain premise. This does not waive concrete security defects.
 
 ## Threat packet (Root writes it)
 
@@ -27,6 +30,12 @@ to an approved criterion.
   argv (for example `npm audit`, `pip-audit`, `cargo audit`). A missing tool, blocked network
   or timeout is `not_run` with an unknown; never assume it passed.
 - Never install tools automatically. Record command, cwd, candidate, exit code and result.
+
+Decide scanner reuse separately from reviewer reuse. Carry prior secret/dependency evidence
+only if the respective scanned inputs and configuration are unchanged, with original identity
+and an impact reason; do not present it as a new scan. A prose-only correction that changes
+no security boundary does not restart the security pipeline. New scanner inputs still need
+the applicable check; required missing checks remain `not_run`.
 
 ## Effect on completion
 

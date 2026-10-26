@@ -36,3 +36,22 @@ and https://github.com/mattpocock/skills/blob/c55ee46073ed923f86ce59a5eb3b6d8950
 Project persistence, explicit authority reconciliation and all ledger/evidence/validator/PTY
 algorithms are local design and implementation. OpenAI and Anthropic articles are design
 references, not MIT-licensed source code or evidence of runtime effectiveness.
+
+## 행동별 TDD와 architecture
+
+2026-10-18 사용자가 선택한 개발 프로세스는 mattpocock/skills의 고정 commit
+`49dd158d1076134a641b33efb035946536778336`에서 TDD·tests·mocking, grilling/domain-modeling,
+code-review와 improve-codebase-architecture/HTML-REPORT, codebase-design/DEEPENING을 변형한다.
+위 Matt Pocock MIT 저작권·허가문을 이 자료에도 유지한다.
+
+- `skills/engineering/tdd/{SKILL.md,tests.md,mocking.md}`
+- `skills/productivity/grilling/SKILL.md`, `skills/engineering/domain-modeling/SKILL.md`
+- `skills/engineering/code-review/SKILL.md`
+- `skills/engineering/improve-codebase-architecture/{SKILL.md,HTML-REPORT.md}`
+- `skills/engineering/codebase-design/{SKILL.md,DEEPENING.md}`
+
+각 원문은 위 commit의 [저장소](https://github.com/mattpocock/skills/tree/49dd158d1076134a641b33efb035946536778336)에서 확인한다.
+Root dispatch는 같은 commit의 `skills/engineering/implement-spec/SKILL.md`를 참고한다.
+실제 파일별 채택은 provenance에 별도로 기록하며 조사·등록만 된 항목을 채택으로 표시하지 않는다.
+Codex metadata·Root-only 위임·사용자 승인·로컬 티켓·설치 호환성은 프로젝트의 변형이다.
+DESIGN-IT-TWICE의 별도 병렬 설계 과정과 retro는 이번 설치에 포함하지 않는다.

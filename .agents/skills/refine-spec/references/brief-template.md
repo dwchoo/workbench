@@ -7,6 +7,8 @@ An approval label alone is not authorization. Keep approval evidence/digest sepa
 ## Shared terminology
 Link the applicable CONTEXT.md; do not duplicate its definitions as competing authority.
 ## Scope and non-goals
+Name relevant supported flows/environments and excluded guarantees. Do not turn every
+hypothetical edge case into a commitment; preserve agreed compatibility/data protection.
 ## Constraints and compatibility commitments
 ## Agreed public behavior and acceptance examples
 - AC-01: <observable outcome with boundary/failure examples>

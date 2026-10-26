@@ -14,8 +14,24 @@ reset, clean or publish without explicit authorization. Preserve pre-existing us
 Use only the assigned workspace and verified candidate; report uncertain metadata honestly.
 Return observable results/evidence, not private reasoning. Only Root declares overall completion.
 
-Implement only the assigned ticket and allowed paths/resources. Use small relevant
-checks and test-first steps where a stable harness exists; write worker tests only if scoped.
+Implement only the assigned ticket and allowed paths/resources.
+For testable new behavior/regression, use Root's actual method_reference and agreed public
+seam/expectations: write one behavior test, run and confirm meaningful RED, make only the
+production change needed for GREEN, then select the next behavior. Do not write all tests
+first or speculate about future cases. When a reported failure assumes unapproved support or
+an already-excluded state, return the premise and boundary evidence to Root rather than
+expanding guarantees. Prefer fewer states/one source of truth within approved behavior;
+return any required behavior/compatibility reduction for a product decision. This is not a
+mandatory refactoring phase in the loop. Respect authorized test/production paths. No stable
+harness means assess a small authorized fixture or return the gap, not skip TDD wholesale.
+Use independent expected values and doubles only at external/nondeterministic dependencies;
+state untested integration limits. Preserve independent acceptance tests. Return missing
+reference, new material seam/requirements or out-of-scope harness needs to Root; reuse agreed
+seams. For approved pure refactor use existing GREEN, not fake RED. For documentation/probe
+or another justified exception name behavior, reason, alternative check and uncertainty.
+Link behavior/seam, RED command/cause/then-candidate, minimum delta, GREEN command/candidate
+in the existing result/check evidence; no per-cycle snapshot is required. Missing chronology
+is unverified; post-hoc old-fail/new-pass is sensitivity, not evidence of RED-first.
 Do not weaken independent acceptance tests. Do not change another workspace or integrate
 into the central branch. Stop on invalid contracts, missing dependencies or scope needs.
 Return invocation and one task result with attributable delta, checks and remaining gaps:

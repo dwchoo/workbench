@@ -20,6 +20,13 @@ Read them as navigation references without running the procedure. If unavailable
 material limitation instead of assuming the summary is sufficient.
 
 Determine stage from evidence, not merely file presence or an `approved`/`complete` flag:
+- User explicitly seeks architecture deepening opportunities: recommend explicit
+  `$improve-codebase-architecture [scope]`. Read its current scope/report/selection/grilling
+  states as navigation only; do not invoke it. Report-only/no-candidate may be complete.
+  After a selection it owns grilling/BRIEF; do not restart refine-spec for the same agreement.
+- User asks to use TDD: explain `$tdd` as methodology within the currently authorized lane,
+  not implementation authorization, a new scheduler, or a substitute for independent tests/review.
+  An unagreed seam needs the caller's catches/misses proposal and confirmation; reuse agreed seams.
 - No settled intent: refine-spec in Astra.
 - Agreed brief but missing/stale executable plan: to-tickets in Sol XHigh/Max.
 - Plan draft: review/approve that actual revision; do not say coding is authorized.

@@ -1,8 +1,8 @@
 # Fixed briefing output template
 
 Read this reference on every invocation. Use the five numbered headings, field labels,
-column names and order below exactly for Korean output; translate labels only when the
-user requests another language. Preserve the same structure in main and side chats.
+column names and order below exactly for Korean output. Translate labels into the user's
+language or an explicitly requested language; preserve the same structure in main and side chats.
 Do not replace tables with prose, rename/reorder sections, or omit empty sections.
 The content and row count vary with evidence; the structure does not.
 

@@ -152,17 +152,10 @@ def capture(root, watch=(), exclude=(), blobs=None):
         else:
             names.add(name)
     files, unknowns = {}, []
-    blob_bytes = 0
     def content(raw):
-        nonlocal blob_bytes
         key = hashlib.sha256(raw).hexdigest()
-        if blobs is not None and key not in blobs:
-            # A checkpoint is a bounded recovery copy, not an output archive.
-            require(blob_bytes + len(raw) <= 32 * 1024 * 1024,
-                    'Checkpoint recovery data exceeds 32 MiB; narrow watch/exclude '
-                    'and exclude generated output, caches and runtime fixtures')
+        if blobs is not None:
             blobs[key] = base64.b64encode(raw).decode()
-            blob_bytes += len(raw)
         return key
     for name in sorted(names):
         if '.git' in Path(name).parts or matches(name, exclude):

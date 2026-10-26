@@ -451,7 +451,7 @@ class BoardSetUpdateTests(UpdateHubFixture):
         shell.chmod(0o755)
         config = self.home / '.config' / 'omp-workbench'
         config.mkdir(parents=True, mode=0o700, exist_ok=True)
-        (config / 'hub.toml').write_text(f'[web]\nbind = "127.0.0.1"\nport = 0\n[board_agent]\nshell = "{shell}"\n')
+        (config / 'hub.toml').write_text(f'[web]\nenabled = true\nbind = "127.0.0.1"\nport = 0\n[board_agent]\nshell = "{shell}"\n')
         passwd = subprocess.run([sys.executable, '-m', 'workbench', 'hub', 'passwd', '--stdin'], env=self.hub_env(),
                                 input=self.PASSWORD + '\n', capture_output=True, text=True, timeout=40)
         self.assertEqual(passwd.returncode, 0, passwd)

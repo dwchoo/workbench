@@ -89,7 +89,7 @@ class FinalCase(link.LinkCase):
     def start_web_hub(self, *titles: str):
         config = Path(self.box.env['XDG_CONFIG_HOME']) / 'omp-workbench'
         config.mkdir(parents=True, exist_ok=True, mode=0o700)
-        (config / 'hub.toml').write_text('[web]\nbind = "127.0.0.1"\nport = 0\n')
+        (config / 'hub.toml').write_text('[web]\nenabled = true\nbind = "127.0.0.1"\nport = 0\n')
         done = subprocess.run([sys.executable, '-m', 'workbench', 'hub', 'passwd', '--stdin'], env=self.box.env,
                               cwd=self.box.base, input=PASSWORD + '\n', capture_output=True, text=True, timeout=60)
         self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
@@ -295,7 +295,7 @@ class HubLifetimeTests(FinalCase):
         """Item 3 (P2-AC-04/23): intake works with the project off; the web power-on delivers them in seq order."""
         config = Path(self.box.env['XDG_CONFIG_HOME']) / 'omp-workbench'
         config.mkdir(parents=True, exist_ok=True, mode=0o700)
-        (config / 'hub.toml').write_text('[web]\nbind = "127.0.0.1"\nport = 0\n')
+        (config / 'hub.toml').write_text('[web]\nenabled = true\nbind = "127.0.0.1"\nport = 0\n')
         done = subprocess.run([sys.executable, '-m', 'workbench', 'hub', 'passwd', '--stdin'], env=self.box.env,
                               cwd=self.box.base, input=PASSWORD + '\n', capture_output=True, text=True, timeout=60)
         self.assertEqual(done.returncode, 0, done.stdout + done.stderr)

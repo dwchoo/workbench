@@ -4,7 +4,7 @@ Usage (from a test under ``tests/hub``; ``discover -s tests/hub`` puts ``tests/h
 
     from fixtures.web_sandbox import WebSandbox, PASSWORD
     box = WebSandbox(self)                 # temp HOME/XDG_*, short private XDG_RUNTIME_DIR, AUTOSTART=0
-    box.write_config(bind='127.0.0.1')     # hub.toml [web] with port 0 (pass ``extra`` lines as needed)
+    box.write_config(bind='127.0.0.1')     # hub.toml [web] enabled, port 0 (pass ``extra`` lines as needed)
     box.set_password()                     # ``wb hub passwd --stdin`` (no Hub needed)
     hub = box.start_hub()                  # waits for hub.json + socket
     host, port = box.wait_listening(hub.pid)   # the Hub's own LISTEN socket from /proc/net/tcp*
@@ -112,10 +112,16 @@ class WebSandbox:
 
     # --- configuration ------------------------------------------------------------------------
 
-    def write_config(self, bind: str = '127.0.0.1', port: int = 0, *extra: str, raw: str | None = None) -> Path:
-        """``hub.toml`` with ``[web] bind/port`` plus ``extra`` lines in ``[web]`` (or ``raw`` as is)."""
+    def write_config(self, bind: str = '127.0.0.1', port: int = 0, *extra: str, raw: str | None = None,
+                     enabled: bool | None = True) -> Path:
+        """``hub.toml`` with ``[web] enabled/bind/port`` plus ``extra`` lines in ``[web]`` (or ``raw`` as is).
+
+        ``enabled = true`` by default (the web surface is off without it, 2026-10-26 user decision);
+        ``enabled=None`` leaves the key out."""
         self.config_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
-        text = raw if raw is not None else '\n'.join(['[web]', f'bind = "{bind}"', f'port = {port}', *extra, ''])
+        switch = [] if enabled is None else [f'enabled = {"true" if enabled else "false"}']
+        text = raw if raw is not None else '\n'.join(['[web]', *switch, f'bind = "{bind}"', f'port = {port}', *extra,
+                                                       ''])
         self.config_file.write_text(text)
         return self.config_file
 

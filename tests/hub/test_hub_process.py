@@ -422,7 +422,8 @@ class HubStatusTests(unittest.TestCase):
         self.assertIn(str(hub.pid), result.stdout)
         self.assertIn('foreground', result.stdout)
         self.assertIn(self.box.record()['socket'], result.stdout)
-        self.assertIn('password_not_set', result.stdout)
+        self.assertIn('web: disabled', result.stdout)  # no hub.toml: web off by default (2026-10-26)
+        self.assertIn(str(self.box.config / 'omp-workbench' / 'hub.toml'), result.stdout)
 
     def test_status_json_carries_the_status_result_fields(self):
         hub = self.box.start_hub()
@@ -433,7 +434,9 @@ class HubStatusTests(unittest.TestCase):
         self.assertEqual(value['hub']['pid'], hub.pid)
         self.assertEqual(value['hub']['start_ticks'], proc_start_ticks(hub.pid))
         self.assertEqual(value['registry']['state'], 'ok')
-        self.assertEqual(value['web'], {'state': 'password_not_set'})  # no auth.json (TI-03)
+        # no hub.toml: web off by default (2026-10-26 user decision), before any password check
+        self.assertEqual(value['web'], {'state': 'disabled',
+                                        'config': str(self.box.config / 'omp-workbench' / 'hub.toml')})
         self.assertIsNone(value['board_agent'])
 
     def test_stale_record_of_a_dead_hub_is_not_running(self):

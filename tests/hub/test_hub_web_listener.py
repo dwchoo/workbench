@@ -336,7 +336,7 @@ class InProcessListenerTests(unittest.IsolatedAsyncioTestCase):
         self.WebListener = WebListener
 
     def listener(self, port: int, *, tls_pair: tuple | None = None, **options):
-        loaded = config.parse_config(f'[web]\nbind = "127.0.0.1"\nport = {port}\n'.encode())
+        loaded = config.parse_config(f'[web]\nenabled = true\nbind = "127.0.0.1"\nport = {port}\n'.encode())
         cert, key = tls_pair or (Path('/nonexistent/c'), Path('/nonexistent/k'))
         decision = config.decide_tls(loaded.web, cert, key)
         web = self.WebListener(self.state, config=loaded, config_error=None, tls=decision,

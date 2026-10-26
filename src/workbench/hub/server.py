@@ -122,7 +122,8 @@ class Hub:
         # Verified backend connections by project id (one each): outside ``tasks`` and its limit (hub_v1).
         self.backend_tasks: dict[str, asyncio.Task] = {}
         self.web: WebListener | None = None
-        # TI-16: the Board agent set (None while ``hub.toml`` is invalid) and its internal MCP listener.
+        # TI-16: the Board agent set (None while ``hub.toml`` is invalid or web is disabled) and its internal
+        # MCP listener (started lazily by the set, so it never starts without one).
         self.board = None
         self.internal_mcp: mcp.InternalListener | None = None
 
@@ -187,8 +188,9 @@ class Hub:
 
     def load_web(self, environment=None) -> None:
         """Read ``hub.toml`` and decide TLS once, at start (changes need a Hub restart)."""
+        path = hub_config.config_path(environment)
         try:
-            loaded = hub_config.load_config(hub_config.config_path(environment))
+            loaded = hub_config.load_config(path)
         except hub_config.ConfigInvalid as exc:
             print(f"[workbench] hub.toml invalid: {exc.reason}; web listener stays closed", file=sys.stderr, flush=True)
             self.web = WebListener(self.layout.state_dir, config=None, config_error=exc, tls=None,
@@ -197,8 +199,10 @@ class Hub:
         cert, key = hub_config.tls_paths(loaded.web, environment)
         tls = hub_config.decide_tls(loaded.web, cert, key)
         self.web = WebListener(self.layout.state_dir, config=loaded, config_error=None, tls=tls,
-                               routes=self.web_routes())
+                               routes=self.web_routes(), config_file=path)
         self.web.projects = self.project_pairs
+        if not loaded.web.enabled:  # the Board agent set is used only from the web: none while web is off
+            return
         self.make_board(loaded.board_agent, environment)
         self.web.stop_hooks.append(self.stop_board)
 

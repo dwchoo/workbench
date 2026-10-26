@@ -41,6 +41,7 @@ class ConfigInvalid(ValueError):
 
 @dataclass(frozen=True, slots=True)
 class WebConfig:
+    enabled: bool = False  # 2026-10-26 user decision: the web surface stays off until hub.toml turns it on
     bind: str = DEFAULT_BIND
     port: int = DEFAULT_PORT
     tls_cert: str = ""
@@ -124,7 +125,7 @@ def _web(table: dict) -> WebConfig:
             if not _absolute_or_empty(value):
                 raise ConfigInvalid(item)
             values[key] = value
-        elif key == "allow_insecure_http":
+        elif key in ("enabled", "allow_insecure_http"):
             if type(value) is not bool:
                 raise ConfigInvalid(item)
             values[key] = value

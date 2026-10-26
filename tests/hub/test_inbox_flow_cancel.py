@@ -247,7 +247,7 @@ class LiveCancelTests(_live_base()):
         from workbench.hub import auth
         config = Path(self.box.env['XDG_CONFIG_HOME']) / 'omp-workbench'
         config.mkdir(parents=True, exist_ok=True, mode=0o700)
-        (config / 'hub.toml').write_text('[web]\nbind = "127.0.0.1"\nport = 0\n')
+        (config / 'hub.toml').write_text('[web]\nenabled = true\nbind = "127.0.0.1"\nport = 0\n')
         done = subprocess.run([sys.executable, '-m', 'workbench', 'hub', 'passwd', '--stdin'], env=self.box.env,
                               cwd=self.box.base, input='correct horse battery\n', capture_output=True, text=True,
                               timeout=60)

@@ -51,6 +51,7 @@ Hub(B)는 WB 프로젝트를 등록·관측·켜고 끄지만, 요청을 받아 
 
 ```toml
 [web]
+enabled = false             # TOML bool. 기본 꺼짐(2026-10-26 사용자 결정). true일 때만 아래 조건으로 연다
 bind = "127.0.0.1"          # IP literal만. "0.0.0.0"/"::"는 명시할 때만
 port = 8780                 # 1..65535. 0은 임의 port(테스트·고급). 실제 port는 status에 보인다
 tls_cert = ""               # "" = TLS 기본 경로
@@ -64,17 +65,18 @@ role_prompt_file = ""       # 추가 role prompt 파일. 기본 prompt 뒤에 �
 shell = ""                  # "" = $SHELL, 없으면 /bin/sh
 ```
 
+- 2026-10-26 사용자 결정: web 기본 비활성, `[web] enabled = true`로 켬. 웹이 가장 많이 노출되는 부분이기 때문이다. `enabled`가 없거나 `false`면 같은 listener가 내는 웹 화면, 외부 `/mcp`, `/ws/board`를 모두 열지 않고, 웹에서만 쓰는 Board agent 세트도 만들지 않는다(그 세트만 쓰는 내부 MCP listener도 시작되지 않는다). registry·목록·hub_v1·inbox writer·검토 전달·ui_v1은 그대로 동작한다. `enabled`가 bool이 아니면 `config_invalid:web.enabled`.
 - 모르는 key·잘못된 형식·hostname인 `bind`는 `config_invalid:<항목>`이다. 웹 listener와 Board agent는 열지 않고 Hub의 나머지 기능(registry·목록·제어 socket)은 동작한다.
 - TLS 판정: cert·key 파일이 **둘 다** 있으면 HTTPS(`ssl.create_default_context(Purpose.CLIENT_AUTH)`, TLS ≥ 1.2). 하나만 있거나 읽기·load가 실패하면 `tls_invalid`로 listener를 열지 않는다(평문으로 내려가지 않는다). 둘 다 없으면 `allow_insecure_http=true`일 때 평문 HTTP, `false`면 `insecure_http_disallowed`로 열지 않는다(BRIEF P2-AC-16 "SPEC에서 정함").
 - 평문 경고: 평문 HTTP이고 bind가 loopback(127.0.0.0/8, ::1)이 아니면(`0.0.0.0` 포함) `insecure_warning: true`. 웹 모든 page 상단 banner와 `wb hub status`에 `평문 HTTP로 LAN에 열려 있습니다. VPN 등 네트워크 보호가 필요합니다.`를 보인다.
 
 ### Web listener 수명(D-10, P2-AC-15·16)
 
-- Listener는 (1) `hub.toml`이 유효하고 (2) `auth.json`에 유효한 비밀번호가 있고 (3) TLS 판정이 `tls`/`insecure_ok`일 때만 연다. 열기 전과 실패 상태는 hub_v1 `status.web.state`에 남는다: `password_not_set`, `config_invalid`, `tls_invalid`, `insecure_http_disallowed`, `bind_failed`(errno 이름 detail, 30 s마다 재시도), `listening`(`url`, `tls`, `insecure_warning`), `stopping`.
+- Listener는 (1) `hub.toml`이 유효하고 (1a) `[web] enabled = true`이고(2026-10-26 사용자 결정) (2) `auth.json`에 유효한 비밀번호가 있고 (3) TLS 판정이 `tls`/`insecure_ok`일 때만 연다. 열기 전과 실패 상태는 hub_v1 `status.web.state`에 남는다: `disabled`(`config`: Hub가 읽은 `hub.toml` 경로. `config_invalid` 다음, 나머지 조건보다 먼저 판정), `password_not_set`, `config_invalid`, `tls_invalid`, `insecure_http_disallowed`, `bind_failed`(errno 이름 detail, 30 s마다 재시도), `listening`(`url`, `tls`, `insecure_warning`), `stopping`.
 - Hub watchdog(2 s)이 `auth.json`의 (dev, ino, mtime_ns, size)를 본다. 비밀번호가 새로 생기면 Hub 재시작 없이 listener를 연다. `hub.toml`·TLS 파일 변경은 Hub 재시작 때 반영한다(`wb hub tls`가 그렇게 안내한다).
 - 같은 loop에 붙고, blocking 작업(scrypt, SQLite, `/proc`, ui_v1 연결)은 executor에서 돈다.
 - 정상 정지 순서(Hub SPEC 정지 순서의 (A) 확장 지점): 새 HTTP 연결 거절(site 정지) → WebSocket을 1001로 닫음 → Board agent 세트 종료 → API key 마지막 사용 시각 flush → 열린 inbox DB 닫기·`inbox.lock` 해제 → 기존 정지.
-- `wb hub status`: `web: listening https://10.8.0.2:8780` / `web: not_listening (password_not_set) — 'wb hub passwd'로 비밀번호를 정하세요` / 평문 경고 줄. `board_agent:` 줄(아래).
+- `wb hub status`: `web: listening https://10.8.0.2:8780` / `web: disabled — 웹은 꺼져 있습니다. <hub.toml 경로>에 '[web] enabled = true'를 넣고 'wb hub stop' 뒤 'wb hub start'로 Hub를 재시작하세요.` / `web: not_listening (password_not_set) — 'wb hub passwd'로 비밀번호를 정하세요` / 평문 경고 줄. 웹이 꺼져 있을 때 `wb hub passwd`는 비밀번호를 정한 뒤 같은 안내를 한 줄 더 낸다. `board_agent:` 줄(아래).
 
 ### 인증·세션·CSRF(D-11, P2-AC-17, ADR-0003)
 

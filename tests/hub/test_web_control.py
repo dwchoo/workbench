@@ -523,7 +523,7 @@ class HubLifetimeTests(unittest.TestCase):
         self.box = ProjectSandbox(self)
         config = Path(self.box.env['XDG_CONFIG_HOME']) / 'omp-workbench'
         config.mkdir(parents=True, mode=0o700)
-        (config / 'hub.toml').write_text('[web]\nbind = "127.0.0.1"\nport = 0\n')
+        (config / 'hub.toml').write_text('[web]\nenabled = true\nbind = "127.0.0.1"\nport = 0\n')
         done = subprocess.run([sys.executable, '-m', 'workbench', 'hub', 'passwd', '--stdin'], env=self.box.env,
                               cwd=self.box.base, input=PASSWORD + '\n', capture_output=True, text=True, timeout=60)
         self.assertEqual(done.returncode, 0, done.stdout + done.stderr)

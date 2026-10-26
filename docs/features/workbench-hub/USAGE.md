@@ -58,7 +58,7 @@ wb hub tls --self-signed [--force]   # 자체 서명 TLS cert·key. Hub 재시�
 wb hub review-mode PATH [auto|manual]  # 프로젝트의 요청 검토 방식 보기·바꾸기
 ```
 
-세 명령의 설정·동작은 [Task Inbox & Web Board 사용 안내](../task-inbox/USAGE.md)에 있다. `wb hub status`는 `web:`(listening 주소 또는 `not_listening` 이유)와 평문 HTTP 경고, `board_agent:` 줄도 보인다. Exit code는 0 성공, 1 실패·거절, 2 요건 없음, 3 Hub 실행 중 아님이다.
+세 명령의 설정·동작은 [Task Inbox & Web Board 사용 안내](../task-inbox/USAGE.md)에 있다. 웹(Web Board·외부 `/mcp`·Board agent)은 기본으로 꺼져 있다. `hub.toml`에 `[web] enabled = true`를 넣고 `wb hub stop` 다음 `wb hub start`로 재시작해야 켜진다(2026-10-26 사용자 결정: web 기본 비활성, `[web] enabled = true`로 켬). `wb hub status`는 `web:`(꺼져 있으면 `disabled`와 켜는 방법, 켜져 있으면 listening 주소 또는 `not_listening` 이유)와 평문 HTTP 경고, `board_agent:` 줄도 보인다. Exit code는 0 성공, 1 실패·거절, 2 요건 없음, 3 Hub 실행 중 아님이다.
 
 ## 자동 시작
 

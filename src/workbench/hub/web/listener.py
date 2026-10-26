@@ -1,7 +1,8 @@
 """Web listener lifetime inside the Hub loop (Task Inbox SPEC "Web listener 수명").
 
-The listener opens only when ``hub.toml`` is valid, ``auth.json`` holds a valid password and the
-TLS decision is ``tls``/``insecure_ok``. Until then (and on failure) ``status()`` names why. The
+The listener opens only when ``hub.toml`` is valid and says ``[web] enabled = true`` (off by
+default, 2026-10-26 user decision), ``auth.json`` holds a valid password and the TLS decision is
+``tls``/``insecure_ok``. Until then (and on failure) ``status()`` names why. The
 Hub watchdog calls :meth:`WebListener.poll` every 2 s: a new ``auth.json`` opens the listener
 without a Hub restart, a failed bind is retried every :data:`BIND_RETRY` seconds.
 """
@@ -82,9 +83,11 @@ class WebListener:
     def __init__(self, state_dir: Path, *, config: HubConfig | None, config_error: ConfigInvalid | None,
                  tls: TlsDecision | None, clock: Callable[[], float] = time.time,
                  monotonic: Callable[[], float] = time.monotonic, bind_retry: float = BIND_RETRY,
-                 routes=(), keepalive_timeout: float = KEEPALIVE_TIMEOUT, max_connections: int = MAX_CONNECTIONS):
+                 routes=(), keepalive_timeout: float = KEEPALIVE_TIMEOUT, max_connections: int = MAX_CONNECTIONS,
+                 config_file: Path | None = None):
         self.state_dir = Path(state_dir)
         self.config, self.config_error, self.tls = config, config_error, tls
+        self.config_file = config_file  # the ``hub.toml`` the Hub read; ``disabled`` status names it
         self.passwords = auth.PasswordStore(self.state_dir)
         self.clock, self.monotonic, self.bind_retry = clock, monotonic, bind_retry
         self.routes = tuple(routes)
@@ -125,9 +128,16 @@ class WebListener:
     async def _blocking(self, function, *args):
         return await asyncio.get_running_loop().run_in_executor(None, function, *args)
 
+    @property
+    def disabled(self) -> bool:
+        return self.config is not None and not self.config.web.enabled
+
     async def start(self) -> None:
         if self.config_error is not None:
             self._state = {"state": "config_invalid", "detail": self.config_error.item}
+            return
+        if self.disabled:
+            self._state = {"state": "disabled", **({"config": str(self.config_file)} if self.config_file else {})}
             return
         if not self.tls.opens:
             self._state = {"state": self.tls.state, **({"detail": self.tls.detail} if self.tls.detail else {})}
@@ -136,7 +146,7 @@ class WebListener:
 
     async def poll(self) -> None:
         """One watchdog tick: react to a changed ``auth.json`` and retry a failed bind when due."""
-        if self.stopping or self.config_error is not None or not self.tls.opens:
+        if self.stopping or self.config_error is not None or self.disabled or not self.tls.opens:
             return
         signature = await self._blocking(_signature, self.passwords.path)
         changed = signature != self._signature

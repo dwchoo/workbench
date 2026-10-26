@@ -2,9 +2,16 @@
 
 Hub가 제공하는 웹(Web Board)과 MCP endpoint로 요청을 접수·검토·실행·조회하는 방법이다. 합의는 [BRIEF](BRIEF.md), 구현 명세는 [SPEC](SPEC.md), Hub 자체의 명령은 [Hub 사용 안내](../workbench-hub/USAGE.md)를 따른다. 이 문서는 사용자가 쓰는 명령·설정·화면과 보안·한계만 다룬다.
 
-핵심 한 줄: **웹은 기본으로 닫혀 있다.** 비밀번호를 정해야 열리고, 기본 주소는 `127.0.0.1:8780`(자기 컴퓨터만)이다. 요청은 접수만으로 실행되지 않고 항상 manager 검토를 거친다.
+핵심 한 줄: **웹은 기본으로 꺼져 있다.** `hub.toml`에 `[web] enabled = true`를 넣고 Hub를 재시작한 뒤 비밀번호까지 정해야 열리고, 기본 주소는 `127.0.0.1:8780`(자기 컴퓨터만)이다(2026-10-26 사용자 결정: web 기본 비활성, `[web] enabled = true`로 켬). 요청은 접수만으로 실행되지 않고 항상 manager 검토를 거친다.
 
 ## 1. 처음 설정
+
+웹을 쓰려면 먼저 `hub.toml`(1.2)에 다음을 넣고 `wb hub stop` 다음 `wb hub start`로 Hub를 재시작한다. 웹은 가장 많이 노출되는 부분이라 기본으로 꺼져 있다. 꺼져 있는 동안 웹 화면, 외부 `/mcp`, `/ws/board`, Board agent 세트가 모두 열리지 않고, Hub의 나머지(등록·목록·TUI·요청 전달·검토)는 그대로 동작한다.
+
+```toml
+[web]
+enabled = true
+```
 
 ### 1.1 비밀번호
 
@@ -13,7 +20,7 @@ wb hub passwd            # terminal에서 두 번 입력 (10~1024자)
 printf '%s\n' "$PW" | wb hub passwd --stdin   # 스크립트용. terminal에서는 거절
 ```
 
-- 비밀번호가 없으면 웹 listener를 열지 않는다. 정하는 순간 Hub 재시작 없이 열린다(Hub는 약 2초마다 확인).
+- 비밀번호가 없으면 웹 listener를 열지 않는다. 웹이 켜져 있으면(`enabled = true`) 정하는 순간 Hub 재시작 없이 열린다(Hub는 약 2초마다 확인). 웹이 꺼져 있으면 비밀번호는 저장되고, 웹이 꺼져 있다는 안내 한 줄(설정 파일 경로, `[web] enabled = true`, 재시작)이 함께 나온다.
 - 비밀번호를 정하면 기존 웹 로그인 세션이 모두 무효가 된다. 잊었으면 같은 명령으로 다시 정한다.
 - 이 명령은 Hub를 시작하지도, 자동 시작하지도 않는다. 값은 인자나 환경 변수가 아니라 terminal 또는 stdin 첫 줄로만 받는다.
 
@@ -23,6 +30,7 @@ printf '%s\n' "$PW" | wb hub passwd --stdin   # 스크립트용. terminal에서�
 
 | 표 | key | 기본값 | 의미 |
 |---|---|---|---|
+| `[web]` | `enabled` | `false` | 웹(화면, 외부 `/mcp`, `/ws/board`)과 Board agent 세트를 켤지. TOML bool만 된다(그 밖의 형식은 `config_invalid:web.enabled`). 바꾸면 Hub 재시작이 필요하다 |
 | `[web]` | `bind` | `"127.0.0.1"` | 열 주소. IP literal만 된다(호스트 이름 불가). `"0.0.0.0"`·`"::"`은 직접 쓸 때만 |
 | `[web]` | `port` | `8780` | 0~65535. 0이면 임의 port(실제 값은 `wb hub status`에 보임) |
 | `[web]` | `tls_cert`, `tls_key` | `""` | 인증서·key 절대 경로. 빈 값이면 기본 경로 `~/.config/omp-workbench/tls/hub-cert.pem`, `hub-key.pem` |
@@ -38,6 +46,7 @@ LAN/VPN 예(VPN 주소 `10.8.0.2`, 이름 `box.vpn`):
 
 ```toml
 [web]
+enabled = true
 bind = "10.8.0.2"
 port = 8780
 server_names = ["box.vpn"]
@@ -308,6 +317,8 @@ Web Board 이전에 `wb hub enable`을 한 사용자는 **`wb hub enable`을 한
 ### 10.1 `web: not_listening (…)`
 
 `wb hub status`의 `web:` 줄이 이유를 보인다. `wb hub status --json`에는 `web.state`/`web.detail`로 나온다.
+
+웹이 꺼져 있으면 `web: disabled — 웹은 꺼져 있습니다. <hub.toml 경로>에 '[web] enabled = true'를 넣고 'wb hub stop' 뒤 'wb hub start'로 Hub를 재시작하세요.`가 보인다(`--json`: `web.state`가 `disabled`, `web.config`가 Hub가 읽은 `hub.toml` 경로). 이때는 아래 이유를 따지지 않는다.
 
 | 이유 | 뜻과 조치 |
 |---|---|

@@ -101,8 +101,15 @@ def cmd_hub_status(args: argparse.Namespace) -> int:
 PASSWORD_NOT_SET_HINT = "'wb hub passwd'로 비밀번호를 정하세요"
 
 
+def web_disabled_hint(path: object) -> str:
+    """How to turn the web on (2026-10-26 user decision: off until ``hub.toml`` enables it)."""
+    return (f"웹은 꺼져 있습니다. {path}에 '[web] enabled = true'를 넣고 "
+            "'wb hub stop' 뒤 'wb hub start'로 Hub를 재시작하세요.")
+
+
 def web_status_lines(web: dict) -> list[str]:
-    """``web: listening <url>`` (+ the plain-HTTP warning) or ``web: not_listening (<reason>)``."""
+    """``web: listening <url>`` (+ the plain-HTTP warning), ``web: disabled — <hint>`` or
+    ``web: not_listening (<reason>)``."""
     from .config import INSECURE_WARNING_TEXT
     state, detail = web.get("state"), web.get("detail")
     if state == "listening":
@@ -116,6 +123,9 @@ def web_status_lines(web: dict) -> list[str]:
             else:
                 lines.append(f"경고: {warning}")
         return lines
+    if state == "disabled":
+        from .config import config_path
+        return [f"web: disabled — {web_disabled_hint(web.get('config') or config_path())}"]
     reason = f"{state}:{detail}" if detail else f"{state}"
     line = f"web: not_listening ({reason})"
     if state == "password_not_set" and not detail:
@@ -272,7 +282,16 @@ def cmd_hub_passwd(args: argparse.Namespace) -> int:
     except (AuthInvalid, DataDirError, OSError) as exc:
         return _fail(f"비밀번호 파일을 쓰지 못했습니다: {exc}. {PASSWD_UNCHANGED}")
     print("비밀번호를 정했습니다. 기존 웹 로그인 세션은 모두 무효가 됩니다.")
-    print("Hub가 실행 중이면 재시작 없이 웹 listener가 열립니다.")
+    from .config import ConfigInvalid, config_path, load_config
+    path = config_path()
+    try:
+        enabled = load_config(path).web.enabled
+    except ConfigInvalid:
+        enabled = True  # the Hub reports config_invalid itself; keep the usual line
+    if enabled:
+        print("Hub가 실행 중이면 재시작 없이 웹 listener가 열립니다.")
+    else:
+        print(web_disabled_hint(path))
     return EXIT_OK
 
 

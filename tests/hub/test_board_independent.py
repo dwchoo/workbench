@@ -546,6 +546,7 @@ class Rig:
         box.env.update({'WORKBENCH_OMP': str(omp), 'FAKE_BOARD_RECORD': str(self.record)})
         box.write_config(raw=textwrap.dedent(f'''\
             [web]
+            enabled = true
             bind = "127.0.0.1"
             port = 0
             [board_agent]

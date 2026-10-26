@@ -117,7 +117,9 @@ class HubProtocolTests(unittest.TestCase):
         self.assertEqual(reply['hub']['pid'], hub.pid)
         self.assertEqual(reply['registry'], {'state': 'ok', 'count': 0,
                                              'path': str(self.box.state / 'registry.json')})
-        self.assertEqual(reply['web'], {'state': 'password_not_set'})  # no auth.json in the sandbox (TI-03)
+        # no hub.toml in the sandbox: web off by default (2026-10-26 user decision)
+        self.assertEqual(reply['web'], {'state': 'disabled',
+                                        'config': str(self.box.config / 'omp-workbench' / 'hub.toml')})
         self.assertIsNone(reply['board_agent'])
 
     def assert_stopped_and_clean(self, hub, record: dict) -> None:

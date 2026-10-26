@@ -73,7 +73,7 @@ wb hub tls --self-signed [--force]   # 자체 서명 TLS cert·key. Hub 재시�
 wb hub review-mode PATH [auto|manual]  # 프로젝트의 요청 검토 방식 보기·바꾸기
 ```
 
-세 명령의 설정·동작은 [Task Inbox & Web Board 사용 안내](../task-inbox/USAGE.md)에 있다. 웹(Web Board·외부 `/mcp`·Board agent)은 기본으로 꺼져 있다. `hub.toml`에서 `enabled = false`를 `enabled = true`로 바꾸고 `wb hub passwd`로 비밀번호를 정한 뒤 `wb hub stop` 다음 `wb hub start`로 재시작해야 켜진다(2026-10-26 사용자 결정: web 기본 비활성, `[web] enabled = true`로 켬). `hub.toml`(`~/.config/omp-workbench/hub.toml`, `$XDG_CONFIG_HOME`이 절대 경로면 그 아래)은 없으면 Hub가 시작할 때와 `wb hub passwd`가 주석 달린 기본 템플릿(0600, 웹 꺼짐)으로 자동으로 만들고, 이미 있는 파일은 건드리지 않는다(2026-10-26 사용자 요청: hub.toml 자동 생성). `wb hub status`는 `web:`(꺼져 있으면 `disabled`와 켜는 방법, 켜져 있으면 listening 주소 또는 `not_listening` 이유)와 평문 HTTP 경고, `board_agent:` 줄도 보인다. Exit code는 0 성공, 1 실패·거절, 2 요건 없음, 3 Hub 실행 중 아님이다.
+세 명령의 설정·동작은 [Task Inbox & Web Board 사용 안내](../task-inbox/USAGE.md)에 있다. 웹(Web Board·외부 `/mcp`·Board agent)은 기본으로 꺼져 있다. `hub.toml`에서 `enabled = false`를 `enabled = true`로 바꾸고 `wb hub passwd`로 비밀번호를 정한 뒤 `wb hub stop` 다음 `wb hub start`로 재시작해야 켜진다(2026-10-26 사용자 결정: web 기본 비활성, `[web] enabled = true`로 켬). `hub.toml`(`~/.config/omp-workbench/hub.toml`, `$XDG_CONFIG_HOME`이 절대 경로면 그 아래)은 없으면 Hub가 시작할 때와 `wb hub passwd`가 주석 달린 기본 템플릿(0600, 웹 꺼짐)으로 자동으로 만들고, 이미 있는 파일은 건드리지 않는다(2026-10-26 사용자 요청: hub.toml 자동 생성). `wb hub status`는 `web:`(꺼져 있으면 `disabled`와 켜는 방법, 켜져 있으면 listening 주소 또는 `not_listening` 이유)와 평문 HTTP 경고, `board_agent:` 줄도 보이며, Board agent 시작이 실패했으면 그 아래에 원인과 고치는 방법(예: OMP 선택이 거절된 디렉터리와 chmod 명령)을 보인다. Exit code는 0 성공, 1 실패·거절, 2 요건 없음, 3 Hub 실행 중 아님이다.
 
 ## 자동 시작
 

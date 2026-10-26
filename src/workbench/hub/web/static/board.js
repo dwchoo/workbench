@@ -2,6 +2,7 @@
 // This file is DOM and socket glue only. Every protocol rule lives in board-state.js (pure, node-tested);
 // here events are fed to step() and its effects are carried out. No inline script, no external URL.
 import { initialState, step, describe, channelLabel, terminalKey, selectionText } from "./board-state.js";
+import { installStyleNonce } from "./style-nonce.js";
 
 const CHANNELS = ["agent", "shell"];
 const NOTICES = {
@@ -14,6 +15,9 @@ const NOTICES = {
 const byId = (id) => document.getElementById(id);
 const csrfMeta = document.querySelector('meta[name="csrf-token"]');
 const csrf = csrfMeta ? csrfMeta.content : "";
+// The CSP admits only <style> elements with this response's nonce; wire it before any term.open() (style-nonce.js).
+const styleNonceMeta = document.querySelector('meta[name="style-nonce"]');
+installStyleNonce(document, styleNonceMeta ? styleNonceMeta.content : "");
 const TerminalClass = globalThis.Terminal;
 const FitAddonClass = globalThis.FitAddon && globalThis.FitAddon.FitAddon;
 

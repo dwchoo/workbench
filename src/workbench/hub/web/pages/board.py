@@ -3,8 +3,9 @@
 ``GET /board`` is server-rendered HTML: a tab for the Board agent OMP and one for the shell (each an empty
 ``div`` the page script turns into an xterm.js terminal), the channel states, the connection state, the takeover
 banner and the restart links. The state machine and the DOM glue are ``/static/board-state.js`` and
-``/static/board.js`` (module scripts, no inline script); the CSRF token reaches them in a ``<meta>``. The page
-never starts the set: only a WebSocket attach does.
+``/static/board.js`` (module scripts, no inline script); the CSRF token and this response's CSP style nonce
+(:func:`..middleware.style_nonce`, set on xterm's ``<style>`` elements by ``/static/style-nonce.js``) reach them in
+``<meta>`` elements. The page never starts the set: only a WebSocket attach does.
 
 ``GET /board/restart?channel=`` is the confirm page (nothing changes); its form posts to ``POST /board/restart``
 (TI-16) and cancel is a plain link back.
@@ -16,7 +17,7 @@ from typing import Callable
 from aiohttp import web
 
 from .. import render
-from ..middleware import SERVICES, inline_styles, session_of
+from ..middleware import SERVICES, inline_styles, session_of, style_nonce
 
 CHANNELS = (("agent", "Board agent"), ("shell", "Shell"))
 CHANNEL_NAMES = tuple(name for name, _ in CHANNELS)
@@ -54,7 +55,7 @@ def frame(request: web.Request, title: str, body: object, *, status: int = 200, 
                        stylesheets=STYLESHEETS if board else STYLESHEETS[:1],
                        scripts=SCRIPTS if board else SCRIPTS[:1],
                        module_scripts=MODULE_SCRIPTS if board else (),
-                       metas={"csrf-token": session.csrf} if board else None)
+                       metas={"csrf-token": session.csrf, "style-nonce": style_nonce(request)} if board else None)
 
 
 def tab_button(name: str, label: str, first: bool) -> render.Markup:
@@ -110,7 +111,7 @@ def confirm_page(request: web.Request, channel: str) -> web.Response:
 
 def make_register(board: Callable[[], object | None]) -> Callable[[web.Application], None]:
     """``GET /board`` and ``GET /board/restart`` over ``board()`` (the Hub's ``BoardSet`` or None)."""
-    @inline_styles  # xterm.js inserts <style> elements: this page's CSP alone allows inline styles
+    @inline_styles  # xterm.js inserts <style> elements: this page's CSP alone allows nonced ones (and style attributes)
     async def get_board(request: web.Request) -> web.Response:
         return board_page(request, board())
 

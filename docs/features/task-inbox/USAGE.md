@@ -362,7 +362,7 @@ Web Board 이전에 `wb hub enable`을 한 사용자는 **`wb hub enable`을 한
 
 개발 host에서는 검증하지 못한 항목이다. 처음 쓰는 컴퓨터에서 한 번 확인한다.
 
-1. 실제 브라우저(Firefox·Chromium·휴대폰)에서 page·확인 page·badge·xterm.js 렌더링, tab 닫기·강제 종료·다른 브라우저 인수의 체감 동작. `/board` 응답만 xterm DOM renderer 때문에 `style-src 'self' 'unsafe-inline'`을 쓴다(`script-src`는 `'self'` 그대로). 다른 page는 inline style을 허용하지 않는다.
+1. 실제 브라우저(Firefox·Chromium·휴대폰)에서 page·확인 page·badge·xterm.js 렌더링, tab 닫기·강제 종료·다른 브라우저 인수의 체감 동작. `/board` 200 응답만 xterm DOM renderer 때문에 `style-src 'self' 'nonce-<N>'; style-src-attr 'unsafe-inline'`을 쓴다(2026-10-26 사용자 결정. `script-src`는 `'self'` 그대로). Nonce가 없는 `<style>`은 막히고, style 속성은 xterm truecolor 색 때문에 허용한다. 다른 page는 inline style을 허용하지 않는다.
 2. LAN/VPN 주소 bind와 다른 기기 접근, 자체 서명 인증서의 브라우저 신뢰 흐름.
 3. GPU 안내: 실제 `nvidia-smi`와 실제 모델의 "계속할까요?" 응답. 개발 host에는 NVIDIA GPU가 없다.
 4. 실제 OMP·실제 모델로 Board agent가 Hub MCP tool을 쓰고 manager가 검토하는 전체 흐름(유료 provider).

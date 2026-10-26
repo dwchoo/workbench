@@ -80,6 +80,35 @@ class VendoredXtermTests(unittest.TestCase):
                              f'{name} carries a URL literal')
 
 
+class XtermStyleInjectionTripwireTests(unittest.TestCase):
+    """The /board CSP (2026-10-26 사용자 결정) fits how xterm 5.5 injects styles: exactly two
+    ``createElement("style")`` (nonced by ``static/style-nonce.js``) and one ``setAttribute("style"`` (truecolor
+    cells, ``style-src-attr``), nothing else. An upgrade that changes the approach must fail here, not in a browser."""
+
+    EXPECTED = {
+        'createElement("style")': 2,
+        'setAttribute("style"': 1,
+        'innerHTML': 0,
+        'outerHTML': 0,
+        'insertAdjacentHTML': 0,
+        'adoptedStyleSheets': 0,
+        'cssText': 0,
+        'insertRule': 0,
+        'CSSStyleSheet': 0,
+        'createElementNS': 0,
+    }
+
+    def test_vendored_xterm_injects_styles_only_the_ways_the_board_csp_allows(self):
+        text = (VENDOR / 'xterm.js').read_text()
+        counts = {needle: text.count(needle) for needle in self.EXPECTED}
+        self.assertEqual(counts, self.EXPECTED)
+        self.assertEqual(re.findall(r"createElement\(\s*['\"`]style['\"`]\s*\)", text, re.IGNORECASE),
+                         ['createElement("style")'] * 2, 'no other spelling of a <style> creation')
+        self.assertEqual(len(re.findall(r"setAttribute\(\s*['\"`]style['\"`]", text, re.IGNORECASE)), 1)
+        self.assertEqual(re.findall(r'(?<![\w$])createElement\(\s*[A-Za-z_$]', text), [],
+                         'no createElement with a computed tag name')
+
+
 class PackagingConfigTests(unittest.TestCase):
     def test_static_tree_is_declared_package_data_and_in_manifest(self):
         config = tomllib.loads((REPO / 'pyproject.toml').read_text())

@@ -99,7 +99,7 @@ CSRF·출처:
 로그인 실패 지연:
 - 로그인 검증은 Hub 전체에서 한 번에 하나(asyncio lock)다. 연속 실패 수를 client 주소별·전체로 센다(`hub.sqlite3.login_state`, Hub 재시작에도 유지). 다음 시도의 검증 전 지연 = `max(f(ip), f(global/3))`, `f(n) = 0 (n ≤ 3), min(2^(n-4), 30) s (n > 3)`. 성공하면 그 주소와 전체 수를 0으로. 실패 응답은 `비밀번호가 맞지 않습니다`만 보인다. (2026-10-25 orchestrator 결정, 소유자 lockout 방지) 전체 수에 따른 지연 `f(global/3)`은 loopback client와 최근 30일 안에 로그인에 성공한 주소에는 적용하지 않고 주소별 지연만 적용한다. 지연은 lock 안에서 잠들지 않고 429 + `Retry-After`로 즉시 답한다.
 
-보안 header(모든 응답): `Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'`, `X-Content-Type-Options: nosniff`, `Referrer-Policy: same-origin`(2026-10-25 orchestrator 정정: `no-referrer`면 Fetch 규칙상 같은 출처 form POST도 `Origin: null`이 되어 Origin 검사에 모두 막힌다. Origin `null`은 계속 403), `X-Frame-Options: DENY`, 인증 page·API는 `Cache-Control: no-store`. Inline script·style 없음. 요청 본문·댓글·제목·key 이름 등 사용자 텍스트는 모두 `html.escape` 뒤 `<pre>`/text node로만 출력한다(Markdown·HTML 해석 없음, P2-AC-31).
+보안 header(모든 응답): `Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'`, `X-Content-Type-Options: nosniff`, `Referrer-Policy: same-origin`(2026-10-25 orchestrator 정정: `no-referrer`면 Fetch 규칙상 같은 출처 form POST도 `Origin: null`이 되어 Origin 검사에 모두 막힌다. Origin `null`은 계속 403), `X-Frame-Options: DENY`, 인증 page·API는 `Cache-Control: no-store`. Inline script·style 없음(예외: `/board` 200 응답의 nonce `<style>`·style 속성, "WebSocket terminal 프로토콜" 절 2026-10-26 사용자 결정). 요청 본문·댓글·제목·key 이름 등 사용자 텍스트는 모두 `html.escape` 뒤 `<pre>`/text node로만 출력한다(Markdown·HTML 해석 없음, P2-AC-31).
 
 ### 감사 기록(D-11, P2-AC-18)
 
@@ -372,7 +372,14 @@ Frame:
 - 입력: binary frame의 epoch가 현재 epoch이고 그 연결이 현재 lease일 때만 PTY에 쓴다. 아니면 버리고 셈만 한다(D-28 (2)).
 - `{"t":"resize","epoch":E,"channel":"agent","rows":r,"cols":c}`(1~1000), `{"t":"ping","epoch":E,"n":k}` → `{"t":"pong","n":k}`, `{"t":"release","epoch":E}` → lease 해제·1000 close(D-28 (4), tab 닫기 `pagehide`에서 best-effort).
 - Heartbeat: client는 10 s마다 `ping`. Server는 현재 연결에서 어떤 frame도 20 s(+1 s 여유) 동안 오지 않으면 4002로 닫고 lease를 `none`("연결 없음")으로 둔다(D-28 (3)). TCP 끊김(EOF·RST)은 즉시 해제다. Lease 해제는 epoch를 올리지 않는다(같은 tab의 resume이 된다).
-- (2026-10-25 orchestrator 보완) 세션이 무효가 되면(로그아웃·비밀번호 변경·CLI `wb hub passwd`·24 h 만료) 열린 terminal 연결도 4401로 닫는다(약 5 s 안 재확인, 로그아웃·변경 시 즉시). `/ws/board` 연결은 전체 8개, 세션당 hello 전 2개로 제한한다. 다른 Hub run의 `resume`은 이 run에 아직 attach가 없을 때만 attach한다. Client는 4400~4499를 자동 재연결하지 않는다. `/board` 응답만 xterm DOM renderer 때문에 `style-src 'self' 'unsafe-inline'`을 쓰고 `script-src`는 그대로다.
+- (2026-10-25 orchestrator 보완) 세션이 무효가 되면(로그아웃·비밀번호 변경·CLI `wb hub passwd`·24 h 만료) 열린 terminal 연결도 4401로 닫는다(약 5 s 안 재확인, 로그아웃·변경 시 즉시). `/ws/board` 연결은 전체 8개, 세션당 hello 전 2개로 제한한다. 다른 Hub run의 `resume`은 이 run에 아직 attach가 없을 때만 attach한다. Client는 4400~4499를 자동 재연결하지 않는다. `/board` 응답만 xterm DOM renderer 때문에 style 예외를 둔다(아래 항목). `script-src`는 그대로다.
+- (2026-10-26 사용자 결정) `/board`의 200 응답 CSP는 전역 CSP에서 `style-src`만 `style-src 'self' 'nonce-<N>'; style-src-attr 'unsafe-inline'`로 바꾼다. 나머지 directive는 그대로다. 이것은 TI-18의 `style-src 'self' 'unsafe-inline'`를 대체한다.
+  - `N`은 응답마다 새로 만드는 `secrets.token_urlsafe(16)`다. Page는 같은 값을 `<meta name="style-nonce">`(HTML escape)로 넘긴다.
+  - `static/style-nonce.js`의 `installStyleNonce(document, N)`는 `board.js`가 `term.open()` 전에 한 번 호출한다. 이 함수는 `document.createElement`를 감싸 `style` element에만 `.nonce = N`을 넣는다. 다른 tag와 인자는 그대로 둔다.
+  - xterm 5.5 DOM renderer는 `<style>`을 두 곳(`_dimensionsStyleElement`, `_themeStyleElement`)에서 `createElement("style")` 뒤 `textContent`로 채운다. 두 element 모두 nonce로 허용되고, nonce 없이 주입된 `<style>` markup은 계속 막힌다.
+  - `style-src-attr 'unsafe-inline'`이 남는 이유: xterm은 24-bit truecolor 전경·배경색과 `minimumContrastRatio`가 1이 아닐 때의 색을 `setAttribute("style", …)`로 쓴다. Nonce는 style 속성에 적용되지 않는다. 이 directive가 없으면 headless Chrome 측정에서 truecolor 칸이 기본색으로 그려졌다. Style 속성만으로는 script를 실행할 수 없고, page에는 사용자가 제어하는 HTML이 없다(terminal 출력은 xterm으로 쓴다).
+  - 다른 page, `/board`의 200이 아닌 응답(303 login, 421, 403, 503 등), static file은 전역 CSP 그대로다(nonce·`style-src-attr` 없음).
+  - xterm을 올릴 때 주입 방식이 바뀌면 `tests/hub/test_web_assets.py`의 tripwire가 실패한다. 이 test는 `createElement("style")` 2회, `setAttribute("style"` 1회, `innerHTML`·`insertAdjacentHTML`·`adoptedStyleSheets`·`cssText` 0회를 확인한다.
 - 남은 "연결됨"은 아무것도 막지 않는다: 새 hello는 항상 인수한다(불변식 6).
 - Client 재연결 규칙(`board-state.js`): 네트워크로 끊기면 지수 backoff(1→2→4…≤15 s)로 `resume` hello. `taken_over`·`taken_elsewhere`를 받은 뒤에는 자동 재연결하지 않는다(두 tab 사이 핑퐁 방지). Pong이 20 s 없으면 "연결 없음"을 보이고 재연결.
 - 송신 queue가 연결당 4 MiB를 넘으면 그 연결을 4003으로 닫는다(client는 resume).

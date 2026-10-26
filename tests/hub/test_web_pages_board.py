@@ -24,6 +24,19 @@ from workbench.hub.web.pages.board import channel_label  # noqa: E402
 STATIC = REPO / 'src/workbench/hub/web/static'
 
 
+def csp_directives(header: str) -> dict[str, list[str]]:
+    """``{directive: [source, ...]}`` of one CSP header value, in order; a repeated directive is an error."""
+    directives: dict[str, list[str]] = {}
+    for part in header.split(';'):
+        words = part.split()
+        if not words:
+            continue
+        if words[0] in directives:
+            raise AssertionError(f'repeated CSP directive {words[0]!r} in {header!r}')
+        directives[words[0]] = words[1:]
+    return directives
+
+
 class FakeBoard:
     """What the page reads: ``status()`` (hub_v1 ``status.board_agent``) and ``restart``."""
 
@@ -145,40 +158,82 @@ class PageStructureTests(BoardPageCase):
 
     async def test_own_assets_and_xterm_assets_are_served_with_a_javascript_type_and_no_external_url(self):
         for path, kind in (('/static/board.js', 'javascript'), ('/static/board-state.js', 'javascript'),
+                           ('/static/style-nonce.js', 'javascript'),
                            ('/static/vendor/xterm/xterm.js', 'javascript'),
                            ('/static/vendor/xterm/addon-fit.js', 'javascript'),
                            ('/static/board.css', 'css'), ('/static/vendor/xterm/xterm.css', 'css')):
             response = await self.get(path)
             self.assertEqual(response.status, 200, path)
             self.assertIn(kind, response.headers['Content-Type'], path)
-        for name in ('board.js', 'board-state.js', 'board.css'):
+        for name in ('board.js', 'board-state.js', 'style-nonce.js', 'board.css'):
             text = (STATIC / name).read_text()
             self.assertEqual(re.findall(r'https?://', text), [], name)
             self.assertNotIn('eval(', text, name)
 
-    async def test_board_page_alone_allows_inline_styles_for_xterm_and_changes_nothing_else_in_the_csp(self):
-        # xterm 5.5's DOM renderer inserts <style> elements; the global style-src 'self' would block them.
-        strict = web_auth.COMMON_HEADERS['Content-Security-Policy']
+    async def test_board_page_alone_allows_nonced_style_elements_and_inline_style_attributes_only(self):
+        # xterm 5.5's DOM renderer inserts <style> elements (allowed by this response's nonce) and writes
+        # truecolor cells through setAttribute("style") (allowed by style-src-attr). 2026-10-26 사용자 결정.
+        strict = csp_directives(web_auth.COMMON_HEADERS['Content-Security-Policy'])
         response, _ = await self.page()
+        self.assertEqual(response.status, 200)
         csp = response.headers['Content-Security-Policy']
-        self.assertEqual(csp, strict.replace("style-src 'self'", "style-src 'self' 'unsafe-inline'"))
-        self.assertIn("style-src 'self' 'unsafe-inline'", csp)
-        self.assertIn("script-src 'self';", csp)
+        directives = csp_directives(csp)
+        style = directives['style-src']
+        nonces = [item for item in style if item.startswith("'nonce-")]
+        self.assertEqual(len(nonces), 1, csp)
+        self.assertRegex(nonces[0], r"^'nonce-[A-Za-z0-9_-]{22,}'$")
+        self.assertEqual([item for item in style if item not in nonces], ["'self'"], csp)
+        self.assertNotIn("'unsafe-inline'", style)
+        self.assertEqual(directives['style-src-attr'], ["'unsafe-inline'"])
+        others = {name: value for name, value in directives.items() if name not in ('style-src', 'style-src-attr')}
+        self.assertEqual(others, {name: value for name, value in strict.items() if name != 'style-src'})
+        self.assertEqual(directives['script-src'], ["'self'"])
         self.assertNotIn("'unsafe-eval'", csp)
+        self.assertEqual(csp.count("'unsafe-inline'"), 1, csp)
         self.assertEqual(response.headers['X-Content-Type-Options'], 'nosniff')
 
-    async def test_every_other_page_keeps_the_strict_csp(self):
+    async def test_style_nonce_is_fresh_per_response_and_matches_the_style_nonce_meta_of_the_body(self):
+        seen = []
+        for _ in range(2):
+            response, dom = await self.page()
+            self.assertEqual(response.status, 200)
+            nonces = [item for item in csp_directives(response.headers['Content-Security-Policy'])['style-src']
+                      if item.startswith("'nonce-")]
+            self.assertEqual(len(nonces), 1)
+            metas = [attrs for attrs in dom.tags('meta') if attrs.get('name') == 'style-nonce']
+            self.assertEqual(len(metas), 1, 'exactly one style-nonce meta')
+            self.assertEqual(f"'nonce-{metas[0]['content']}'", nonces[0])
+            seen.append(metas[0]['content'])
+        self.assertNotEqual(seen[0], seen[1], 'a nonce is never reused across responses')
+
+    async def test_every_other_page_and_every_non_200_board_response_keeps_the_strict_csp(self):
         strict = web_auth.COMMON_HEADERS['Content-Security-Policy']
         self.assertNotIn("'unsafe-inline'", strict)
+        self.assertNotIn('nonce-', strict)
+        self.assertNotIn('style-src-attr', strict)
+        responses = []
         for path, cookies in (('/board/restart?channel=agent', self.cookies), ('/board/restart?channel=x', self.cookies),
                               ('/login', None), ('/', self.cookies), ('/board', None), ('/nope', self.cookies),
-                              ('/static/board.js', None), ('/ws/board', self.cookies)):
-            response = await self.get(path, cookies=cookies)
-            self.assertEqual(response.headers['Content-Security-Policy'], strict, path)
+                              ('/static/board.js', None), ('/static/style-nonce.js', None),
+                              ('/ws/board', self.cookies)):
+            responses.append((path, await self.get(path, cookies=cookies)))
+        responses.append(('/board bad Host', await self.get('/board', host='evil.example', cookies=self.cookies)))
+        responses.append(('/board stale cookie', await self.get('/board', cookies={'wb_hub_session': 'stale'})))
+        responses.append(('POST /board', await self.post('/board', {}, cookies=self.cookies)))
+        statuses = dict((path, response.status) for path, response in responses)
+        self.assertEqual((statuses['/board'], statuses['/board bad Host'], statuses['/board stale cookie']),
+                         (303, 421, 303))
+        self.assertEqual(statuses['POST /board'], 403)
+        self.assertEqual(statuses['/static/style-nonce.js'], 200)
         self.board_ref[0] = None
         response, _ = await self.page()
         self.assertEqual(response.status, 503)
-        self.assertEqual(response.headers['Content-Security-Policy'], strict, 'the 503 page has no terminal')
+        responses.append(('/board 503: the page has no terminal', response))
+        for path, response in responses:
+            csp = response.headers['Content-Security-Policy']
+            self.assertEqual(csp, strict, path)
+            self.assertNotIn('nonce-', csp, path)
+            self.assertNotIn('style-src-attr', csp, path)
 
     async def test_page_needs_a_session(self):
         response = await self.get('/board')

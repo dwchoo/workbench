@@ -31,7 +31,8 @@ class FakeTerminal {
   clearSelection() { this.selection = ""; this.cleared += 1; }
   scrollToBottom() { this.bottomScrolls += 1; }
   loadAddon() {}
-  open() {}
+  // xterm's DOM renderer creates its <style> elements from open() on: the nonce must already be wired by then.
+  open() { this.styleNonceAtOpen = document.createElement("style").nonce; }
   focus() {}
   reset() { this.resets += 1; }
   write(data) { this.raw.push(data); this.written.push(new TextDecoder().decode(data)); }
@@ -56,7 +57,9 @@ const documentListeners = {};
 const clipboard = { copied: [], execResult: true };
 globalThis.document = {
   getElementById: element,
-  querySelector: (selector) => (selector.includes("csrf-token") ? { content: "csrf-from-meta" } : null),
+  querySelector: (selector) => (selector.includes("csrf-token") ? { content: "csrf-from-meta" }
+    : selector.includes("style-nonce") ? { content: "nonce-from-meta" } : null),
+  createElement: (tagName) => ({ tagName: String(tagName).toUpperCase(), nonce: "" }),
   addEventListener: (type, handler) => { documentListeners[type] = handler; },
   // The browser's copy command: a copy event the page may fill (plain HTTP has no navigator.clipboard).
   execCommand(command) {
@@ -91,6 +94,14 @@ const frame = (channel, epoch, text) => {
   bytes.set(payload, 5);
   return bytes.buffer;
 };
+
+test("the style nonce from the meta tag is on <style> elements before any terminal opens; other tags get none", () => {
+  assert.equal(terminals.length, 2);
+  for (const term of terminals) assert.equal(term.styleNonceAtOpen, "nonce-from-meta");
+  assert.equal(document.createElement("STYLE").nonce, "nonce-from-meta");
+  assert.equal(document.createElement("div").nonce, "");
+  assert.equal(document.createElement("textarea").nonce, "", "xterm's IME helper textarea is untouched");
+});
 
 test("the page opens /ws/board and its hello carries the csrf token from the meta tag and the terminal sizes", () => {
   assert.equal(sockets.length, 1);

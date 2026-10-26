@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import hmac
 import ipaddress
+import secrets
 from urllib.parse import urlsplit
 
 from aiohttp import web
@@ -34,6 +35,7 @@ API_PREFIXES = ("/api/", "/ws/")
 SESSION: web.RequestKey = web.RequestKey("wb_session", object)
 SESSION_TOKEN: web.RequestKey = web.RequestKey("wb_session_token", str)
 PRINCIPAL: web.RequestKey = web.RequestKey("wb_principal", Principal)
+STYLE_NONCE: web.RequestKey = web.RequestKey("wb_style_nonce", str)
 
 # Route access marks (attribute ``wb_access`` on the handler): unmarked routes need a session.
 ACCESS_PUBLIC = "public"  # no session (login, static)
@@ -42,9 +44,18 @@ ACCESS_OWN = "own"  # the handler authenticates by itself (``/mcp`` with an API 
 
 
 def inline_styles(handler):
-    """Mark one page handler whose 200 response may carry inline ``<style>`` elements (see :func:`csp_for`)."""
+    """Mark one page handler whose 200 response may carry nonced ``<style>`` elements (see :func:`csp_for`)."""
     handler.wb_inline_styles = True
     return handler
+
+
+def style_nonce(request: web.Request) -> str:
+    """This request's CSP style nonce: made once per request (``secrets.token_urlsafe(16)``), then reused, so the
+    page body and the response's CSP carry the same value."""
+    nonce = request.get(STYLE_NONCE)
+    if nonce is None:
+        nonce = request[STYLE_NONCE] = secrets.token_urlsafe(16)
+    return nonce
 
 
 def public(handler):
@@ -66,15 +77,21 @@ def csp_for(request: web.Request, response: web.StreamResponse) -> str:
     """The CSP of this response: the strict global one, except for a 200 from a route marked
     :func:`inline_styles` (the Board page only).
 
-    xterm.js 5.5's DOM renderer creates ``<style>`` elements and fills them with ``textContent``; under
-    ``style-src 'self'`` the browser refuses them and the terminal draws nothing. The Board page therefore gets
-    ``style-src 'self' 'unsafe-inline'`` (orchestrator decision, TI-18 review). Nothing else changes: ``script-src
-    'self'`` stays, and no other page, error or static file is loosened. Style injection alone cannot run script;
-    the page holds no user-controlled HTML (terminal output is written through xterm, not as markup).
+    xterm.js 5.5's DOM renderer creates two ``<style>`` elements and fills them with ``textContent``, and writes
+    24-bit colours (and ``minimumContrastRatio`` colours) through ``setAttribute("style", ...)``; under ``style-src
+    'self'`` the browser refuses both and the terminal draws nothing or loses its colours. The Board page therefore
+    gets ``style-src 'self' 'nonce-<N>'; style-src-attr 'unsafe-inline'`` (2026-10-26 사용자 결정; it replaces the
+    TI-18 ``style-src 'self' 'unsafe-inline'``). ``N`` is :func:`style_nonce`, fresh per request; the page hands it
+    to ``static/style-nonce.js``, which sets it on the ``<style>`` elements xterm creates. Injected ``<style>``
+    markup without the nonce stays refused; ``style-src-attr`` stays only because xterm's truecolor cells have no
+    other route. Nothing else changes: ``script-src 'self'`` stays, and no other page, error, redirect or static
+    file is loosened. Style attributes alone cannot run script; the page holds no user-controlled HTML (terminal
+    output is written through xterm, not as markup).
     """
     marked = getattr(request.match_info.handler, "wb_inline_styles", False)
     if marked and response.status == 200:
-        return CSP.replace("style-src 'self'", "style-src 'self' 'unsafe-inline'", 1)
+        return CSP.replace("style-src 'self'", f"style-src 'self' 'nonce-{style_nonce(request)}'; "
+                           "style-src-attr 'unsafe-inline'", 1)
     return CSP
 
 

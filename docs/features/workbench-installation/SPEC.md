@@ -40,6 +40,7 @@ uv, Git 접근 인증, Python >=3.12는 사전 요건이다. OMP와 그 설치 �
 `wb` 무인자는 start 동작으로 진입한다. `wb start`, `attach`, `status`, `shutdown`, `setup`, `migrate`를 제공한다. 기존 `omp-workbench` entry point 및 `confirm-boot`, Task/log/summary 관련 세부 명령과 옵션을 유지한다. 기존 parser의 명령별 옵션 위치를 호환하며 옵션 재배치를 새 필수 요건으로 만들지 않는다. `--help`는 시작·초기화하지 않는다.
 
 - `wb setup [--omp PATH]`: 사용자 전역 프로그램 준비이며 cwd의 `.wb/`를 만들지 않는다. 기존 `WORKBENCH_OMP` 선택도 유지한다.
+  - 명령 링크(`~/.local/bin/omp`)를 준비하지 못해도 종료 코드는 0(경고)이다. 단 출력과 JSON `command_link`(`plain_wb_ready`·`reason`·`detail`·`fix`)에 문제 디렉터리·권한·수정 명령과, 일반 `wb`가 시작하지 않으며 `WORKBENCH_OMP=<경로>`로 임시 실행할 수 있음을 명시한다. 신뢰 검사 자체는 완화하지 않는다.
 - `wb [start]`: 기존 backend가 있으면 검증 후 연결하고 없으면 준비 요건과 프로젝트 확인을 거쳐 시작한다. `start --no-attach` 등 기존 옵션도 유지한다.
 - `wb attach/status/shutdown`: 기존 context를 조회하며 프로젝트를 새로 만들지 않는다. shutdown의 기존 확인·정리 계약을 유지한다.
 - `wb migrate --from PATH --project PATH`: 단일 기존 data-dir을 명시한 프로젝트 `.wb/`로 이관한다. 성공해도 backend·실험을 자동 시작하지 않는다.

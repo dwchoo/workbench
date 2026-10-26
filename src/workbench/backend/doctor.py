@@ -17,7 +17,7 @@ import time
 
 from .install_recipe import inspect_existing
 from .project import resolve_project_context
-from .setup import resolve_runtime_selection
+from .setup import SetupError, resolve_runtime_selection
 from .migration_sqlite import committed_image
 from .paths import DataDirError, DataLayout
 from .omp_home import user_auth_store, auth_store_state
@@ -281,6 +281,11 @@ def diagnose(args):
         add('omp', 'ok' if omp.status == 'executable' else 'error',
             'OMP '+omp.version if omp.status == 'executable' else '선택 OMP 누락 또는 version 확인 실패',
             '선택 OMP 경로를 확인하세요. doctor는 로그인·SDK/provider 검사를 하지 않습니다.')
+    except SetupError as error:
+        # The selection itself is refused (plain wb cannot start): say why and how, not just "unknown".
+        add('omp', 'error', f'OMP 선택 실패: {error.code}' + (f' — {error.detail}' if error.detail else ''),
+            (f'`{error.fix}` 실행 후 ' if error.fix else '원인을 해결한 뒤 ') +
+            '`wb setup`을 다시 실행하세요. 임시로는 WORKBENCH_OMP=<omp 경로> 로 실행할 수 있습니다.')
     except (OSError, ValueError, RuntimeError):
         add('omp', 'unknown', '선택 OMP metadata 확인 불가', 'WORKBENCH_OMP 또는 사용자 OMP 선택을 확인하세요.')
     try:

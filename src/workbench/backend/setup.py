@@ -4,6 +4,7 @@ from __future__ import annotations
 from contextlib import contextmanager
 from dataclasses import dataclass, asdict
 from hashlib import sha256
+import errno
 import fcntl
 import json
 import os
@@ -24,11 +25,17 @@ from workbench.backend.paths import write_private_json, write_private_bytes
 
 
 class SetupError(ValueError):
-    def __init__(self, code: str, *, path=None, detail=None):
+    """``str(error)`` stays the stable reason code; ``detail``/``fix`` tell the user what to change."""
+    def __init__(self, code: str, *, path=None, detail=None, fix=None):
         self.code = code
         self.path = str(path) if path is not None else None
         self.detail = detail
+        self.fix = fix
         super().__init__(code)
+
+    def explain(self) -> str:
+        """``code: detail`` for one-line user messages; callers append ``fix`` in their own words."""
+        return self.code + (f': {self.detail}' if self.detail else '')
 
 
 @dataclass(frozen=True)
@@ -53,29 +60,49 @@ def setup_paths(environment=None) -> SetupPaths:
                       base('XDG_DATA_HOME', '.local/share') / 'omp-workbench/tools')
 
 
-def _trusted_ancestor(fd):
+def _unsafe_directory(path, info) -> tuple[str, str | None]:
+    """Why a directory may not hold managed files, and the one command that fixes it (if any)."""
+    mode = stat.S_IMODE(info.st_mode)
+    if info.st_uid not in {0, os.geteuid()}:
+        return (f'{path} is owned by uid {info.st_uid} (mode {mode:o}); its owner must be you or root, '
+                'so it cannot be fixed with chmod', None)
+    group, world = bool(mode & 0o020), bool(mode & 0o002)
+    kind = ('group- and world-writable' if group and world else 'group-writable' if group else 'world-writable')
+    flag = 'go-w' if group and world else 'g-w' if group else 'o-w'
+    return (f'{path} is {kind} (mode {mode:o}); other users could replace the command inside it',
+            f'chmod {flag} {shlex.quote(str(path))}')
+
+
+def _trusted_ancestor(fd, path):
     info = os.fstat(fd)
     mode = stat.S_IMODE(info.st_mode)
     if (info.st_uid not in {0, os.geteuid()}
             or (mode & 0o022 and not mode & stat.S_ISVTX)):
-        raise SetupError('unsafe_managed_ancestry')
+        detail, fix = _unsafe_directory(path, info)
+        raise SetupError('unsafe_managed_ancestry', path=path, detail=detail, fix=fix)
 
 
 def _directory(path: Path, *, create=False, private=False) -> int:
     """Walk by descriptors so an ancestor symlink cannot redirect managed writes."""
     fd = os.open('/', os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC)
+    current = Path('/')
     try:
-        _trusted_ancestor(fd)
+        _trusted_ancestor(fd, current)
         for part in path.parts[1:]:
-            if create:
-                try:
-                    os.mkdir(part, mode=0o700, dir_fd=fd)
-                except FileExistsError:
-                    pass
-            child = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC, dir_fd=fd)
+            current = current / part
+            try:
+                if create:
+                    try:
+                        os.mkdir(part, mode=0o700, dir_fd=fd)
+                    except FileExistsError:
+                        pass
+                child = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC, dir_fd=fd)
+            except OSError as error:
+                error.component = current  # lets callers name the component that could not be used
+                raise
             os.close(fd)
             fd = child
-            _trusted_ancestor(fd)
+            _trusted_ancestor(fd, current)
         info = os.fstat(fd)
         if private and (info.st_uid != os.geteuid() or stat.S_IMODE(info.st_mode) & 0o077):
             raise SetupError('unsafe_managed_directory')
@@ -140,13 +167,33 @@ def resolve_runtime_selection(omp=None, environment=None) -> OMPSelection:
         try:
             # Sticky ancestors such as /tmp are valid, but the command directory
             # itself must not let another user create the default executable.
-            if stat.S_IMODE(os.fstat(parent).st_mode) & 0o022:
-                raise SetupError('unsafe_managed_ancestry', path=command)
+            info = os.fstat(parent)
+            if stat.S_IMODE(info.st_mode) & 0o022:
+                detail, fix = _unsafe_directory(command.parent, info)
+                raise SetupError('unsafe_managed_ancestry', path=command, detail=detail, fix=fix)
         finally:
             os.close(parent)
     except (OSError, SetupError) as error:
-        raise SetupError(getattr(error, 'code', 'unusable_user_command_parent'), path=command) from error
+        detail, fix = _failure_detail(error)
+        raise SetupError(getattr(error, 'code', 'unusable_user_command_parent'), path=command,
+                         detail=detail, fix=fix) from error
     return OMPSelection(command, 'user_bin')
+
+
+def _failure_detail(error, default='the command directory') -> tuple[str | None, str | None]:
+    """Detail and fix for a command-directory failure, from a SetupError or an OSError with a component."""
+    if isinstance(error, SetupError):
+        return error.detail, error.fix
+    component = getattr(error, 'component', None)
+    name = str(component) if component is not None else default
+    if isinstance(error, FileNotFoundError):
+        return f'{name} does not exist; wb setup creates it', None
+    if getattr(error, 'errno', None) in {errno.ELOOP, errno.ENOTDIR}:
+        # O_DIRECTORY|O_NOFOLLOW reports a symlink as ENOTDIR, so look at the component itself.
+        what = 'a symbolic link' if component is not None and os.path.islink(component) else 'not a directory'
+        return (f'{name} is {what}; it must be a real directory so a managed command cannot be redirected '
+                f'(replace it with a real directory)'), None
+    return f'{name}: {error.strerror or type(error).__name__}', None
 
 
 def resolve_selection(omp=None, environment=None, *, prefer_user_command=False) -> OMPSelection | None:
@@ -325,7 +372,7 @@ def _command_link(record, environment):
     binary = Path(record['path'])
     command = user_command(environment)
     status = 'created'
-    reason = warning = None
+    reason = warning = detail = fix = None
     try:
         parent = _directory(command.parent, create=True)
         try:
@@ -338,14 +385,18 @@ def _command_link(record, environment):
                 except OSError:
                     matching = False
                 if not matching:
-                    raise SetupError('command_link_conflict', path=command)
+                    raise SetupError('command_link_conflict', path=command,
+                                     detail=f'{command} already exists and is not this OMP; wb setup never '
+                                            'overwrites it. Move or remove it to let setup link it')
                 status = 'reused'
         finally:
             os.close(parent)
     except (OSError, SetupError) as error:
         status = 'warning'
         reason = getattr(error, 'code', type(error).__name__)
-        warning = f'Could not prepare command link {command}: {reason}. OMP remains ready at {binary}.'
+        detail, fix = _failure_detail(error, default=str(command.parent))
+        warning = (f'Could not prepare command link {command}: {reason}'
+                   f'{f" ({detail})" if detail else ""}. OMP remains ready at {binary}.')
     found = shutil.which('omp', path=environment.get('PATH', ''))
     try:
         on_path = found is not None and Path(found).resolve(strict=True) == binary
@@ -359,7 +410,19 @@ def _command_link(record, environment):
             guidance += f' For this shell, run: export PATH={shlex.quote(str(command.parent))}:"$PATH"'
         guidance += f' You can run the verified absolute executable instead: {shlex.quote(str(binary))}'
     return {'path': str(command), 'status': status, 'on_path': on_path,
-            'resolved_path': found, 'reason': reason, 'warning': warning, 'guidance': guidance}
+            'resolved_path': found, 'reason': reason, 'warning': warning, 'guidance': guidance,
+            'plain_wb_ready': status != 'warning' or _plain_wb_ready(command, environment),
+            'detail': detail, 'fix': fix}
+
+
+def _plain_wb_ready(command, environment) -> bool:
+    """Whether plain wb (no --omp/WORKBENCH_OMP) would accept the command as it is now."""
+    try:
+        resolve_runtime_selection(environment={key: value for key, value in environment.items()
+                                               if key != 'WORKBENCH_OMP'})
+    except (SetupError, OSError):
+        return False
+    return command.is_file() and os.access(command, os.X_OK)
 
 
 def _ready_result(record, status, command_link):

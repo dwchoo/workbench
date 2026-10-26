@@ -1177,8 +1177,13 @@ def cmd_setup(args) -> int:
         result = {"state": "failed", "status": "failed", "reason": "interrupted" if isinstance(error, KeyboardInterrupt) else getattr(error, "code", type(error).__name__),
                   "path": getattr(error, "path", None) or args.omp,
                   "detail": getattr(error, "detail", None),
+                  "fix": getattr(error, "fix", None),
                   "retry": "Fix the reported OMP/path/network issue and retry wb setup."}
-        print(json.dumps(result, ensure_ascii=False) if args.json else f"OMP setup failed: {result['reason']} ({result['path'] or 'user program prefix'}): {result['detail'] or ''}. {result['retry']}")
+        if args.json:
+            print(json.dumps(result, ensure_ascii=False))
+        else:
+            retry = f"Fix: {result['fix']}, then retry wb setup." if result["fix"] else result["retry"]
+            print(f"OMP setup failed: {result['reason']} ({result['path'] or 'user program prefix'}): {result['detail'] or ''}. {retry}")
         return EXIT_FAILURE
     if args.json:
         print(json.dumps(result, ensure_ascii=False))
@@ -1188,6 +1193,10 @@ def cmd_setup(args) -> int:
         print(f"OMP command link {link['status']}: {link['path']}")
         if link['warning']:
             print(f"Warning: {link['warning']}")
+        if not link['plain_wb_ready']:
+            fix = f" Fix: {link['fix']}, then" if link['fix'] else " Resolve this, then"
+            print(f"Note: plain `wb` will not start until {link['path']} works.{fix} run wb setup again. "
+                  f"To run once without it: WORKBENCH_OMP={result['path']} wb")
         print(link['guidance'])
         print(result['login_guidance'])
         print(result['update_guidance'])

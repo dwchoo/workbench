@@ -271,7 +271,9 @@ def build_plan(environment: Mapping[str, str], *, omp: str | None = None,
         selection = resolve_runtime_selection(omp, environment)
     except SetupError as exc:
         raise StartRequirementError(
-            f'OMP selection failed (selected {exc.path or "unknown"}): {exc}. Run wb setup. No backend was started.') from exc
+            f'OMP selection failed (selected {exc.path or "unknown"}): {exc.explain()}. '
+            f'{f"Fix: {exc.fix}, then" if exc.fix else "Resolve this, then"} run wb setup '
+            '(or pass --omp/WORKBENCH_OMP for one run). No backend was started.') from exc
     candidate = str(selection.path) if selection is not None else None
     if not candidate or not os.access(candidate, os.X_OK):
         raise StartRequirementError(

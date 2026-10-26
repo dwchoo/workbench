@@ -14,7 +14,7 @@ omp-workbench doctor --json
 | 항목 ID | 검사와 한계 |
 |---|---|
 | `installation` | 실행 distribution·Python·entrypoint 결속과 설치 방법·Git commit 또는 일반/editable 출처. 출처 URL·인증 정보는 출력하지 않는다. 확인되지 않은 결속/버전 형식은 unknown이다. |
-| `python`, `uv`, `omp` | Python 3.12 이상과 로컬 도구 version. uv stdout/stderr 총 4KiB·3초, OMP는 기존 inspector의 총 64KiB·3초 제한을 사용한다. 허용된 version만 출력하며 raw stderr를 버린다. OMP SDK 호환성·로그인·모델/provider 검사는 하지 않는다. |
+| `python`, `uv`, `omp` | Python 3.12 이상과 로컬 도구 version. uv stdout/stderr 총 4KiB·3초, OMP는 기존 inspector의 총 64KiB·3초 제한을 사용한다. 허용된 version만 출력하며 raw stderr를 버린다. OMP SDK 호환성·로그인·모델/provider 검사는 하지 않는다. | 사용자 OMP 명령 선택 자체가 거절되면(예: `~/.local/bin` 쓰기 권한) `omp`는 error이며 summary에 reason code와 문제 디렉터리, hint에 수정 명령을 표시한다.
 | `auth` | 선택된 공유 auth store의 존재·소유자·종류·0600 metadata만 확인한다. 내용을 열거나 key/token 유효성을 검사하지 않는다. 부재는 warning이다. |
 | `project`, `permissions` | 초기화 없는 context 해석과 사용자 소유 0700 WB root. 권한을 바꾸지 않는다. |
 | `db.tasks`, `db.records` | 원본 main/WAL의 고정 bytes를 기존 SQLite committed-image 경계로 메모리에 옮겨 quick_check·지원 user_version·core table metadata를 확인한다. 각 파일은 최대 64MiB이며 원본을 SQLite로 열지 않는다. 부재는 미생성 warning, 손상/schema 오류는 error, 변경 중인 family·rollback journal·관측 불가는 unknown이다. |

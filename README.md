@@ -48,6 +48,8 @@ uv tool install --force --reinstall --python 3.12 'git+https://github.com/dwchoo
 
 `wb setup`은 검증한 OMP를 가리키는 `~/.local/bin/omp` 절대 경로 symlink를 준비합니다. 공식 배포본과 기존 외부 실행 파일 모두 대상이며, 외부 실행 파일 자체는 변경하지 않습니다. 이전 설치도 `wb setup`을 다시 실행하면 저장된 설치를 재검사해 빠진 링크를 복구합니다. 이미 같은 실행 파일을 가리키거나 사용자 명령 자체가 실행 파일이면 그대로 재사용합니다. 다른 파일이나 링크는 덮어쓰지 않습니다. 출력에서 현재 `PATH`가 선택한 OMP를 가리키는지 확인하세요. `~/.local/bin`이 빠졌거나 다른 `omp`가 먼저 선택되면 출력된 `export PATH=...`를 현재 shell에서 실행할 수 있습니다. shell 설정 파일은 자동으로 바꾸지 않습니다. 링크를 준비하지 못해도 검증된 절대 실행 경로와 경고를 출력합니다.
 
+`~/.local/bin`과 그 상위 디렉터리(`~/.local`, `~` 등)는 그룹·다른 사용자가 쓸 수 없어야 하며(`g-w`, `o-w`) 소유자가 본인 또는 root여야 합니다. umask가 `0002`인 호스트(일부 Ubuntu·DGX 등)에서는 새 `~/.local/bin`이 `775`가 되어 `unsafe_managed_ancestry`로 거절됩니다. 이 경우 `wb setup`은 문제 디렉터리·권한·고칠 명령(`chmod g-w ~/.local/bin`)을 출력하고 종료 코드 0으로 끝나지만, 링크가 없으면 일반 `wb`는 시작하지 않습니다(`OMP selection failed ... Fix: chmod ..., then run wb setup`). 권한을 고친 뒤 `wb setup`을 다시 실행하세요. 고치기 전에 한 번만 실행하려면 `WORKBENCH_OMP=<setup이 출력한 OMP 경로> wb`를 쓸 수 있습니다. `wb doctor`의 `omp` 항목도 같은 원인을 표시합니다. 이 검사는 완화되지 않습니다.
+
 setup의 설치 검사 순서는 `wb setup --omp` 인자, `WORKBENCH_OMP`, 현재 `~/.local/bin/omp`, 이전 setup의 설치 기록, `PATH`의 `omp`입니다. 선택한 파일이 없거나 실행할 수 없으면 다른 파일로 조용히 바꾸지 않고 실패를 안내합니다. 직접 선택하려면 다음처럼 실행합니다.
 
 ```sh

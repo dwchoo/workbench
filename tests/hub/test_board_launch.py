@@ -111,6 +111,26 @@ class LauncherCase(unittest.TestCase):
         return self.arun((launcher or self.launcher).prepare_agent())
 
 
+class OmpSelectionDetailTests(LauncherCase):
+    def test_a_refused_command_link_carries_the_directory_and_the_fix_but_keeps_the_reason_code(self):
+        del self.box.env['WORKBENCH_OMP']
+        local_bin = self.box.home / '.local' / 'bin'
+        local_bin.mkdir(parents=True)
+        for private in (self.box.home, self.box.home / '.local'):
+            os.chmod(private, 0o700)  # only the command directory is unsafe
+        os.chmod(local_bin, 0o775)
+        with self.assertRaises(launch.BoardLaunchError) as raised:
+            self.prepare(self.make_launcher(self.config))  # the launcher copies the environment at construction
+        error = raised.exception
+        self.assertEqual(error.reason, 'omp_unavailable')
+        self.assertIn(str(local_bin), error.message)
+        self.assertIn('group-writable', error.message)
+        self.assertIn(f'chmod g-w {local_bin}', error.message)
+
+    def test_an_error_without_a_selection_detail_has_no_message(self):
+        self.assertIsNone(launch.BoardLaunchError('shell_unavailable', '/x').message)
+
+
 class SystemKeyTests(LauncherCase):
     def test_each_start_issues_a_new_system_editor_key_and_the_previous_one_stops_verifying(self):
         first = self.prepare()

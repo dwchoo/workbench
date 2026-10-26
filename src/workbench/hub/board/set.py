@@ -417,14 +417,18 @@ class Slot:
     pid: int | None = None
     started_at: float | None = None
     detail: str | None = None
+    message: str | None = None  # human explanation of a failed start (directory, fix); ``detail`` stays the code
     exit_status: int | None = None
     size: tuple[int, int] = DEFAULT_SIZE
     ring: Ring | None = None
     subscribers: list = field(default_factory=list)
 
     def view(self) -> dict[str, Any]:
-        return {"state": self.state, "pid": self.pid, "started_at": self.started_at, "detail": self.detail,
+        view = {"state": self.state, "pid": self.pid, "started_at": self.started_at, "detail": self.detail,
                 "exit_status": self.exit_status}
+        if self.message:
+            view["message"] = self.message
+        return view
 
 
 class BoardSet:
@@ -491,15 +495,16 @@ class BoardSet:
         channel.on_output = lambda chunk, slot=slot: self._output(slot, chunk)
         channel.start_io(asyncio.get_running_loop())
         slot.channel, slot.pid, slot.started_at, slot.ring = channel, channel.pid, channel.started_at, channel.ring
-        slot.detail, slot.exit_status = None, None
+        slot.detail, slot.message, slot.exit_status = None, None, None
         return channel
 
     async def _start_agent(self, slot: Slot, reason: str, actor: str, address: str | None) -> None:
-        slot.state, slot.detail = "starting", None
+        slot.state, slot.detail, slot.message = "starting", None, None
         try:
             started = await self.launcher.prepare_agent()
         except BoardLaunchError as exc:
             slot.state, slot.detail, slot.channel, slot.pid = "failed", exc.reason, None, None
+            slot.message = exc.message
             self._changed()
             return
         except Exception as exc:  # noqa: BLE001 - never leave the slot "starting"

@@ -95,6 +95,8 @@ def cmd_hub_status(args: argparse.Namespace) -> int:
         print("  board_agent: 없음")
     else:
         print("  board_agent: " + board_text(board, (board.get("lease") or {}).get("state")))
+        for line in board_failure_lines(board):
+            print(line)
     return EXIT_OK
 
 
@@ -376,6 +378,17 @@ def board_text(channels: dict, lease: str | None) -> str:
     if lease is not None:
         parts.append(LEASE_TEXT.get(lease, str(lease)))
     return " · ".join(parts)
+
+
+def board_failure_lines(board: dict) -> list[str]:
+    """``    <channel>: <message>`` for each channel that failed with an explanation (directory, fix)."""
+    lines = []
+    for name in ("agent", "shell"):
+        channel = board.get(name)
+        message = channel.get("message") if isinstance(channel, dict) else None
+        if isinstance(message, str) and message:
+            lines.append(f"    {name}: {message}")
+    return lines
 
 
 def active_text(item) -> str:

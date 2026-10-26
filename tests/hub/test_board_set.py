@@ -196,6 +196,41 @@ class ShellChannelTests(SetCase):
         self.assertEqual(status['shell']['state'], 'running')
 
 
+class OmpSelectionFailureTests(SetCase):
+    """An unusable ``~/.local/bin/omp`` fails the agent with the same directory and fix ``wb`` prints (bcbba31)."""
+
+    def group_writable_local_bin(self) -> Path:
+        del self.box.env['WORKBENCH_OMP']  # no override: the default user command link decides
+        local_bin = self.box.home / '.local' / 'bin'
+        local_bin.mkdir(parents=True, exist_ok=True)
+        for private in (self.box.home, self.box.home / '.local'):
+            os.chmod(private, 0o700)  # only the command directory is unsafe
+        os.chmod(local_bin, 0o775)
+        self.launcher = self.make_launcher(self.config)
+        self.board = self.make_board()
+        return local_bin
+
+    def test_the_agent_failure_names_the_directory_and_the_chmod_while_the_reason_code_stays(self):
+        local_bin = self.group_writable_local_bin()
+        self.start()
+        agent = self.board.status()['agent']
+        self.assertEqual((agent['state'], agent['detail']), ('failed', 'omp_unavailable'))
+        self.assertIn(str(local_bin), agent['message'])
+        self.assertIn('group-writable', agent['message'])
+        self.assertIn(f'chmod g-w {local_bin}', agent['message'])
+        self.assertIn('unsafe_managed_ancestry', agent['message'])
+        self.assertEqual(self.board.status()['shell']['state'], 'running')
+
+    def test_a_plain_missing_override_has_no_message_and_other_views_keep_their_keys(self):
+        self.box.env['WORKBENCH_OMP'] = str(self.box.root / 'missing-omp')
+        self.launcher = self.make_launcher(self.config)
+        self.board = self.make_board()
+        self.start()
+        status = self.board.status()
+        self.assertEqual(status['agent']['detail'], 'omp_unavailable')
+        self.assertEqual(set(status['shell']), {'state', 'pid', 'started_at', 'detail', 'exit_status'})
+
+
 class ExitTests(SetCase):
     def test_a_channel_that_ends_by_itself_shows_exited_with_its_status_and_is_reaped(self):
         self.start()

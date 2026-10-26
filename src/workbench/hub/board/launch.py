@@ -38,6 +38,7 @@ KEY_ENV = "WB_BOARD_MCP_KEY"
 CHECK_ROLE = "board"
 DEFAULT_SHELL = "/bin/sh"
 REASON_LIMIT = 256  # the audit ``reason`` limit
+MESSAGE_LIMIT = 1024  # the human ``message`` next to a failed channel
 FALLBACK_LOCALE = "C.UTF-8"
 LOCALE_KEYS = ("LC_ALL", "LC_CTYPE", "LANG")  # the C library's precedence for the character type
 _UTF8_LOCALE = re.compile(r"\.utf-?8(@|$)", re.IGNORECASE)
@@ -46,11 +47,13 @@ BOARD_PROVIDER_IDS = tuple(item for item in ISOLATION_PROVIDER_IDS if item != "n
 
 
 class BoardLaunchError(RuntimeError):
-    """The Board agent OMP cannot be started; ``reason`` is the short status detail."""
+    """The Board agent OMP cannot be started; ``reason`` is the short status detail (a stable code).
+    ``message`` is the optional human explanation (directory, cause, fix) shown next to it, never in its place."""
 
-    def __init__(self, reason: str, text: str = ""):
+    def __init__(self, reason: str, text: str = "", *, message: str | None = None):
         super().__init__(text or reason)
         self.reason = reason
+        self.message = message
 
 
 @dataclass(frozen=True, slots=True)
@@ -170,7 +173,10 @@ def resolve_omp(environment: Mapping[str, str]) -> str:
     try:
         selection = resolve_runtime_selection(None, environment)
     except SetupError as exc:
-        raise BoardLaunchError("omp_unavailable", str(exc)) from exc
+        # Same facts `wb` prints (launcher.build_plan): the selected path, the cause and the one-line fix.
+        message = f"OMP selection failed (selected {exc.path or 'unknown'}): {exc.explain()}."
+        message += f" Fix: {exc.fix}, then run wb setup." if exc.fix else " Resolve this, then run wb setup."
+        raise BoardLaunchError("omp_unavailable", str(exc), message=message[:MESSAGE_LIMIT]) from exc
     path = str(selection.path)
     if not os.access(path, os.X_OK):
         raise BoardLaunchError("omp_unavailable", f"not executable: {path}")

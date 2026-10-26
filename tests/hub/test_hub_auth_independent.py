@@ -969,7 +969,7 @@ class ApiKeyTests(AuthCase):
         revoked = keys.issue('revoked', 'editor', {'all': True}, None, now=T0)
         expiring = keys.issue('expiring', 'editor', {'all': True}, 1, now=T0)
         keys.revoke(revoked.key_id, now=T0 + 1)
-        for raw, now in ((revoked.raw, T0 + 2), (expiring.raw, T0 + DAY + 1), (live.raw[:15] + 'x' + live.raw[16:], T0 + 2),
+        for raw, now in ((revoked.raw, T0 + 2), (expiring.raw, T0 + DAY + 1), (live.raw[:15] + ('A' if live.raw[15] != 'A' else 'B') + live.raw[16:], T0 + 2),
                          ('junk', T0)):
             with self.assertRaises(auth.ApiKeyRefused):
                 keys.verify(raw, now)

@@ -342,9 +342,25 @@ class BoardPageTests(unittest.TestCase):
             if item.startswith('/static') or item.endswith(('.js', '.css')):
                 self.assertEqual(code, 200, item)
         csp_board = headers['Content-Security-Policy']
-        self.assertIn("style-src 'self' 'unsafe-inline'", csp_board)
+        # 2026-10-26 user decision: style-src 'self' 'nonce-<N>' plus style-src-attr 'unsafe-inline'; N is the
+        # page's <meta name="style-nonce">; the one 'unsafe-inline' is the attribute one, never style-src's.
+        board_csp: dict = {}
+        for part in csp_board.split(';'):
+            words = part.split()
+            if words:
+                self.assertNotIn(words[0], board_csp, f'repeated directive in {csp_board}')
+                board_csp[words[0]] = words[1:]
+        nonces = re.findall(r"'nonce-([A-Za-z0-9_-]{22,})'", csp_board)
+        self.assertEqual(len(nonces), 1, csp_board)
+        self.assertEqual(csp_board.count('nonce-'), 1, csp_board)
+        self.assertEqual(board_csp.get('style-src'), ["'self'", f"'nonce-{nonces[0]}'"], csp_board)
+        self.assertNotIn("'unsafe-inline'", board_csp.get('style-src', []))
+        self.assertEqual(board_csp.get('style-src-attr'), ["'unsafe-inline'"], csp_board)
+        self.assertEqual(csp_board.count("'unsafe-inline'"), 1, csp_board)
+        self.assertEqual(re.findall(r'<meta name="style-nonce" content="([^"]*)"', page), nonces)
+        self.assertEqual(page.count(nonces[0]), 1, 'the nonce is only in the meta')
         self.assertIn("script-src 'self'", csp_board)
-        self.assertNotIn("'unsafe-inline'", csp_board.replace("style-src 'self' 'unsafe-inline'", ''))
+        self.assertEqual(board_csp.get('script-src'), ["'self'"], csp_board)
         for path in ('/requests', '/settings', '/login'):
             code, other, _ = browser.request('GET', path)
             self.assertNotIn("'unsafe-inline'", other.get('Content-Security-Policy', ''), path)

@@ -26,6 +26,18 @@ wb start           # 명시한 start는 예전처럼 초기화 확인 후 시작
 
 열은 이름, 경로, 상태, Task·단계, 명령, 대기 사유, 요청, 마지막 활동이다. 3초마다 갱신한다. 값이 없으면 `—`이다. 요청 열은 `대기 N · 질문 M`(신규 N건, 추가 정보 필요 M건)이고 둘 다 0이면 `0`, 그 프로젝트의 요청 저장소를 읽지 못하면 `—`다(0이 아니다). 요청 기능은 [Task Inbox & Web Board 사용 안내](../task-inbox/USAGE.md)를 본다.
 
+제목 아래, 프로젝트 표 위에 Hub 자신의 상태를 1~2줄로 보인다. `wb hub status`와 같은 Hub `status` 응답이고 목록과 같은 3초 주기와 `r`로 갱신한다.
+
+```text
+Hub pid 4242 · wb 0.3.1 · 프로젝트 5개 · Board agent: 없음 · 가동 3시간 2분
+web: disabled — hub.toml에 [web] enabled = true를 넣고 Hub를 재시작하면 켜집니다
+```
+
+- 첫 줄: Hub pid, `wb` version, 등록된 프로젝트 수, Board agent 상태(agent 채널의 `running`/`stopped` 등, shell이 다르면 `(shell …)`, 세트를 한 번도 시작하지 않았으면 `없음`), 가동 시간.
+- 둘째 줄 `web:`: `disabled`(켜는 방법을 같이 보임), `listening <url>`(평문 HTTP면 `[!] 평문 HTTP` 표시), `not_listening: <이유>`, `config_invalid:<항목>` 중 하나.
+- 상태를 가져오지 못하면(Hub 연결 끊김·응답 없음) `Hub 상태 불명` 한 줄만 보인다. 응답이 일부만 오면 아는 값은 보이고 모르는 항목은 `불명`이다. 알 수 없는 상태를 `disabled`나 `없음`으로 보이지 않는다. 첫 응답 전에는 `Hub 상태 불러오는 중…`이다.
+- 좁은 terminal에서는 각 줄을 폭에 맞춰 `…`로 자른다(가동 시간이 가장 먼저 잘림). 화면이 아주 낮으면 프로젝트 행을 최소 3줄 남기도록 이 줄들을 줄인다.
+
 | 키 | 동작 |
 |---|---|
 | `↑` `↓` / `k` `j` | 선택 이동 |

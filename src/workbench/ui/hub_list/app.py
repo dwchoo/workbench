@@ -29,6 +29,7 @@ from workbench.ui.product.input import JAMO_KEYS
 from workbench.ui.hub_list.view import draw
 
 LIST_TIMEOUT = 30.0  # same bound as ``wb hub list``
+STATUS_TIMEOUT = 5.0  # same bound as ``wb hub status``
 NO_TTY_TEXT = "Hub 목록은 terminal이 필요합니다. 'wb hub list'를 쓰세요"
 BACK_PROMPT = "Enter를 누르면 목록으로 돌아갑니다. "
 REGISTRY_BAD_TEXT = "Hub registry가 손상되어 목록을 읽지 못했습니다"
@@ -45,13 +46,17 @@ class Terminated(Exception):
 
 
 class HubPoller(threading.Thread):
-    """Asks the Hub for ``list`` every :data:`POLL_INTERVAL` and on :meth:`refresh`; results are
-    ``("rows", rows, notice)`` or ``("lost", reason)`` events for :meth:`drain`. A slow Hub never
-    blocks the screen: the request runs here, the screen only reads events."""
+    """Asks the Hub for ``status`` and ``list`` every :data:`POLL_INTERVAL` and on :meth:`refresh`;
+    results are ``("hub", status | None, reason)``, ``("rows", rows, notice)`` or ``("lost", reason)``
+    events for :meth:`drain`. A slow Hub never blocks the screen: the requests run here, the screen
+    only reads events. ``fetch_hub`` (the ``wb hub status`` request) defaults on only with the default
+    ``fetch``; a custom ``fetch`` asks no status unless given one."""
 
-    def __init__(self, fetch: Callable[[bool], tuple] | None = None, interval: float = POLL_INTERVAL):
+    def __init__(self, fetch: Callable[[bool], tuple] | None = None, interval: float = POLL_INTERVAL,
+                 fetch_hub: Callable[[], tuple] | None = None):
         super().__init__(daemon=True, name="hub-list-poller")
         self.fetch = fetch or fetch_list
+        self.fetch_hub = fetch_hub or (fetch_hub_status if fetch is None else None)
         self.interval = interval
         self.events: queue.Queue = queue.Queue()
         self._wake = threading.Event()
@@ -90,12 +95,34 @@ class HubPoller(threading.Thread):
             if not self._idle.is_set():
                 with self._lock:
                     fresh, self._fresh = self._fresh, False
+                if self.fetch_hub is not None:  # first: the cheap status is never held back by a slow list
+                    try:
+                        self.events.put(self.fetch_hub())
+                    except Exception as exc:
+                        self.events.put(("hub", None, type(exc).__name__))
                 try:
                     event = self.fetch(fresh)
                 except Exception as exc:  # the banner shows; the thread keeps polling
                     event = ("lost", type(exc).__name__)
                 self.events.put(event)
             self._wake.wait(self.interval)
+
+
+def fetch_hub_status() -> tuple:
+    """One Hub ``status`` (the request ``wb hub status`` makes): ``("hub", reply, "")`` or
+    ``("hub", None, reason)`` when it cannot be read; unknown is never turned into a state."""
+    try:
+        with HubClient(hub_layout(), timeout=STATUS_TIMEOUT) as client:
+            reply = client.request("status")
+    except HubNotRunning:
+        return ("hub", None, "not_running")
+    except (HubUnknown, HubUnresponsive) as exc:
+        return ("hub", None, exc.reason)
+    except OSError as exc:
+        return ("hub", None, type(exc).__name__)
+    if not isinstance(reply, dict) or not reply.get("ok"):
+        return ("hub", None, str((reply or {}).get("reason")) if isinstance(reply, dict) else "bad_reply")
+    return ("hub", reply, "")
 
 
 def fetch_list(fresh: bool) -> tuple:
@@ -144,7 +171,9 @@ def _screen(stdscr: "curses.window", model: HubListModel, poller: HubPoller):
     quick_errors = 0
     while True:
         for event in poller.drain():
-            if event[0] == "rows":
+            if event[0] == "hub":
+                model.set_hub_status(event[1]) if event[1] is not None else model.set_hub_unknown(event[2])
+            elif event[0] == "rows":
                 model.set_rows(event[1])
                 if event[2]:
                     model.notice = event[2]

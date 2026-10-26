@@ -23,12 +23,13 @@ MIN_WIDTH = 6  # a shrunk column keeps at least this much (이름 and 상태: ``
 FLOOR = {NAME: 10, STATE: 6}
 SEPARATOR = 2
 MARK = "> "
+MIN_ROOM = 3  # project rows the Hub status header never takes away on a short terminal
 
 
 @dataclass(frozen=True)
 class Line:
     text: str
-    kind: str  # title banner header row selected body notice modal footer blank
+    kind: str  # title banner hub header row selected body notice modal footer blank
 
 
 def _width(text: str) -> int:
@@ -85,6 +86,8 @@ def screen_lines(model: HubListModel, rows: int, cols: int, now: float) -> list[
     top = [Line(_fit(TITLE, limit), "title")]
     if model.banner:
         top.append(Line(_fit(model.banner, limit), "banner"))
+    spare = rows - len(top) - 1 - 2 - MIN_ROOM  # lines left for the Hub status once the table keeps MIN_ROOM
+    top.extend(Line(_fit(text, limit), "hub") for text in model.hub_lines(now)[:max(0, spare)])
     table = model.table(now)
     header, bodies = _format(table, limit)
     top.append(Line(MARK.replace(">", " ") + header, "header"))
@@ -107,7 +110,7 @@ def screen_lines(model: HubListModel, rows: int, cols: int, now: float) -> list[
 
 
 _ATTRIBUTES = {"title": curses.A_BOLD, "banner": curses.A_BOLD | curses.A_BLINK, "header": curses.A_UNDERLINE,
-               "selected": curses.A_REVERSE, "modal": curses.A_BOLD | curses.A_REVERSE, "notice": curses.A_BOLD,
+               "hub": curses.A_DIM, "selected": curses.A_REVERSE, "modal": curses.A_BOLD | curses.A_REVERSE, "notice": curses.A_BOLD,
                "footer": curses.A_DIM}
 
 

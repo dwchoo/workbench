@@ -15,6 +15,11 @@ from workbench.hub.presentation import COLUMNS, power_text, row_cells
 
 HUB_LOST_TEXT = "Hub 연결 없음"
 LOADING_TEXT = "불러오는 중…"
+HUB_UNKNOWN_TEXT = "Hub 상태 불명"
+HUB_LOADING_TEXT = "Hub 상태 불러오는 중…"
+UNKNOWN = "불명"
+WEB_ON_HINT = "hub.toml에 [web] enabled = true를 넣고 Hub를 재시작하면 켜집니다"
+INSECURE_MARK = "[!] 평문 HTTP"
 EMPTY_TEXT = "등록된 WB 프로젝트가 없습니다. 'wb init <폴더>'로 만들거나 'wb hub add <폴더>'로 등록하세요."
 
 
@@ -60,8 +65,63 @@ def entry_of(row: dict) -> registry.Entry:
                           registered_at=0.0, source="tui")
 
 
+def _dict(value: object) -> dict:
+    return value if isinstance(value, dict) else {}
+
+
+def _text(value: object) -> str | None:
+    return value if isinstance(value, str) and value else None
+
+
+def _uptime_text(seconds: float) -> str:
+    seconds = max(0, int(seconds))
+    days, rest = divmod(seconds, 86400)
+    hours, rest = divmod(rest, 3600)
+    minutes = rest // 60
+    if days:
+        return f"{days}일 {hours}시간"
+    if hours:
+        return f"{hours}시간 {minutes}분"
+    if minutes:
+        return f"{minutes}분"
+    return f"{rest}초"
+
+
+def web_text(web: object) -> str:
+    """``web: ...`` from the status ``web`` object (the states ``wb hub status`` prints); anything
+    unreadable is ``불명``, never ``disabled``."""
+    state = _text(_dict(web).get("state"))
+    if state is None:
+        return f"web: {UNKNOWN}"
+    web = _dict(web)
+    detail = _text(web.get("detail"))
+    if state == "listening":
+        url = _text(web.get("url")) or UNKNOWN
+        return f"web: listening {url}" + (f" {INSECURE_MARK}" if web.get("insecure_warning") else "")
+    if state == "disabled":
+        return f"web: disabled — {WEB_ON_HINT}"
+    if state == "config_invalid":
+        return f"web: config_invalid:{detail or UNKNOWN}"
+    return f"web: not_listening: {state}" + (f":{detail}" if detail else "")
+
+
+def board_text(status: dict) -> str:
+    """``Board agent: <agent state>`` (+ ``shell <state>`` when it differs); ``없음`` is only the
+    status's own ``board_agent: null`` (no set ever started), a missing key is ``불명``."""
+    if "board_agent" not in status:
+        return f"Board agent: {UNKNOWN}"
+    board = status["board_agent"]
+    if board is None:
+        return "Board agent: 없음"
+    agent = _text(_dict(_dict(board).get("agent")).get("state")) or UNKNOWN
+    shell = _text(_dict(_dict(board).get("shell")).get("state")) or UNKNOWN
+    return f"Board agent: {agent}" + ("" if shell == agent else f" (shell {shell})")
+
+
 class HubListModel:
     def __init__(self) -> None:
+        self._hub: dict | None = None  # the last good hub_v1 ``status`` reply; None = not known right now
+        self._hub_asked = False
         self._rows: list[dict] = []  # as the last good poll gave them
         self.selected = 0
         self.loaded = False
@@ -85,6 +145,46 @@ class HubListModel:
         if self.rows:
             return ""
         return EMPTY_TEXT if self.loaded else LOADING_TEXT
+
+    def set_hub_status(self, reply: object) -> None:
+        """A ``status`` reply; an unusable one (not ok, not a dict) is unknown, never a state."""
+        if isinstance(reply, dict) and reply.get("ok"):
+            self._hub = reply
+        else:
+            self._hub = None
+        self._hub_asked = True
+
+    def set_hub_unknown(self, reason: str = "") -> None:
+        self._hub = None
+        self._hub_asked = True
+
+    def hub_lines(self, now: float) -> list[str]:
+        """The Hub's own status, 1–2 lines: pid, version, uptime, registered count and Board agent;
+        then the web state. Not fetched yet: loading; not fetchable: ``Hub 상태 불명``."""
+        if not self._hub_asked:
+            return [HUB_LOADING_TEXT]
+        status = self._hub
+        if status is None:
+            return [HUB_UNKNOWN_TEXT]
+        hub, registry_ = _dict(status.get("hub")), _dict(status.get("registry"))
+        pid = hub.get("pid")
+        parts = [f"Hub pid {pid}" if type(pid) is int else f"Hub pid {UNKNOWN}"]
+        release = _text(_dict(hub.get("version")).get("release"))
+        parts.append(f"wb {release}" if release else f"version {UNKNOWN}")
+        count = registry_.get("count")
+        if "registry" in status and registry_.get("state") not in (None, "ok"):
+            parts.append("registry 손상")
+        elif type(count) is int:
+            parts.append(f"프로젝트 {count}개")
+        else:
+            parts.append(f"프로젝트 {UNKNOWN}")
+        parts.append(board_text(status))
+        started = hub.get("started_at")  # last: a narrow terminal cuts the least important part first
+        if isinstance(started, (int, float)) and not isinstance(started, bool):
+            parts.append(f"가동 {_uptime_text(now - started)}")
+        if not all(key in status for key in ("hub", "registry", "web", "board_agent")):
+            parts.insert(1, HUB_UNKNOWN_TEXT)  # a partial reply: the rest of what it lacks is unknown
+        return [" · ".join(parts), web_text(status.get("web"))]
 
     def table(self, now: float) -> list[list[str]]:
         """Header cells and one list of cells per row: the very cells ``wb hub list`` prints."""

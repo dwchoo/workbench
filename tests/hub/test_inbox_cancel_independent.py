@@ -347,6 +347,9 @@ class RaceAndFailureTests(CancelLive):
         self.assertTrue(is_alive(pid), 'the manager cancel leaves the command and the user did not stop it')
         # the request stays open for the manager (P2-AC-09); the user may still cancel it afterwards
         self.until(lambda: self.view(root, rid).get('closed') is True, 30, 'the Hub saw the Task closed')
+        # the linked_task_closed notice bumps the version on each ledger step; a token issued mid-round would mismatch
+        self.until(lambda: self.row(root, rid)['delivery_state'] in ('delivered', 'unknown'), 30,
+                   'the linked_task_closed notice round settled')
         self.assertEqual(self.row(root, rid)['state'], 'RUNNING')
         second = client.tool('inbox_cancel', request_id=rid)
         self.assertEqual(second['status'], 'confirm_required', second)

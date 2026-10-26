@@ -2,11 +2,11 @@
 
 Hub가 제공하는 웹(Web Board)과 MCP endpoint로 요청을 접수·검토·실행·조회하는 방법이다. 합의는 [BRIEF](BRIEF.md), 구현 명세는 [SPEC](SPEC.md), Hub 자체의 명령은 [Hub 사용 안내](../workbench-hub/USAGE.md)를 따른다. 이 문서는 사용자가 쓰는 명령·설정·화면과 보안·한계만 다룬다.
 
-핵심 한 줄: **웹은 기본으로 꺼져 있다.** `hub.toml`에 `[web] enabled = true`를 넣고 Hub를 재시작한 뒤 비밀번호까지 정해야 열리고, 기본 주소는 `127.0.0.1:8780`(자기 컴퓨터만)이다(2026-10-26 사용자 결정: web 기본 비활성, `[web] enabled = true`로 켬). 요청은 접수만으로 실행되지 않고 항상 manager 검토를 거친다.
+핵심 한 줄: **웹은 기본으로 꺼져 있다.** `hub.toml`(Hub가 처음 시작할 때 자동으로 만든다)에서 `enabled = false`를 `enabled = true`로 바꾸고 Hub를 재시작한 뒤 비밀번호까지 정해야 열리고, 기본 주소는 `127.0.0.1:8780`(자기 컴퓨터만)이다(2026-10-26 사용자 결정: web 기본 비활성, `[web] enabled = true`로 켬). 요청은 접수만으로 실행되지 않고 항상 manager 검토를 거친다.
 
 ## 1. 처음 설정
 
-웹을 쓰려면 먼저 `hub.toml`(1.2)에 다음을 넣고 `wb hub stop` 다음 `wb hub start`로 Hub를 재시작한다. 웹은 가장 많이 노출되는 부분이라 기본으로 꺼져 있다. 꺼져 있는 동안 웹 화면, 외부 `/mcp`, `/ws/board`, Board agent 세트가 모두 열리지 않고, Hub의 나머지(등록·목록·TUI·요청 전달·검토)는 그대로 동작한다.
+웹을 쓰려면 먼저 `hub.toml`(1.2)의 `[web]`에서 `enabled = false`를 아래처럼 `true`로 바꾸고 `wb hub stop` 다음 `wb hub start`로 Hub를 재시작한다. 이 파일은 Hub가 처음 시작할 때(또는 `wb hub passwd`가) 없으면 주석 달린 기본 템플릿으로 자동으로 만든다(2026-10-26 사용자 요청: hub.toml 자동 생성). 직접 만들 필요가 없다. 웹은 가장 많이 노출되는 부분이라 기본으로 꺼져 있다. 꺼져 있는 동안 웹 화면, 외부 `/mcp`, `/ws/board`, Board agent 세트가 모두 열리지 않고, Hub의 나머지(등록·목록·TUI·요청 전달·검토)는 그대로 동작한다.
 
 ```toml
 [web]
@@ -26,7 +26,16 @@ printf '%s\n' "$PW" | wb hub passwd --stdin   # 스크립트용. terminal에서�
 
 ### 1.2 `hub.toml`
 
-설정 파일은 `$XDG_CONFIG_HOME/omp-workbench/hub.toml`(절대 경로일 때), 아니면 `~/.config/omp-workbench/hub.toml`이다. 없으면 기본값을 쓴다. Hub는 이 파일을 **시작할 때 한 번 읽고 쓰지 않는다**. 바꾼 뒤에는 `wb hub stop` 다음 `wb hub start`(또는 다음 자동 시작)로 반영한다.
+설정 파일은 `$XDG_CONFIG_HOME/omp-workbench/hub.toml`(절대 경로일 때), 아니면 `~/.config/omp-workbench/hub.toml`이다. Hub는 이 파일을 **시작할 때 한 번 읽는다**. 바꾼 뒤에는 `wb hub stop` 다음 `wb hub start`(또는 다음 자동 시작)로 반영한다.
+
+자동 생성(2026-10-26 사용자 요청: hub.toml 자동 생성): 파일이 없으면 Hub가 시작할 때와 `wb hub passwd`가 주석 달린 템플릿을 만든다. 템플릿은 아래 표의 모든 key와 기본값, 웹 켜는 순서, 보안 안내를 한국어 주석으로 담고, 주석이 아닌 설정은 `[web] enabled = false` 하나다(그대로 두면 모든 값이 기본값이고 웹은 꺼져 있다). 웹을 켜는 순서는 다음과 같다.
+
+1. `hub.toml`의 `enabled = false`를 `enabled = true`로 바꾼다. 다른 key는 `#`을 지우고 값을 고친다.
+2. `wb hub passwd`로 비밀번호를 정한다(1.1).
+3. `wb hub stop` 다음 `wb hub start`로 Hub를 재시작한다.
+
+- 파일은 0600, 디렉터리가 없으면 0700으로 만든다. 이미 있는 파일은 비어 있거나 잘못되었거나 symlink여도 절대 덮어쓰거나 고치지 않는다. 지우면 다음 Hub 시작 때 템플릿이 다시 생긴다.
+- 디렉터리가 symlink이거나 다른 사용자가 쓸 수 있거나 쓰기 권한이 없으면 만들지 않고 `hub.log`에 한 줄(`hub.toml template not created …`)만 남긴다. Hub는 기본값(웹 꺼짐)으로 그대로 동작한다.
 
 | 표 | key | 기본값 | 의미 |
 |---|---|---|---|
@@ -318,7 +327,7 @@ Web Board 이전에 `wb hub enable`을 한 사용자는 **`wb hub enable`을 한
 
 `wb hub status`의 `web:` 줄이 이유를 보인다. `wb hub status --json`에는 `web.state`/`web.detail`로 나온다.
 
-웹이 꺼져 있으면 `web: disabled — 웹은 꺼져 있습니다. <hub.toml 경로>에 '[web] enabled = true'를 넣고 'wb hub stop' 뒤 'wb hub start'로 Hub를 재시작하세요.`가 보인다(`--json`: `web.state`가 `disabled`, `web.config`가 Hub가 읽은 `hub.toml` 경로). 이때는 아래 이유를 따지지 않는다.
+웹이 꺼져 있으면 `web: disabled — 웹은 꺼져 있습니다. <hub.toml 경로>에서 '[web] enabled = true'로 설정하고 'wb hub stop' 뒤 'wb hub start'로 Hub를 재시작하세요.`가 보인다(`--json`: `web.state`가 `disabled`, `web.config`가 Hub가 읽은 `hub.toml` 경로). 이때는 아래 이유를 따지지 않는다.
 
 | 이유 | 뜻과 조치 |
 |---|---|

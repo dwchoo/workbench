@@ -35,7 +35,7 @@ Hub(B)는 WB 프로젝트를 등록·관측·켜고 끄지만, 요청을 받아 
 
 | 대상 | 위치 | 비고 |
 |---|---|---|
-| 설정 | `$XDG_CONFIG_HOME/omp-workbench/hub.toml`(절대 경로일 때), 아니면 `~/.config/omp-workbench/hub.toml` | Hub 시작 때 읽는다(`tomllib`). Hub는 쓰지 않는다. 없으면 기본값 |
+| 설정 | `$XDG_CONFIG_HOME/omp-workbench/hub.toml`(절대 경로일 때), 아니면 `~/.config/omp-workbench/hub.toml` | Hub 시작 때 읽는다(`tomllib`). 없으면 Hub 시작 때와 `wb hub passwd`가 주석 템플릿을 만든다(아래 "초기 템플릿"). 그 밖에는 쓰지 않는다. 읽을 파일이 없으면 기본값 |
 | TLS 기본 경로 | `<config dir>/omp-workbench/tls/hub-cert.pem`, `hub-key.pem` | `wb hub tls --self-signed`가 만든다. key 0600, 디렉터리 0700 |
 | 비밀번호 | `<hub state>/auth.json` + `<hub state>/auth.lock` | 0600. `wb hub passwd`와 Hub(웹 비밀번호 변경)가 lock을 잡고 원자적으로 쓴다 |
 | Hub DB | `<hub state>/hub.sqlite3` | 0600, WAL. 세션·API key·로그인 실패·감사. Hub만 쓴다 |
@@ -66,6 +66,12 @@ shell = ""                  # "" = $SHELL, 없으면 /bin/sh
 ```
 
 - 2026-10-26 사용자 결정: web 기본 비활성, `[web] enabled = true`로 켬. 웹이 가장 많이 노출되는 부분이기 때문이다. `enabled`가 없거나 `false`면 같은 listener가 내는 웹 화면, 외부 `/mcp`, `/ws/board`를 모두 열지 않고, 웹에서만 쓰는 Board agent 세트도 만들지 않는다(그 세트만 쓰는 내부 MCP listener도 시작되지 않는다). registry·목록·hub_v1·inbox writer·검토 전달·ui_v1은 그대로 동작한다. `enabled`가 bool이 아니면 `config_invalid:web.enabled`.
+- 초기 템플릿(2026-10-26 사용자 요청: hub.toml 자동 생성). Hub는 시작할 때마다(autostart·`wb hub start`·systemd·foreground 모두 `wb _hub`의 같은 경로) instance lock을 잡은 뒤, `hub.json`을 내기 전에 `config_path()`에 아무것도 없으면 `config.CONFIG_TEMPLATE`을 쓴다. `wb hub passwd`도 비밀번호를 정한 뒤 같은 함수로 만든다(안내 줄이 가리키는 파일이 실제로 있게). 규칙:
+  - 내용: 한국어 주석으로 모든 key와 기본값, 웹 켜는 순서(`enabled = false`를 `true`로 → `wb hub passwd` → `wb hub stop` 뒤 `wb hub start`), LAN·평문 HTTP 보안 한 줄을 적는다. 주석이 아닌 줄은 `[web]`·`enabled = false`·`[board_agent]`뿐이고, 나머지 key는 기본값을 적은 주석이다. 엄격 parser로 읽으면 정확히 `HubConfig()`(모든 기본값)이므로 웹은 사용자가 고치기 전까지 꺼져 있다.
+  - 이미 있는 것은 절대 바꾸지 않는다. 빈 파일, `config_invalid`인 파일, 사용자가 고친 파일, symlink(대상이 없는 것 포함)도 그대로 둔다. 같은 디렉터리의 0600 임시 파일(`O_CREAT|O_EXCL|O_NOFOLLOW`)을 쓰고 fsync한 뒤 `link()`로 넣는다(이름이 있으면 `EEXIST`로 실패, symlink를 따라가지 않음). hard link가 안 되는 file system에서는 `O_CREAT|O_EXCL|O_NOFOLLOW`로 직접 쓴다. 동시에 만드는 쪽(다른 `wb hub passwd` 등)에 진 경우는 조용히 넘어간다.
+  - 권한: 파일 0600. `omp-workbench` 설정 디렉터리가 없으면 0700으로 만든다. 있는 디렉터리의 권한은 바꾸지 않는다. 디렉터리가 symlink·디렉터리 아님·다른 소유자·group/other 쓰기 가능이면 unsafe로 보고 만들지 않는다.
+  - 만들지 못하면(unsafe 디렉터리, `EACCES`·`EROFS` 등) Hub는 `hub.log`에 `[workbench] hub.toml template not created (<이유>): <경로>; the Hub uses the defaults` 한 줄만 남기고 기본값으로 계속 동작한다. `wb hub passwd`는 아무것도 출력하지 않는다.
+  - symlink인 `hub.toml`은 읽을 때는 지금처럼 따라간다(대상 파일의 내용을 쓴다). 대상이 없으면 파일 없음과 같아 기본값(`disabled`)이고, 템플릿은 그 symlink나 대상에 쓰지 않는다.
 - 모르는 key·잘못된 형식·hostname인 `bind`는 `config_invalid:<항목>`이다. 웹 listener와 Board agent는 열지 않고 Hub의 나머지 기능(registry·목록·제어 socket)은 동작한다.
 - TLS 판정: cert·key 파일이 **둘 다** 있으면 HTTPS(`ssl.create_default_context(Purpose.CLIENT_AUTH)`, TLS ≥ 1.2). 하나만 있거나 읽기·load가 실패하면 `tls_invalid`로 listener를 열지 않는다(평문으로 내려가지 않는다). 둘 다 없으면 `allow_insecure_http=true`일 때 평문 HTTP, `false`면 `insecure_http_disallowed`로 열지 않는다(BRIEF P2-AC-16 "SPEC에서 정함").
 - 평문 경고: 평문 HTTP이고 bind가 loopback(127.0.0.0/8, ::1)이 아니면(`0.0.0.0` 포함) `insecure_warning: true`. 웹 모든 page 상단 banner와 `wb hub status`에 `평문 HTTP로 LAN에 열려 있습니다. VPN 등 네트워크 보호가 필요합니다.`를 보인다.
@@ -76,7 +82,7 @@ shell = ""                  # "" = $SHELL, 없으면 /bin/sh
 - Hub watchdog(2 s)이 `auth.json`의 (dev, ino, mtime_ns, size)를 본다. 비밀번호가 새로 생기면 Hub 재시작 없이 listener를 연다. `hub.toml`·TLS 파일 변경은 Hub 재시작 때 반영한다(`wb hub tls`가 그렇게 안내한다).
 - 같은 loop에 붙고, blocking 작업(scrypt, SQLite, `/proc`, ui_v1 연결)은 executor에서 돈다.
 - 정상 정지 순서(Hub SPEC 정지 순서의 (A) 확장 지점): 새 HTTP 연결 거절(site 정지) → WebSocket을 1001로 닫음 → Board agent 세트 종료 → API key 마지막 사용 시각 flush → 열린 inbox DB 닫기·`inbox.lock` 해제 → 기존 정지.
-- `wb hub status`: `web: listening https://10.8.0.2:8780` / `web: disabled — 웹은 꺼져 있습니다. <hub.toml 경로>에 '[web] enabled = true'를 넣고 'wb hub stop' 뒤 'wb hub start'로 Hub를 재시작하세요.` / `web: not_listening (password_not_set) — 'wb hub passwd'로 비밀번호를 정하세요` / 평문 경고 줄. 웹이 꺼져 있을 때 `wb hub passwd`는 비밀번호를 정한 뒤 같은 안내를 한 줄 더 낸다. `board_agent:` 줄(아래).
+- `wb hub status`: `web: listening https://10.8.0.2:8780` / `web: disabled — 웹은 꺼져 있습니다. <hub.toml 경로>에서 '[web] enabled = true'로 설정하고 'wb hub stop' 뒤 'wb hub start'로 Hub를 재시작하세요.` / `web: not_listening (password_not_set) — 'wb hub passwd'로 비밀번호를 정하세요` / 평문 경고 줄. 웹이 꺼져 있을 때 `wb hub passwd`는 비밀번호를 정한 뒤 같은 안내를 한 줄 더 낸다. `board_agent:` 줄(아래).
 
 ### 인증·세션·CSRF(D-11, P2-AC-17, ADR-0003)
 
@@ -391,7 +397,7 @@ Frame:
 
 | 명령 | 동작 | Hub 자동 시작 |
 |---|---|---|
-| `wb hub passwd [--stdin]` | 위 비밀번호. 예약 거절을 대체 | 아니오 |
+| `wb hub passwd [--stdin]` | 위 비밀번호. 예약 거절을 대체. 비밀번호를 정한 뒤 `hub.toml`이 없으면 초기 템플릿을 만든다(2026-10-26 사용자 요청: hub.toml 자동 생성) | 아니오 |
 | `wb hub tls --self-signed [--force]` | `openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 -nodes -days 825 -subj /CN=<bind 또는 hostname> -addext subjectAltName=IP:<bind>,DNS:localhost[,DNS:<server_names>…]`로 TLS 경로에 만든다. (2026-10-25 orchestrator 정정) wildcard bind(`0.0.0.0`/`::`)면 그 IP 대신 `IP:127.0.0.1`·`IP:::1`과 host 주소(hostname 해석·interface 주소, best effort)를 넣고, loopback bind는 두 loopback IP를 넣는다. leaf 확장(`CA:FALSE`, `serverAuth`)을 붙이고 `--force` 교체는 key·cert 쌍을 함께 바꾼다(실패 시 이전 쌍 복원). 출력에 SAN 목록을 보인다. 이미 있으면 `--force` 없이 거절. openssl이 없으면 exit 2. 끝나면 지문(SHA-256)과 `Hub를 다시 시작하면 HTTPS로 열립니다`를 보인다 | 아니오 |
 | `wb hub review-mode <PATH> [auto\|manual]` | 값 없으면 현재 값. Hub `review_mode` op(D-32). 등록되지 않은 PATH는 exit 1 | 예 |
 | `wb hub status` | `web:`, 평문 경고, `board_agent:` 줄 추가. `--json`은 hub_v1 `status` 그대로 | 아니오 |

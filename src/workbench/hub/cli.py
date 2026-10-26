@@ -103,7 +103,7 @@ PASSWORD_NOT_SET_HINT = "'wb hub passwd'로 비밀번호를 정하세요"
 
 def web_disabled_hint(path: object) -> str:
     """How to turn the web on (2026-10-26 user decision: off until ``hub.toml`` enables it)."""
-    return (f"웹은 꺼져 있습니다. {path}에 '[web] enabled = true'를 넣고 "
+    return (f"웹은 꺼져 있습니다. {path}에서 '[web] enabled = true'로 설정하고 "
             "'wb hub stop' 뒤 'wb hub start'로 Hub를 재시작하세요.")
 
 
@@ -282,8 +282,9 @@ def cmd_hub_passwd(args: argparse.Namespace) -> int:
     except (AuthInvalid, DataDirError, OSError) as exc:
         return _fail(f"비밀번호 파일을 쓰지 못했습니다: {exc}. {PASSWD_UNCHANGED}")
     print("비밀번호를 정했습니다. 기존 웹 로그인 세션은 모두 무효가 됩니다.")
-    from .config import ConfigInvalid, config_path, load_config
+    from .config import ConfigInvalid, config_path, load_config, write_template
     path = config_path()
+    write_template()  # the file the hint points at (2026-10-26 user request); an existing one is left alone
     try:
         enabled = load_config(path).web.enabled
     except ConfigInvalid:

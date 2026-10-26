@@ -736,6 +736,12 @@ def main_hub(args: argparse.Namespace) -> int:
         rotate_log(layout)
     except OSError as exc:  # a log problem never blocks the Hub
         print(f"[workbench] hub.log rotation skipped: {exc}", file=sys.stderr)
+    # Every start path (autostart, ``wb hub start``, systemd, foreground) runs here, under the lock and
+    # before ``hub.json`` is published: the template exists by the time anyone sees the Hub ready.
+    template = hub_config.write_template()
+    if template.startswith("skipped:"):
+        print(f"[workbench] hub.toml template not created ({template.partition(':')[2]}): "
+              f"{hub_config.config_path()}; the Hub uses the defaults", file=sys.stderr, flush=True)
     try:
         hub.bind()
         hub.publish_record()

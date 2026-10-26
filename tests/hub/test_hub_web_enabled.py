@@ -95,6 +95,7 @@ class WebDisabledHubTests(unittest.TestCase):
 
     def test_no_hub_toml_at_all_keeps_the_web_closed(self):
         self.box.set_password()
+        self.box.config_file.unlink()  # passwd created the template (2026-10-26); start with no hub.toml at all
         hub = self.box.start_hub()
         time.sleep(2.5)
         self.assertEqual(tcp_listening(hub.pid), [])

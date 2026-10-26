@@ -252,6 +252,9 @@ class HubProcessCase(unittest.TestCase):
 class DisabledHubTests(HubProcessCase):
     def test_password_and_no_hub_toml_owns_no_socket_and_no_child(self):
         self.box.set_password()
+        # 2026-10-26 user request: ``wb hub passwd`` creates the hub.toml template; remove it so the Hub
+        # still starts with no hub.toml at all (it creates the template itself, web stays disabled).
+        self.box.config_file.unlink()
         self.assertFalse(self.box.config_file.exists())
         hub = self.box.start_hub()
         time.sleep(POLL_WAIT)

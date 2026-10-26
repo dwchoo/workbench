@@ -18,7 +18,7 @@ LOADING_TEXT = "불러오는 중…"
 HUB_UNKNOWN_TEXT = "Hub 상태 불명"
 HUB_LOADING_TEXT = "Hub 상태 불러오는 중…"
 UNKNOWN = "불명"
-WEB_ON_HINT = "hub.toml에 [web] enabled = true를 넣고 Hub를 재시작하면 켜집니다"
+WEB_ON_HINT = "hub.toml의 [web] enabled = false를 true로 바꾸고 Hub를 재시작하세요"
 INSECURE_MARK = "[!] 평문 HTTP"
 EMPTY_TEXT = "등록된 WB 프로젝트가 없습니다. 'wb init <폴더>'로 만들거나 'wb hub add <폴더>'로 등록하세요."
 

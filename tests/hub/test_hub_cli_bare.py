@@ -117,6 +117,27 @@ class NoTty(BareCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertTrue(result.stderr.strip(), 'start must say why')
 
+    def test_wb_hub_without_a_subcommand_is_the_bare_list_from_any_cwd(self):
+        # `wb hub` has no project test: inside a project it still means the list, never `start`.
+        root = self.project('proj')
+        for cwd in (self.folder('plain'), root, self.base):
+            with self.subTest(cwd=str(cwd)):
+                result = self.wb('hub', cwd=cwd)
+                self.assertEqual(result.returncode, 2, result)
+                self.assertIn(GUIDANCE, result.stderr)
+                self.assertEqual(result.stdout, '')
+                self.assertNotIn('No backend was started', result.stderr)
+
+    def test_wb_hub_help_and_a_subcommand_are_unchanged(self):
+        helped = self.wb('hub', '--help')
+        self.assertEqual(helped.returncode, 0, helped)
+        self.assertIn('usage: wb hub', helped.stdout)
+        self.assertIn('status', helped.stdout)
+        self.assertNotIn(GUIDANCE, helped.stderr + helped.stdout)
+        status = self.wb('hub', 'status', '--json')  # no Hub is running: exit 3, not the list
+        self.assertEqual(status.returncode, 3, status)
+        self.assertNotIn(GUIDANCE, status.stderr + status.stdout)
+
     def test_an_explicit_start_outside_keeps_asking_to_initialize(self):
         outside = self.folder('plain')
         result = self.wb('start', cwd=outside)
@@ -130,6 +151,13 @@ class NoTtyAutostart(BareCase):
     def test_the_no_tty_refusal_does_not_start_a_hub(self):
         result = self.wb(cwd=self.folder('plain'))
         self.assertEqual(result.returncode, 2, result)
+        self.assertFalse((self.hub_state / 'hub.json').exists())
+        self.assertFalse((self.hub_state / 'hub.lock').exists())
+
+    def test_wb_hub_without_a_tty_refuses_before_starting_a_hub_too(self):
+        result = self.wb('hub', cwd=self.project('proj'))
+        self.assertEqual(result.returncode, 2, result)
+        self.assertIn(GUIDANCE, result.stderr)
         self.assertFalse((self.hub_state / 'hub.json').exists())
         self.assertFalse((self.hub_state / 'hub.lock').exists())
 
@@ -225,6 +253,12 @@ class NoHub(BareCase):
         self.assertIn('Hub 실행 중 아님', term.text())
 
 
+    def test_wb_hub_on_a_tty_without_a_hub_exits_1_and_says_so_inside_a_project_too(self):
+        term = Terminal(self, 'hub', cwd=self.project('proj'))
+        self.assertEqual(term.wait_exit(), 1, term.text())
+        self.assertIn('Hub 실행 중 아님', term.text())
+
+
 class ListOnATty(BareCase):
     autostart = '1'
 
@@ -240,6 +274,20 @@ class ListOnATty(BareCase):
         self.assertIn('꺼짐', screen)
         term.send(b'q')
         self.assertEqual(term.wait_exit(), 0, term.text())
+
+    def test_wb_hub_opens_the_same_list_outside_and_inside_a_project(self):
+        alpha, beta = self.project('alpha'), self.project('beta')
+        for root in (alpha, beta):
+            added = self.wb('hub', 'add', str(root), env=dict(self.env, WORKBENCH_HUB_AUTOSTART='0'))
+            self.assertEqual(added.returncode, 0, added)
+        for cwd in (self.folder('plain'), alpha, alpha / '.wb'):
+            with self.subTest(cwd=str(cwd)):
+                term = Terminal(self, 'hub', cwd=cwd)
+                screen = term.wait_for('beta')
+                self.assertIn('Workbench Hub', screen)
+                self.assertIn('alpha', screen)
+                term.send(b'q')
+                self.assertEqual(term.wait_exit(), 0, term.text())
 
     def test_enter_on_an_off_row_asks_and_anything_but_y_stays_on_the_list(self):
         alpha = self.project('alpha')

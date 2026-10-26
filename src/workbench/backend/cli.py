@@ -1531,8 +1531,9 @@ def main(argv: list[str] | None = None, *, autostart: bool | None = None) -> int
     the Hub after argparse and before the handler (SPEC "자동 시작 규칙"). In-process
     callers that pass ``argv`` never spawn a background Hub unless they ask."""
     values = list(sys.argv[1:] if argv is None else argv)
-    if not values and _bare_outside_project():
-        # Bare `wb` outside a project: the Hub list (it needs the Hub, so `hub list` auto-starts it).
+    if values == ["hub"] or (not values and _bare_outside_project()):
+        # Bare `wb` outside a project, and `wb hub` with no subcommand from any cwd: the Hub list
+        # (it needs the Hub, so `hub list` auto-starts it).
         if not (sys.stdin is not None and sys.stdin.isatty() and sys.stdout.isatty()):
             print(HUB_LIST_NEEDS_TTY, file=sys.stderr)
             return EXIT_REQUIREMENT

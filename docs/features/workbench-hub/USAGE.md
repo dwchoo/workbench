@@ -24,13 +24,15 @@ wb start           # 명시한 start는 예전처럼 초기화 확인 후 시작
 
 ## Hub 목록(TUI)
 
+프로젝트 밖의 `wb`와 `wb hub`(하위 명령 없음)가 이 목록을 연다. `wb hub`는 프로젝트 안에서도 같은 목록이다. terminal이 아니면 둘 다 exit 2와 `wb hub list` 안내이고, Hub 자동 시작도 같다.
+
 열은 이름, 경로, 상태, Task·단계, 명령, 대기 사유, 요청, 마지막 활동이다. 3초마다 갱신한다. 값이 없으면 `—`이다. 요청 열은 `대기 N · 질문 M`(신규 N건, 추가 정보 필요 M건)이고 둘 다 0이면 `0`, 그 프로젝트의 요청 저장소를 읽지 못하면 `—`다(0이 아니다). 요청 기능은 [Task Inbox & Web Board 사용 안내](../task-inbox/USAGE.md)를 본다.
 
 제목 아래, 프로젝트 표 위에 Hub 자신의 상태를 1~2줄로 보인다. `wb hub status`와 같은 Hub `status` 응답이고 목록과 같은 3초 주기와 `r`로 갱신한다.
 
 ```text
 Hub pid 4242 · wb 0.3.1 · 프로젝트 5개 · Board agent: 없음 · 가동 3시간 2분
-web: disabled — hub.toml에 [web] enabled = true를 넣고 Hub를 재시작하면 켜집니다
+web: disabled — hub.toml의 [web] enabled = false를 true로 바꾸고 Hub를 재시작하세요
 ```
 
 - 첫 줄: Hub pid, `wb` version, 등록된 프로젝트 수, Board agent 상태(agent 채널의 `running`/`stopped` 등, shell이 다르면 `(shell …)`, 세트를 한 번도 시작하지 않았으면 `없음`), 가동 시간.
@@ -57,6 +59,7 @@ web: disabled — hub.toml에 [web] enabled = true를 넣고 Hub를 재시작하
 wb hub start               # Hub가 없으면 background로 시작
 wb hub stop [--yes]        # Hub 정지. 켜진 WB 프로젝트는 계속 실행
 wb hub status [--json]     # pid, version, 위치, 등록 수, 부팅 자동 시작 여부
+wb hub                     # TUI Hub 목록(프로젝트 안팎 어디서나). terminal이 아니면 exit 2
 wb hub list [--json]       # 목록을 TUI 없이 출력
 wb hub add PATH            # WB 프로젝트 root 등록 (.wb 없으면 거절, wb init 안내)
 wb hub remove PATH         # 등록 해제 (.wb 보존. 켜짐·불명 프로젝트는 먼저 끄라며 거절)

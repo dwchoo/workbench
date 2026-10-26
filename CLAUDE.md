@@ -56,6 +56,9 @@
 - graphify가 `.workflow`에 남기는 것은 수 KB짜리 실행 메타데이터뿐이다. 하지만 checkpoint에 `graphify-out/`이 섞이면 실행마다 수십~수백 MB가 늘어난다.
 - worker packet에 checkpoint·hash manifest의 exclude를 명시한다: `graphify-out/`, `.workflow/`, `.worktrees/`, `.venv/`, 격리 home·캐시.
 - 격리 실행을 마친 worktree를 제거할 때는 내부 `.workflow/`도 같이 정리한다. `graphify-out/`의 일자별 snapshot 디렉터리는 최근 3개만 남긴다.
+- 삭제 확인 범위(2026-10-24 사용자 결정):
+  - 사용자 확인 없이 삭제하고 결과만 보고한다: 소유 process 종료를 확인한 재생성 가능 자료. `storage_maintenance.py --apply` 대상 캐시, `shm_tests.py --clean-stale --apply` 대상 root, 격리 실행을 마친 worktree와 내부 `.workflow/`, 최근 3개를 넘는 `graphify-out/` snapshot, 이번 작업·테스트가 `/tmp`에 만든 temp dir·파일(scratchpad, `/tmp/omp-workbench-*` 등)이 대상이다. 도구에 dry-run이 있으면 먼저 돌리고, 후보에 보고서·trace·실패 근거·DB 결과가 섞여 있으면 멈추고 묻는다.
+  - 사용자 확인을 받은 뒤 수행한다: 보고서·trace·실패 근거·DB 결과(`/tmp/wb-cw16-reports` 포함)의 삭제, `--archive-checkpoints` 압축, 이번 작업이 만들지 않은 `/tmp` 항목, 위 범위에 없는 삭제.
 
 ## Agent skills
 

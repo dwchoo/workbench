@@ -25,7 +25,7 @@ from . import limits
 from .limits import InboxError
 from .store import IDLE_SECONDS, InboxStore
 
-__all__ = ["CommittedEvent", "InboxError", "InboxService", "Principal", "ProjectRef"]
+__all__ = ["CommittedEvent", "InboxError", "InboxService", "Principal", "ProjectRef", "cancel_fingerprint"]
 
 LOG = logging.getLogger(__name__)
 STATES = ("NEW", "REVIEWING", "NEEDS_INFO", "READY", "RUNNING", "CLOSED")
@@ -171,6 +171,39 @@ def origin_json(kind: str, key_id: str | None, name: str | None) -> dict:
 
 def _content_hash(title: str, body: str) -> str:
     return hashlib.sha256(json.dumps([title, body], ensure_ascii=False).encode("utf-8")).hexdigest()
+
+
+def _fingerprint(state: object, revision: object, title: object, body: object, comments: int, task_id: object,
+                 spec_revision: object, cancel_state: object, view: object) -> str:
+    view = view if isinstance(view, dict) else {}
+    command = view.get("command")
+    command_id = command.get("command_id") if isinstance(command, dict) else None
+    fields = {"state": state, "revision": revision, "title": title, "body": body, "comments": comments,
+              "task_id": task_id, "spec_revision": spec_revision, "cancel_state": cancel_state,
+              "task_status": view.get("status"), "task_closed": bool(view.get("closed")),
+              "command_id": command_id if isinstance(command_id, str) else None}
+    return hashlib.sha256(json.dumps(fields, ensure_ascii=False, sort_keys=True).encode("utf-8")).hexdigest()
+
+
+def cancel_fingerprint(request: dict) -> str:
+    """The cancel confirm fingerprint of a request as :meth:`InboxService.get` returns it (SPEC "취소",
+    2026-10-26 user decision): only user-meaningful state -- the request's state, revision, title and body,
+    the number of people's comments (not the Hub's ``system`` comments), its link (task_id, spec_revision),
+    cancel_state, and the Task's status, closed flag and running command_id. The version, ``updated_at``,
+    the delivery ledger and view refreshes that keep the Task status do not change it."""
+    task = request["task"]
+    comments = sum(1 for comment in request["comments"] if comment["kind"] != "system")
+    return _fingerprint(request["state"], request["revision"], request["title"], request["body"], comments,
+                        task["task_id"], task["spec_revision"], request["cancel_state"], task["view"])
+
+
+def _row_fingerprint(connection: sqlite3.Connection, row: sqlite3.Row) -> str:
+    """:func:`cancel_fingerprint` of the stored row (inside the writer transaction)."""
+    view = json.loads(row["task_view"]) if row["task_view"] else None
+    comments = connection.execute("SELECT count(*) FROM comments WHERE request_id = ? AND kind != 'system'",
+                                  (row["request_id"],)).fetchone()[0]
+    return _fingerprint(row["state"], row["revision"], row["title"], row["body"], comments, row["task_id"],
+                        row["spec_revision"], row["cancel_state"], view)
 
 
 class _Project:
@@ -833,15 +866,20 @@ class InboxService:
         return self._change(principal, request_id, "set_state", fn, wait)
 
     def cancel(self, principal: Principal, request_id: str, *, reason: str | None = None,
-               base_version: int | None = None, wait: bool = True) -> Any:
+               base_version: int | None = None, base_fingerprint: str | None = None, wait: bool = True) -> Any:
         """Before dispatch: CLOSED(cancelled) at once. READY/RUNNING: ``cancel_state=requested`` and a
-        ``cancel_requested`` event for the backend port; the request closes only when the Task does."""
+        ``cancel_requested`` event for the backend port; the request closes only when the Task does.
+        ``base_version`` (the web pre-run cancel) and ``base_fingerprint`` (a confirm token's
+        :func:`cancel_fingerprint`) are checked in the same writer transaction as the write: ``conflict``."""
         reason = None if reason is None else limits.comment(reason)
         sent: dict = {}  # the committed ``expect`` for the backend call (TI-13)
 
         def fn(tx: _Tx, row: sqlite3.Row) -> dict:
             if base_version is not None:
                 self._base(row, base_version)
+            if base_fingerprint is not None and base_fingerprint != _row_fingerprint(tx.connection, row):
+                raise InboxError("conflict", "the request or its Task changed after the confirmation",
+                                 state=row["state"], version=row["version"])
             state = row["state"]
             # A REVIEWING/NEEDS_INFO request can still link a live Task (manager asked while RUNNING,
             # P2-AC-27). Closing it at once would orphan that Task, so it takes the linked path: the

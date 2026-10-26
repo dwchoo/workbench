@@ -19,7 +19,8 @@ import uuid
 REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO / 'src'))
 
-from workbench.hub.inbox.service import InboxError, InboxService, Principal, ProjectRef  # noqa: E402
+from workbench.hub.inbox.service import (InboxError, InboxService, Principal, ProjectRef,  # noqa: E402
+                                        cancel_fingerprint)
 
 OWNER = Principal.owner()
 
@@ -450,6 +451,28 @@ class CancelTests(ServiceCase):
                 self.assertEqual(emitted[0].detail, {'task_id': 'task-1', 'reason': 'stop',
                                                      'expect': {'status': status, 'command_id': None}})
                 self.assertEqual(self.state(rid)[:2], (state, None))
+
+    def test_base_fingerprint_ignores_the_delivery_ledger_and_refuses_a_real_change_in_the_writer(self):
+        # SPEC "취소" (2026-10-26 user decision): the confirm compares user-meaningful state, not the version
+        rid = self.make('RUNNING')
+        fingerprint = cancel_fingerprint(self.service.get(OWNER, rid))
+        version = self.service.reserve_delivery(rid, 'd-1', self.version(rid))['version']
+        self.service.mark_offered(rid, 'd-1', '1:1', event='revised', version=version)
+        self.service.record_delivery(rid, 'd-1', 'delivered')
+        self.service.observe_task(rid, 'task-1', 'running', view={'runs': [{'run_id': 'run-1'}]})
+        self.assertEqual(cancel_fingerprint(self.service.get(OWNER, rid)), fingerprint)
+        stale = self.make('RUNNING')
+        old = cancel_fingerprint(self.service.get(OWNER, stale))
+        self.service.observe_task(stale, 'task-1', 'held')
+        before = self.snapshot(stale)
+        count = len(self.events)
+        error = self.code(self.service.cancel, OWNER, stale, base_fingerprint=old)
+        self.assertEqual((error.code, error.state), ('conflict', 'RUNNING'))
+        self.assertEqual(self.snapshot(stale), before)
+        self.assertEqual(len(self.events), count)
+        self.assertEqual(self.service.cancel(OWNER, rid, base_fingerprint=fingerprint)['status'], 'cancel_requested')
+        self.assertEqual(self.state(rid)[:2], ('RUNNING', None))
+        self.assertEqual(self.rows('SELECT cancel_state FROM requests WHERE request_id = ?', rid), [('requested',)])
 
     def test_a_failing_notification_does_not_undo_the_commit(self):
         def boom(event):

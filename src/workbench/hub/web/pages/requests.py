@@ -22,7 +22,7 @@ from aiohttp import web
 
 from ...inbox.limits import InboxError
 from ...inbox.results import MAX_PAGE as MAX_RESULT_PAGE, Results, page_bounds, summary as result_summary
-from ...inbox.service import PERMISSIONS, STATES, Principal, ProjectRef
+from ...inbox.service import PERMISSIONS, STATES, Principal, ProjectRef, cancel_fingerprint
 from .. import render
 from ..middleware import SERVICES, api, principal_of, see_other, session_of
 from ...web_control import DaemonExecutor
@@ -561,11 +561,11 @@ def _is_linked(detail: dict) -> bool:
 
 
 def _binding(request: web.Request, detail: dict) -> tuple:
-    """What a cancel token is tied to: the session (its csrf), who, which request and version, the Task
-    status and its command."""
-    principal, view = principal_of(request), detail["task"]["view"] or {}
-    return (session_of(request).csrf, principal.kind, principal.key_id, detail["request_id"], detail["version"],
-            view.get("status"), (_view_command(view) or {}).get("command_id"))
+    """What a cancel token is tied to: the session (its csrf), who, which request and its cancel confirm
+    fingerprint (SPEC "취소", 2026-10-26: user-meaningful request and Task state, not the version)."""
+    principal = principal_of(request)
+    return (session_of(request).csrf, principal.kind, principal.key_id, detail["request_id"],
+            cancel_fingerprint(detail))
 
 
 def _view_command(view: dict) -> dict | None:
@@ -629,9 +629,18 @@ async def post_cancel(request: web.Request) -> web.Response:
     try:
         detail = await _detail(request, rid)
         version = number_field(base, "base_version")
-        if _is_linked(detail) and not take_cancel_token(request, token, detail):
+        if not _is_linked(detail):  # stops nothing: a state edit checked against the version like the others
+            done = await _call(request, port.inbox.cancel, principal_of(request), rid, base_version=version)
+        elif not take_cancel_token(request, token, detail):
             raise InboxError("token_mismatch", "", state=detail["state"], version=detail["version"])
-        done = await _call(request, port.inbox.cancel, principal_of(request), rid, base_version=version)
+        else:
+            try:  # the token's fingerprint is checked again in the writer transaction that records the cancel
+                done = await _call(request, port.inbox.cancel, principal_of(request), rid,
+                                   base_fingerprint=cancel_fingerprint(detail))
+            except InboxError as exc:
+                if exc.code != "conflict":
+                    raise
+                raise InboxError("token_mismatch", "", state=exc.state, version=exc.version) from None
     except InboxError as exc:
         return error_page(request, exc, back=request_url(rid))
     notice = ("cancelled" if done["status"] == "cancelled" else

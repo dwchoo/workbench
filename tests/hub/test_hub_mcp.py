@@ -596,6 +596,54 @@ class CancelTests(ToolCase):
         self.r1.tool('inbox_comment', request_id=self.rid, body='one more thing')
         self.mismatch(token)
 
+    def version(self, request_id=None) -> int:
+        return self.hub.inbox_rows('SELECT version FROM requests WHERE request_id = ?', request_id or self.rid)[0][0]
+
+    def test_every_real_state_change_after_the_token_refuses_it_and_stops_nothing(self):
+        manager = Principal.manager(self.hub.a)
+
+        def needs_info():  # a re-asked request whose Task still runs (P2-AC-27) takes the token path too
+            self.hub.link_running(self.rid, view={'command': COMMAND})
+            self.hub.inbox.review(manager, self.rid, 'ask', body='which data?')
+
+        def other_key_cancels():
+            other = self.first(self.ed)['confirm_token']
+            self.assertEqual(self.ed.tool('inbox_cancel', request_id=self.rid, confirm_token=other)['status'],
+                             'cancel_requested')
+
+        observe = self.hub.inbox.observe_task
+        cases = (
+            ('revision', self.running, lambda: self.ed.tool('inbox_update', request_id=self.rid,
+                                                            base_version=self.version(), body='use the new data'),
+             None),
+            ('task status', self.running, lambda: observe(self.rid, 'task-1', 'held', view={'command': COMMAND}),
+             None),
+            ('task closed', self.running,
+             lambda: observe(self.rid, 'task-1', 'closed', closed_reason='finished', view={'command': COMMAND}), None),
+            ('command id', self.running,
+             lambda: observe(self.rid, 'task-1', 'running', view={'command': dict(COMMAND, command_id='cmd-2')}),
+             None),
+            ('command ended', self.running, lambda: observe(self.rid, 'task-1', 'running', view={}), None),
+            ('cancel_state', self.running, other_key_cancels, 'requested'),
+            ('state', self.running, lambda: self.hub.inbox.review(manager, self.rid, 'ask', body='why?'), None),
+            ('progress comment', self.running,
+             lambda: self.hub.inbox.review(manager, self.rid, 'comment', body='halfway there'), None),
+            ('body in place', needs_info, lambda: self.ed.tool('inbox_update', request_id=self.rid,
+                                                               base_version=self.version(), body='edited in place'),
+             None),
+        )
+        for name, setup, change, cancel_state in cases:
+            with self.subTest(name):
+                self.rid = self.submit(self.r1)['request_id']
+                setup()
+                token = self.first()['confirm_token']
+                change()
+                stops = len(self.hub.cancels)
+                error = self.r1.tool_error('inbox_cancel', request_id=self.rid, confirm_token=token)
+                self.assertEqual(error['code'], 'token_mismatch')
+                self.assertEqual(len(self.hub.cancels), stops)
+                self.assertEqual(self.row()[2], cancel_state)
+
     def test_task_status_changed(self):
         self.running()
         token = self.first()['confirm_token']
@@ -607,6 +655,74 @@ class CancelTests(ToolCase):
         token = self.first()['confirm_token']
         self.hub.inbox.observe_task(self.rid, 'task-1', 'running', view={'command': dict(COMMAND, command_id='cmd-2')})
         self.mismatch(token)
+
+    def ledger_round(self, *, requeue=False):
+        """The dispatcher's notice round for the pending round: reserve, offer (optionally requeued and
+        offered again), delivered. Only the delivery ledger moves (2026-10-26: not user-meaningful)."""
+        inbox, rid = self.hub.inbox, self.rid
+        version = self.hub.inbox_rows('SELECT version FROM requests WHERE request_id = ?', rid)[0][0]
+        version = inbox.reserve_delivery(rid, 'd-1', version)['version']
+        inbox.mark_offered(rid, 'd-1', '1:1', event='linked_task_closed', version=version)
+        if requeue:
+            inbox.requeue_offer(rid, 'd-1', 'backend_gone')
+            version = self.hub.inbox_rows('SELECT version FROM requests WHERE request_id = ?', rid)[0][0]
+            version = inbox.reserve_delivery(rid, 'd-2', version)['version']
+            inbox.mark_offered(rid, 'd-2', '1:1', event='linked_task_closed', version=version)
+            inbox.record_delivery(rid, 'd-2', 'delivered')
+        else:
+            inbox.record_delivery(rid, 'd-1', 'delivered')
+
+    def test_a_task_close_notice_round_after_the_token_does_not_invalidate_it(self):
+        # 2026-10-26 user decision: the token is bound to user-meaningful state, not the request version
+        for requeue in (False, True):
+            with self.subTest(requeue=requeue):
+                self.rid = self.submit(self.r1)['request_id']
+                self.hub.link_running(self.rid, view={'command': COMMAND})
+                self.hub.inbox.observe_task(self.rid, 'task-1', 'closed', closed_reason='finished',
+                                            view={'command': COMMAND})  # linked_task_closed: a pending round
+                token = self.first()['confirm_token']
+                before = self.hub.inbox_rows('SELECT version FROM requests WHERE request_id = ?', self.rid)[0][0]
+                self.ledger_round(requeue=requeue)
+                after = self.hub.inbox_rows('SELECT version, delivery_state FROM requests WHERE request_id = ?',
+                                            self.rid)[0]
+                self.assertEqual(after[1], 'delivered')
+                self.assertGreater(after[0], before)  # the version moved; the token still holds
+                value = self.r1.tool('inbox_cancel', request_id=self.rid, confirm_token=token)
+                self.assertEqual(value['status'], 'cancel_requested')
+                self.assertEqual(self.row(), ('RUNNING', None, 'requested'))
+                self.assertEqual(self.hub.cancels[-1].request_id, self.rid)
+
+    def test_a_view_refresh_that_keeps_the_task_status_keeps_the_token(self):
+        # 2026-10-26 user decision: the Task sync's view-only update (runs, the command's label/state) is not a
+        # Task status change
+        self.running()
+        token = self.first()['confirm_token']
+        before = self.version()
+        self.hub.inbox.observe_task(self.rid, 'task-1', 'running', view={
+            'command': dict(COMMAND, label='python train.py --resume', state='stopping'),
+            'runs': [{'run_id': 'run-1', 'status': 'running'}]})
+        self.assertGreater(self.version(), before)
+        value = self.r1.tool('inbox_cancel', request_id=self.rid, confirm_token=token)
+        self.assertEqual(value['status'], 'cancel_requested')
+        self.assertEqual(self.row(), ('RUNNING', None, 'requested'))
+
+    def test_a_change_between_the_token_check_and_the_cancel_commit_refuses_it(self):
+        # the fingerprint is compared again inside the writer transaction: no window after the read
+        self.running()
+        token = self.first()['confirm_token']
+        inbox, cancel = self.hub.inbox, self.hub.inbox.cancel
+
+        def late_change(*args, **kwargs):
+            inbox.observe_task(self.rid, 'task-1', 'held', view={'command': COMMAND})
+            return cancel(*args, **kwargs)
+        with mock.patch.object(inbox, 'cancel', side_effect=late_change):
+            self.mismatch_after_change(token)
+
+    def mismatch_after_change(self, token):
+        error = self.r1.tool_error('inbox_cancel', request_id=self.rid, confirm_token=token)
+        self.assertEqual(error['code'], 'token_mismatch')
+        self.assertEqual(self.hub.cancels, [])
+        self.assertEqual(self.row(), ('RUNNING', None, None))
 
     def test_tokens_are_capped_per_key(self):
         self.running()

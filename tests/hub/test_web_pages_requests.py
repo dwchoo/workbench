@@ -821,6 +821,99 @@ class CancelTests(RequestsCase):
         self.assertIsNone(self.row(request_id)[2])
         self.assertNotEqual(version, fresh['fields']['base_version'])
 
+    def version(self, request_id):
+        return self.row(request_id)[3]
+
+    async def test_a_notice_round_or_view_refresh_after_the_confirm_page_keeps_the_token(self):
+        # SPEC "취소" (2026-10-26 user decision): the token is bound to user-meaningful state; the delivery
+        # ledger (with its system comments) and a view refresh that keeps the Task status move only the version
+        command = {'command_id': 'cmd-1', 'label': 'python train.py', 'state': 'running'}
+
+        def notice_round(request_id):
+            self.inbox.observe_task(request_id, 'task-9', 'running', view={'command': command})
+            version = self.inbox.reserve_delivery(request_id, 'd-1', self.version(request_id))['version']
+            self.inbox.mark_offered(request_id, 'd-1', '1:1', event='revised', version=version)
+            self.inbox.record_delivery(request_id, 'd-1', 'delivered')
+
+        def view_refresh(request_id):
+            self.inbox.observe_task(request_id, 'task-9', 'running', view={
+                'command': dict(command, label='python train.py --resume', state='stopping'),
+                'runs': [{'run_id': 'run-1', 'status': 'running'}]})
+
+        def refused_round(request_id):  # a refused notice round adds the Hub's system comment
+            version = self.inbox.reserve_delivery(request_id, 'd-1', self.version(request_id))['version']
+            self.inbox.mark_offered(request_id, 'd-1', '1:1', event='revised', version=version)
+            self.inbox.record_delivery(request_id, 'd-1', 'rejected')
+
+        self.backend_up = True
+        for name, change in (('notice round', notice_round), ('view refresh', view_refresh),
+                             ('refused round', refused_round)):
+            with self.subTest(name):
+                request_id = self.add(f'Job {name}', 'b')
+                self.link(request_id, 'running')
+                self.inbox.observe_task(request_id, 'task-9', 'running', view={'command': command})
+                _, form = await self.confirm(request_id)
+                before = self.version(request_id)
+                change(request_id)
+                self.assertGreater(self.version(request_id), before)
+                response = await self.confirm_post(request_id, form)
+                self.assertEqual((response.status, response.headers.get('Location')),
+                                 (303, f'/requests/{request_id}?notice=cancel_requested'))
+                self.assertEqual(self.row(request_id)[:3], ('RUNNING', None, 'requested'))
+
+    async def test_every_real_state_change_after_the_confirm_page_refuses_and_stops_nothing(self):
+        command = {'command_id': 'cmd-1', 'label': 'python train.py', 'state': 'running'}
+        manager = Principal.manager(self.a)
+        observe = self.inbox.observe_task
+        cases = (
+            ('revision', lambda rid: self.inbox.update(OWNER, rid, self.version(rid), body='new data')),
+            ('task status', lambda rid: observe(rid, 'task-9', 'held', view={'command': command})),
+            ('task closed', lambda rid: observe(rid, 'task-9', 'closed', closed_reason='finished',
+                                                view={'command': command})),
+            ('command id', lambda rid: observe(rid, 'task-9', 'running',
+                                               view={'command': dict(command, command_id='cmd-2')})),
+            ('command ended', lambda rid: observe(rid, 'task-9', 'running', view={})),
+            ('cancel_state', lambda rid: self.inbox.cancel(OWNER, rid)),
+            ('state', lambda rid: self.inbox.review(manager, rid, 'ask', body='why?')),
+            ('owner comment', lambda rid: self.inbox.comment(OWNER, rid, 'one more thing')),
+            ('progress comment', lambda rid: self.inbox.review(manager, rid, 'comment', body='halfway there')),
+        )
+        self.backend_up = True
+        for name, change in cases:
+            with self.subTest(name):
+                request_id = self.add(f'Job {name}', 'b')
+                self.link(request_id, 'running')
+                observe(request_id, 'task-9', 'running', view={'command': command})
+                _, form = await self.confirm(request_id)
+                change(request_id)
+                cancel_state = self.row(request_id)[2]
+                requested = [e for e in self.events if e.type == 'cancel_requested']
+                response = await self.confirm_post(request_id, form)
+                self.assertEqual(response.status, 409)
+                self.assertIn('작업이 바뀌었습니다', response.body_text)
+                self.assertEqual(self.row(request_id)[2], cancel_state)
+                self.assertEqual([e for e in self.events if e.type == 'cancel_requested'], requested)
+
+    async def test_a_change_between_the_token_check_and_the_cancel_commit_refuses_it(self):
+        request_id = self.add('Job', 'b')
+        self.link(request_id, 'running')
+        self.backend_up = True
+        _, form = await self.confirm(request_id)
+        cancel = self.inbox.cancel
+
+        def late_change(*args, **kwargs):
+            self.inbox.observe_task(request_id, 'task-9', 'held')
+            return cancel(*args, **kwargs)
+        self.inbox.cancel = late_change
+        try:
+            response = await self.confirm_post(request_id, form)
+        finally:
+            del self.inbox.cancel
+        self.assertEqual(response.status, 409)
+        self.assertIn('작업이 바뀌었습니다', response.body_text)
+        self.assertEqual(self.row(request_id)[:3], ('RUNNING', None, None))
+        self.assertNotIn('cancel_requested', [event.type for event in self.events])
+
     async def test_backend_off_refuses_a_running_cancel_with_the_reason(self):
         request_id = self.add('Job', 'b')
         self.link(request_id, 'running')

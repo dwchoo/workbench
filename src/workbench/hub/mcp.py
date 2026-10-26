@@ -31,7 +31,7 @@ from aiohttp import web
 from . import auth, presentation
 from .inbox import limits
 from .inbox.limits import InboxError
-from .inbox.service import PRE_DISPATCH, Principal
+from .inbox.service import PRE_DISPATCH, Principal, cancel_fingerprint
 from .web.app import OriginPolicy, flush_last_used
 from .web.middleware import (BODY_LIMIT, SERVICES, _listening_port as listening_port, body_limit, expected_origin,
                              origin_of_header, own_auth, security_headers)
@@ -305,15 +305,13 @@ def _scope(principal: Principal, project_id: str) -> None:
 
 @dataclass(frozen=True, slots=True)
 class _CancelToken:
-    """What a two-step cancel token is bound to (SPEC: principal, request_id, request version, task
-    status, command_id) and when it lapses (monotonic)."""
+    """What a two-step cancel token is bound to (SPEC "취소": principal, request_id and the request's
+    cancel confirm fingerprint -- user-meaningful state only, 2026-10-26) and when it lapses (monotonic)."""
 
     kind: str
     key_id: str | None
     request_id: str
-    version: int
-    task_status: str | None
-    command_id: str | None
+    fingerprint: str
     deadline: float
 
 
@@ -457,7 +455,7 @@ class McpServer:
         return {name: value[name] for name in ("state", "version")}
 
     # -- two-step cancel (SPEC "취소", D-33, P2-AC-41) --------------------------------------
-    def _issue_token(self, principal: Principal, request_id: str, bound: tuple) -> str:
+    def _issue_token(self, principal: Principal, request_id: str, fingerprint: str) -> str:
         token = secrets.token_urlsafe(24)
         now = self.monotonic()
         with self._lock:
@@ -466,7 +464,7 @@ class McpServer:
                    if (entry.kind, entry.key_id) == (principal.kind, principal.key_id)]
             for stale in own[:max(0, len(own) - TOKENS_PER_KEY + 1)]:
                 del self._tokens[stale]
-            self._tokens[_token_key(token)] = _CancelToken(principal.kind, principal.key_id, request_id, *bound,
+            self._tokens[_token_key(token)] = _CancelToken(principal.kind, principal.key_id, request_id, fingerprint,
                                                            deadline=now + self.token_ttl)
         return token
 
@@ -498,14 +496,14 @@ class McpServer:
         command = _command(view)
         # RUNNING (or a REVIEWING/NEEDS_INFO request whose Task still runs, P2-AC-27) stops work: two steps.
         two_step = state == "RUNNING" or (state in PRE_DISPATCH and task_id is not None)
-        bound = (request["version"], view.get("status"), None if command is None else command["command_id"])
+        fingerprint = cancel_fingerprint(request)
         if token is not None:
             entry = self._take_token(principal, request_id, token)
-            if not two_step or (entry.version, entry.task_status, entry.command_id) != bound:
+            if not two_step or entry.fingerprint != fingerprint:
                 raise InboxError("token_mismatch", "the request or its Task changed after the confirm token was issued")
-            try:
+            try:  # the fingerprint is checked again in the writer transaction that records the cancel
                 value = await self._blocking(self.inbox.cancel, principal, request_id, reason=reason,
-                                             base_version=entry.version)
+                                             base_fingerprint=entry.fingerprint)
             except InboxError as exc:
                 if exc.code == "conflict":  # changed between the read above and the cancel commit
                     raise InboxError("token_mismatch", "the request changed after the confirm token was issued",
@@ -519,7 +517,7 @@ class McpServer:
                 raise InboxError("invalid_transition", "cancel was already requested", state=state,
                                  version=request["version"])
             return marked({"status": "confirm_required",
-                           "confirm_token": self._issue_token(principal, request_id, bound),
+                           "confirm_token": self._issue_token(principal, request_id, fingerprint),
                            "expires_in": int(self.token_ttl),
                            "impact": {"task_id": task_id, "task_status": view.get("status"), "command": command}},
                           command is not None)  # the command label is worker text

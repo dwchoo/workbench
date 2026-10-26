@@ -159,7 +159,7 @@ Schema v1(모든 시각은 epoch 초 REAL, JSON은 TEXT):
 meta(key PRIMARY KEY, value)            -- schema_version=1, project_id, review_mode('auto'|'manual'), created_at
 requests(request_id TEXT PRIMARY KEY,   -- canonical UUID4
   seq INTEGER UNIQUE NOT NULL,          -- 프로젝트 안 접수 순서, 표시 "#<seq>"
-  created_at, updated_at, version INTEGER NOT NULL,      -- 모든 변경마다 +1
+  created_at, updated_at, version INTEGER NOT NULL,      -- 모든 변경마다 +1(편집 base_version. 취소 확인 token은 version이 아니라 fingerprint, "취소")
   origin_kind TEXT,                     -- owner | board_agent | api_key
   origin_key_id TEXT, origin_name TEXT, -- api_key일 때 key_id·이름(이름은 접수 시점 값)
   idem_key TEXT, content_hash TEXT,     -- UNIQUE(origin_kind, origin_key_id, idem_key)
@@ -270,7 +270,7 @@ Board agent는 별도 내부 listener(아래)의 같은 `/mcp`를 쓴다. 외부
 | `GET/POST /requests/<rid>/edit` | 편집(`base_version` hidden) |
 | `POST /requests/<rid>/comments` | 댓글/답변 |
 | `POST /requests/<rid>/state` | NEW↔NEEDS_INFO, 다시 열기 |
-| `GET/POST /requests/<rid>/cancel` | 확인 page(RUNNING이면 영향 요약과 token) → 실행 |
+| `GET/POST /requests/<rid>/cancel` | 확인 page(RUNNING이면 영향 요약과 token) → 실행. 연결된 Task가 있으면 token에 묶인 취소 확인 fingerprint로 비교하고("취소", 2026-10-26 사용자 결정), 없으면 hidden `base_version`으로 비교한다 |
 | `POST /requests/<rid>/start-review` | 수동 검토 시작(D-31, P2-AC-39) |
 | `GET /requests/<rid>/full` | 전체 보기(run 목록, 보고 원문, 명령 목록, raw page link, 산출물 경로) |
 | `GET /requests/<rid>/raw?run_id=&offset=&length=` / `…/artifact?path=&offset=&length=` | 원문 page(`text/plain; charset=utf-8`, `Content-Disposition: inline`) |
@@ -334,7 +334,9 @@ Board agent에는 bridge extension이 없으므로 `to_worker`·`workbench_inbox
 ### 취소(D-20, D-33, P2-AC-30·41·43, 기술 보완)
 
 - 실행 전(NEW·REVIEWING·NEEDS_INFO): 즉시 CLOSED(cancelled). 그 round가 manager에게 전달되었으면 `cancelled` 통지.
-- READY: 확인 없이 `cancel_task`를 보낸다(명령이 없다). RUNNING: 웹은 확인 page, MCP는 2단계 token. Token은 `secrets.token_urlsafe(24)`, 60 s, (principal, request_id, request version, task status, command_id)에 묶이고 한 번 쓰면 사라진다. 확인 시점에 묶인 값이 하나라도 달라졌으면 `token_mismatch`로 거절하고 아무것도 멈추지 않는다(P2-AC-41).
+- READY: 확인 없이 `cancel_task`를 보낸다(명령이 없다). RUNNING: 웹은 확인 page, MCP는 2단계 token. Token은 `secrets.token_urlsafe(24)`, 60 s, (principal, request_id, 취소 확인 fingerprint)에 묶이고 한 번 쓰면 사라진다(웹 token은 session csrf에도 묶인다). 확인 시점에 fingerprint가 달라졌으면 `token_mismatch`로 거절하고 아무것도 멈추지 않는다(P2-AC-41).
+- 취소 확인 fingerprint는 사용자 의미 상태만 담는다: 요청 `state`·`revision`·`title`·`body`, 사람이 쓴 댓글 수(`kind != system`), 연결 `task_id`·`spec_revision`, `cancel_state`, `task_view`의 Task `status`·`closed`, 실행 중 명령의 `command_id`. `version`·`updated_at`, 전달 장부(`delivery_state`·`delivery_id`·`delivery_backend`·`delivery_at`·`review_round`, 전달 결과·재전송 system 댓글), Task `status`·`closed`·`command_id`가 같은 `task_view` 갱신(run 목록·명령 label·state 등)은 넣지 않는다. `title`·`body`는 제자리 편집(NEW·NEEDS_INFO·REVIEWING)이 `revision`을 올리지 않기 때문에 넣는다. 사람이 쓴 댓글(소유자·key의 댓글, manager의 진행·질문·결정)은 확인한 사람이 보지 못한 요청 내용이라 넣고, Hub가 쓰는 system 댓글은 장부라 뺀다. 비교와 `cancel_state=requested` 기록은 writer 안에서 한 번에 한다(`InboxService.cancel(base_fingerprint=…)`, 다르면 `conflict`이고 MCP·웹은 `token_mismatch`로 답한다). 연결된 Task가 없는 웹 실행 전 취소(멈추는 것이 없는 상태 편집)는 지금처럼 `base_version`으로 비교한다.
+- 2026-10-26 사용자 결정: confirm token은 사용자 의미 상태에 묶는다. 전에는 request `version`에 묶어서 Task 종료 통지의 전달 round(`reserve_delivery`·`mark_offered`·`record_delivery`)나 Task 상태가 같은 view 갱신처럼 장부만 바뀌어도 정직한 확인이 `token_mismatch`로 거절되었다. BRIEF P2-AC-41은 "요청·Task 상태가 바뀌었으면" 거절이라고 적는다. `version`은 편집의 일반 optimistic concurrency 값으로 그대로 둔다.
 - Hub는 요청에 `cancel_state=requested`를 commit한 뒤 backend에 `cancel_task{task_id, request_id, expect, reason}`을 보낸다. Backend가 꺼져 있으면 commit 전에 `backend_not_running`으로 거절한다(아무것도 바꾸지 않음. 켠 뒤 다시).
 - Backend `cancel_task`(새 `TaskFlow.cancel_by_user`): 현재 Task 상태·실행 중 명령이 `expect`와 다르면 `task_changed`로 거절. 같으면 (1) 그 Task의 Workbench 실행 명령이 있으면 기존 사용자 stop(CS-O10, `requested_by: user`, SIGINT→SIGTERM→SIGKILL, 잔존 확인)을 background로 시작하고, (2) 기존 `_cancel`과 같은 절차(withdraw, `cancelling`, host exit 대기, worker 알림)를 `by: "user"`로 실행한다. 결과 `{cancel:"cancel_requested"|"cancelled", stop:{status:"stopping"}|null}`. Manager에게 `cancelled` 통지가 간다.
 - 요청은 Task 동기화가 Task `closed`(사용자 취소)를 관측해야 CLOSED(cancelled)가 된다. 명령 stop이 `unknown`이면 그 사실을 system 댓글로 남기고 성공으로 보이지 않는다(P2-AC-30).

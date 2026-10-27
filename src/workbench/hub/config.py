@@ -1,9 +1,11 @@
 """``hub.toml`` (Task Inbox SPEC "``hub.toml`` schema"): strict read, TLS decision, plain-HTTP warning.
 
-The Hub reads the file once at start. It writes it only to create the initial template when nothing
-is at the path (2026-10-26 user request; :func:`write_template`, which never replaces anything).
-Anything it does not know (a key, a table, a type, a hostname ``bind``) makes the whole file
-``config_invalid:<item>``: the web listener and Board agent stay closed while the rest of the Hub works.
+The Hub reads the file at start and again on ``wb hub reload`` (2026-10-27 사용자 결정; hub_v1 ``reload``). It
+writes it only to create the initial template when nothing is at the path (2026-10-26 user request;
+:func:`write_template`, which never replaces anything). Anything it does not know (a key, a table, a type, a
+hostname ``bind``) makes the whole file ``config_invalid:<item>``: at start the web listener and Board agent stay
+closed while the rest of the Hub works; on a reload the running config stays as it was.
+``[web] bind`` is one IP or a list of IPs; ``[web] allow_from`` lists the client networks served (empty: all).
 """
 from __future__ import annotations
 
@@ -15,7 +17,7 @@ from pathlib import Path
 import ssl
 import stat
 import tomllib
-from typing import Mapping
+from typing import Iterable, Mapping
 
 from workbench.backend.paths import write_private_bytes
 
@@ -28,6 +30,9 @@ DEFAULT_BIND, DEFAULT_PORT = "127.0.0.1", 8780
 INSECURE_WARNING_TEXT = "평문 HTTP로 LAN에 열려 있습니다. VPN 등 네트워크 보호가 필요합니다."
 SERVER_NAME_MAX = 253
 SERVER_NAMES_MAX = 64
+BIND_MAX = 16  # ``[web] bind`` list entries
+ALLOW_FROM_MAX = 256  # ``[web] allow_from`` entries
+_IPV4_MAPPED = ipaddress.ip_network("::ffff:0:0/96")
 _LABEL_CHARS = frozenset("abcdefghijklmnopqrstuvwxyz0123456789-")
 CONFIG_FILE_MODE, CONFIG_DIR_MODE = 0o600, 0o700
 _NO_HARD_LINKS = (errno.EPERM, errno.EXDEV, errno.EOPNOTSUPP, errno.ENOSYS, errno.EMLINK)
@@ -38,26 +43,33 @@ CONFIG_TEMPLATE = """\
 # OMP Workbench Hub 설정 파일 (hub.toml)
 #
 # Hub가 시작할 때 이 파일이 없으면 이 기본 내용으로 한 번 만듭니다. 그 뒤로 Hub는 이 파일을
-# 고치지 않습니다. Hub는 시작할 때 한 번만 읽으므로, 고친 뒤에는 'wb hub stop' 뒤
-# 'wb hub start'로 Hub를 재시작해야 반영됩니다.
-# 모르는 키나 잘못된 값이 하나라도 있으면 파일 전체가 무효(config_invalid)가 되어 웹과
-# Board agent는 열리지 않고, Hub의 나머지 기능(등록, 목록, 요청 전달)은 그대로 동작합니다.
+# 고치지 않습니다. Hub는 시작할 때 이 파일을 읽고, 고친 뒤에는 'wb hub reload'로 실행 중인
+# Hub에 반영합니다(Hub를 멈출 필요 없음). 웹 설정이 바뀌면 웹 listener만 다시 열고, 켜져 있는
+# WB 프로젝트와 실행 중인 Board agent는 건드리지 않습니다. 열려 있던 브라우저 연결은 끊길 수
+# 있지만 로그인은 유지됩니다.
+# 모르는 키나 잘못된 값이 하나라도 있으면 파일 전체가 무효(config_invalid)입니다. Hub 시작 때라면
+# 웹과 Board agent가 열리지 않고 Hub의 나머지 기능(등록, 목록, 요청 전달)은 그대로 동작합니다.
+# 'wb hub reload' 때라면 실행 중인 설정을 그대로 두고 잘못된 항목 이름을 알려 줍니다.
 # 아래에서 '#'으로 막힌 줄은 기본값을 보여 줍니다. 바꾸려면 '#'을 지우고 값을 고치세요.
 #
 # 웹(Task Inbox 화면, 외부 /mcp, Web Board) 켜는 방법:
 #   1. 아래 [web]의 'enabled = false'를 'enabled = true'로 바꿉니다.
 #   2. 'wb hub passwd'로 웹 로그인 비밀번호를 정합니다.
-#   3. 'wb hub stop' 뒤 'wb hub start'로 Hub를 재시작합니다.
+#   3. 'wb hub reload'로 반영합니다(Hub가 꺼져 있으면 'wb hub start').
 #
 # 보안: bind를 LAN 주소나 0.0.0.0으로 바꾸면 같은 네트워크의 다른 기기도 접속할 수 있고,
 # TLS 없이(평문 HTTP) 열면 비밀번호와 내용이 암호화되지 않으니 VPN으로 보호하거나
-# 'wb hub tls --self-signed'로 HTTPS를 쓰세요.
+# 'wb hub tls --self-signed'로 HTTPS를 쓰세요. allow_from으로 접속할 수 있는 기기의 IP를
+# 좁힐 수 있습니다.
 
 [web]
 # enabled: 웹을 열지 여부(true/false). 기본값 false(꺼짐).
 enabled = false
 
 # bind: 웹이 받을 IP 주소(IP 주소만, 호스트 이름은 안 됨). 기본값 "127.0.0.1"(이 컴퓨터에서만 접속).
+# 여러 주소는 목록으로 적습니다. 모든 주소가 같은 port로 열리고, 하나라도 열지 못하면 아무 주소도
+# 열지 않습니다.
+#   예(이 컴퓨터와 Tailscale 주소): bind = ["127.0.0.1", "100.101.102.103"]
 # bind = "127.0.0.1"
 
 # port: 웹 포트(0~65535, 0은 임의 포트). 기본값 8780.
@@ -76,8 +88,16 @@ enabled = false
 # server_names: bind IP 외에 받을 접속 이름(Host) 목록(예: ["box.vpn"]). 기본값 [].
 # server_names = []
 
+# allow_from: 접속을 받을 기기의 IP 주소나 대역(CIDR) 목록. 기본값 [](모든 기기, 제한 없음).
+# 목록이 있으면 그 밖의 주소는 내용 없는 403으로 거절합니다(화면, /mcp, Web Board 모두).
+# 이 컴퓨터(loopback)도 자동으로 허용하지 않으니, 여기서도 쓰려면 "127.0.0.1"과 "::1"을 넣으세요.
+# 대역은 "192.168.10.0/24"처럼 끝자리를 0으로 적습니다("192.168.10.5/24"는 잘못된 값).
+#   예(Tailscale VPN과 이 컴퓨터만): allow_from = ["100.64.0.0/10", "127.0.0.1", "::1"]
+# allow_from = []
+
 [board_agent]
 # model: Board agent가 쓸 OMP 모델. 기본값 ""(omp-models.yml의 manager 항목).
+# 바꾼 값은 다음 Board agent 시작(재시작) 때 적용됩니다.
 # model = ""
 
 # role_prompt_file: 기본 역할 prompt 뒤에 덧붙일 파일의 절대 경로. 기본값 ""(없음).
@@ -100,15 +120,27 @@ class ConfigInvalid(ValueError):
         return f"config_invalid:{self.item}"
 
 
+Network = ipaddress.IPv4Network | ipaddress.IPv6Network
+
+
 @dataclass(frozen=True, slots=True)
 class WebConfig:
     enabled: bool = False  # 2026-10-26 user decision: the web surface stays off until hub.toml turns it on
-    bind: str = DEFAULT_BIND
+    bind: str = DEFAULT_BIND  # the first (or only) listening address
     port: int = DEFAULT_PORT
     tls_cert: str = ""
     tls_key: str = ""
     allow_insecure_http: bool = True
     server_names: tuple[str, ...] = ()
+    # 2026-10-27 사용자 결정: ``bind`` may be a list (every address, ``bind`` is its first) and ``allow_from``
+    # limits client IPs (empty: no filter).
+    binds: tuple[str, ...] = ()
+    allow_from: tuple[Network, ...] = ()
+
+    @property
+    def addresses(self) -> tuple[str, ...]:
+        """Every listening address, in ``hub.toml`` order."""
+        return self.binds or (self.bind,)
 
 
 @dataclass(frozen=True, slots=True)
@@ -261,14 +293,48 @@ def _absolute_or_empty(value: object) -> bool:
     return isinstance(value, str) and (value == "" or (os.path.isabs(value) and "\0" not in value))
 
 
+def _binds(value: object) -> tuple[str, ...] | None:
+    """One IP literal, or a non-empty list of distinct ones (at most :data:`BIND_MAX`); else ``None``."""
+    if isinstance(value, str):
+        return (value,) if _ip_literal(value) else None
+    if not isinstance(value, list) or not 0 < len(value) <= BIND_MAX or not all(_ip_literal(v) for v in value):
+        return None
+    if len({ipaddress.ip_address(v) for v in value}) != len(value):
+        return None
+    return tuple(value)
+
+
+def _allow_entry(value: object) -> Network | None:
+    """An address or network without host bits (2026-10-27: ``192.168.10.5/24`` is refused, never widened)."""
+    if not isinstance(value, str) or not value or "%" in value:
+        return None
+    try:
+        network = ipaddress.ip_network(value, strict=True)
+    except ValueError:
+        return None
+    if network.version == 6 and (network.subnet_of(_IPV4_MAPPED)):
+        return None  # peers are matched as IPv4; a mapped entry would never match
+    return network
+
+
 def _web(table: dict) -> WebConfig:
     values = {}
     for key, value in table.items():
         item = f"web.{key}"
         if key == "bind":
-            if not _ip_literal(value):
+            binds = _binds(value)
+            if binds is None:
                 raise ConfigInvalid(item)
-            values[key] = value
+            values["bind"] = binds[0]
+            if isinstance(value, list):
+                values["binds"] = binds
+        elif key == "allow_from":
+            if not isinstance(value, list) or len(value) > ALLOW_FROM_MAX:
+                raise ConfigInvalid(item)
+            networks = tuple(_allow_entry(entry) for entry in value)
+            if None in networks:
+                raise ConfigInvalid(item)
+            values[key] = tuple(dict.fromkeys(networks))
         elif key == "port":
             if type(value) is not int or not 0 <= value <= 65535:
                 raise ConfigInvalid(item)
@@ -392,6 +458,8 @@ def is_loopback(bind: str) -> bool:
         return False
 
 
-def insecure_warning(bind: str, *, tls: bool) -> bool:
-    """Plain HTTP on anything but loopback (``0.0.0.0``/``::`` included) warns."""
-    return not tls and not is_loopback(bind)
+def insecure_warning(bind: str | Iterable[str], *, tls: bool) -> bool:
+    """Plain HTTP on anything but loopback (``0.0.0.0``/``::`` included) warns; with several addresses,
+    one that is not loopback is enough."""
+    addresses = (bind,) if isinstance(bind, str) else tuple(bind)
+    return not tls and not all(is_loopback(address) for address in addresses)

@@ -145,7 +145,7 @@ class WebStatusTextTests(unittest.TestCase):
         self.assertEqual(len(lines), 1, text.stdout)
         line = lines[0]
         self.assertTrue(line.strip().startswith('web: disabled'), line)
-        for part in (str(self.box.config_file), ENABLE_KEY, "'wb hub stop'", "'wb hub start'", '재시작'):
+        for part in (str(self.box.config_file), ENABLE_KEY, "'wb hub reload'", '반영'):  # 2026-10-27: reload, no restart
             self.assertIn(part, line)
         self.assertNotIn('listening', line)
 
@@ -179,7 +179,7 @@ class PasswdHintTests(unittest.TestCase):
                 self.assertIn('비밀번호를 정했습니다.', result.stdout)
                 hints = [line for line in result.stdout.splitlines() if ENABLE_KEY in line]
                 self.assertEqual(len(hints), 1, result.stdout)
-                for part in (str(self.box.config_file), "'wb hub stop'", "'wb hub start'"):
+                for part in (str(self.box.config_file), "'wb hub reload'"):  # 2026-10-27: was stop/start
                     self.assertIn(part, hints[0])
                 self.assertNotIn('재시작 없이 웹 listener가 열립니다', result.stdout)
 

@@ -341,7 +341,7 @@ class DisabledStatusTextTests(HubProcessCase):
         self.assertIn('web: disabled', line)
         self.assertIn(str(self.box.config_file), line)  # default path, no hub.toml exists
         self.assertIn('[web] enabled = true', line)
-        self.assertIn('재시작', line)
+        self.assertIn("'wb hub reload'", line)  # 2026-10-27 contract: applied by reload (was: '재시작')
         self.assertRegex(line, r'[가-힣]')
         self.assertNotIn('not_listening', text.stdout)
         self.assertNotIn('password_not_set', text.stdout)  # the password is set, and disabled wins anyway
@@ -355,7 +355,7 @@ class DisabledStatusTextTests(HubProcessCase):
         self.assertTrue((self.box.state / 'auth.json').is_file())
         self.assertIn('[web] enabled = true', result.stdout)
         self.assertIn(str(self.box.config_file), result.stdout)
-        self.assertIn('재시작', result.stdout)
+        self.assertIn("'wb hub reload'", result.stdout)  # 2026-10-27 contract: applied by reload (was: '재시작')
 
     def test_passwd_hint_goes_away_when_enabled(self):
         self.box.write_config('127.0.0.1', 0, enabled=True)

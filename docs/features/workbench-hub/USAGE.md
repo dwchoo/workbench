@@ -32,11 +32,11 @@ wb start           # 명시한 start는 예전처럼 초기화 확인 후 시작
 
 ```text
 Hub pid 4242 · wb 0.3.1 · 프로젝트 5개 · Board agent: 없음 · 가동 3시간 2분
-web: disabled — hub.toml의 [web] enabled = false를 true로 바꾸고 Hub를 재시작하세요
+web: disabled — hub.toml의 [web] enabled = false를 true로 바꾸고 'wb hub reload'를 실행하세요 · config 12:30
 ```
 
 - 첫 줄: Hub pid, `wb` version, 등록된 프로젝트 수, Board agent 상태(agent 채널의 `running`/`stopped` 등, shell이 다르면 `(shell …)`, 세트를 한 번도 시작하지 않았으면 `없음`), 가동 시간.
-- 둘째 줄 `web:`: `disabled`(켜는 방법을 같이 보임), `listening <url>`(평문 HTTP면 `[!] 평문 HTTP` 표시), `not_listening: <이유>`, `config_invalid:<항목>` 중 하나.
+- 둘째 줄 `web:`: `disabled`(켜는 방법을 같이 보임), `listening <url> [<url>…]`(여러 주소면 모두, 평문 HTTP면 `[!] 평문 HTTP` 표시), `not_listening: <이유>`, `config_invalid:<항목>` 중 하나. 끝에 `· config HH:MM`(실행 중인 `hub.toml`을 읽은 시각)과, 마지막 `wb hub reload`가 거절되었으면 `· reload 실패: config_invalid:<항목>`이 붙는다(2026-10-27).
 - 상태를 가져오지 못하면(Hub 연결 끊김·응답 없음) `Hub 상태 불명` 한 줄만 보인다. 응답이 일부만 오면 아는 값은 보이고 모르는 항목은 `불명`이다. 알 수 없는 상태를 `disabled`나 `없음`으로 보이지 않는다. 첫 응답 전에는 `Hub 상태 불러오는 중…`이다.
 - 좁은 terminal에서는 각 줄을 폭에 맞춰 `…`로 자른다(가동 시간이 가장 먼저 잘림). 화면이 아주 낮으면 프로젝트 행을 최소 3줄 남기도록 이 줄들을 줄인다.
 
@@ -69,11 +69,17 @@ wb --version               # wb <release> (<commit>|editable|unknown)
 
 ```sh
 wb hub passwd [--stdin]              # Web Board 로그인 비밀번호. Hub를 시작하지 않는다
-wb hub tls --self-signed [--force]   # 자체 서명 TLS cert·key. Hub 재시작 뒤 HTTPS
+wb hub tls --self-signed [--force]   # 자체 서명 TLS cert·key. 'wb hub reload' 뒤 HTTPS
+wb hub reload                        # 실행 중인 Hub가 hub.toml을 다시 읽음(웹 listener만 다시 염)
 wb hub review-mode PATH [auto|manual]  # 프로젝트의 요청 검토 방식 보기·바꾸기
 ```
 
-세 명령의 설정·동작은 [Task Inbox & Web Board 사용 안내](../task-inbox/USAGE.md)에 있다. 웹(Web Board·외부 `/mcp`·Board agent)은 기본으로 꺼져 있다. `hub.toml`에서 `enabled = false`를 `enabled = true`로 바꾸고 `wb hub passwd`로 비밀번호를 정한 뒤 `wb hub stop` 다음 `wb hub start`로 재시작해야 켜진다(2026-10-26 사용자 결정: web 기본 비활성, `[web] enabled = true`로 켬). `hub.toml`(`~/.config/omp-workbench/hub.toml`, `$XDG_CONFIG_HOME`이 절대 경로면 그 아래)은 없으면 Hub가 시작할 때와 `wb hub passwd`가 주석 달린 기본 템플릿(0600, 웹 꺼짐)으로 자동으로 만들고, 이미 있는 파일은 건드리지 않는다(2026-10-26 사용자 요청: hub.toml 자동 생성). `wb hub status`는 `web:`(꺼져 있으면 `disabled`와 켜는 방법, 켜져 있으면 listening 주소 또는 `not_listening` 이유)와 평문 HTTP 경고, `board_agent:` 줄도 보이며, Board agent 시작이 실패했으면 그 아래에 원인과 고치는 방법(예: OMP 선택이 거절된 디렉터리와 chmod 명령)을 보인다. Exit code는 0 성공, 1 실패·거절, 2 요건 없음, 3 Hub 실행 중 아님이다.
+세 명령의 설정·동작은 [Task Inbox & Web Board 사용 안내](../task-inbox/USAGE.md)에 있다. 웹(Web Board·외부 `/mcp`·Board agent)은 기본으로 꺼져 있다. `hub.toml`에서 `enabled = false`를 `enabled = true`로 바꾸고 `wb hub passwd`로 비밀번호를 정한 뒤 `wb hub reload`로 반영해야 켜진다(2026-10-26 사용자 결정: web 기본 비활성, `[web] enabled = true`로 켬).
+
+2026-10-27 사용자 결정: bind 여러 주소, allow_from, wb hub reload.
+- `wb hub reload`는 실행 중인 Hub가 `hub.toml`을 엄격하게 다시 읽게 한다. 웹 설정이 바뀌면 웹 listener만 다시 열고(로그인 유지), WB 프로젝트·등록 목록·요청 전달은 건드리지 않는다. 파일이 잘못되었으면 실행 중인 설정을 그대로 두고 항목 이름을 보이며 exit 1, Hub가 없으면 exit 3이다. 웹을 끄는 reload는 실행 중인 Board agent 세트를 멈추지 않는다(`wb hub stop`까지 유지).
+- `[web] bind`는 `["127.0.0.1", "100.101.102.103"]`처럼 여러 IP를 받을 수 있다(같은 port, 하나라도 실패하면 아무것도 열지 않음).
+- `[web] allow_from = ["100.64.0.0/10", "127.0.0.1", "::1"]`처럼 접속할 수 있는 기기의 IP·대역을 좁힐 수 있다(VPN만 허용하는 예. 비어 있으면 제한 없음, loopback도 자동 허용 안 함). 자세한 내용은 [Task Inbox & Web Board 사용 안내](../task-inbox/USAGE.md) 1.2·1.5·10.2. `hub.toml`(`~/.config/omp-workbench/hub.toml`, `$XDG_CONFIG_HOME`이 절대 경로면 그 아래)은 없으면 Hub가 시작할 때와 `wb hub passwd`가 주석 달린 기본 템플릿(0600, 웹 꺼짐)으로 자동으로 만들고, 이미 있는 파일은 건드리지 않는다(2026-10-26 사용자 요청: hub.toml 자동 생성). `wb hub status`는 `web:`(꺼져 있으면 `disabled`와 켜는 방법, 켜져 있으면 listening 주소 전부 또는 `not_listening` 이유)와 평문 HTTP 경고, `config: loaded <시각> (<경로>)`(마지막 reload가 거절되었으면 그 이유 줄 추가), `board_agent:` 줄도 보이며, Board agent 시작이 실패했으면 그 아래에 원인과 고치는 방법(예: OMP 선택이 거절된 디렉터리와 chmod 명령)을 보인다. Exit code는 0 성공, 1 실패·거절, 2 요건 없음, 3 Hub 실행 중 아님이다.
 
 ## 자동 시작
 

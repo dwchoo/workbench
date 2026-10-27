@@ -33,6 +33,13 @@ the inbox reason code (the MCP error code names: ``not_found``, ``forbidden``, `
   ``{link_token, expires_in, ...}``, ``inbox_link_commit{link_token, task_id, spec_revision, task_status}`` ->
   ``{state, version}``, ``inbox_delivery{request_id, delivery_id, outcome}`` -> ``{state, version}``;
 - ``review_mode{root, set?}`` (local) -> ``{review_mode}``.
+
+``reload{}`` (local, 2026-10-27 사용자 결정): the Hub re-reads ``hub.toml`` with the strict parser. An invalid file
+keeps the running config and answers ``ok:false``, ``reason`` ``config_invalid``, ``detail``
+``config_invalid:<item>`` and ``item``. A valid one answers ``{changed: [<key>...], web: <status.web>,
+board_agent: <status.board_agent>, board_agent_note: <text>|null, config: <status.config>}``: a web change
+re-creates only the web listener (an open that fails shows in ``web``); nothing else (WB projects, registry,
+inbox, review dispatch) is touched. ``reload_failed``/``reload_timeout`` when the Hub could not finish it.
 """
 from __future__ import annotations
 
@@ -61,6 +68,7 @@ class ClientType(StrEnum):
     STOP_REQUEST = "stop_request"
     STOP_CONFIRM = "stop_confirm"
     REVIEW_MODE = "review_mode"
+    RELOAD = "reload"
     INBOX_LIST = "inbox_list"
     INBOX_SHOW = "inbox_show"
     INBOX_REVIEW = "inbox_review"
@@ -75,7 +83,7 @@ BACKEND_OPS = frozenset({ClientType.INBOX_LIST.value, ClientType.INBOX_SHOW.valu
                          ClientType.INBOX_LINK_CHECK.value, ClientType.INBOX_LINK_COMMIT.value,
                          ClientType.INBOX_DELIVERY.value})
 LOCAL_OPS = frozenset({ClientType.STATUS.value, ClientType.LIST.value, ClientType.STOP_REQUEST.value,
-                       ClientType.STOP_CONFIRM.value, ClientType.REVIEW_MODE.value})
+                       ClientType.STOP_CONFIRM.value, ClientType.REVIEW_MODE.value, ClientType.RELOAD.value})
 
 
 # Reserved names; (B) answers them with ``unsupported_type`` and (A) opens them.

@@ -137,21 +137,21 @@ def san_entries(web: WebConfig, *, discover: Callable[[], tuple[list[str], list[
                 ) -> tuple[str, ...]:
     """``IP:...``/``DNS:...`` entries for ``web``: never the wildcard address itself.
 
-    A wildcard bind (``0.0.0.0``/``::``) is reached through some host address, so it gets both
+    Each address of a list ``bind`` counts (2026-10-27). A wildcard bind (``0.0.0.0``/``::``) is reached
+    through some host address, so it gets both
     loopback addresses plus the host's own addresses and names; a loopback bind gets both
     loopback addresses; any other bind gets that address. ``localhost`` and ``server_names``
     are always named.
     """
-    bind = ipaddress.ip_address(web.bind)
+    binds = [ipaddress.ip_address(address) for address in web.addresses]  # every bind (2026-10-27 list form)
     addresses: list[str] = []
     names: list[str] = []
     discovered: tuple[list[str], list[str]] = ([], [])
-    if bind.is_unspecified:
+    if any(bind.is_unspecified for bind in binds):
         discovered = discover()
-    if bind.is_unspecified or bind.is_loopback:
+    if any(bind.is_unspecified or bind.is_loopback for bind in binds):
         addresses += ["127.0.0.1", "::1"]
-    if not bind.is_unspecified:
-        addresses.append(str(bind))
+    addresses += [str(bind) for bind in binds if not bind.is_unspecified]
     for text in discovered[0]:
         try:
             addresses.append(str(ipaddress.ip_address(text)))

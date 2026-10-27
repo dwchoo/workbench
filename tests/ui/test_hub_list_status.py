@@ -79,7 +79,7 @@ class WebStates(unittest.TestCase):
         # hub.toml always exists with `enabled = false` (2026-10-26): the hint says to flip it, not to add a line.
         self.assertIn("enabled = false", text)
         self.assertIn("true", text)
-        self.assertIn("재시작", text)
+        self.assertIn("wb hub reload", text)  # 2026-10-27: applied by reload (was: 재시작)
         self.assertNotIn("넣고", text)
 
     def test_listening_shows_the_url_without_a_warning_when_secure(self):

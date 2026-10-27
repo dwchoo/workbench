@@ -18,6 +18,7 @@ from aiohttp import web
 
 from .. import auth
 from . import middleware
+from .refusals import RefusalLog
 from .middleware import (PRINCIPAL, SERVICES, SESSION, api, own_auth, principal_of, public,  # noqa: F401
                          session_of)
 from .pages import board as board_page
@@ -30,15 +31,22 @@ WEBSOCKETS: web.AppKey = web.AppKey("websockets", weakref.WeakSet)
 
 @dataclass(frozen=True, slots=True)
 class OriginPolicy:
-    """What ``Host``/``Origin`` the listener accepts: its bind IP, ``server_names`` and scheme."""
+    """What ``Host``/``Origin`` the listener accepts (its bind IPs, ``server_names`` and scheme) and which
+    client IPs it serves (``allow_from``)."""
 
     bind: str
     tls: bool = False
     server_names: tuple[str, ...] = ()
+    binds: tuple[str, ...] = ()  # every listening address (2026-10-27); empty: ``bind`` alone
+    allow_from: tuple = ()  # client networks (``ipaddress``); empty: every client (2026-10-27)
 
     @property
     def scheme(self) -> str:
         return "https" if self.tls else "http"
+
+    @property
+    def addresses(self) -> tuple[str, ...]:
+        return self.binds or (self.bind,)
 
 
 @dataclass(slots=True)
@@ -64,6 +72,8 @@ class WebServices:
     # Called with a logged-out session token, or None after a password change (every session ended); the
     # Board terminal ends those sessions' WebSockets at once (TI-17).
     session_listeners: list = field(default_factory=list)
+    # Rate-limited hub.log lines for refused requests (2026-10-27); kept across a listener reopen.
+    refusals: RefusalLog = field(default_factory=RefusalLog)
 
     def __post_init__(self) -> None:
         self.sessions = auth.SessionStore(self.db, self.passwords)
@@ -151,7 +161,7 @@ def board_routes(board: Callable[[], object | None]) -> Callable[[web.Applicatio
 
 
 def create_app(services: WebServices, *, routes: Iterable[Callable[[web.Application], None]] = ()) -> web.Application:
-    app = web.Application(middlewares=[middleware.host_check, middleware.body_limit, middleware.origin_check,
+    app = web.Application(middlewares=[middleware.peer_check, middleware.host_check, middleware.body_limit, middleware.origin_check,
                                        middleware.session_check],
                           client_max_size=middleware.BODY_LIMIT)
     app[SERVICES] = services

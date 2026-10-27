@@ -30,7 +30,7 @@ def mode_of(path: Path) -> int:
 
 
 WEB_KEYS = {'bind': '"127.0.0.1"', 'port': '8780', 'tls_cert': '""', 'tls_key': '""',
-            'allow_insecure_http': 'true', 'server_names': '[]'}
+            'allow_insecure_http': 'true', 'server_names': '[]', 'allow_from': '[]'}  # allow_from: 2026-10-27
 BOARD_KEYS = {'model': '""', 'role_prompt_file': '""', 'shell': '""'}
 COMMENTED_KEY = re.compile(r'^# ?([a-z_]+) = (.+)$')
 
@@ -64,6 +64,18 @@ class TemplateContentTests(unittest.TestCase):
         self.assertEqual(commented, {**{('[web]', key): value for key, value in WEB_KEYS.items()},
                                      **{('[board_agent]', key): value for key, value in BOARD_KEYS.items()}})
 
+    def test_the_list_bind_and_allow_from_examples_parse_and_name_loopback_and_a_vpn(self):
+        examples = [re.sub(r'^#\s+예[^:]*:\s*', '', line) for line in self.lines() if re.match(r'^#\s+예', line)]
+        self.assertEqual(len(examples), 2, examples)
+        for example in examples:
+            parsed = config.parse_config(f'[web]\n{example}\n'.encode('utf-8'))
+            self.assertNotEqual(parsed, config.HubConfig(), example)
+        self.assertIn('bind = [', examples[0])
+        self.assertIn('100.64.0.0/10', examples[1])
+        comments = '\n'.join(self.lines())
+        self.assertIn('Tailscale', comments)
+        self.assertIn('"127.0.0.1"과 "::1"', comments)  # loopback is not allowed implicitly
+
     def test_uncommenting_every_key_still_gives_the_defaults(self):
         uncommented = '\n'.join(re.sub(r'^# ?(?=[a-z_]+ = )', '', line) for line in self.lines()) + '\n'
         self.assertNotEqual(uncommented, self.text)
@@ -72,7 +84,8 @@ class TemplateContentTests(unittest.TestCase):
     def test_korean_comments_say_how_to_enable_and_warn_about_lan_and_plain_http(self):
         comments = '\n'.join(line for line in self.lines() if line.lstrip().startswith('#'))
         self.assertRegex(comments, r'[가-힣]')
-        for part in ('enabled = true', 'wb hub passwd', "'wb hub stop'", "'wb hub start'", 'LAN', 'HTTP'):
+        # 2026-10-27: changes are applied with 'wb hub reload' (was: 'wb hub stop' then 'wb hub start')
+        for part in ('enabled = true', 'wb hub passwd', "'wb hub reload'", 'LAN', 'HTTP'):
             self.assertIn(part, comments)
         for key in (*WEB_KEYS, *BOARD_KEYS, 'enabled'):
             described = [line for line in self.lines() if line.startswith('#') and key in line
@@ -267,8 +280,7 @@ class EnablingTheGeneratedFileTests(unittest.TestCase):
         hub = self.box.start_hub()
         text = self.box.cli('hub', 'status')
         line = next(line for line in text.stdout.splitlines() if 'web:' in line)
-        for part in ('web: disabled', str(self.box.config_file), '[web] enabled = true', "'wb hub stop'",
-                     "'wb hub start'"):
+        for part in ('web: disabled', str(self.box.config_file), '[web] enabled = true', "'wb hub reload'"):  # 2026-10-27
             self.assertIn(part, line)
         self.assertEqual(self.box.stop_hub(hub), 0)
         template = self.box.config_file.read_text(encoding='utf-8')

@@ -35,7 +35,7 @@ Hub(B)는 WB 프로젝트를 등록·관측·켜고 끄지만, 요청을 받아 
 
 | 대상 | 위치 | 비고 |
 |---|---|---|
-| 설정 | `$XDG_CONFIG_HOME/omp-workbench/hub.toml`(절대 경로일 때), 아니면 `~/.config/omp-workbench/hub.toml` | Hub 시작 때 읽는다(`tomllib`). 없으면 Hub 시작 때와 `wb hub passwd`가 주석 템플릿을 만든다(아래 "초기 템플릿"). 그 밖에는 쓰지 않는다. 읽을 파일이 없으면 기본값 |
+| 설정 | `$XDG_CONFIG_HOME/omp-workbench/hub.toml`(절대 경로일 때), 아니면 `~/.config/omp-workbench/hub.toml` | Hub 시작 때와 `wb hub reload` 때 읽는다(`tomllib`, 2026-10-27 사용자 결정). 없으면 Hub 시작 때와 `wb hub passwd`가 주석 템플릿을 만든다(아래 "초기 템플릿"). 그 밖에는 쓰지 않는다. 읽을 파일이 없으면 기본값 |
 | TLS 기본 경로 | `<config dir>/omp-workbench/tls/hub-cert.pem`, `hub-key.pem` | `wb hub tls --self-signed`가 만든다. key 0600, 디렉터리 0700 |
 | 비밀번호 | `<hub state>/auth.json` + `<hub state>/auth.lock` | 0600. `wb hub passwd`와 Hub(웹 비밀번호 변경)가 lock을 잡고 원자적으로 쓴다 |
 | Hub DB | `<hub state>/hub.sqlite3` | 0600, WAL. 세션·API key·로그인 실패·감사. Hub만 쓴다 |
@@ -52,12 +52,13 @@ Hub(B)는 WB 프로젝트를 등록·관측·켜고 끄지만, 요청을 받아 
 ```toml
 [web]
 enabled = false             # TOML bool. 기본 꺼짐(2026-10-26 사용자 결정). true일 때만 아래 조건으로 연다
-bind = "127.0.0.1"          # IP literal만. "0.0.0.0"/"::"는 명시할 때만
+bind = "127.0.0.1"          # IP literal 하나 또는 IP literal 목록(2026-10-27). "0.0.0.0"/"::"는 명시할 때만
 port = 8780                 # 1..65535. 0은 임의 port(테스트·고급). 실제 port는 status에 보인다
 tls_cert = ""               # "" = TLS 기본 경로
 tls_key = ""
 allow_insecure_http = true  # 기본 허용(D-10)
 server_names = []           # bind IP 외에 받을 Host 이름(예: "box.vpn"). DNS rebinding 방어용
+allow_from = []             # 접속을 받을 client IP·CIDR 목록(2026-10-27). [] = 제한 없음
 
 [board_agent]
 model = ""                  # OMP model selector. "" = omp-models.yml의 manager 항목
@@ -65,24 +66,41 @@ role_prompt_file = ""       # 추가 role prompt 파일. 기본 prompt 뒤에 �
 shell = ""                  # "" = $SHELL, 없으면 /bin/sh
 ```
 
+- 2026-10-27 사용자 결정: bind 여러 주소, allow_from, wb hub reload.
+  - `bind`는 IP 문자열 하나(지금과 같음) 또는 비어 있지 않은 IP 문자열 목록(최대 16개)이다. 빈 목록, 같은 주소의 중복(`"::1"`과 `"0:0:0:0:0:0:0:1"`도 중복), 문자열 아닌 값, hostname, scope가 붙은 IPv6는 `config_invalid:web.bind`. `WebConfig.bind`는 첫 주소, `WebConfig.addresses`는 전체다.
+  - Listener는 모든 주소에서 같은 `port`로 연다. `port = 0`이면 첫 주소가 받은 port를 나머지 주소에도 쓰고, 그 port가 다른 주소에서 이미 쓰이고 있으면 전체를 새 port로 최대 5번 다시 시도한다. 한 주소라도 열지 못하면 이미 연 주소도 모두 닫고 `bind_failed`(`detail` errno 이름, `address` `<주소>:<port>`)다. 일부만 여는 일은 없다.
+  - Host 검사·평문 경고·`wb hub tls` SAN은 모든 bind 주소를 쓴다: Host는 어느 bind IP든 받고, loopback bind가 하나라도 있으면 `localhost`를 받고, wildcard가 하나라도 있으면 IP literal 전부를 받는다. 평문 HTTP이고 loopback이 아닌 주소가 하나라도 있으면 경고한다.
+  - `allow_from`은 IPv4·IPv6 주소나 network(`ipaddress.ip_network(strict=True)`)의 목록(최대 256개)이다. Host bit가 있는 값(`"192.168.10.5/24"`)은 정규화하지 않고 `config_invalid:web.allow_from`이다(한 주소인지 /24 전체인지 모호하고, 조용히 넓히면 허용 범위가 256배가 되기 때문). IPv4-mapped IPv6 항목(`::ffff:0:0/96` 안)도 거절한다(peer는 IPv4로 비교하므로 맞을 수 없다). 중복은 하나로 합친다. 없거나 `[]`면 지금과 같이 거르지 않는다. Loopback도 자동 허용하지 않는다. 이 컴퓨터에서 쓰려면 `"127.0.0.1"`, `"::1"`을 넣는다.
 - 2026-10-26 사용자 결정: web 기본 비활성, `[web] enabled = true`로 켬. 웹이 가장 많이 노출되는 부분이기 때문이다. `enabled`가 없거나 `false`면 같은 listener가 내는 웹 화면, 외부 `/mcp`, `/ws/board`를 모두 열지 않고, 웹에서만 쓰는 Board agent 세트도 만들지 않는다(그 세트만 쓰는 내부 MCP listener도 시작되지 않는다). registry·목록·hub_v1·inbox writer·검토 전달·ui_v1은 그대로 동작한다. `enabled`가 bool이 아니면 `config_invalid:web.enabled`.
 - 초기 템플릿(2026-10-26 사용자 요청: hub.toml 자동 생성). Hub는 시작할 때마다(autostart·`wb hub start`·systemd·foreground 모두 `wb _hub`의 같은 경로) instance lock을 잡은 뒤, `hub.json`을 내기 전에 `config_path()`에 아무것도 없으면 `config.CONFIG_TEMPLATE`을 쓴다. `wb hub passwd`도 비밀번호를 정한 뒤 같은 함수로 만든다(안내 줄이 가리키는 파일이 실제로 있게). 규칙:
-  - 내용: 한국어 주석으로 모든 key와 기본값, 웹 켜는 순서(`enabled = false`를 `true`로 → `wb hub passwd` → `wb hub stop` 뒤 `wb hub start`), LAN·평문 HTTP 보안 한 줄을 적는다. 주석이 아닌 줄은 `[web]`·`enabled = false`·`[board_agent]`뿐이고, 나머지 key는 기본값을 적은 주석이다. 엄격 parser로 읽으면 정확히 `HubConfig()`(모든 기본값)이므로 웹은 사용자가 고치기 전까지 꺼져 있다.
+  - 내용: 한국어 주석으로 모든 key와 기본값, 웹 켜는 순서(`enabled = false`를 `true`로 → `wb hub passwd` → `wb hub reload`, 2026-10-27), LAN·평문 HTTP 보안 한 줄, `bind` 목록 예와 `allow_from` 예(loopback 안내, Tailscale `100.64.0.0/10`)를 적는다. 예는 `#   예: ...` 꼴이라 주석을 모두 풀어도 기본값 그대로다. 주석이 아닌 줄은 `[web]`·`enabled = false`·`[board_agent]`뿐이고, 나머지 key는 기본값을 적은 주석이다. 엄격 parser로 읽으면 정확히 `HubConfig()`(모든 기본값)이므로 웹은 사용자가 고치기 전까지 꺼져 있다.
   - 이미 있는 것은 절대 바꾸지 않는다. 빈 파일, `config_invalid`인 파일, 사용자가 고친 파일, symlink(대상이 없는 것 포함)도 그대로 둔다. 같은 디렉터리의 0600 임시 파일(`O_CREAT|O_EXCL|O_NOFOLLOW`)을 쓰고 fsync한 뒤 `link()`로 넣는다(이름이 있으면 `EEXIST`로 실패, symlink를 따라가지 않음). hard link가 안 되는 file system에서는 `O_CREAT|O_EXCL|O_NOFOLLOW`로 직접 쓴다. 동시에 만드는 쪽(다른 `wb hub passwd` 등)에 진 경우는 조용히 넘어간다.
   - 권한: 파일 0600. `omp-workbench` 설정 디렉터리가 없으면 0700으로 만든다. 있는 디렉터리의 권한은 바꾸지 않는다. 디렉터리가 symlink·디렉터리 아님·다른 소유자·group/other 쓰기 가능이면 unsafe로 보고 만들지 않는다.
   - 만들지 못하면(unsafe 디렉터리, `EACCES`·`EROFS` 등) Hub는 `hub.log`에 `[workbench] hub.toml template not created (<이유>): <경로>; the Hub uses the defaults` 한 줄만 남기고 기본값으로 계속 동작한다. `wb hub passwd`는 아무것도 출력하지 않는다.
   - symlink인 `hub.toml`은 읽을 때는 지금처럼 따라간다(대상 파일의 내용을 쓴다). 대상이 없으면 파일 없음과 같아 기본값(`disabled`)이고, 템플릿은 그 symlink나 대상에 쓰지 않는다.
-- 모르는 key·잘못된 형식·hostname인 `bind`는 `config_invalid:<항목>`이다. 웹 listener와 Board agent는 열지 않고 Hub의 나머지 기능(registry·목록·제어 socket)은 동작한다.
+- 모르는 key·잘못된 형식·hostname인 `bind`는 `config_invalid:<항목>`이다. Hub 시작 때면 웹 listener와 Board agent는 열지 않고 Hub의 나머지 기능(registry·목록·제어 socket)은 동작한다. `wb hub reload` 때면 실행 중인 설정을 그대로 둔다(아래 "`wb hub reload`").
 - TLS 판정: cert·key 파일이 **둘 다** 있으면 HTTPS(`ssl.create_default_context(Purpose.CLIENT_AUTH)`, TLS ≥ 1.2). 하나만 있거나 읽기·load가 실패하면 `tls_invalid`로 listener를 열지 않는다(평문으로 내려가지 않는다). 둘 다 없으면 `allow_insecure_http=true`일 때 평문 HTTP, `false`면 `insecure_http_disallowed`로 열지 않는다(BRIEF P2-AC-16 "SPEC에서 정함").
-- 평문 경고: 평문 HTTP이고 bind가 loopback(127.0.0.0/8, ::1)이 아니면(`0.0.0.0` 포함) `insecure_warning: true`. 웹 모든 page 상단 banner와 `wb hub status`에 `평문 HTTP로 LAN에 열려 있습니다. VPN 등 네트워크 보호가 필요합니다.`를 보인다.
+- 평문 경고: 평문 HTTP이고 bind 주소 중 하나라도 loopback(127.0.0.0/8, ::1)이 아니면(`0.0.0.0` 포함) `insecure_warning: true`. 웹 모든 page 상단 banner와 `wb hub status`에 `평문 HTTP로 LAN에 열려 있습니다. VPN 등 네트워크 보호가 필요합니다.`를 보인다.
 
 ### Web listener 수명(D-10, P2-AC-15·16)
 
-- Listener는 (1) `hub.toml`이 유효하고 (1a) `[web] enabled = true`이고(2026-10-26 사용자 결정) (2) `auth.json`에 유효한 비밀번호가 있고 (3) TLS 판정이 `tls`/`insecure_ok`일 때만 연다. 열기 전과 실패 상태는 hub_v1 `status.web.state`에 남는다: `disabled`(`config`: Hub가 읽은 `hub.toml` 경로. `config_invalid` 다음, 나머지 조건보다 먼저 판정), `password_not_set`, `config_invalid`, `tls_invalid`, `insecure_http_disallowed`, `bind_failed`(errno 이름 detail, 30 s마다 재시도), `listening`(`url`, `tls`, `insecure_warning`), `stopping`.
-- Hub watchdog(2 s)이 `auth.json`의 (dev, ino, mtime_ns, size)를 본다. 비밀번호가 새로 생기면 Hub 재시작 없이 listener를 연다. `hub.toml`·TLS 파일 변경은 Hub 재시작 때 반영한다(`wb hub tls`가 그렇게 안내한다).
+- Listener는 (1) `hub.toml`이 유효하고 (1a) `[web] enabled = true`이고(2026-10-26 사용자 결정) (2) `auth.json`에 유효한 비밀번호가 있고 (3) TLS 판정이 `tls`/`insecure_ok`일 때만 연다. 열기 전과 실패 상태는 hub_v1 `status.web.state`에 남는다: `disabled`(`config`: Hub가 읽은 `hub.toml` 경로. `config_invalid` 다음, 나머지 조건보다 먼저 판정), `password_not_set`, `config_invalid`, `tls_invalid`, `insecure_http_disallowed`, `bind_failed`(errno 이름 detail, 실패한 `address`, 30 s마다 재시도), `listening`(`url`: 첫 주소, `urls`: 모든 주소, `bind`: 첫 주소, `binds`, `port`, `allow_from`, `tls`, `insecure_warning`), `stopping`.
+- Hub watchdog(2 s)이 `auth.json`의 (dev, ino, mtime_ns, size)를 본다. 비밀번호가 새로 생기면 Hub 재시작 없이 listener를 연다. `hub.toml`·TLS 파일 변경은 `wb hub reload`(또는 Hub 재시작) 때 반영한다(2026-10-27).
+
+### `wb hub reload`(2026-10-27 사용자 결정)
+
+- hub_v1 local op `reload{}`. 같은 uid의 local principal만 쓴다(backend principal은 `unsupported_type`). Hub는 `hub.toml`을 엄격 parser로 다시 읽고 TLS를 다시 판정한다(cert·key 파일의 stat이 바뀌어도 `web.tls_files` 변경).
+- 무효: 실행 중인 설정을 그대로 둔다. 답 `ok:false`, `reason:"config_invalid"`, `detail:"config_invalid:<항목>"`, `item`. `status.config.reload_error = {reason, at}`. CLI는 항목을 적은 한국어 줄을 stderr에 내고 exit 1.
+- 유효하고 웹 설정(`enabled`·`bind`·`port`·TLS·`allow_insecure_http`·`server_names`·`allow_from`)이 바뀜: 웹 listener만 다시 만든다. 기존 site를 닫고(열린 HTTP·WebSocket 연결은 끊길 수 있고 Board client는 다시 붙는다) 새 설정으로 연다. `hub.sqlite3`·WebServices(로그인 세션은 `hub.sqlite3`에 있다)·Board terminal은 유지한다. 새 listener를 열지 못하면(port 사용 중 등) 이전 설정으로 되돌리지 않는다: 사용자가 일부러 바꾼 파일과 실제 상태가 어긋나지 않게 하고, 보안 때문에 뺀 주소를 다시 열지 않기 위해서다. `status.web`은 `bind_failed`(원인·주소)이고 30 s마다 새 설정으로 다시 시도한다. CLI는 원인을 보이고 exit 1. Hub는 reload 때문에 죽거나 멈추지 않는다(`RELOAD_TIMEOUT` 20 s, 실패는 `reload_failed`/`reload_timeout`).
+- 바뀐 것이 없으면 listener는 그대로이고 답의 `changed`가 `[]`이다.
+- 꺼짐→켜짐: listener를 열고 Hub 시작 때처럼 Board agent 세트를 만든다(이미 있으면 그것을 쓴다). 켜짐→꺼짐: listener를 닫는다(외부 `/mcp`, `/ws/board`도 닫힘). 실행 중인 Board agent 세트는 죽이지 않는다(작업 중일 수 있다). 그 세트와 내부 MCP listener는 `wb hub stop`까지 계속 돌고 status에 보이며 답의 `board_agent_note`가 그렇게 말한다. 다시 켜면 같은 세트를 쓴다(중복 생성 없음).
+- `[board_agent]` 변경은 다음 Board agent 시작 때 적용된다(답의 `board_agent_note`).
+- WB 프로젝트 backend·manager·worker를 시작·정지·재시작하거나 signal하지 않는다. registry, inbox writer, 검토 전달도 건드리지 않는다.
+- 답: `{changed: [<"web.bind"|"web.port"|...|"web.tls_files"|"board_agent.<key>">], web: <status.web>, board_agent: <status.board_agent>, board_agent_note: <text>|null, config: <status.config>}`. 시작 때 `config_invalid`였으면 `changed`는 `["web", "board_agent"]`.
+- `status.config = {path, loaded_at, state:"ok"|"config_invalid", detail?, reload_error: {reason, at}|null}`. `wb hub status`는 `config: loaded <시각> (<경로>)`와, 마지막 reload가 거절되었으면 `config: 마지막 'wb hub reload' 실패 <시각>: <reason> — 지금은 이전 설정으로 동작합니다`를 보인다. 성공한 reload는 오류를 지운다. TUI Hub 목록 header의 web 줄 끝에 `· config HH:MM`, `· reload 실패: <reason>`을 붙인다.
 - 같은 loop에 붙고, blocking 작업(scrypt, SQLite, `/proc`, ui_v1 연결)은 executor에서 돈다.
 - 정상 정지 순서(Hub SPEC 정지 순서의 (A) 확장 지점): 새 HTTP 연결 거절(site 정지) → WebSocket을 1001로 닫음 → Board agent 세트 종료 → API key 마지막 사용 시각 flush → 열린 inbox DB 닫기·`inbox.lock` 해제 → 기존 정지.
-- `wb hub status`: `web: listening https://10.8.0.2:8780` / `web: disabled — 웹은 꺼져 있습니다. <hub.toml 경로>에서 '[web] enabled = true'로 설정하고 'wb hub stop' 뒤 'wb hub start'로 Hub를 재시작하세요.` / `web: not_listening (password_not_set) — 'wb hub passwd'로 비밀번호를 정하세요` / 평문 경고 줄. 웹이 꺼져 있을 때 `wb hub passwd`는 비밀번호를 정한 뒤 같은 안내를 한 줄 더 낸다. `board_agent:` 줄(아래).
+- `wb hub status`: `web: listening https://10.8.0.2:8780`(여러 주소면 URL을 공백으로 이어서, `allow_from`이 있으면 다음 줄에 `allow_from: <목록> (목록 밖 주소는 403)`) / `web: disabled — 웹은 꺼져 있습니다. <hub.toml 경로>에서 '[web] enabled = true'로 설정하고 'wb hub reload'로 반영하세요.`(2026-10-27) / `web: not_listening (bind_failed:EADDRINUSE 127.0.0.2:8780)` / `web: not_listening (password_not_set) — 'wb hub passwd'로 비밀번호를 정하세요` / 평문 경고 줄. 웹이 꺼져 있을 때 `wb hub passwd`는 비밀번호를 정한 뒤 같은 안내를 한 줄 더 낸다. `board_agent:` 줄(아래).
 
 ### 인증·세션·CSRF(D-11, P2-AC-17, ADR-0003)
 
@@ -99,7 +117,11 @@ shell = ""                  # "" = $SHELL, 없으면 /bin/sh
 CSRF·출처:
 - 세션마다 `csrf_token`(32 B). 모든 상태 변경(POST/PUT/PATCH/DELETE)은 form field `csrf` 또는 header `X-CSRF-Token`이 세션 값과 같아야 한다(아니면 403 `csrf_failed`, 아무것도 바꾸지 않음). WebSocket은 hello의 `csrf`로 확인한다.
 - `Origin`이 있으면 기대 origin(`<scheme>://<Host>`)과 같아야 한다. `Origin`이 없고 `Referer`가 있으면 그 origin이 같아야 한다. 아니면 403.
-- Host 검사(DNS rebinding 방어, 모든 route): `Host`는 `<bind IP>:<port>`, `server_names`의 `<name>:<port>`, bind가 loopback이면 `localhost:<port>`만 받는다. bind가 `0.0.0.0`/`::`이면 IP literal Host 전부와 `server_names`를 받는다. 아니면 421.
+- Client IP 검사(`allow_from`, 2026-10-27, 모든 route의 가장 바깥 middleware): `allow_from`이 있으면 TCP peer 주소(transport `peername`)만 본다. `X-Forwarded-For`·`Forwarded`·`X-Real-IP` 등 header는 믿지 않는다. IPv4-mapped IPv6 peer(`::ffff:a.b.c.d`)는 IPv4로 바꿔 비교한다. 읽을 수 없는 peer는 거절한다. 거절은 본문 없는 403이고 Host·Origin·세션 조회·CSRF·로그인 throttle·handler보다 먼저 일어나며 page, `/static`, 외부 `/mcp`, `/ws/board` upgrade, 없는 경로 모두 같다(`Set-Cookie` 없음). Board agent의 내부 MCP listener(127.0.0.1)는 이 검사 대상이 아니다.
+- Host 검사(DNS rebinding 방어, 모든 route): `Host`는 `<bind IP>:<port>`(bind 주소 중 아무것), `server_names`의 `<name>:<port>`, bind 주소 중 loopback이 있으면 `localhost:<port>`만 받는다. bind 주소 중 `0.0.0.0`/`::`가 있으면 IP literal Host 전부와 `server_names`를 받는다. 아니면 421.
+- 거절 기록(2026-10-27 사용자 요구): Host 거절(421), `allow_from` 거절(403), 로그인 form token 불일치, 세션 CSRF 불일치는 `hub.log`(stderr)에 한 줄을 남긴다. 예: `[workbench] web: refused Host 'dgx-spark:8780' on 100.116.175.100:8780 (421 misdirected_request); allowed: bind IP, server_names, localhost on loopback bind`, `[workbench] web: refused client 10.1.2.3 on 127.0.0.1:8780 (403 allow_from); not in [web] allow_from`. Host 값은 출력 가능한 ASCII만(나머지는 `?`), 100자까지, 따옴표로 감싼다. token·비밀번호 값은 남기지 않는다. 같은 (이유, 값)은 60 s에 한 줄, 전체는 60 s에 20줄까지이고 나머지는 세기만 해서 다음 줄에 `(+N more refusals not logged: rate limit)`로 붙인다. 기억하는 key는 그 window에 쓴 줄 수(최대 20개)를 넘지 않는다(`web/refusals.py`).
+- 오래된 form(2026-10-27 사용자 요구): 로그인 form의 double-submit token이 맞지 않으면(cookie 없음·불일치) 맨 `csrf_failed` 대신 로그인 화면을 새 token·cookie로 다시 보이고 403과 `로그인 화면이 만료되었습니다. 다시 로그인하세요.`를 보인다. 비밀번호는 확인하지 않고 로그인 실패로 세지 않는다(throttle·감사 없음). 로그인한 page form의 세션 CSRF가 맞지 않으면 403 작은 한국어 page(`화면이 오래되었습니다. 새로 고친 뒤 다시 시도하세요.`, 같은 출처 `Referer`의 path로 가는 링크, 없으면 `/`, reason code `csrf_failed` 표시)를 보인다. API route는 지금처럼 JSON `{"ok":false,"reason":"csrf_failed"}`다.
+- 로그인 token 유지(2026-10-27 hotfix): `GET /login`은 형식이 맞는 `wb_hub_login` cookie(`token_urlsafe(32)`, 43자)가 있으면 그 값을 다시 쓰고 cookie를 같은 값으로 다시 내린다(Max-Age 갱신). 없거나 형식이 틀릴 때만 새 token을 만든다. `/favicon.ico`는 공개 route로 204(`Cache-Control: public, max-age=86400`)이고 redirect·cookie가 없다. 이전에는 browser의 favicon 요청이 `303 /login`으로 가서 새 cookie가 열린 form의 token을 무효로 만들었다.
 - 로그인 form은 세션 전 double-submit token(`wb_hub_login` cookie, HttpOnly, SameSite=Strict + hidden field)을 쓴다.
 
 로그인 실패 지연:
@@ -302,7 +324,7 @@ Board agent는 별도 내부 listener(아래)의 같은 `/mcp`를 쓴다. 외부
 - Backend는 hub_v1 socket에 hello `{"v":1,"type":"hello","client":"workbench-backend","project_id":<id>}`로 접속한다. Hub는 `SO_PEERCRED` pid·uid를 읽고, registry에서 그 `project_id` 항목을 찾아 `inspect_backend` 신원(pid·start_ticks)이 peer pid·`start_ticks(peer pid)`와 같을 때만 principal `manager(project_id)`를 준다. 아니면 `reject`/`principal_mismatch`(TI-T04). 이 확인은 같은 uid 안의 혼동 방지이며 보안 경계는 0600 socket과 uid다.
 - Backend는 연결을 하나 유지하고 끊기면 5 s마다 다시 붙는다. Hub가 없어도 backend·core는 영향이 없다(P2-AC-01). Backend는 Hub를 자동 시작하지 않는다.
 - 새 op(backend principal 전용): `inbox_list{states?, limit?}`, `inbox_show{request_id}`, `inbox_review{request_id, action:"begin_review"|"ask"|"comment"|"reject"|"close", body?, outcome?, summary?}`, `inbox_link_check{request_id}` → `{link_token, expires_in:30}`, `inbox_link_commit{link_token, task_id, spec_revision, task_status}` → `{state:"READY"|"RUNNING"}`, `inbox_delivery{request_id, delivery_id, outcome}`. 모든 결과는 hub_v1 `result`/`failure`이고 실패 reason은 MCP 오류 code와 같은 이름을 쓴다.
-- Local principal 새 op: `review_mode{root, set?}`(`wb hub review-mode`). 예약 op `power_on`·`power_off_*`·`pause`·`resume`·`confirm_boot`는 hub_v1 socket에서 계속 `unsupported_type`이다(웹은 같은 process 안에서 라이브러리를 부른다. 이 socket으로 열 소비자가 없다).
+- Local principal 새 op: `review_mode{root, set?}`(`wb hub review-mode`), `reload{}`(`wb hub reload`, 2026-10-27, 위 "`wb hub reload`"). 예약 op `power_on`·`power_off_*`·`pause`·`resume`·`confirm_boot`는 hub_v1 socket에서 계속 `unsupported_type`이다(웹은 같은 process 안에서 라이브러리를 부른다. 이 socket으로 열 소비자가 없다).
 
 **Hub → backend (ui_v1, attach 없음, client `workbench-hub`)**: HB-06의 `NON_ATTACHED_CONTROL_CLIENTS` 규칙(이름 + server 쪽 peer uid == backend euid)을 다음 새 request type에도 적용한다. 다른 client나 다른 uid는 `not_attached`. ui_v1 `VERSION`은 그대로(추가). 옛 backend는 `unsupported_type`/`not_attached` → Hub는 `backend_too_old`로 보인다.
 - `inbox_notice{request_id, delivery_id, event, fields}` → `{queued:true, notice_id}`. Backend는 Watchdog notice queue에 `inbox_request` type으로 넣는다(bridge `NOTICE_TYPES.manager`에 추가. recovery skill 문서 대상인 `MANAGER_NOTICE_TYPES`에는 넣지 않고 별도 상수 `INBOX_NOTICE_TYPE`로 둔다, 2026-10-25 TI-10 리뷰 판단). `event ∈ {new, answered, updated, revised, cancelled, linked_task_closed}`. `fields` = `{request_id, seq, title, origin, state, excerpt(≤1000자), hint}`. 본문 전체는 넣지 않는다(manager는 `workbench_inbox show`로 읽는다).
@@ -399,9 +421,10 @@ Frame:
 | 명령 | 동작 | Hub 자동 시작 |
 |---|---|---|
 | `wb hub passwd [--stdin]` | 위 비밀번호. 예약 거절을 대체. 비밀번호를 정한 뒤 `hub.toml`이 없으면 초기 템플릿을 만든다(2026-10-26 사용자 요청: hub.toml 자동 생성) | 아니오 |
-| `wb hub tls --self-signed [--force]` | `openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 -nodes -days 825 -subj /CN=<bind 또는 hostname> -addext subjectAltName=IP:<bind>,DNS:localhost[,DNS:<server_names>…]`로 TLS 경로에 만든다. (2026-10-25 orchestrator 정정) wildcard bind(`0.0.0.0`/`::`)면 그 IP 대신 `IP:127.0.0.1`·`IP:::1`과 host 주소(hostname 해석·interface 주소, best effort)를 넣고, loopback bind는 두 loopback IP를 넣는다. leaf 확장(`CA:FALSE`, `serverAuth`)을 붙이고 `--force` 교체는 key·cert 쌍을 함께 바꾼다(실패 시 이전 쌍 복원). 출력에 SAN 목록을 보인다. 이미 있으면 `--force` 없이 거절. openssl이 없으면 exit 2. 끝나면 지문(SHA-256)과 `Hub를 다시 시작하면 HTTPS로 열립니다`를 보인다 | 아니오 |
+| `wb hub tls --self-signed [--force]` | `openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 -nodes -days 825 -subj /CN=<bind 또는 hostname> -addext subjectAltName=IP:<bind>,DNS:localhost[,DNS:<server_names>…]`로 TLS 경로에 만든다. (2026-10-25 orchestrator 정정) wildcard bind(`0.0.0.0`/`::`)면 그 IP 대신 `IP:127.0.0.1`·`IP:::1`과 host 주소(hostname 해석·interface 주소, best effort)를 넣고, loopback bind는 두 loopback IP를 넣는다. leaf 확장(`CA:FALSE`, `serverAuth`)을 붙이고 `--force` 교체는 key·cert 쌍을 함께 바꾼다(실패 시 이전 쌍 복원). 출력에 SAN 목록을 보인다. 이미 있으면 `--force` 없이 거절. openssl이 없으면 exit 2. 끝나면 지문(SHA-256)과 `Hub를 다시 시작하면 HTTPS로 열립니다. 실행 중인 Hub에는 'wb hub reload'로 반영하세요.`를 보인다. `bind`가 목록이면 모든 주소를 같은 규칙으로 SAN에 넣는다(2026-10-27) | 아니오 |
+| `wb hub reload` | 실행 중인 Hub가 `hub.toml`을 다시 읽는다(위 "`wb hub reload`"). 바뀐 항목, `web:` 줄, Board agent 안내를 보인다. 무효면 exit 1, 새 listener를 열지 못하면 exit 1, Hub가 없으면 exit 3 | 아니오 |
 | `wb hub review-mode <PATH> [auto\|manual]` | 값 없으면 현재 값. Hub `review_mode` op(D-32). 등록되지 않은 PATH는 exit 1 | 예 |
-| `wb hub status` | `web:`, 평문 경고, `board_agent:` 줄 추가. `--json`은 hub_v1 `status` 그대로 | 아니오 |
+| `wb hub status` | `web:`, 평문 경고, `config:`(2026-10-27), `board_agent:` 줄 추가. `--json`은 hub_v1 `status` 그대로 | 아니오 |
 
 ## 상태 전이, 실패와 경계 동작
 

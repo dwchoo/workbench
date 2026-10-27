@@ -8,6 +8,7 @@ refresh never retargets it.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime
 
 from workbench.hub import registry
 from workbench.hub.presentation import COLUMNS, power_text, row_cells
@@ -18,7 +19,7 @@ LOADING_TEXT = "불러오는 중…"
 HUB_UNKNOWN_TEXT = "Hub 상태 불명"
 HUB_LOADING_TEXT = "Hub 상태 불러오는 중…"
 UNKNOWN = "불명"
-WEB_ON_HINT = "hub.toml의 [web] enabled = false를 true로 바꾸고 Hub를 재시작하세요"
+WEB_ON_HINT = "hub.toml의 [web] enabled = false를 true로 바꾸고 'wb hub reload'를 실행하세요"
 INSECURE_MARK = "[!] 평문 HTTP"
 EMPTY_TEXT = "등록된 WB 프로젝트가 없습니다. 'wb init <폴더>'로 만들거나 'wb hub add <폴더>'로 등록하세요."
 
@@ -96,13 +97,27 @@ def web_text(web: object) -> str:
     web = _dict(web)
     detail = _text(web.get("detail"))
     if state == "listening":
-        url = _text(web.get("url")) or UNKNOWN
-        return f"web: listening {url}" + (f" {INSECURE_MARK}" if web.get("insecure_warning") else "")
+        urls = [url for url in web.get("urls") or () if _text(url)] or [_text(web.get("url")) or UNKNOWN]
+        return f"web: listening {' '.join(urls)}" + (f" {INSECURE_MARK}" if web.get("insecure_warning") else "")
     if state == "disabled":
         return f"web: disabled — {WEB_ON_HINT}"
     if state == "config_invalid":
         return f"web: config_invalid:{detail or UNKNOWN}"
     return f"web: not_listening: {state}" + (f":{detail}" if detail else "")
+
+
+def config_text(config: object) -> str:
+    """`` · config HH:MM`` (when the running ``hub.toml`` was loaded) and `` · reload 실패: <reason>`` after a refused
+    ``wb hub reload`` (2026-10-27); empty for a Hub that does not send ``config``."""
+    config = _dict(config)
+    loaded = config.get("loaded_at")
+    if not isinstance(loaded, (int, float)) or isinstance(loaded, bool):
+        return ""
+    text = f" · config {datetime.fromtimestamp(loaded).strftime('%H:%M')}"
+    error = _dict(config.get("reload_error"))
+    if _text(error.get("reason")):
+        text += f" · reload 실패: {error['reason']}"
+    return text
 
 
 def board_text(status: dict) -> str:
@@ -184,7 +199,7 @@ class HubListModel:
             parts.append(f"가동 {_uptime_text(now - started)}")
         if not all(key in status for key in ("hub", "registry", "web", "board_agent")):
             parts.insert(1, HUB_UNKNOWN_TEXT)  # a partial reply: the rest of what it lacks is unknown
-        return [" · ".join(parts), web_text(status.get("web"))]
+        return [" · ".join(parts), web_text(status.get("web")) + config_text(status.get("config"))]
 
     def table(self, now: float) -> list[list[str]]:
         """Header cells and one list of cells per row: the very cells ``wb hub list`` prints."""

@@ -19,13 +19,15 @@ from aiohttp import web
 from ... import auth
 from .. import render
 from . import settings
-from ..middleware import (SERVICES, SESSION_TOKEN, clear_session_cookie, public, refuse, see_other,
+from ..middleware import (SERVICES, SESSION_TOKEN, clear_session_cookie, peer_of, public, see_other,
                           session_of, set_session_cookie)
+from ..refusals import printable
 
 LOGIN_COOKIE = "wb_hub_login"
 LOGIN_COOKIE_MAX_AGE = 3600
 LOGIN_FIELD = "login_token"
 WRONG_PASSWORD = "비밀번호가 맞지 않습니다"
+LOGIN_EXPIRED = "로그인 화면이 만료되었습니다. 다시 로그인하세요."
 WAIT_TEXT = "로그인 시도가 너무 잦습니다. {seconds}초 뒤 다시 시도하세요."
 USER_AGENT_LIMIT = 256
 
@@ -143,8 +145,16 @@ UNAVAILABLE = "password_unavailable"
 async def post_login(request: web.Request) -> web.Response:
     services = request.app[SERVICES]
     form = await request.post()
-    if not _same(request.cookies.get(LOGIN_COOKIE), form.get(LOGIN_FIELD)):
-        return refuse(request, 403, "csrf_failed")
+    cookie, field = request.cookies.get(LOGIN_COOKIE), form.get(LOGIN_FIELD)
+    if not _same(cookie, field):
+        # 2026-10-27: an expired cookie, another tab or a page from the cache. The page again with a fresh token;
+        # the password is never checked and nothing counts as a login failure. The log never names a token.
+        cause = ("login cookie absent" if not cookie else "login token absent" if not field
+                 else "login token mismatched")
+        peer = printable(peer_of(request))
+        services.refusals.note("login_form", f"{peer} {cause}", f"[workbench] web: refused login form from {peer} "
+                               f"(403 {cause}); the login page was shown again with a fresh token")
+        return login_page(request, status=403, error=LOGIN_EXPIRED, fresh=True)
     verdict = await verify_password(request, form.get("password"))
     if verdict.unavailable:
         return web.Response(status=503, text=UNAVAILABLE)

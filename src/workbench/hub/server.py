@@ -38,6 +38,10 @@ LOCAL_PRINCIPAL = Principal.local()
 STOP_SIGNALS = (signal.SIGTERM, signal.SIGINT)
 WATCHDOG_INTERVAL = 2.0
 WEB_POLL_TIMEOUT = 20.0  # one listener poll (auth.json read, audit note, open) never stalls the watchdog
+RELOAD_TIMEOUT = 20.0  # one ``wb hub reload`` (file read, TLS decision, listener close and open)
+BOARD_RUNNING_NOTE = ("웹을 꺼도 실행 중인 Board agent 세트는 멈추지 않습니다. 'wb hub stop'까지 계속 실행되고, "
+                      "웹을 다시 켜면 같은 세트를 그대로 씁니다.")
+BOARD_CONFIG_NOTE = "[board_agent] 변경은 다음 Board agent 시작(재시작) 때 적용됩니다."
 
 
 def registry_summary(layout: HubLayout) -> dict:
@@ -91,6 +95,36 @@ def backend_mismatch(entries: list[registry.Entry], project_id: str, peer: tuple
     return None
 
 
+def tls_signature(tls: hub_config.TlsDecision, cert: Path, key: Path) -> tuple:
+    """What a reload compares to see a changed TLS decision or replaced cert/key files ('wb hub tls')."""
+    def stat_of(path: Path) -> tuple | None:
+        try:
+            info = os.stat(path)
+        except OSError:
+            return None
+        return (info.st_dev, info.st_ino, info.st_mtime_ns, info.st_size, info.st_mode)
+    return (tls.state, tls.detail, str(cert), stat_of(cert), str(key), stat_of(key))
+
+
+def config_changes(old: hub_config.HubConfig | None, new: hub_config.HubConfig, old_tls: tuple | None,
+                   new_tls: tuple) -> list[str]:
+    """The ``hub.toml`` keys whose value differs (``web.bind`` covers the list form; ``web.tls_files`` a changed TLS
+    decision or cert/key file); ``web`` and ``board_agent`` when the running config was ``config_invalid``."""
+    from dataclasses import fields
+    if old is None:
+        return ["web", "board_agent"]
+    changed: list[str] = []
+    for table, before, after in (("web", old.web, new.web), ("board_agent", old.board_agent, new.board_agent)):
+        for item in fields(before):
+            if getattr(before, item.name) != getattr(after, item.name):
+                key = f"{table}.{'bind' if item.name == 'binds' else item.name}"
+                if key not in changed:
+                    changed.append(key)
+    if old_tls != new_tls:
+        changed.append("web.tls_files")
+    return changed
+
+
 class Hub:
     def __init__(self, layout: HubLayout, mode: str, *, stop_token_ttl: int = hub_v1.STOP_TOKEN_TTL,
                  idle_timeout: float = hub_v1.IDLE_TIMEOUT, max_connections: int = hub_v1.MAX_CONNECTIONS):
@@ -126,6 +160,12 @@ class Hub:
         # MCP listener (started lazily by the set, so it never starts without one).
         self.board = None
         self.internal_mcp: mcp.InternalListener | None = None
+        # 2026-10-27 ``wb hub reload``: what the running config came from, and the last refused reload.
+        self.config_environment = None
+        self.config_info: dict = {}
+        self.tls_signature: tuple | None = None
+        self.reload_error: dict | None = None
+        self.reload_lock = asyncio.Lock()
 
     def project_pairs(self) -> list[tuple[str, str]]:
         """``(project_id, name)`` of the registered projects for the web settings pages; executor only."""
@@ -186,25 +226,86 @@ class Hub:
         entry = next((item for item in entries if item.project_id == project_id), None)
         return entry is not None and self.dispatcher.port.identity(Path(entry.root)) is not None
 
+    def read_config(self):
+        """``(config, tls decision, path, tls signature)`` from ``hub.toml``; :class:`ConfigInvalid` when unusable.
+        Blocking (file and TLS reads): at start or in an executor."""
+        path = hub_config.config_path(self.config_environment)
+        loaded = hub_config.load_config(path)
+        cert, key = hub_config.tls_paths(loaded.web, self.config_environment)
+        tls = hub_config.decide_tls(loaded.web, cert, key)
+        return loaded, tls, path, tls_signature(tls, cert, key)
+
     def load_web(self, environment=None) -> None:
-        """Read ``hub.toml`` and decide TLS once, at start (changes need a Hub restart)."""
+        """Read ``hub.toml`` and decide TLS at start; ``wb hub reload`` (:meth:`reload`) applies later changes."""
+        self.config_environment = environment
         path = hub_config.config_path(environment)
         try:
-            loaded = hub_config.load_config(path)
+            loaded, tls, path, self.tls_signature = self.read_config()
         except hub_config.ConfigInvalid as exc:
             print(f"[workbench] hub.toml invalid: {exc.reason}; web listener stays closed", file=sys.stderr, flush=True)
+            self.config_info = {"path": str(path), "loaded_at": time.time(), "state": "config_invalid",
+                                "detail": exc.item}
             self.web = WebListener(self.layout.state_dir, config=None, config_error=exc, tls=None,
-                                   routes=self.web_routes())
+                                   routes=self.web_routes(), config_file=path)
+            self.web.projects = self.project_pairs
             return
-        cert, key = hub_config.tls_paths(loaded.web, environment)
-        tls = hub_config.decide_tls(loaded.web, cert, key)
+        self.config_info = {"path": str(path), "loaded_at": time.time(), "state": "ok"}
         self.web = WebListener(self.layout.state_dir, config=loaded, config_error=None, tls=tls,
                                routes=self.web_routes(), config_file=path)
         self.web.projects = self.project_pairs
         if not loaded.web.enabled:  # the Board agent set is used only from the web: none while web is off
             return
-        self.make_board(loaded.board_agent, environment)
-        self.web.stop_hooks.append(self.stop_board)
+        self.ensure_board(loaded.board_agent)
+
+    def ensure_board(self, config: hub_config.BoardAgentConfig) -> None:
+        """The Board agent set for an enabled web: made once, then reused (a reload never makes a second one);
+        ``config`` applies from its next start."""
+        if self.board is None:
+            self.make_board(config, self.config_environment)
+        else:
+            self.board.launcher.config = config
+        if self.stop_board not in self.web.stop_hooks:
+            self.web.stop_hooks.append(self.stop_board)
+
+    def config_status(self) -> dict:
+        """``status.config``: the file, when the running config was loaded, and the last refused reload."""
+        return {**self.config_info, "reload_error": dict(self.reload_error) if self.reload_error else None}
+
+    async def reload(self, request_id: str) -> dict:
+        """hub_v1 ``reload`` (2026-10-27 사용자 결정). Only the web listener and the Board agent set's next-start
+        config change; WB projects, the registry, the inbox and review dispatch are never touched."""
+        async with self.reload_lock:
+            loop = asyncio.get_running_loop()
+            try:
+                loaded, tls, path, signature = await loop.run_in_executor(None, self.read_config)
+            except hub_config.ConfigInvalid as exc:
+                self.reload_error = {"reason": exc.reason, "at": time.time()}
+                print(f"[workbench] hub.toml reload refused: {exc.reason}; the running config stays",
+                      file=sys.stderr, flush=True)
+                return hub_v1.failure(request_id, "config_invalid", exc.reason, item=exc.item)
+            changed = config_changes(self.web.config, loaded, self.tls_signature, signature)
+            if any(key == "web" or key.startswith("web.") for key in changed):
+                await self.web.reconfigure(loaded, tls, path)
+            else:
+                self.web.config, self.web.config_file = loaded, path  # only [board_agent] (or nothing) changed
+            self.tls_signature = signature
+            self.config_info = {"path": str(path), "loaded_at": time.time(), "state": "ok"}
+            self.reload_error = None
+            notes = []
+            if loaded.web.enabled:
+                self.ensure_board(loaded.board_agent)
+            elif self.board is not None:
+                self.board.launcher.config = loaded.board_agent
+                if self.board.active():
+                    notes.append(BOARD_RUNNING_NOTE)
+            if self.board is not None and any(key == "board_agent" or key.startswith("board_agent.")
+                                              for key in changed):
+                notes.append(BOARD_CONFIG_NOTE)
+            print(f"[workbench] hub.toml reloaded: changed {', '.join(changed) or 'nothing'}; "
+                  f"web {self.web.status().get('state')}", file=sys.stderr, flush=True)
+            return hub_v1.result(request_id, changed=changed, web=self.web.status(),
+                                 board_agent=self.board.status() if self.board is not None else None,
+                                 board_agent_note=" ".join(notes) or None, config=self.config_status())
 
     def bind(self) -> None:
         path = prepare_socket_path()
@@ -295,6 +396,14 @@ class Hub:
             return await self.inbox_op(principal, request)
         if op == hub_v1.ClientType.STATUS.value:
             return hub_v1.result(request_id, **await self.status())
+        if op == hub_v1.ClientType.RELOAD.value:
+            try:
+                return await asyncio.wait_for(self.reload(request_id), RELOAD_TIMEOUT)
+            except asyncio.TimeoutError:
+                return hub_v1.failure(request_id, "reload_timeout", f"the reload did not finish in {RELOAD_TIMEOUT:g} s")
+            except Exception as exc:  # a reload never stops the Hub
+                print(f"[workbench] hub.toml reload failed: {exc!r}", file=sys.stderr, flush=True)
+                return hub_v1.failure(request_id, "reload_failed", f"{type(exc).__name__}: {exc}")
         if op == hub_v1.ClientType.LIST.value:
             fresh = request.get("fresh", False)
             if not isinstance(fresh, bool):
@@ -417,7 +526,8 @@ class Hub:
         registry = await asyncio.get_running_loop().run_in_executor(None, registry_summary, self.layout)
         web = self.web.status() if self.web is not None else {"state": "not_available"}
         board = self.board.status() if self.board is not None else None
-        return {"hub": dict(self.record or {}), "registry": registry, "web": web, "board_agent": board}
+        return {"hub": dict(self.record or {}), "registry": registry, "web": web, "board_agent": board,
+                "config": self.config_status()}
 
     def active(self) -> list:
         """Live things this Hub owns that a stop would end: the Board agent set while a channel lives."""

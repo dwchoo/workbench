@@ -28,6 +28,9 @@ SHUTDOWN_TIMEOUT = 3.0
 KEEPALIVE_TIMEOUT = 15.0  # also closes a connection whose request headers never finish
 MAX_CONNECTIONS = 256
 TLS_HANDSHAKE_TIMEOUT = 10.0
+# Several addresses on ``port = 0``: the first address picks the port, the others take the same one; when
+# that port is taken on another address, the whole open is retried with a new port this many times.
+PORT_ZERO_ATTEMPTS = 5
 RETRIED_STATES = frozenset({"bind_failed", "hub_db_invalid"})  # transient: retried every BIND_RETRY s
 
 
@@ -43,8 +46,12 @@ def _signature(path: Path) -> tuple | None:
     return (info.st_dev, info.st_ino, info.st_mtime_ns, info.st_size)
 
 
+def _host_port(host: str, port: int) -> str:
+    return f"[{host}]:{port}" if ":" in host else f"{host}:{port}"
+
+
 def listen_url(scheme: str, host: str, port: int) -> str:
-    return f"{scheme}://[{host}]:{port}" if ":" in host else f"{scheme}://{host}:{port}"
+    return f"{scheme}://{_host_port(host, port)}"
 
 
 class _Refuse(asyncio.Protocol):
@@ -100,6 +107,8 @@ class WebListener:
         self.services: WebServices | None = None
         self.runner: web.AppRunner | None = None
         self.stopping = False
+        # One start/poll/reconfigure/stop at a time (a ``wb hub reload`` never races a watchdog poll's open).
+        self._lock = asyncio.Lock()
         # Extension point of the stop order (Board agent set end, TI-16): awaited after WebSockets close.
         self.stop_hooks: list[Callable] = []
 
@@ -133,6 +142,34 @@ class WebListener:
         return self.config is not None and not self.config.web.enabled
 
     async def start(self) -> None:
+        async with self._lock:
+            await self._start()
+
+    async def reconfigure(self, config: HubConfig, tls: TlsDecision, config_file: Path | None) -> None:
+        """``wb hub reload`` with changed web settings (2026-10-27): close the listening sites (open HTTP and
+        WebSocket connections end; the Board client reconnects), then open with the new settings. ``hub.sqlite3``,
+        the services (login sessions live in ``hub.sqlite3``) and the stop hooks (the Board agent set) stay.
+        A failed open is the usual ``bind_failed`` (retried every ``bind_retry`` s); nothing rolls back."""
+        async with self._lock:
+            if self.stopping:
+                return
+            runner, self.runner = self.runner, None
+            if runner is not None:
+                await self._close_runner(runner)
+            self.config, self.config_error, self.tls, self.config_file = config, None, tls, config_file
+            self._state, self._signature, self._retry_at = {"state": "password_not_set"}, None, None
+            await self._start()
+
+    async def _close_runner(self, runner: web.AppRunner) -> None:
+        for site in list(runner.sites):
+            await self._step("site stop", site.stop())
+        for socket_ in list(runner.app[WEBSOCKETS]):
+            await self._step("websocket close", socket_.close(code=WSCloseCode.GOING_AWAY, message=b"hub reload"))
+        if self.services is not None:
+            await self._step("api key flush", self._blocking(self.services.api_keys.flush))
+        await self._step("runner cleanup", runner.cleanup())
+
+    async def _start(self) -> None:
         if self.config_error is not None:
             self._state = {"state": "config_invalid", "detail": self.config_error.item}
             return
@@ -146,6 +183,10 @@ class WebListener:
 
     async def poll(self) -> None:
         """One watchdog tick: react to a changed ``auth.json`` and retry a failed bind when due."""
+        async with self._lock:
+            await self._poll()
+
+    async def _poll(self) -> None:
         if self.stopping or self.config_error is not None or self.disabled or not self.tls.opens:
             return
         signature = await self._blocking(_signature, self.passwords.path)
@@ -206,40 +247,74 @@ class WebListener:
             self._state = {"state": "hub_db_invalid", "retry_in": self.bind_retry}
             return
         tls = self.tls.state == "tls"
-        warn = insecure_warning(web_config.bind, tls=tls)
+        addresses = web_config.addresses
+        warn = insecure_warning(addresses, tls=tls)
+        policy = OriginPolicy(web_config.bind, tls, web_config.server_names, binds=addresses,
+                              allow_from=web_config.allow_from)
         if self.services is None:
-            self.services = WebServices(self.passwords, db, OriginPolicy(web_config.bind, tls, web_config.server_names),
-                                        insecure_warning=warn, clock=self.clock,
+            self.services = WebServices(self.passwords, db, policy, insecure_warning=warn, clock=self.clock,
                                         projects=lambda: self.projects())
-        runner = web.AppRunner(create_app(self.services, routes=self.routes), access_log=None,
-                               handle_signals=False, shutdown_timeout=SHUTDOWN_TIMEOUT,
-                               keepalive_timeout=self.keepalive_timeout)
-        await runner.setup()
-        site = GuardedSite(runner, web_config.bind, web_config.port, ssl_context=self.tls.context,
-                           max_connections=self.max_connections)
-        try:
-            await site.start()
-        except BaseException as exc:
-            await runner.cleanup()
-            if not isinstance(exc, OSError):
+        else:  # a reload keeps the services (sessions, Board terminal) and takes the new policy
+            self.services.policy, self.services.insecure_warning = policy, warn
+        attempts = PORT_ZERO_ATTEMPTS if web_config.port == 0 and len(addresses) > 1 else 1
+        for attempt in range(attempts):
+            runner = web.AppRunner(create_app(self.services, routes=self.routes), access_log=None,
+                                   handle_signals=False, shutdown_timeout=SHUTDOWN_TIMEOUT,
+                                   keepalive_timeout=self.keepalive_timeout)
+            await runner.setup()
+            try:
+                failure = await self._start_sites(runner, addresses, web_config.port)
+            except BaseException:
+                await runner.cleanup()
                 raise
+            if failure is None:
+                break
+            await runner.cleanup()  # no partial listen: every site started so far closes
+            address, port, exc = failure
+            retry_port = (web_config.port == 0 and address != addresses[0]
+                          and exc.errno == errno.EADDRINUSE and attempt + 1 < attempts)
+            if retry_port:  # the port the first address got is taken on another one: pick a new port
+                continue
             name = errno.errorcode.get(exc.errno or 0, "OSError")
+            where = _host_port(address, port)
             self._retry_at = self.monotonic() + self.bind_retry
-            self._state = {"state": "bind_failed", "detail": name, "retry_in": self.bind_retry}
-            _log(f"bind {web_config.bind}:{web_config.port} failed: {name}; retrying in {self.bind_retry:g} s")
+            self._state = {"state": "bind_failed", "detail": name, "address": where, "retry_in": self.bind_retry}
+            _log(f"bind {where} failed: {name}; nothing listens; retrying in {self.bind_retry:g} s")
             return
         self.runner, self._retry_at = runner, None
         port = runner.addresses[0][1]
-        url = listen_url("https" if tls else "http", web_config.bind, port)
-        self._state = {"state": "listening", "url": url, "tls": tls, "insecure_warning": warn,
-                       "bind": web_config.bind, "port": port, "warnings": list(self.tls.warnings)}
-        _log(f"listening {url}")
+        scheme = "https" if tls else "http"
+        urls = [listen_url(scheme, address, port) for address in addresses]
+        self._state = {"state": "listening", "url": urls[0], "urls": urls, "tls": tls, "insecure_warning": warn,
+                       "bind": addresses[0], "binds": list(addresses), "port": port,
+                       "allow_from": [str(network) for network in web_config.allow_from],
+                       "warnings": list(self.tls.warnings)}
+        _log(f"listening {' '.join(urls)}"
+             + (f" (allow_from {' '.join(map(str, web_config.allow_from))})" if web_config.allow_from else ""))
+
+    async def _start_sites(self, runner: web.AppRunner, addresses: tuple[str, ...], port: int):
+        """Start one site per address on one port (port 0: the first address picks it); ``None``, or the
+        ``(address, port, OSError)`` that failed."""
+        for address in addresses:
+            site = GuardedSite(runner, address, port, ssl_context=self.tls.context,
+                               max_connections=self.max_connections)
+            try:
+                await site.start()
+            except OSError as exc:
+                return address, port, exc
+            if port == 0:
+                port = runner.addresses[0][1]
+        return None
 
     async def stop(self) -> None:
         """Stop order (SPEC): refuse new connections (site stop) -> close WebSockets (1001) ->
         extension hooks (Board agent set) -> flush API key last use -> end open connections ->
         close ``hub.sqlite3``. Each step runs even when an earlier one failed."""
         self.stopping = True
+        async with self._lock:
+            await self._stop()
+
+    async def _stop(self) -> None:
         runner, self.runner = self.runner, None
         self._state = {"state": "stopping"}
         if runner is not None:

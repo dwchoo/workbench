@@ -63,7 +63,7 @@ def cmd_hub_status(args: argparse.Namespace) -> int:
     if not reply.get("ok"):
         print(f"Hub status 실패: {reply.get('reason')}: {reply.get('detail')}", file=sys.stderr)
         return EXIT_FAILURE
-    status = {key: reply.get(key) for key in ("hub", "registry", "web", "board_agent")}
+    status = {key: reply.get(key) for key in ("hub", "registry", "web", "board_agent", "config")}
     local = installed_version()
     drift = status["hub"].get("version") != local
     from .service_unit import OUTDATED_UNIT_TEXT, boot_autostart_state, unit_outdated
@@ -90,6 +90,8 @@ def cmd_hub_status(args: argparse.Namespace) -> int:
         print(f"  {OUTDATED_UNIT_TEXT}")
     for line in web_status_lines(status["web"] or {}):
         print(f"  {line}")
+    for line in config_status_lines(status["config"]):
+        print(f"  {line}")
     board = status["board_agent"]
     if board is None:
         print("  board_agent: 없음")
@@ -101,12 +103,74 @@ def cmd_hub_status(args: argparse.Namespace) -> int:
 
 
 PASSWORD_NOT_SET_HINT = "'wb hub passwd'로 비밀번호를 정하세요"
+RELOAD_TIMEOUT = 30.0  # the Hub bounds its own reload at 20 s
+
+
+def _time_text(value: object) -> str:
+    return (datetime.fromtimestamp(value).astimezone().isoformat(timespec="seconds")
+            if isinstance(value, (int, float)) and not isinstance(value, bool) else "unknown")
+
+
+def config_status_lines(config: object) -> list[str]:
+    """``config: loaded <time> (<path>)`` and, after a refused ``wb hub reload``, the error it kept."""
+    if not isinstance(config, dict) or not config:
+        return []
+    line = f"config: loaded {_time_text(config.get('loaded_at'))} ({config.get('path')})"
+    if config.get("state") == "config_invalid":
+        line += f" — config_invalid:{config.get('detail')}"
+    lines = [line]
+    error = config.get("reload_error")
+    if isinstance(error, dict):
+        lines.append(f"config: 마지막 'wb hub reload' 실패 {_time_text(error.get('at'))}: {error.get('reason')} "
+                     "— 지금은 이전 설정으로 동작합니다")
+    return lines
+
+
+def cmd_hub_reload(args: argparse.Namespace) -> int:
+    """``wb hub reload``: the running Hub re-reads ``hub.toml`` (2026-10-27 사용자 결정). Never starts a Hub."""
+    from .config import config_path
+    layout = hub_layout()
+    try:
+        with HubClient(layout, timeout=RELOAD_TIMEOUT) as client:
+            reply = client.request("reload")
+    except HubNotRunning:
+        print(f"{NOT_RUNNING_TEXT}: 다시 읽을 Hub가 없습니다. 'wb hub start'로 시작하면 hub.toml을 읽습니다.",
+              file=sys.stderr)
+        return EXIT_NOT_RUNNING
+    except (HubUnknown, HubUnresponsive) as exc:
+        print(f"Hub에 묻지 못했습니다: {exc.reason} (lock {layout.lock})", file=sys.stderr)
+        return EXIT_FAILURE
+    if not reply.get("ok"):
+        if reply.get("reason") == "config_invalid":
+            print(f"hub.toml의 '{reply.get('item')}' 항목이 잘못되어({reply.get('detail')}) 설정을 바꾸지 않았습니다. "
+                  f"실행 중인 Hub는 이전 설정을 그대로 씁니다. {config_path()}를 고친 뒤 다시 실행하세요.",
+                  file=sys.stderr)
+        else:
+            print(f"Hub reload 실패: {reply.get('reason')}: {reply.get('detail')}", file=sys.stderr)
+        return EXIT_FAILURE
+    changed = [str(key) for key in reply.get("changed") or ()]
+    if changed:
+        print(f"hub.toml을 다시 읽었습니다. 바뀐 항목: {', '.join(changed)}")
+    else:
+        print("hub.toml을 다시 읽었습니다. 바뀐 항목이 없어 웹 listener는 그대로입니다.")
+    web = reply.get("web") or {}
+    for line in web_status_lines(web):
+        print(f"  {line}")
+    if reply.get("board_agent_note"):
+        print(f"  board_agent: {reply.get('board_agent_note')}")
+    if web.get("state") in ("bind_failed", "hub_db_invalid"):
+        print("새 웹 설정으로 listener를 열지 못했습니다. 이전 설정으로 되돌리지 않고 "
+              f"{web.get('retry_in', 30)}초마다 다시 시도합니다. 원인을 고치거나 hub.toml을 고친 뒤 "
+              "'wb hub reload'를 다시 실행하세요.", file=sys.stderr)
+        return EXIT_FAILURE
+    return EXIT_OK
 
 
 def web_disabled_hint(path: object) -> str:
-    """How to turn the web on (2026-10-26 user decision: off until ``hub.toml`` enables it)."""
+    """How to turn the web on (2026-10-26 user decision: off until ``hub.toml`` enables it; 2026-10-27: applied
+    with ``wb hub reload``)."""
     return (f"웹은 꺼져 있습니다. {path}에서 '[web] enabled = true'로 설정하고 "
-            "'wb hub stop' 뒤 'wb hub start'로 Hub를 재시작하세요.")
+            "'wb hub reload'로 반영하세요.")
 
 
 def web_status_lines(web: dict) -> list[str]:
@@ -115,7 +179,11 @@ def web_status_lines(web: dict) -> list[str]:
     from .config import INSECURE_WARNING_TEXT
     state, detail = web.get("state"), web.get("detail")
     if state == "listening":
-        lines = [f"web: listening {web.get('url')}"]
+        urls = [url for url in web.get("urls") or () if isinstance(url, str)] or [web.get("url")]
+        lines = [f"web: listening {' '.join(map(str, urls))}"]
+        allow_from = [str(entry) for entry in web.get("allow_from") or ()]
+        if allow_from:
+            lines.append(f"allow_from: {', '.join(allow_from)} (목록 밖 주소는 403)")
         if web.get("insecure_warning"):
             lines.append(f"경고: {INSECURE_WARNING_TEXT}")
         for warning in web.get("warnings") or ():
@@ -129,6 +197,8 @@ def web_status_lines(web: dict) -> list[str]:
         from .config import config_path
         return [f"web: disabled — {web_disabled_hint(web.get('config') or config_path())}"]
     reason = f"{state}:{detail}" if detail else f"{state}"
+    if web.get("address"):
+        reason += f" {web.get('address')}"
     line = f"web: not_listening ({reason})"
     if state == "password_not_set" and not detail:
         line += f" — {PASSWORD_NOT_SET_HINT}"
@@ -302,7 +372,7 @@ def cmd_hub_tls(args: argparse.Namespace) -> int:
     """``wb hub tls --self-signed [--force]``: cert and key for the web listener with the host ``openssl``.
 
     Reads ``hub.toml`` (bind, ``server_names``, TLS paths) and never starts or asks the Hub: it
-    keeps serving what it loaded until it is restarted.
+    keeps serving what it loaded until ``wb hub reload`` or a restart.
     """
     from . import tls
     from .config import ConfigInvalid, config_path, load_config, tls_paths
@@ -324,7 +394,7 @@ def cmd_hub_tls(args: argparse.Namespace) -> int:
     print(f"  SAN: {', '.join(made.san)}")
     print(f"  SHA-256 지문: {made.fingerprint}")
     print("브라우저에서 처음 열 때 위 지문과 같은지 확인하세요.")
-    print("Hub를 다시 시작하면 HTTPS로 열립니다.")
+    print("Hub를 다시 시작하면 HTTPS로 열립니다. 실행 중인 Hub에는 'wb hub reload'로 반영하세요.")
     return EXIT_OK
 
 
@@ -433,7 +503,8 @@ AUTOSTART_ENV = "WORKBENCH_HUB_AUTOSTART"
 # HB-D11 exceptions (SPEC "CLI 계약"); ``--help``/``--version``/argparse errors end before.
 # ``hub start`` starts the Hub itself; future ``hub`` commands are listed by name.
 AUTOSTART_EXEMPT_COMMANDS = frozenset({"setup", "update", "doctor", "_backend", "_hub"})
-AUTOSTART_EXEMPT_HUB_ACTIONS = frozenset({"start", "status", "stop", "enable", "disable", "passwd", "tls"})
+AUTOSTART_EXEMPT_HUB_ACTIONS = frozenset({"start", "status", "stop", "enable", "disable", "passwd", "tls",
+                                          "reload"})
 # ``wb logs <kind>``: diagnostic log reads like ``doctor``; they start no Hub and create nothing under HOME.
 AUTOSTART_EXEMPT_LOGS_KINDS = frozenset({"important", "raw", "raw-status", "raw-rotation", "summary-compat"})
 

@@ -293,7 +293,7 @@ class ForgeryTests(BackendPrincipalCase):
 
 
 BACKEND_OPS = ('inbox_list', 'inbox_show', 'inbox_review', 'inbox_link_check', 'inbox_link_commit', 'inbox_delivery')
-LOCAL_OPS = ('status', 'list', 'stop_request', 'stop_confirm', 'review_mode')
+LOCAL_OPS = ('status', 'list', 'stop_request', 'stop_confirm', 'review_mode', 'reload')  # reload: 2026-10-27
 RESERVED = ('power_on', 'power_off_request', 'power_off_confirm', 'pause', 'resume', 'confirm_boot')
 
 

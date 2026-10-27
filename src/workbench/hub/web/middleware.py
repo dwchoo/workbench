@@ -1,6 +1,7 @@
 """Request checks every web route passes (Task Inbox SPEC "인증·세션·CSRF", "보안 header").
 
-Order, outermost first: security headers (on every response, also errors) -> ``Host`` (421,
+Order, outermost first: security headers (on every response, also errors) -> client IP ``allow_from``
+(bare 403, 2026-10-27) -> ``Host`` (421,
 DNS rebinding) -> body size (413) -> ``Origin``/``Referer`` on state changes (403) -> session
 (page ``303 /login``, API 401) and CSRF on state changes (403 ``csrf_failed``).
 """
@@ -15,6 +16,7 @@ from aiohttp import web
 
 from ..config import _server_name, is_loopback
 from ..inbox.service import Principal
+from .refusals import printable, sanitize
 
 # The app's ``WebServices`` (defined in ``app``, which imports this module).
 SERVICES: web.AppKey = web.AppKey("services", object)
@@ -143,17 +145,80 @@ def parse_authority(text: str, default_port: int) -> tuple[object, int] | None:
     return host, int(digits)
 
 
+def _policy_addresses(policy) -> tuple[str, ...]:
+    return getattr(policy, "addresses", None) or (policy.bind,)
+
+
 def host_allowed(policy, host: object, port: int, listening_port: int) -> bool:
-    """SPEC Host rule: ``<bind IP>:<port>``, ``<server_name>:<port>``, ``localhost:<port>`` on a
-    loopback bind; an unspecified bind (``0.0.0.0``/``::``) takes every IP literal."""
+    """SPEC Host rule: ``<bind IP>:<port>`` (any of the bind IPs), ``<server_name>:<port>``,
+    ``localhost:<port>`` when a bind IP is loopback; an unspecified bind (``0.0.0.0``/``::``) takes
+    every IP literal."""
     if port != listening_port:
         return False
+    addresses = _policy_addresses(policy)
     if isinstance(host, str):
-        return host in policy.server_names or (host == "localhost" and is_loopback(policy.bind))
-    bind = ipaddress.ip_address(policy.bind)
-    if bind.is_unspecified:
+        return host in policy.server_names or (host == "localhost" and any(map(is_loopback, addresses)))
+    binds = [ipaddress.ip_address(address) for address in addresses]
+    if any(bind.is_unspecified for bind in binds):
         return True
-    return host == bind
+    return host in binds
+
+
+def peer_address(value: object) -> ipaddress.IPv4Address | ipaddress.IPv6Address | None:
+    """The peer IP of a transport ``peername`` host, an IPv4-mapped IPv6 one as IPv4; ``None`` when unreadable."""
+    if not isinstance(value, str) or not value or "%" in value:
+        return None
+    try:
+        address = ipaddress.ip_address(value)
+    except ValueError:
+        return None
+    mapped = getattr(address, "ipv4_mapped", None)
+    return mapped if mapped is not None else address
+
+
+def peer_allowed(allow_from, peer: object) -> bool:
+    """2026-10-27 ``allow_from``: an empty list allows every peer; otherwise the peer (IPv4-mapped as IPv4)
+    must be in a listed network, and an unknown peer is refused."""
+    if not allow_from:
+        return True
+    address = peer_address(peer)
+    return address is not None and any(address in network for network in allow_from)
+
+
+def peer_of(request: web.Request) -> str | None:
+    """The TCP peer host of this request's connection: never a header (``X-Forwarded-For`` and the like)."""
+    transport = request.transport
+    peername = transport.get_extra_info("peername") if transport is not None else None
+    return peername[0] if isinstance(peername, tuple) and peername else None
+
+
+@web.middleware
+async def peer_check(request: web.Request, handler):
+    """Outermost check (2026-10-27): a peer outside ``allow_from`` gets a bare 403 before Host, session, CSRF,
+    throttle or any handler, on every route (pages, static, ``/mcp``, the ``/ws/board`` upgrade)."""
+    services = request.app[SERVICES]
+    allow_from = services.policy.allow_from
+    if allow_from:
+        peer = peer_of(request)
+        if not peer_allowed(allow_from, peer):
+            shown = str(peer_address(peer) or sanitize(peer))
+            services.refusals.note("allow_from", shown, f"[workbench] web: refused client {shown} on "
+                                   f"{_listening_text(request)} (403 allow_from); not in [web] allow_from")
+            return web.Response(status=403)
+    return await handler(request)
+
+
+def _listening_text(request: web.Request) -> str:
+    """``<address>:<port>`` the request arrived on (``[v6]:port``)."""
+    transport = request.transport
+    sockname = transport.get_extra_info("sockname") if transport is not None else None
+    if not (isinstance(sockname, tuple) and len(sockname) >= 2):
+        return "(unknown)"
+    host = str(sockname[0])
+    return f"[{host}]:{sockname[1]}" if ":" in host else f"{host}:{sockname[1]}"
+
+
+HOST_HINT = "allowed: bind IP, server_names, localhost on loopback bind"
 
 
 def _listening_port(request: web.Request) -> int | None:
@@ -169,6 +234,10 @@ async def host_check(request: web.Request, handler):
     listening = _listening_port(request)
     authority = parse_authority(hosts[0], 443 if policy.tls else 80) if len(hosts) == 1 else None
     if listening is None or authority is None or not host_allowed(policy, *authority, listening):
+        shown = sanitize(hosts[0]) if len(hosts) == 1 else ("(none)" if not hosts else "(multiple)")
+        request.app[SERVICES].refusals.note(
+            "host", shown, f"[workbench] web: refused Host {shown} on {_listening_text(request)} "
+            f"(421 misdirected_request); {HOST_HINT}")
         return web.Response(status=421, text="misdirected_request")
     return await handler(request)
 
@@ -321,5 +390,38 @@ async def session_check(request: web.Request, handler):
             clear_session_cookie(response, secure=services.policy.tls)
         return response
     if request.method in UNSAFE_METHODS and not csrf_matches(await csrf_token_of(request), session.csrf):
-        return refuse(request, 403, "csrf_failed", access=access)
+        peer, path = printable(peer_of(request)), printable(request.path)
+        kind = "API" if access == ACCESS_API else "form"
+        services.refusals.note("csrf", f"{peer} {request.method} {path}",
+                               f"[workbench] web: refused {kind} {printable(request.method)} {path} from {peer} "
+                               "(403 csrf_failed: the page's CSRF value is not this session's; a stale page)")
+        if access == ACCESS_API:
+            return refuse(request, 403, "csrf_failed", access=access)
+        return stale_form_page(request)
     return await handler(request)
+
+
+STALE_FORM_TEXT = "화면이 오래되었습니다. 새로 고친 뒤 다시 시도하세요."
+
+
+def back_link(request: web.Request) -> str:
+    """The same-origin ``Referer`` path (with its query) to go back to, else ``/``."""
+    referers = request.headers.getall("Referer", [])
+    if len(referers) != 1 or origin_of_referer(referers[0]) != expected_origin(request):
+        return "/"
+    parts = urlsplit(referers[0])
+    target = parts.path + (f"?{parts.query}" if parts.query else "")
+    return target if target.startswith("/") and not target.startswith("//") else "/"
+
+
+def stale_form_page(request: web.Request) -> web.Response:
+    """A logged-in page form whose CSRF value is not the session's (an old tab, a page from the cache): a small
+    Korean 403 page with a link back instead of the bare ``csrf_failed`` text (2026-10-27). Nothing changed."""
+    from . import render
+    body = render.html_join([
+        render.tag("h1", "다시 시도하세요"),
+        render.tag("p", STALE_FORM_TEXT, class_="error", role="alert"),
+        render.tag("p", render.tag("a", "돌아가기", href=back_link(request))),
+        render.tag("p", render.tag("code", "csrf_failed"))])
+    return render.page("화면이 오래되었습니다", body, status=403,
+                       insecure_warning=request.app[SERVICES].insecure_warning)

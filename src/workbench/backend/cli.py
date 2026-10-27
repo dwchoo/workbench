@@ -1255,6 +1255,11 @@ def cmd_hub_tls(args: argparse.Namespace) -> int:
     return run(args)
 
 
+def cmd_hub_reload(args: argparse.Namespace) -> int:
+    from workbench.hub.cli import cmd_hub_reload as run
+    return run(args)
+
+
 def cmd_hub_review_mode(args: argparse.Namespace) -> int:
     from workbench.hub.cli import cmd_hub_review_mode as run
     return run(args)
@@ -1465,6 +1470,8 @@ def parser() -> argparse.ArgumentParser:
         .set_defaults(handler=cmd_hub_enable)
     hub_sub.add_parser("disable", help="부팅 자동 시작 unit을 끄고 지움 (실행 중인 Hub는 유지)") \
         .set_defaults(handler=cmd_hub_disable)
+    hub_sub.add_parser("reload", help="실행 중인 Hub가 hub.toml을 다시 읽음 (웹 listener만 다시 열고 WB 프로젝트는 건드리지 않음)") \
+        .set_defaults(handler=cmd_hub_reload)
     hub_passwd = hub_sub.add_parser("passwd", help="Web Board 로그인 비밀번호 설정 (terminal에서 두 번 입력)")
     hub_passwd.add_argument("--stdin", action="store_true", help="stdin 첫 줄을 비밀번호로 읽음 (스크립트용)")
     hub_passwd.set_defaults(handler=cmd_hub_passwd)

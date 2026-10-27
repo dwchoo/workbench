@@ -348,7 +348,10 @@ class CsrfOriginTests(WebAppCase):
         other_token, other_csrf = await self.logged_in()
         for data in ({}, {'csrf': ''}, {'csrf': csrf[:-1] + ('A' if csrf[-1] != 'A' else 'B')}, {'csrf': other_csrf}):
             response = await self.post('/logout', data, cookies={'wb_hub_session': token})
-            self.assertEqual((response.status, response.body_text), (403, 'csrf_failed'), data)
+            # 2026-10-27: a page form gets a small Korean page that still carries the reason code
+            self.assertEqual(response.status, 403, data)
+            self.assertIn('csrf_failed', response.body_text, data)
+            self.assertIn('화면이 오래되었습니다', response.body_text, data)
         await self.assert_still_logged_in(token)
         await self.assert_still_logged_in(other_token)
 

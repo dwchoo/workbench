@@ -3,6 +3,7 @@
 Revision: r0.4; state: approved (2026-10-25, 사용자가 인터뷰 결정 D1~D42를 확정한 뒤 orchestrator 검토·수정을 거친 승인을 사전 위임).
 작성일: 2026-09-23(r0.1~r0.2), 개정일: 2026-10-25(r0.3~r0.4).
 D-05~D-30은 2026-10-25 요구사항 인터뷰(grilling)의 사용자 결정이며 사용자가 같은 날 결정 목록 전체를 확인했다. D-31~D-36은 남은 항목에 대한 [orchestrator 결정, 사용자 사전 위임]이며 사용자가 나중에 바꿀 수 있다. r0.4는 orchestrator가 결정 목록과 대조해 고치고, 대체된 r0.2 이력을 끝의 "이력"으로 옮긴 판이다. 모든 ID는 보존한다. 문서 승인은 구현 권한과 별개다. 승인 reference·digest 파일은 orchestrator가 따로 남긴다.
+2026-10-27 개정(사용자 결정, 구현 전): 외부 접점 MCP를 없애기로 했다. 이 문서의 MCP client·Hub MCP·MCP 응답·MCP tool은 `/api/v1/` REST API와 `wb-inbox` skill로 읽는다(등급·한도·두 단계 취소·결과 범위는 그대로). 원문은 보존한다. [web-board-ux](../web-board-ux/BRIEF.md) WBX-D05~D11, [ADR-0006](../../adr/0006-rest-skill-single-external-contact.md).
 
 이 문서는 (A) Web Board다. 선행 문서는 [Hub·다중 WB 프로젝트 BRIEF](../workbench-hub/BRIEF.md)(이하 (B), HB-D01~HB-D15)이며, (A)는 (B)의 Hub 위에서 동작한다.
 
@@ -21,7 +22,7 @@ D-05~D-30은 2026-10-25 요구사항 인터뷰(grilling)의 사용자 결정이�
 
 - [PRD 기준] 요청 접수·조회·댓글, 검토 기록, 승인 명세 연결, 내부 전달, 실행 추적, 웹 조회, 결과 회수 및 영속 저장.
 - [포함] Hub가 제공하는 웹: 등록된 WB 프로젝트 목록·상태(HB-D09), 요청 목록·상세·작성·편집·댓글·취소, 수동 검토 방식의 "검토 시작"(D-31), WB 프로젝트별 검토 방식 설정(D-32), 제한된 backend 제어(켜기/끄기·일시정지·재개·`confirm-boot`), 로그인·API key 관리, Board agent 세트(Board agent OMP tab + 일반 shell tab). Hub MCP endpoint(외부 agent·Board agent용). Manager의 검토 결과 기록 도구.
-- [사용자 결정 D-08, 해제된 비목표] PRD §2 "제외"와 r0.2의 "원격 terminal 조작", PRD의 "임의 shell 실행 API", "범용 chatbot 웹 UI", 그리고 OMP MCP 비활성 정책은 다음 범위에 한해 해제한다. (1) 웹 terminal과 shell은 Board agent 세트에만 둔다. (2) Board agent의 OMP MCP 연결은 Hub MCP 하나만 허용한다. (3) 웹의 backend 제어는 켜기/끄기·일시정지·재개·`confirm-boot`로 한정한다. 이 해제는 PRD 문구를 고치지 않고 이 문서의 사용자 결정으로 기록한다.
+- [사용자 결정 D-08, 해제된 비목표] PRD §2 "제외"와 r0.2의 "원격 terminal 조작", PRD의 "임의 shell 실행 API", "범용 chatbot 웹 UI", 그리고 OMP MCP 비활성 정책은 다음 범위에 한해 해제한다. (1) 웹 terminal과 shell은 Board agent 세트에만 둔다. (2) Board agent의 OMP MCP 연결은 Hub MCP 하나만 허용한다. (3) 웹의 backend 제어는 켜기/끄기·일시정지·재개·`confirm-boot`로 한정한다. 이 해제는 PRD 문구를 고치지 않고 이 문서의 사용자 결정으로 기록한다. [2026-10-27 개정: Board agent는 MCP 없이 `wb-inbox` skill만 쓴다. [web-board-ux](../web-board-ux/BRIEF.md) WBX-D11, [ADR-0006](../../adr/0006-rest-skill-single-external-contact.md)]
 - [사용자 결정 D-08, 계속 제외] 웹에서 manager·worker·host pane 조작, 다중 worker, 범용 scheduler, 파일 첨부, 외부 알림(메일·메신저), OAuth·외부 identity, rate limit, Docker, callback/webhook delivery, 전체 대화 동기화.
 
 ## 제약과 호환성
@@ -30,7 +31,7 @@ D-05~D-30은 2026-10-25 요구사항 인터뷰(grilling)의 사용자 결정이�
 - [사용자 결정 D-03, D-36] Codex CLI는 첫 사용 후보지만 client 선택의 우선순위는 낮다. 개발 중 client 호환성은 표준 라이브러리로 만든 MCP 테스트 client로만 검증하고, Codex CLI 호환성은 대상 host에서 확인한다. 개발 테스트 통과를 Codex CLI 호환 완료로 보지 않는다.
 - [PRD 기준, r0.3 한정] Board 없이도 core가 동작해야 하며 Board가 host terminal이나 PTY를 소유하지 않는다. Board agent 세트의 PTY는 Hub가 소유하지만 WB 프로젝트의 host terminal과 별개이며, 웹은 WB 프로젝트의 host terminal을 조작하지 않는다.
 - [PRD 기준] 요청 저장과 mailbox 통지를 분리하고, 저장 후 통지 실패로 접수 성공을 뒤집지 않는다.
-- [PRD 제안, D-14·D-29로 결정] 서비스는 Hub 하나, 저장소는 WB 프로젝트별 SQLite(Hub 단일 writer), 외부 접점은 MCP Streamable HTTP의 tool 부분집합이다.
+- [PRD 제안, D-14·D-29로 결정] 서비스는 Hub 하나, 저장소는 WB 프로젝트별 SQLite(Hub 단일 writer), 외부 접점은 MCP Streamable HTTP의 tool 부분집합이다. [2026-10-27 개정: MCP를 없애고 외부 접점은 `/api/v1/` REST API와 `wb-inbox` skill이다. [web-board-ux](../web-board-ux/BRIEF.md) WBX-D05, [ADR-0006](../../adr/0006-rest-skill-single-external-contact.md)]
 - [기존 계약 C-D66] Manager의 `to_worker`는 UI 승인 없이 상시 위임으로 실행된다. D-17은 이 위임을 요청 출처와 무관하게 적용한다.
 - [기존 계약 C-D70] Backend → manager 알림은 manager가 쉬고 입력창이 비었을 때만 전달된다(`editor_not_empty`면 대기). 요청 전달(D-15, D-31)도 이 경로를 쓰며 그 대기 사유를 웹에 보인다.
 - [기존 계약 C-D71 (3)] 재부팅 뒤 `confirm-boot` 전에는 Workbench가 스스로 시작하는 동작을 보류한다. 웹의 `confirm-boot`는 같은 확인이며 보류 규칙을 바꾸지 않는다.
@@ -68,7 +69,7 @@ r0.3~r0.4에서 더하는 수락 예시다. "관측"은 웹 화면, MCP 응답, 
 - P2-AC-30 (D-20): 실행 전 요청의 취소는 바로 CLOSED(cancelled)가 된다. RUNNING 요청의 취소는 확인을 거친 뒤 기존 명령 stop(사용자 stop)과 Task 취소 경로를 탄다. 취소 요청 수락만으로 명령이 끝났다고 보고하지 않는다. 취소는 소유자, Board agent(editor key), 원 요청 client만 할 수 있다. MCP의 확인 형태는 P2-AC-41이다.
 - P2-AC-31 (D-22): 결과 조회의 기본은 manager의 최종 보고 요약이다. MCP tool의 옵션이나 웹 "전체 보기"를 명시하면 원문 로그·명령 출력·실행 산출물 전체를 볼 수 있다. requester key도 자기 요청에 대해 전체 보기를 할 수 있다. 요청 본문의 script·HTML은 웹에서 실행되지 않는다(P2-AC-13 유지).
 - P2-AC-32 (D-23, D-24): 요청은 자동 삭제되지 않는다. CLOSED 요청은 기본 목록에서 숨고 filter로 보인다. 파일 첨부 수단은 없고 본문의 경로 참조만 있다. 브라우저 tab 제목과 badge에 처리 대기·NEEDS_INFO 수가 보이고, 그 밖의 알림(메일·메신저·OS 알림)은 없다.
-- P2-AC-33 (D-25): Board agent는 Hub가 실행하며 어느 WB 프로젝트의 manager와도 별개다. Board agent는 Hub MCP에 editor 등급으로 연결되어 등록된 모든 WB 프로젝트를 검색하고 요청을 등록·편집한다. Board agent는 승인 명세를 연결하거나 worker에게 전달할 수 없고, Board agent가 낸 요청도 manager 검토를 거친다. 다른 MCP, 프로젝트 설정, 사용자 `~/.omp` 설정은 Board agent에게 보이지 않는다. WB 프로젝트의 manager·worker MCP는 계속 비활성이며 기존 누출 검사가 통과한다. Board agent는 manager와 같은 OMP 로그인을 쓰고, 재시작해도 세션·메모리가 유지된다.
+- P2-AC-33 (D-25): Board agent는 Hub가 실행하며 어느 WB 프로젝트의 manager와도 별개다. Board agent는 Hub MCP에 editor 등급으로 연결되어 등록된 모든 WB 프로젝트를 검색하고 요청을 등록·편집한다. Board agent는 승인 명세를 연결하거나 worker에게 전달할 수 없고, Board agent가 낸 요청도 manager 검토를 거친다. 다른 MCP, 프로젝트 설정, 사용자 `~/.omp` 설정은 Board agent에게 보이지 않는다. WB 프로젝트의 manager·worker MCP는 계속 비활성이며 기존 누출 검사가 통과한다. Board agent는 manager와 같은 OMP 로그인을 쓰고, 재시작해도 세션·메모리가 유지된다. [2026-10-27 개정: Hub MCP 대신 내부 listener의 REST를 `wb-inbox` skill로 쓰고 MCP는 없다. [web-board-ux](../web-board-ux/BRIEF.md) WBX-D11, WBX-AC-16]
 - P2-AC-34 (D-26): 소유자는 Board agent tab 하나와 일반 shell tab 하나를 연다. 브라우저를 닫아도 둘 다 계속 실행되고, 다시 열거나 다른 브라우저에서 열면 이어서 연결된다. 웹의 재시작 버튼으로 Board agent를 다시 띄울 수 있다.
 - P2-AC-35 (D-28): 연결 수명. (1) 인증된 새 tab은 항상 즉시 인수한다. (2) 인수 뒤 이전 연결(지난 epoch)의 입력은 버려진다. (3) Heartbeat가 10초 간격으로 두 번 오지 않으면 서버가 연결을 끊고 "연결 없음"으로 표시한다. (4) Tab을 닫으면 가능한 한 바로 해제한다. (5) 다시 살아난 이전 tab에는 "다른 곳에서 연결됨 — 다시 가져오기"가 보인다. 검증 사례: tab 닫기, 브라우저 강제 종료, 네트워크 단절과 복구, 두 tab 동시 연결, 인수 직후 이전 tab 입력. 어느 경우에도 남은 "연결됨" 표시가 새 연결을 막지 않는다.
 - P2-AC-36 (D-27): (1) 다른 곳에서 GPU를 쓰고 있으면(nvidia-smi 사용량, "프로젝트 X 실험 실행 중") Board agent는 GPU를 쓰기 전에 "계속할까요?"라고 묻는다. (2) 어떤 WB 프로젝트의 manager·worker가 작업 중일 때 Board agent는 그 WB 프로젝트의 코드를 수정하기 전에 "계속할까요?"라고 묻는다. 어느 경우에도 lock이나 자원 중재는 하지 않는다.
@@ -76,11 +77,11 @@ r0.3~r0.4에서 더하는 수락 예시다. "관측"은 웹 화면, MCP 응답, 
 - P2-AC-38 (D-21): 로그인한 소유자는 웹 양식에서 WB 프로젝트를 골라 요청을 작성하고, 편집하고, 댓글을 단다. 작성한 요청은 출처 "소유자"로 NEW에 저장된다.
 - P2-AC-39 (D-31): 검토 방식이 수동인 WB 프로젝트의 NEW 요청은 웹 "검토 시작" 버튼(로그인한 소유자만) 또는 TUI에서 시작할 때 manager에게 전달되고 REVIEWING이 된다. 전달은 C-D70의 대기 규칙을 따른다. API key로는 검토를 시작할 수 없다.
 - P2-AC-40 (D-32): 검토 방식은 웹의 WB 프로젝트 설정 화면(소유자)과 CLI에서 바꾼다. 값은 그 WB 프로젝트의 `.wb/` 아래 저장되어, Hub 재시작이나 등록 해제·재등록 뒤에도 유지된다.
-- P2-AC-41 (D-33): MCP client가 RUNNING 요청을 취소하면 첫 호출은 취소하지 않고 token과 영향 요약(연결된 Task·실행 중 명령)을 돌려준다. 같은 token으로 확인을 호출해야 P2-AC-30의 취소 경로를 탄다. token이 없거나 맞지 않거나, 그 사이 요청·Task 상태가 바뀌었으면 확인은 거절되고 아무것도 멈추지 않는다.
+- P2-AC-41 (D-33): MCP client가 RUNNING 요청을 취소하면 첫 호출은 취소하지 않고 token과 영향 요약(연결된 Task·실행 중 명령)을 돌려준다. 같은 token으로 확인을 호출해야 P2-AC-30의 취소 경로를 탄다. token이 없거나 맞지 않거나, 그 사이 요청·Task 상태가 바뀌었으면 확인은 거절되고 아무것도 멈추지 않는다. [2026-10-27 개정: 같은 두 단계를 REST `POST /api/v1/requests/{id}/cancel`로 한다. [web-board-ux](../web-board-ux/BRIEF.md) WBX-D05, WBX-AC-10]
 - P2-AC-42 (D-34): editor key는 요청 작성·편집·댓글·취소, NEW↔NEEDS_INFO 전환, 닫힌 요청 다시 열기를 할 수 있다. 승인 명세 연결, READY·RUNNING 지정, CLOSED(success/failed) 종료는 거절되며 이 전이는 manager(검토 결과 도구)와 backend만 한다.
 - P2-AC-43 (D-35): 같은 요청의 상태 변경이 겹치면 Hub가 도착 순서대로 하나씩 적용하고, 앞선 변경으로 더는 유효하지 않은 변경은 이유와 함께 거절한다. 예: worker 전달 전에 도착한 소유자 취소가 이기면 요청은 CLOSED(cancelled)가 되고, 뒤이은 승인 명세 연결은 거절되며 worker에게 아무것도 전달되지 않는다. Worker 전달 뒤의 취소는 P2-AC-30을 따른다.
 - P2-AC-44 (D-36): 본문 64 KiB, 댓글 16 KiB, 제목 200자를 넘는 입력은 웹·MCP 모두 이유와 함께 거절되고 아무것도 저장되지 않는다(한도 값은 SPEC에서 조정할 수 있다).
-- P2-AC-45 (D-36): 표준 라이브러리로 만든 MCP 테스트 client가 Streamable HTTP로 Hub MCP의 tool 부분집합(제출·조회·댓글·취소·결과 조회)을 호출하는 검증이 테스트에 있다. Codex CLI 호환성은 대상 host 확인 항목으로 따로 남는다.
+- P2-AC-45 (D-36): 표준 라이브러리로 만든 MCP 테스트 client가 Streamable HTTP로 Hub MCP의 tool 부분집합(제출·조회·댓글·취소·결과 조회)을 호출하는 검증이 테스트에 있다. Codex CLI 호환성은 대상 host 확인 항목으로 따로 남는다. [2026-10-27 개정: MCP 테스트 client 대신 REST 테스트 client와 `wb_inbox.py`로 검증한다. [web-board-ux](../web-board-ux/BRIEF.md) WBX-D07, WBX-AC-12]
 
 ## 결정과 근거
 
@@ -93,7 +94,7 @@ D-05~D-30은 2026-10-25 인터뷰의 사용자 결정이다(같은 날 목록 �
 | D-05 | 사용자 결정 | Core가 완성되었으므로 Phase 2를 지금 시작한다. (B) Hub BRIEF를 먼저, 이 문서 (A)를 그 위에 진행한다. 기존 r0.2는 (A)의 입력이다. D-04의 보류를 해제한다. |
 | D-06 | 사용자 결정 | 소유자는 한 사람, 한 OS 사용자다. 외부 MCP client도 소유자의 agent이며 요청자는 API key 이름으로 식별한다. 계정 구조는 나중에 확장할 수 있게 둔다. |
 | D-07 | 사용자 결정 | 네트워크는 LAN 공개다. HTTPS는 지원하되 선택이고 HTTP를 허용한다(VPN 전제). D-02를 대체한다. |
-| D-08 | 사용자 결정 | 해제하는 비목표: 웹 terminal과 shell(Board agent 세트에만), Board agent의 OMP MCP(Hub MCP에만), 웹 backend 제어(켜기/끄기·일시정지·재개·`confirm-boot`만). 계속 제외: 웹의 manager·worker·host pane 조작, 다중 worker, 범용 scheduler, 파일 첨부, 외부 알림, OAuth·외부 identity. |
+| D-08 | 사용자 결정 | 해제하는 비목표: 웹 terminal과 shell(Board agent 세트에만), Board agent의 OMP MCP(Hub MCP에만), 웹 backend 제어(켜기/끄기·일시정지·재개·`confirm-boot`만). 계속 제외: 웹의 manager·worker·host pane 조작, 다중 worker, 범용 scheduler, 파일 첨부, 외부 알림, OAuth·외부 identity. [2026-10-27 개정: Board agent의 MCP는 없고 `wb-inbox` skill만 허용. [web-board-ux](../web-board-ux/BRIEF.md) WBX-D11] |
 | D-09 | 사용자 결정 | 웹은 상태 보기다. 웹에서 일을 시키는 통로는 Board agent이고(요청 양식은 D-21), manager·worker·host pane 조작은 없다. 웹 제어 버튼은 켜기/끄기·일시정지·재개·`confirm-boot`이며 확인 창을 거치고 로그인한 소유자만 쓸 수 있다. API key로는 할 수 없다. 대기 사유(예: "manager 입력창에 작성 중인 글이 있어 알림 대기")를 보인다. [2026-10-25 주석: 실제 label은 `WAIT_LABELS`의 "manager 입력창에 글이 있어 알림 대기"가 기준이다.] |
 | D-10 | 사용자 결정 | Listener는 설정한 주소(예: VPN IP)에만 bind하고 `0.0.0.0`은 명시 설정이 필요하다. 비밀번호가 설정되기 전에는 웹 listener를 열지 않는다(Hub의 다른 기능은 동작). 설정 파일은 `~/.config/omp-workbench/hub.toml`이며 bind, port, TLS 인증서·key 경로, `allow_insecure_http`(설정은 있고 기본값은 허용)를 둔다. TLS는 선택이고 `wb hub tls --self-signed`가 host openssl을 쓴다. Loopback이 아닌 주소에서 평문 HTTP면 웹과 `wb hub status`에 경고한다. 2026-10-26 사용자 결정: web 기본 비활성, `[web] enabled = true`로 켬. 웹이 가장 많이 노출되는 부분이라 Hub 시작(자동 시작 포함)만으로는 웹(화면·외부 `/mcp`·`/ws/board`)과 Board agent 세트를 열지 않는다. 켜려면 `hub.toml`을 고치고 Hub를 재시작한다. |
 | D-11 | 사용자 결정 | 초기 비밀번호는 `wb hub passwd`로 정하고 hash로만 저장한다(방식은 SPEC, 초안 후보는 표준 라이브러리 scrypt). 웹에서 바꾸려면 현재 비밀번호가 필요하고, 바꾸면 다른 모든 세션을 무효로 한다. 잊으면 `wb hub passwd`. OAuth는 없다. HttpOnly 세션 cookie, CSRF 방어, 반복 로그인 실패 시 지연, 세션 만료 24시간. Terminal 재인증은 없다. 감사 기록: 로그인, terminal 열기·닫기·인수, API key 발급·폐기(terminal 입력 내용은 기록하지 않음). |
@@ -107,21 +108,21 @@ D-05~D-30은 2026-10-25 인터뷰의 사용자 결정이다(같은 날 목록 �
 | D-19 | 사용자 결정 | NEW·NEEDS_INFO의 편집은 바로 반영한다. READY·RUNNING 이후의 편집은 새 요청 revision으로 기록하고 manager에게 알린다. 새 명세 revision을 만들지는 manager가 정한다. 실행 중 Task를 조용히 바꾸지 않는다. |
 | D-20 | 사용자 결정 | 취소는 소유자, Board agent, 원 요청 client가 할 수 있다. RUNNING의 취소는 확인을 거쳐 기존 사용자 stop([CS-O10](../command-stop/FOLLOWUPS-BRIEF.md) FU-D06~08)과 Task 취소 경로로 CLOSED(cancelled)가 된다. 실행 전 취소는 바로 닫는다. MCP의 확인 형태는 D-33. |
 | D-21 | 사용자 결정 | 소유자는 웹 양식으로 요청을 작성·편집하고 댓글을 단다. |
-| D-22 | 사용자 결정 | 결과는 기본으로 요약(manager 최종 보고)이다. 원문 로그·명령 출력·실행 산출물 전체는 명시 요청(MCP tool 옵션 또는 웹 "전체 보기") 시 제공하며 requester key에도 허용한다(자기 요청). 모든 client가 소유자의 것이기 때문이다. 이는 P2-AC-14(비밀 정보·임의 host 파일 노출 금지)의 의도적 완화다. |
+| D-22 | 사용자 결정 | 결과는 기본으로 요약(manager 최종 보고)이다. 원문 로그·명령 출력·실행 산출물 전체는 명시 요청(MCP tool 옵션 또는 웹 "전체 보기") 시 제공하며 requester key에도 허용한다(자기 요청). 모든 client가 소유자의 것이기 때문이다. 이는 P2-AC-14(비밀 정보·임의 host 파일 노출 금지)의 의도적 완화다. [2026-10-27 개정: "MCP tool 옵션"은 REST 결과 조회의 옵션이다. [web-board-ux](../web-board-ux/BRIEF.md) WBX-D05] |
 | D-23 | 사용자 결정 | 요청은 자동 삭제하지 않는다. 닫힌 요청은 기본 보기에서 숨기고 filter(보관함)로 보인다. 파일 첨부는 없고 텍스트와 경로 참조만 둔다. |
 | D-24 | 사용자 결정 | 알림은 웹 tab 제목과 badge 수(처리 대기, NEEDS_INFO)뿐이다. 외부 알림은 나중이다. |
-| D-25 | 사용자 결정 | Board agent는 Hub가 실행·소유하는 OMP이며 어느 WB 프로젝트의 manager와도 별개다. 승인 명세를 연결하거나 worker에게 전달하지 않는다. Sandbox가 없다. 사용자의 일반 shell과 같은 권한이다(사용자 gh/git 설정의 GitHub 인증, 프로젝트 코드 수정, `wb init`으로 새 WB 프로젝트 생성 → 자동 등록, GPU 사용). 보안은 웹 로그인 + listener 주소 제한 + 감사 기록에 의존한다. Hub MCP에 editor 등급으로 연결해 등록된 모든 WB 프로젝트를 검색하고 각 프로젝트에 요청을 등록·편집한다. 다른 MCP, 프로젝트 설정, 사용자 `~/.omp` 설정은 막고, WB 프로젝트의 manager·worker MCP는 계속 비활성이다. Manager와 같은 OMP 로그인(`agent.db`)을 쓰고, 전용 영속 설정·home(세션·메모리)과 Hub 설정의 자체 모델·역할 prompt를 가진다. ADR-0003. |
+| D-25 | 사용자 결정 | Board agent는 Hub가 실행·소유하는 OMP이며 어느 WB 프로젝트의 manager와도 별개다. 승인 명세를 연결하거나 worker에게 전달하지 않는다. Sandbox가 없다. 사용자의 일반 shell과 같은 권한이다(사용자 gh/git 설정의 GitHub 인증, 프로젝트 코드 수정, `wb init`으로 새 WB 프로젝트 생성 → 자동 등록, GPU 사용). 보안은 웹 로그인 + listener 주소 제한 + 감사 기록에 의존한다. Hub MCP에 editor 등급으로 연결해 등록된 모든 WB 프로젝트를 검색하고 각 프로젝트에 요청을 등록·편집한다. 다른 MCP, 프로젝트 설정, 사용자 `~/.omp` 설정은 막고, WB 프로젝트의 manager·worker MCP는 계속 비활성이다. Manager와 같은 OMP 로그인(`agent.db`)을 쓰고, 전용 영속 설정·home(세션·메모리)과 Hub 설정의 자체 모델·역할 prompt를 가진다. ADR-0003. [2026-10-27 개정: Hub MCP 연결 대신 내부 loopback listener의 REST를 `wb-inbox` skill로 쓰고, system key는 env `WB_API_KEY`, 허용 skill은 `wb-inbox` 하나, MCP는 없다. [web-board-ux](../web-board-ux/BRIEF.md) WBX-D11, [ADR-0006](../../adr/0006-rest-skill-single-external-contact.md)] |
 | D-26 | 사용자 결정 | 웹 terminal 세트는 소유자당 한 벌이다: Board agent OMP tab 하나 + 일반 shell tab 하나. 둘 다 브라우저를 닫아도 유지되며(detach 의미) 새 브라우저가 인수한다(D-28). 웹에 Board agent 재시작 버튼이 있다. |
 | D-27 | 사용자 결정 | 안내만 하고 자원 관리는 하지 않는다. (1) 다른 곳에서 GPU를 쓰고 있으면(nvidia-smi 사용량 / "프로젝트 X 실험 실행 중" 표시) Board agent는 GPU를 쓰기 전에 "계속할까요?"라고 묻는다. (2) 어떤 WB 프로젝트의 manager·worker가 작업 중이면 Board agent는 그 프로젝트의 코드를 수정하기 전에 "계속할까요?"라고 묻는다. Lock·중재는 없다. |
 | D-28 | 사용자 결정 | 연결 수명: 남은 "연결됨"이 새 연결을 막지 않는다. (1) 인증된 새 tab은 항상 즉시 인수한다. (2) attach마다 lease/epoch 번호를 주고 지난 epoch의 입력은 버린다. (3) WebSocket heartbeat 10초, 두 번 놓치면 서버가 끊고 "연결 없음"으로 표시한다. (4) Tab을 닫으면 best-effort로 해제한다. (5) 다시 살아난 이전 tab은 "다른 곳에서 연결됨 — 다시 가져오기"를 보인다. (6) tab 닫기, 브라우저 강제 종료, 네트워크 단절·복구, 두 tab 동시, 인수 직후 이전 tab 입력을 테스트로 검증한다. |
-| D-29 | 사용자 결정 | 고정 버전 runtime 의존성 `aiohttp`(HTTP+WebSocket+TLS)를 추가한다. 고정 버전: `aiohttp==3.14.5`와 전이 의존성 9개 `aiohappyeyeballs==2.7.1`, `aiosignal==1.4.0`, `attrs==26.1.0`, `frozenlist==1.8.0`, `idna==3.20`, `multidict==7.2.0`, `propcache==0.5.4`, `typing-extensions==4.16.0`, `yarl==1.25.1`. Dependency audit을 한다. 설치 SPEC:117의 표준 라이브러리 우선에 대한 예외이며, 이유는 LAN에 공개되는 endpoint에서 HTTP·WebSocket을 직접 구현하는 것이 보안 위험이기 때문이다. `xterm.js`는 license 고지와 함께 wheel에 포함한다(CDN 없음, LAN이 오프라인일 수 있음). MCP Streamable HTTP의 tool 부분집합은 직접 구현한다(`mcp` SDK 미사용). Docker는 쓰지 않는다. |
+| D-29 | 사용자 결정 | 고정 버전 runtime 의존성 `aiohttp`(HTTP+WebSocket+TLS)를 추가한다. 고정 버전: `aiohttp==3.14.5`와 전이 의존성 9개 `aiohappyeyeballs==2.7.1`, `aiosignal==1.4.0`, `attrs==26.1.0`, `frozenlist==1.8.0`, `idna==3.20`, `multidict==7.2.0`, `propcache==0.5.4`, `typing-extensions==4.16.0`, `yarl==1.25.1`. Dependency audit을 한다. 설치 SPEC:117의 표준 라이브러리 우선에 대한 예외이며, 이유는 LAN에 공개되는 endpoint에서 HTTP·WebSocket을 직접 구현하는 것이 보안 위험이기 때문이다. `xterm.js`는 license 고지와 함께 wheel에 포함한다(CDN 없음, LAN이 오프라인일 수 있음). MCP Streamable HTTP의 tool 부분집합은 직접 구현한다(`mcp` SDK 미사용). Docker는 쓰지 않는다. [2026-10-27 개정: MCP 구현은 없앤다. `aiohttp` 예외의 근거는 REST에도 그대로다. [web-board-ux](../web-board-ux/BRIEF.md) WBX-D05] |
 | D-30 | 사용자 결정(알려진 한계로 기록) | GPU 경로는 이 개발 host에서 검증할 수 없다. 웹 로그인이 유일한 장벽이다. HTTP는 VPN에 의존한다. |
 | D-31 | orchestrator 결정, 사용자 사전 위임 (Q-02) | 수동 검토 방식에서 검토는 웹 "검토 시작" 버튼(로그인한 소유자만) 또는 TUI에서 시작한다. API key로는 시작하지 않는다. |
 | D-32 | orchestrator 결정, 사용자 사전 위임 (Q-09) | 검토 방식은 웹의 WB 프로젝트 설정 화면과 CLI에서 바꾸고, 값은 그 WB 프로젝트의 `.wb/` 아래 저장한다. |
-| D-33 | orchestrator 결정, 사용자 사전 위임 (Q-03) | MCP client의 RUNNING 요청 취소는 두 단계다. 취소 요청이 token과 영향 요약을 돌려주고, 그 token으로 확인해야 취소한다(종료의 `shutdown_request`/`shutdown_confirm`과 같은 형태). |
+| D-33 | orchestrator 결정, 사용자 사전 위임 (Q-03) | MCP client의 RUNNING 요청 취소는 두 단계다. 취소 요청이 token과 영향 요약을 돌려주고, 그 token으로 확인해야 취소한다(종료의 `shutdown_request`/`shutdown_confirm`과 같은 형태). [2026-10-27 개정: 같은 두 단계를 REST cancel endpoint로 한다. [web-board-ux](../web-board-ux/BRIEF.md) WBX-D05] |
 | D-34 | orchestrator 결정, 사용자 사전 위임 (Q-04) | editor 등급은 요청 작성·편집·댓글·취소와 NEW↔NEEDS_INFO 전환, 다시 열기를 할 수 있다. 승인 명세 연결, READY·RUNNING 지정, CLOSED(success/failed) 종료는 할 수 없으며 manager·backend 전용이다. |
 | D-35 | orchestrator 결정, 사용자 사전 위임 (Q-08) | 겹치는 상태 변경은 Hub(단일 writer)가 도착 순서대로 직렬화한다. Worker 전달 전에 도착한 취소가 이긴다. 전달 뒤의 취소는 D-20을 따른다. |
-| D-36 | orchestrator 결정, 사용자 사전 위임 (Q-06) | 입력 한도: 요청 본문 ≤ 64 KiB, 댓글 ≤ 16 KiB, 제목 ≤ 200자(SPEC에서 조정 가능). Client 호환성은 표준 라이브러리 MCP 테스트 client로만 검증하고, Codex CLI 호환성은 대상 host 확인 항목이다. |
+| D-36 | orchestrator 결정, 사용자 사전 위임 (Q-06) | 입력 한도: 요청 본문 ≤ 64 KiB, 댓글 ≤ 16 KiB, 제목 ≤ 200자(SPEC에서 조정 가능). Client 호환성은 표준 라이브러리 MCP 테스트 client로만 검증하고, Codex CLI 호환성은 대상 host 확인 항목이다. [2026-10-27 개정: 검증은 REST 테스트 client와 `wb_inbox.py`로, Codex CLI 확인은 skill 사용 확인으로 한다. [web-board-ux](../web-board-ux/BRIEF.md) WBX-D05·D07] |
 
 ## 구현 방향과 검증 의도
 

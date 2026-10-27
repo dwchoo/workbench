@@ -1,6 +1,6 @@
 # ADR-0003: Board agent는 sandbox 없이 사용자 권한으로 실행한다
 
-상태: 사용자 결정 수용, 2026-10-25. 문서 전체 승인과 구현은 별개다.
+상태: 사용자 결정 수용, 2026-10-25. 문서 전체 승인과 구현은 별개다. 2026-10-27: Board agent MCP 항목은 [ADR-0006](0006-rest-skill-single-external-contact.md)이 대체한다.
 근거: [Task Inbox & Web Board BRIEF](../features/task-inbox/BRIEF.md) r0.3의 D-08, D-10, D-11, D-25, D-30. [Hub BRIEF](../features/workbench-hub/BRIEF.md) HB-D02.
 
 ## 배경
@@ -16,7 +16,7 @@ Hub listener는 LAN에 공개되며 HTTP도 허용한다(VPN 전제, D-07). 그�
 - Board agent와 웹 shell은 sandbox 없이 사용자의 일반 shell과 같은 OS 권한으로 실행한다.
 - 보호는 세 가지에 의존한다: (1) 웹 로그인(scrypt 비밀번호, HttpOnly 세션, CSRF 방어, 반복 실패 지연, 24시간 만료), (2) listener를 설정한 주소에만 bind(`0.0.0.0`은 명시 설정), 비밀번호가 없으면 listener를 열지 않음, (3) 감사 기록(로그인, terminal 열기·닫기·인수, API key 발급·폐기. 입력 내용은 기록하지 않음).
 - API key로는 terminal을 열 수 없다. Board agent 세트는 로그인한 소유자만 쓴다.
-- Sandbox를 두지 않는 대신 OMP 설정의 노출은 좁힌다. Board agent의 MCP는 Hub MCP(editor 등급) 하나만 허용하고, 다른 MCP·프로젝트 설정·사용자 `~/.omp` 설정은 막는다. WB 프로젝트의 manager·worker MCP는 계속 비활성이다. 이 제한은 설정 노출의 범위이며 OS 권한 경계가 아니다.
+- Sandbox를 두지 않는 대신 OMP 설정의 노출은 좁힌다. Board agent의 MCP는 Hub MCP(editor 등급) 하나만 허용하고, 다른 MCP·프로젝트 설정·사용자 `~/.omp` 설정은 막는다. WB 프로젝트의 manager·worker MCP는 계속 비활성이다. 이 제한은 설정 노출의 범위이며 OS 권한 경계가 아니다. [2026-10-27 개정: Board agent는 MCP가 없고 허용 skill은 `wb-inbox` 하나이며 Hub 내부 listener의 REST를 쓴다. [web-board-ux](../features/web-board-ux/BRIEF.md) WBX-D11, ADR-0006]
 
 ## 검토한 대안
 
@@ -41,5 +41,5 @@ Hub listener는 LAN에 공개되며 HTTP도 허용한다(VPN 전제, D-07). 그�
 
 - 비밀번호 미설정 시 listener 미개방, 설정 주소 외 bind 없음, 평문 HTTP 경고를 확인한다.
 - API key로 terminal 열기·인수 시도가 거절되는지 확인한다.
-- Board agent의 tool 목록에 Hub MCP 외 MCP tool이 없고, manager·worker의 기존 MCP 누출 검사가 계속 통과하는지 확인한다.
+- Board agent의 tool 목록에 Hub MCP 외 MCP tool이 없고, manager·worker의 기존 MCP 누출 검사가 계속 통과하는지 확인한다. [2026-10-27 개정: MCP tool이 하나도 없고 skill이 `wb-inbox` 하나뿐인지 확인한다. WBX-AC-16]
 - 감사 기록에 정해진 사건이 남고 terminal 입력 내용은 남지 않는지 확인한다.

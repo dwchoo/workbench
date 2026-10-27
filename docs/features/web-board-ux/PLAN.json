@@ -1,0 +1,1506 @@
+{
+  "schema_version": 1,
+  "feature_id": "web-board-ux",
+  "revision": "p2",
+  "source_brief": {
+    "path": "BRIEF.md",
+    "revision": "r0.2"
+  },
+  "spec": {
+    "path": "SPEC.md",
+    "revision": "s2"
+  },
+  "status": "draft_requires_bundle_confirmation",
+  "note": "2026-10-27 사용자가 SPEC s1 U1~U10에 답함(BRIEF r0.2 WBX-D14 선택·D20~D28). Seam S1~S8 확정. C0 충족(mockup 방향 A). Probe WBX-B4가 failed/inconclusive면 B5·B8·B9·I1 보류.",
+  "scheduling": {
+    "max_open_child_threads": 4,
+    "max_parallel_writer_workspaces": 2,
+    "workspace_policy": "isolated_when_parallel",
+    "dependency_gate": "integrated_and_validated",
+    "on_unavailable_isolation": "serial_with_disclosure"
+  },
+  "budget_policy": {
+    "operating_estimates": "Root가 남은 필수 작업에 맞춰 유한 호출 예산을 조정한다.",
+    "explicit_user_limits": []
+  },
+  "initial_frontier": [
+    "WBX-A1",
+    "WBX-A2",
+    "WBX-A3",
+    "WBX-B1"
+  ],
+  "tickets": [
+    {
+      "id": "WBX-A1",
+      "path": "tickets/WBX-A1.md",
+      "title": "전역 nav와 Board 상태 점",
+      "kind": "implementation",
+      "depends_on": [],
+      "acceptance_ids": [
+        "WBX-AC-01"
+      ],
+      "deliverable": "모든 로그인 화면 header의 전역 nav, aria-current, 설정 details, CSS-only 접힘, WebServices.board_state",
+      "write_scope_hint": [
+        "src/workbench/hub/web/render.py",
+        "src/workbench/hub/web/pages/*.py",
+        "src/workbench/hub/web/app.py",
+        "src/workbench/hub/server.py",
+        "src/workbench/hub/web/static/base.css",
+        "tests/hub/test_web_nav*.py"
+      ],
+      "resource_claims": [
+        {
+          "resource": "file:src/workbench/hub/web/render.py",
+          "mode": "exclusive"
+        },
+        {
+          "resource": "file:src/workbench/hub/web/app.py",
+          "mode": "exclusive"
+        },
+        {
+          "resource": "file:src/workbench/hub/server.py",
+          "mode": "exclusive"
+        },
+        {
+          "resource": "file:src/workbench/hub/web/static/base.css",
+          "mode": "exclusive"
+        }
+      ],
+      "workspace_requirement": "isolated_if_parallel",
+      "worker": "sonnet",
+      "routing_hint": {
+        "reason_codes": [
+          "bounded_pattern"
+        ],
+        "evidence_refs": [
+          "SPEC.md#전역-nav"
+        ]
+      },
+      "verification_unit": "U-A1",
+      "base_requirements": [
+        "승인된 exact BRIEF r0.2 / SPEC s2 / PLAN p2 bundle",
+        "SPEC 테스트 결정의 seam S1~S8 사용자 확정(2026-10-27, WBX-D20·D21) — 충족",
+        "현재 source·dirty baseline 대조",
+        "선행 ticket의 통합·검증된 artifact"
+      ],
+      "contract_requirements": [
+        "SPEC s2 공개 계약·독립 기대값"
+      ]
+    },
+    {
+      "id": "WBX-A2",
+      "path": "tickets/WBX-A2.md",
+      "title": "Cache 정책과 bfcache 복원 세션 확인",
+      "kind": "implementation",
+      "depends_on": [],
+      "acceptance_ids": [
+        "WBX-AC-02",
+        "WBX-AC-03",
+        "WBX-AC-04"
+      ],
+      "deliverable": "security_headers cache 표, session-check.js, login-restore.js, USAGE §10 TLS 안내",
+      "write_scope_hint": [
+        "src/workbench/hub/web/middleware.py",
+        "src/workbench/hub/web/render.py",
+        "src/workbench/hub/web/pages/login.py",
+        "src/workbench/hub/web/static/session-check.js",
+        "src/workbench/hub/web/static/login-restore.js",
+        "docs/features/task-inbox/USAGE.md",
+        "tests/hub/test_web_cache*.py"
+      ],
+      "resource_claims": [
+        {
+          "resource": "file:src/workbench/hub/web/middleware.py",
+          "mode": "exclusive"
+        },
+        {
+          "resource": "file:src/workbench/hub/web/render.py",
+          "mode": "exclusive"
+        },
+        {
+          "resource": "file:docs/features/task-inbox/USAGE.md",
+          "mode": "exclusive"
+        }
+      ],
+      "workspace_requirement": "isolated_if_parallel",
+      "worker": "opus",
+      "routing_hint": {
+        "reason_codes": [
+          "coupled_invariants"
+        ],
+        "evidence_refs": [
+          "SPEC.md#cache-정책과-bfcache",
+          "BRIEF.md WBX-D02"
+        ]
+      },
+      "verification_unit": "U-A2",
+      "base_requirements": [
+        "승인된 exact BRIEF r0.2 / SPEC s2 / PLAN p2 bundle",
+        "SPEC 테스트 결정의 seam S1~S8 사용자 확정(2026-10-27, WBX-D20·D21) — 충족",
+        "현재 source·dirty baseline 대조",
+        "선행 ticket의 통합·검증된 artifact"
+      ],
+      "contract_requirements": [
+        "SPEC s2 공개 계약·독립 기대값"
+      ]
+    },
+    {
+      "id": "WBX-A3",
+      "path": "tickets/WBX-A3.md",
+      "title": "평문 HTTP 배너 접기",
+      "kind": "implementation",
+      "depends_on": [],
+      "acceptance_ids": [
+        "WBX-AC-05"
+      ],
+      "deliverable": "배너+chip, head 동기 script, localStorage 접힘, CSS 상호 배타",
+      "write_scope_hint": [
+        "src/workbench/hub/web/render.py",
+        "src/workbench/hub/web/static/insecure-banner.js",
+        "src/workbench/hub/web/static/base.css",
+        "tests/hub/test_web_banner*.py"
+      ],
+      "resource_claims": [
+        {
+          "resource": "file:src/workbench/hub/web/render.py",
+          "mode": "exclusive"
+        },
+        {
+          "resource": "file:src/workbench/hub/web/static/base.css",
+          "mode": "exclusive"
+        }
+      ],
+      "workspace_requirement": "isolated_if_parallel",
+      "worker": "sonnet",
+      "routing_hint": {
+        "reason_codes": [
+          "bounded_pattern"
+        ],
+        "evidence_refs": [
+          "SPEC.md#평문-http-배너-접기"
+        ]
+      },
+      "verification_unit": "U-A3",
+      "base_requirements": [
+        "승인된 exact BRIEF r0.2 / SPEC s2 / PLAN p2 bundle",
+        "SPEC 테스트 결정의 seam S1~S8 사용자 확정(2026-10-27, WBX-D20·D21) — 충족",
+        "현재 source·dirty baseline 대조",
+        "선행 ticket의 통합·검증된 artifact"
+      ],
+      "contract_requirements": [
+        "SPEC s2 공개 계약·독립 기대값"
+      ]
+    },
+    {
+      "id": "WBX-A4",
+      "path": "tickets/WBX-A4.md",
+      "title": "Key 발급 화면의 client 설정 안내와 복사 버튼",
+      "kind": "implementation",
+      "depends_on": [
+        "WBX-B3"
+      ],
+      "dependency_reasons": {
+        "WBX-B3": "[web] skill_repo_url config와 /skill/README.md route가 통합되어 있어야 링크 조건과 대상이 검증된다"
+      },
+      "acceptance_ids": [
+        "WBX-AC-06"
+      ],
+      "deliverable": "발급 결과 .env·README 링크·agent 한 줄 안내·copy.js, 목록 자리표시 판, USAGE §3",
+      "write_scope_hint": [
+        "src/workbench/hub/web/pages/settings.py",
+        "src/workbench/hub/web/static/copy.js",
+        "docs/features/task-inbox/USAGE.md",
+        "tests/hub/test_web_pages_settings*.py"
+      ],
+      "resource_claims": [
+        {
+          "resource": "file:docs/features/task-inbox/USAGE.md",
+          "mode": "exclusive"
+        }
+      ],
+      "workspace_requirement": "isolated_if_parallel",
+      "worker": "sonnet",
+      "routing_hint": {
+        "reason_codes": [
+          "bounded_pattern"
+        ],
+        "evidence_refs": [
+          "SPEC.md#key-발급-결과의-client-설정-안내"
+        ]
+      },
+      "verification_unit": "U-A4",
+      "base_requirements": [
+        "승인된 exact BRIEF r0.2 / SPEC s2 / PLAN p2 bundle",
+        "SPEC 테스트 결정의 seam S1~S8 사용자 확정(2026-10-27, WBX-D20·D21) — 충족",
+        "현재 source·dirty baseline 대조",
+        "선행 ticket의 통합·검증된 artifact"
+      ],
+      "contract_requirements": [
+        "SPEC s2 공개 계약·독립 기대값"
+      ]
+    },
+    {
+      "id": "WBX-A5",
+      "path": "tickets/WBX-A5.md",
+      "title": "사용자 Chrome 확인(WBX-O01)",
+      "kind": "user_verification",
+      "depends_on": [
+        "WBX-A1",
+        "WBX-A2",
+        "WBX-A3"
+      ],
+      "dependency_reasons": {
+        "WBX-A1": "nav가 있는 실제 화면",
+        "WBX-A2": "바뀐 cache 정책이 확인 대상",
+        "WBX-A3": "배너 접힘을 같은 기회에 관찰"
+      },
+      "acceptance_ids": [
+        "WBX-AC-04"
+      ],
+      "deliverable": "CHECK-CHROME.md에 사용자 Chrome 관찰 기록(설정 상태 포함)",
+      "write_scope_hint": [
+        "docs/features/web-board-ux/CHECK-CHROME.md"
+      ],
+      "resource_claims": [],
+      "workspace_requirement": "none",
+      "worker": "user",
+      "routing_hint": {
+        "reason_codes": [
+          "external_blocker"
+        ],
+        "evidence_refs": [
+          "BRIEF.md WBX-O01",
+          "BRIEF.md WBX-D22"
+        ]
+      },
+      "verification_unit": "U-A5",
+      "base_requirements": [
+        "승인된 exact BRIEF r0.2 / SPEC s2 / PLAN p2 bundle",
+        "SPEC 테스트 결정의 seam S1~S8 사용자 확정(2026-10-27, WBX-D20·D21) — 충족",
+        "현재 source·dirty baseline 대조",
+        "선행 ticket의 통합·검증된 artifact"
+      ],
+      "contract_requirements": [
+        "SPEC s2 공개 계약·독립 기대값"
+      ],
+      "owner": "user"
+    },
+    {
+      "id": "WBX-B1",
+      "path": "tickets/WBX-B1.md",
+      "title": "외부 요청 API /api/v1/ (expand)",
+      "kind": "implementation",
+      "depends_on": [],
+      "acceptance_ids": [
+        "WBX-AC-07",
+        "WBX-AC-08",
+        "WBX-AC-09",
+        "WBX-AC-10",
+        "WBX-AC-11",
+        "WBX-AC-12"
+      ],
+      "deliverable": "inbox_api.py 처리 계층 이동(MCP 안전망), rest.py endpoint 9개, 오류·status 표, route audit pin, rest_client/rest_hub",
+      "write_scope_hint": [
+        "src/workbench/hub/inbox_api.py",
+        "src/workbench/hub/rest.py",
+        "src/workbench/hub/mcp.py",
+        "src/workbench/hub/web/middleware.py",
+        "src/workbench/hub/web/app.py",
+        "src/workbench/hub/server.py",
+        "tests/hub/support/rest_client.py",
+        "tests/hub/support/rest_hub.py",
+        "tests/hub/test_hub_rest*.py",
+        "tests/hub/test_web_route_audit.py"
+      ],
+      "resource_claims": [
+        {
+          "resource": "file:src/workbench/hub/mcp.py",
+          "mode": "exclusive"
+        },
+        {
+          "resource": "file:src/workbench/hub/web/middleware.py",
+          "mode": "exclusive"
+        },
+        {
+          "resource": "file:src/workbench/hub/web/app.py",
+          "mode": "exclusive"
+        },
+        {
+          "resource": "file:src/workbench/hub/server.py",
+          "mode": "exclusive"
+        },
+        {
+          "resource": "file:tests/hub/test_web_route_audit.py",
+          "mode": "exclusive"
+        },
+        {
+          "resource": "dir:tests/hub/support",
+          "mode": "exclusive"
+        },
+        {
+          "resource": "runtime:/tmp/omp-workbench-<uid>",
+          "mode": "shared"
+        }
+      ],
+      "workspace_requirement": "isolated_if_parallel",
+      "worker": "opus",
+      "routing_hint": {
+        "reason_codes": [
+          "coupled_invariants"
+        ],
+        "evidence_refs": [
+          "SPEC.md#외부-요청-api-apiv1",
+          "ADR-0006"
+        ]
+      },
+      "verification_unit": "U-B1",
+      "base_requirements": [
+        "승인된 exact BRIEF r0.2 / SPEC s2 / PLAN p2 bundle",
+        "SPEC 테스트 결정의 seam S1~S8 사용자 확정(2026-10-27, WBX-D20·D21) — 충족",
+        "현재 source·dirty baseline 대조",
+        "선행 ticket의 통합·검증된 artifact"
+      ],
+      "contract_requirements": [
+        "SPEC s2 공개 계약·독립 기대값"
+      ],
+      "isolated_run_note": "CLAUDE.md sandbox 규칙; checkpoint·hash manifest exclude graphify-out/, .workflow/, .worktrees/, .venv/, 격리 home·캐시; 전후 du -sh 보고"
+    },
+    {
+      "id": "WBX-B2",
+      "path": "tickets/WBX-B2.md",
+      "title": "wb-inbox skill과 wb_inbox.py",
+      "kind": "implementation",
+      "depends_on": [
+        "WBX-B1"
+      ],
+      "dependency_reasons": {
+        "WBX-B1": "REST 계약과 S2 테스트 Hub(rest_hub)가 통합되어야 client를 실제 HTTP로 검증한다"
+      },
+      "acceptance_ids": [
+        "WBX-AC-13",
+        "WBX-AC-14"
+      ],
+      "deliverable": "skills/README.md, wb-inbox/SKILL.md·wb_inbox.py·.env.example, .gitignore",
+      "write_scope_hint": [
+        "skills/**",
+        ".gitignore",
+        "tests/hub/test_wb_inbox*.py"
+      ],
+      "resource_claims": [
+        {
+          "resource": "dir:tests/hub/support",
+          "mode": "shared"
+        },
+        {
+          "resource": "runtime:/tmp/omp-workbench-<uid>",
+          "mode": "shared"
+        }
+      ],
+      "workspace_requirement": "isolated_if_parallel",
+      "worker": "sonnet",
+      "routing_hint": {
+        "reason_codes": [
+          "bounded_pattern"
+        ],
+        "evidence_refs": [
+          "SPEC.md#wb-inbox-skill과-wb_inboxpy"
+        ]
+      },
+      "verification_unit": "U-B2",
+      "base_requirements": [
+        "승인된 exact BRIEF r0.2 / SPEC s2 / PLAN p2 bundle",
+        "SPEC 테스트 결정의 seam S1~S8 사용자 확정(2026-10-27, WBX-D20·D21) — 충족",
+        "현재 source·dirty baseline 대조",
+        "선행 ticket의 통합·검증된 artifact"
+      ],
+      "contract_requirements": [
+        "SPEC s2 공개 계약·독립 기대값"
+      ],
+      "isolated_run_note": "CLAUDE.md sandbox 규칙; checkpoint·hash manifest exclude graphify-out/, .workflow/, .worktrees/, .venv/, 격리 home·캐시; 전후 du -sh 보고"
+    },
+    {
+      "id": "WBX-B3",
+      "path": "tickets/WBX-B3.md",
+      "title": "/skill/ 제공, packaging, skill_repo_url",
+      "kind": "implementation",
+      "depends_on": [
+        "WBX-B2"
+      ],
+      "dependency_reasons": {
+        "WBX-B2": "제공·packaging할 skill 파일과 자리표시 문자열"
+      },
+      "acceptance_ids": [
+        "WBX-AC-11",
+        "WBX-AC-15"
+      ],
+      "deliverable": "공개 /skill/ 고정 route와 치환, BuildPy·MANIFEST, [web] skill_repo_url",
+      "write_scope_hint": [
+        "src/workbench/hub/web/pages/skill.py",
+        "src/workbench/hub/web/app.py",
+        "src/workbench/hub/config.py",
+        "build_support/assets.py",
+        "MANIFEST.in",
+        "tests/hub/test_web_skill*.py",
+        "tests/hub/test_hub_config*.py",
+        "tests/hub/test_web_route_audit.py",
+        "tests/backend/installation/test_package_assets*.py"
+      ],
+      "resource_claims": [
+        {
+          "resource": "file:src/workbench/hub/web/app.py",
+          "mode": "exclusive"
+        },
+        {
+          "resource": "file:src/workbench/hub/config.py",
+          "mode": "exclusive"
+        },
+        {
+          "resource": "file:tests/hub/test_web_route_audit.py",
+          "mode": "exclusive"
+        },
+        {
+          "resource": "runtime:/tmp/omp-workbench-<uid>",
+          "mode": "shared"
+        }
+      ],
+      "workspace_requirement": "isolated_if_parallel",
+      "worker": "sonnet",
+      "routing_hint": {
+        "reason_codes": [
+          "bounded_pattern"
+        ],
+        "evidence_refs": [
+          "SPEC.md#skill-제공-packaging-skill_repo_url"
+        ]
+      },
+      "verification_unit": "U-B3",
+      "base_requirements": [
+        "승인된 exact BRIEF r0.2 / SPEC s2 / PLAN p2 bundle",
+        "SPEC 테스트 결정의 seam S1~S8 사용자 확정(2026-10-27, WBX-D20·D21) — 충족",
+        "현재 source·dirty baseline 대조",
+        "선행 ticket의 통합·검증된 artifact"
+      ],
+      "contract_requirements": [
+        "SPEC s2 공개 계약·독립 기대값"
+      ],
+      "isolated_run_note": "CLAUDE.md sandbox 규칙; checkpoint·hash manifest exclude graphify-out/, .workflow/, .worktrees/, .venv/, 격리 home·캐시; 전후 du -sh 보고"
+    },
+    {
+      "id": "WBX-B4",
+      "path": "tickets/WBX-B4.md",
+      "title": "Board overlay 아래 wb-inbox skill probe(WBX-O02)",
+      "kind": "feasibility",
+      "depends_on": [
+        "WBX-B1",
+        "WBX-B2"
+      ],
+      "dependency_reasons": {
+        "WBX-B1": "probe가 호출할 REST",
+        "WBX-B2": "probe가 OMP에 줄 wb-inbox skill"
+      },
+      "acceptance_ids": [
+        "WBX-AC-17"
+      ],
+      "deliverable": "PROBE-BOARD-SKILL.md 판정(passed/failed/inconclusive)과 WBX-B5 구성",
+      "write_scope_hint": [
+        "tests/hub/probes/board_skill_probe.py",
+        "docs/features/web-board-ux/PROBE-BOARD-SKILL.md"
+      ],
+      "resource_claims": [
+        {
+          "resource": "runtime:real-omp-login",
+          "mode": "exclusive"
+        },
+        {
+          "resource": "runtime:/tmp/omp-workbench-<uid>",
+          "mode": "shared"
+        }
+      ],
+      "workspace_requirement": "isolated_or_serial_with_disclosure",
+      "worker": "opus",
+      "routing_hint": {
+        "reason_codes": [
+          "coupled_invariants"
+        ],
+        "evidence_refs": [
+          "BRIEF.md WBX-D11",
+          "BRIEF.md WBX-D27"
+        ]
+      },
+      "verification_unit": "U-B4",
+      "base_requirements": [
+        "승인된 exact BRIEF r0.2 / SPEC s2 / PLAN p2 bundle",
+        "SPEC 테스트 결정의 seam S1~S8 사용자 확정(2026-10-27, WBX-D20·D21) — 충족",
+        "현재 source·dirty baseline 대조",
+        "선행 ticket의 통합·검증된 artifact"
+      ],
+      "contract_requirements": [
+        "SPEC s2 공개 계약·독립 기대값"
+      ],
+      "isolated_run_note": "CLAUDE.md sandbox 규칙; checkpoint·hash manifest exclude graphify-out/, .workflow/, .worktrees/, .venv/, 격리 home·캐시; 전후 du -sh 보고",
+      "critical_assumption": "Board overlay 아래 OMP가 wb-inbox 하나만 보고 bash로 REST를 호출한다",
+      "on_failed_or_inconclusive": "WBX-B5·B8·B9 보류, 사용자 결정"
+    },
+    {
+      "id": "WBX-B5",
+      "path": "tickets/WBX-B5.md",
+      "title": "Board agent를 내부 REST와 wb-inbox skill로 전환",
+      "kind": "implementation",
+      "depends_on": [
+        "WBX-B3",
+        "WBX-B4"
+      ],
+      "dependency_reasons": {
+        "WBX-B3": "설치본에서 skills/wb-inbox를 찾는 packaging",
+        "WBX-B4": "passed 판정과 overlay 구성(failed/inconclusive면 시작 금지)"
+      },
+      "acceptance_ids": [
+        "WBX-AC-12",
+        "WBX-AC-16"
+      ],
+      "deliverable": "내부 listener REST, Board env·Hub env 위생, skill 복사 디렉터리, 격리 검사, ROLE.md, fake OMP 확장",
+      "write_scope_hint": [
+        "src/workbench/hub/board/launch.py",
+        "src/workbench/hub/process.py",
+        "src/workbench/hub/server.py",
+        "src/workbench/hub/rest.py",
+        "src/workbench/hub/mcp.py",
+        "omp_bridge/board/ROLE.md",
+        "tests/hub/fixtures/fake_omp_board.py",
+        "tests/hub/test_board_*.py",
+        "tests/hub/test_web_pages_board.py",
+        "tests/hub/test_hub_web_reload.py",
+        "tests/hub/test_hub_web_enabled_independent.py"
+      ],
+      "resource_claims": [
+        {
+          "resource": "file:src/workbench/hub/mcp.py",
+          "mode": "exclusive"
+        },
+        {
+          "resource": "file:src/workbench/hub/server.py",
+          "mode": "exclusive"
+        },
+        {
+          "resource": "runtime:/tmp/omp-workbench-<uid>",
+          "mode": "shared"
+        }
+      ],
+      "workspace_requirement": "isolated_if_parallel",
+      "worker": "opus",
+      "routing_hint": {
+        "reason_codes": [
+          "coupled_invariants"
+        ],
+        "evidence_refs": [
+          "SPEC.md#board-agent-전환",
+          "ADR-0003",
+          "ADR-0006",
+          "BRIEF.md WBX-D24"
+        ]
+      },
+      "verification_unit": "U-B5",
+      "base_requirements": [
+        "승인된 exact BRIEF r0.2 / SPEC s2 / PLAN p2 bundle",
+        "SPEC 테스트 결정의 seam S1~S8 사용자 확정(2026-10-27, WBX-D20·D21) — 충족",
+        "현재 source·dirty baseline 대조",
+        "선행 ticket의 통합·검증된 artifact"
+      ],
+      "contract_requirements": [
+        "SPEC s2 공개 계약·독립 기대값"
+      ],
+      "isolated_run_note": "CLAUDE.md sandbox 규칙; checkpoint·hash manifest exclude graphify-out/, .workflow/, .worktrees/, .venv/, 격리 home·캐시; 전후 du -sh 보고"
+    },
+    {
+      "id": "WBX-B6",
+      "path": "tickets/WBX-B6.md",
+      "title": "MCP 핵심 테스트를 REST로 이전",
+      "kind": "implementation",
+      "depends_on": [
+        "WBX-B1"
+      ],
+      "dependency_reasons": {
+        "WBX-B1": "REST와 테스트 지원(rest_client/rest_hub)"
+      },
+      "acceptance_ids": [
+        "WBX-AC-07",
+        "WBX-AC-08",
+        "WBX-AC-09",
+        "WBX-AC-10",
+        "WBX-AC-12"
+      ],
+      "deliverable": "test_hub_mcp*.py 동작의 REST 대응 test와 대응표",
+      "write_scope_hint": [
+        "tests/hub/test_hub_rest*.py"
+      ],
+      "resource_claims": [
+        {
+          "resource": "dir:tests/hub/support",
+          "mode": "shared"
+        },
+        {
+          "resource": "runtime:/tmp/omp-workbench-<uid>",
+          "mode": "shared"
+        }
+      ],
+      "workspace_requirement": "isolated_if_parallel",
+      "worker": "sonnet",
+      "routing_hint": {
+        "reason_codes": [
+          "bounded_pattern"
+        ],
+        "evidence_refs": [
+          "SPEC.md#mcp-제거-순서"
+        ]
+      },
+      "verification_unit": "U-B6",
+      "base_requirements": [
+        "승인된 exact BRIEF r0.2 / SPEC s2 / PLAN p2 bundle",
+        "SPEC 테스트 결정의 seam S1~S8 사용자 확정(2026-10-27, WBX-D20·D21) — 충족",
+        "현재 source·dirty baseline 대조",
+        "선행 ticket의 통합·검증된 artifact"
+      ],
+      "contract_requirements": [
+        "SPEC s2 공개 계약·독립 기대값"
+      ]
+    },
+    {
+      "id": "WBX-B7",
+      "path": "tickets/WBX-B7.md",
+      "title": "MCP client를 쓰는 다른 테스트를 REST로 이전",
+      "kind": "implementation",
+      "depends_on": [
+        "WBX-B1"
+      ],
+      "dependency_reasons": {
+        "WBX-B1": "REST와 테스트 지원(rest_client/rest_hub)"
+      },
+      "acceptance_ids": [
+        "WBX-AC-12"
+      ],
+      "deliverable": "inbox·hangul·allow_from·live_inbox_final 테스트의 REST 이전",
+      "write_scope_hint": [
+        "tests/hub/test_inbox_results*.py",
+        "tests/hub/test_inbox_cancel*.py",
+        "tests/hub/test_inbox_flow_cancel.py",
+        "tests/hub/test_inbox_untrusted_independent.py",
+        "tests/hub/test_web_hangul.py",
+        "tests/hub/test_hub_web_allow_from.py",
+        "tests/integration/live_inbox_final_independent.py"
+      ],
+      "resource_claims": [
+        {
+          "resource": "dir:tests/hub/support",
+          "mode": "shared"
+        },
+        {
+          "resource": "runtime:/tmp/omp-workbench-<uid>",
+          "mode": "shared"
+        }
+      ],
+      "workspace_requirement": "isolated_if_parallel",
+      "worker": "sonnet",
+      "routing_hint": {
+        "reason_codes": [
+          "bounded_pattern"
+        ],
+        "evidence_refs": [
+          "SPEC.md#mcp-제거-순서"
+        ]
+      },
+      "verification_unit": "U-B7",
+      "base_requirements": [
+        "승인된 exact BRIEF r0.2 / SPEC s2 / PLAN p2 bundle",
+        "SPEC 테스트 결정의 seam S1~S8 사용자 확정(2026-10-27, WBX-D20·D21) — 충족",
+        "현재 source·dirty baseline 대조",
+        "선행 ticket의 통합·검증된 artifact"
+      ],
+      "contract_requirements": [
+        "SPEC s2 공개 계약·독립 기대값"
+      ],
+      "isolated_run_note": "CLAUDE.md sandbox 규칙; checkpoint·hash manifest exclude graphify-out/, .workflow/, .worktrees/, .venv/, 격리 home·캐시; 전후 du -sh 보고"
+    },
+    {
+      "id": "WBX-B8",
+      "path": "tickets/WBX-B8.md",
+      "title": "MCP 제거(contract)",
+      "kind": "implementation",
+      "depends_on": [
+        "WBX-B5",
+        "WBX-B6",
+        "WBX-B7"
+      ],
+      "dependency_reasons": {
+        "WBX-B5": "Board가 /mcp를 쓰지 않음",
+        "WBX-B6": "MCP 핵심 동작의 REST 대체 test",
+        "WBX-B7": "다른 suite의 MCP 의존 제거"
+      },
+      "acceptance_ids": [
+        "WBX-AC-12"
+      ],
+      "deliverable": "mcp.py·/mcp·MCP 테스트·support·probe 삭제, route audit·템플릿·주석 정리",
+      "write_scope_hint": [
+        "src/workbench/hub/**",
+        "tests/hub/**"
+      ],
+      "resource_claims": [
+        {
+          "resource": "file:src/workbench/hub/mcp.py",
+          "mode": "exclusive"
+        },
+        {
+          "resource": "file:src/workbench/hub/web/middleware.py",
+          "mode": "exclusive"
+        },
+        {
+          "resource": "file:src/workbench/hub/server.py",
+          "mode": "exclusive"
+        },
+        {
+          "resource": "file:src/workbench/hub/config.py",
+          "mode": "exclusive"
+        },
+        {
+          "resource": "file:tests/hub/test_web_route_audit.py",
+          "mode": "exclusive"
+        },
+        {
+          "resource": "dir:tests/hub/support",
+          "mode": "exclusive"
+        },
+        {
+          "resource": "runtime:/tmp/omp-workbench-<uid>",
+          "mode": "shared"
+        }
+      ],
+      "workspace_requirement": "isolated_if_parallel",
+      "worker": "opus",
+      "routing_hint": {
+        "reason_codes": [
+          "coupled_invariants"
+        ],
+        "evidence_refs": [
+          "SPEC.md#mcp-제거-순서"
+        ]
+      },
+      "verification_unit": "U-B8",
+      "base_requirements": [
+        "승인된 exact BRIEF r0.2 / SPEC s2 / PLAN p2 bundle",
+        "SPEC 테스트 결정의 seam S1~S8 사용자 확정(2026-10-27, WBX-D20·D21) — 충족",
+        "현재 source·dirty baseline 대조",
+        "선행 ticket의 통합·검증된 artifact"
+      ],
+      "contract_requirements": [
+        "SPEC s2 공개 계약·독립 기대값"
+      ],
+      "isolated_run_note": "CLAUDE.md sandbox 규칙; checkpoint·hash manifest exclude graphify-out/, .workflow/, .worktrees/, .venv/, 격리 home·캐시; 전후 du -sh 보고"
+    },
+    {
+      "id": "WBX-B9",
+      "path": "tickets/WBX-B9.md",
+      "title": "MCP → REST·skill 문서 갱신",
+      "kind": "documentation",
+      "depends_on": [
+        "WBX-B8"
+      ],
+      "dependency_reasons": {
+        "WBX-B8": "문서가 현재 동작(MCP 없음)을 적어야 한다"
+      },
+      "acceptance_ids": [
+        "WBX-AC-12"
+      ],
+      "deliverable": "task-inbox SPEC·USAGE, workbench-hub SPEC·USAGE, ADR-0004/0005 주석, CONTEXT.md 표시 제거, README.md",
+      "write_scope_hint": [
+        "docs/features/task-inbox/SPEC.md",
+        "docs/features/task-inbox/USAGE.md",
+        "docs/features/workbench-hub/SPEC.md",
+        "docs/features/workbench-hub/USAGE.md",
+        "docs/adr/0004-auto-execution-after-manager-review.md",
+        "docs/adr/0005-per-project-inbox-store-hub-single-writer.md",
+        "CONTEXT.md",
+        "README.md"
+      ],
+      "resource_claims": [
+        {
+          "resource": "file:docs/features/task-inbox/USAGE.md",
+          "mode": "exclusive"
+        }
+      ],
+      "workspace_requirement": "isolated_if_parallel",
+      "worker": "sonnet",
+      "routing_hint": {
+        "reason_codes": [
+          "bounded_pattern"
+        ],
+        "evidence_refs": [
+          "SPEC.md#문서-갱신-배정"
+        ]
+      },
+      "verification_unit": "U-B9",
+      "base_requirements": [
+        "승인된 exact BRIEF r0.2 / SPEC s2 / PLAN p2 bundle",
+        "SPEC 테스트 결정의 seam S1~S8 사용자 확정(2026-10-27, WBX-D20·D21) — 충족",
+        "현재 source·dirty baseline 대조",
+        "선행 ticket의 통합·검증된 artifact"
+      ],
+      "contract_requirements": [
+        "SPEC s2 공개 계약·독립 기대값"
+      ]
+    },
+    {
+      "id": "WBX-C0",
+      "path": "tickets/WBX-C0.md",
+      "title": "Mockup 선택 gate(WBX-D14)",
+      "kind": "user_decision",
+      "depends_on": [],
+      "acceptance_ids": [
+        "WBX-AC-18"
+      ],
+      "deliverable": "사용자 선택과 SPEC s2 트랙 C 확정",
+      "write_scope_hint": [
+        "docs/features/web-board-ux/SPEC.md"
+      ],
+      "resource_claims": [],
+      "workspace_requirement": "none",
+      "worker": "user",
+      "routing_hint": {
+        "reason_codes": [
+          "external_blocker"
+        ],
+        "evidence_refs": [
+          "BRIEF.md WBX-D14"
+        ]
+      },
+      "verification_unit": "U-C0",
+      "base_requirements": [
+        "승인된 exact BRIEF r0.2 / SPEC s2 / PLAN p2 bundle",
+        "SPEC 테스트 결정의 seam S1~S8 사용자 확정(2026-10-27, WBX-D20·D21) — 충족",
+        "현재 source·dirty baseline 대조",
+        "선행 ticket의 통합·검증된 artifact"
+      ],
+      "contract_requirements": [
+        "SPEC s2 공개 계약·독립 기대값"
+      ],
+      "owner": "user",
+      "note": "mockups/ 폴더는 다른 agent 소유, 이 ticket은 쓰지 않는다",
+      "status_note": "충족 2026-10-27: 사용자 선택 방향 A(mockups/a/), BRIEF WBX-D14"
+    },
+    {
+      "id": "WBX-C1",
+      "path": "tickets/WBX-C1.md",
+      "title": "CSS design system과 전 화면 적용",
+      "kind": "implementation",
+      "depends_on": [
+        "WBX-C0",
+        "WBX-A1",
+        "WBX-A2",
+        "WBX-A3"
+      ],
+      "dependency_reasons": {
+        "WBX-C0": "선택된 mockup 방향 A(mockups/a/style.css 출발점)와 SPEC s2 트랙 C 선택",
+        "WBX-A1": "nav markup",
+        "WBX-A2": "layout script 구성",
+        "WBX-A3": "배너·chip markup"
+      },
+      "acceptance_ids": [
+        "WBX-AC-19"
+      ],
+      "deliverable": "token·light/dark·구성 요소 CSS, 모든 화면 적용",
+      "write_scope_hint": [
+        "src/workbench/hub/web/static/*.css",
+        "src/workbench/hub/web/render.py",
+        "src/workbench/hub/web/pages/*.py",
+        "tests/hub/test_web_*.py"
+      ],
+      "resource_claims": [
+        {
+          "resource": "file:src/workbench/hub/web/render.py",
+          "mode": "exclusive"
+        },
+        {
+          "resource": "file:src/workbench/hub/web/static/base.css",
+          "mode": "exclusive"
+        }
+      ],
+      "workspace_requirement": "isolated_if_parallel",
+      "worker": "sonnet",
+      "routing_hint": {
+        "reason_codes": [
+          "bounded_pattern"
+        ],
+        "evidence_refs": [
+          "BRIEF.md WBX-D12"
+        ]
+      },
+      "verification_unit": "U-C1",
+      "base_requirements": [
+        "승인된 exact BRIEF r0.2 / SPEC s2 / PLAN p2 bundle",
+        "SPEC 테스트 결정의 seam S1~S8 사용자 확정(2026-10-27, WBX-D20·D21) — 충족",
+        "현재 source·dirty baseline 대조",
+        "선행 ticket의 통합·검증된 artifact"
+      ],
+      "contract_requirements": [
+        "SPEC s2 공개 계약·독립 기대값"
+      ]
+    },
+    {
+      "id": "WBX-C2",
+      "path": "tickets/WBX-C2.md",
+      "title": "Dashboard /와 JSON 갱신",
+      "kind": "implementation",
+      "depends_on": [
+        "WBX-C1"
+      ],
+      "dependency_reasons": {
+        "WBX-C1": "design system 구성 요소"
+      },
+      "acceptance_ids": [
+        "WBX-AC-20"
+      ],
+      "deliverable": "/ dashboard, 세션 JSON endpoint, dashboard.js, meta refresh 제거",
+      "write_scope_hint": [
+        "src/workbench/hub/web/pages/board_status.py",
+        "src/workbench/hub/web/pages/*.py",
+        "src/workbench/hub/web/app.py",
+        "src/workbench/hub/web/static/dashboard.js",
+        "tests/hub/test_web_dashboard*.py",
+        "tests/hub/test_web_route_audit.py"
+      ],
+      "resource_claims": [
+        {
+          "resource": "file:src/workbench/hub/web/render.py",
+          "mode": "exclusive"
+        },
+        {
+          "resource": "file:src/workbench/hub/web/app.py",
+          "mode": "exclusive"
+        },
+        {
+          "resource": "file:tests/hub/test_web_route_audit.py",
+          "mode": "exclusive"
+        }
+      ],
+      "workspace_requirement": "isolated_if_parallel",
+      "worker": "sonnet",
+      "routing_hint": {
+        "reason_codes": [
+          "bounded_pattern"
+        ],
+        "evidence_refs": [
+          "BRIEF.md WBX-D13",
+          "WBX-D18"
+        ]
+      },
+      "verification_unit": "U-C2",
+      "base_requirements": [
+        "승인된 exact BRIEF r0.2 / SPEC s2 / PLAN p2 bundle",
+        "SPEC 테스트 결정의 seam S1~S8 사용자 확정(2026-10-27, WBX-D20·D21) — 충족",
+        "현재 source·dirty baseline 대조",
+        "선행 ticket의 통합·검증된 artifact"
+      ],
+      "contract_requirements": [
+        "SPEC s2 공개 계약·독립 기대값"
+      ]
+    },
+    {
+      "id": "WBX-I1",
+      "path": "tickets/WBX-I1.md",
+      "title": "최종 통합·검증",
+      "kind": "integration_verification",
+      "depends_on": [
+        "WBX-A4",
+        "WBX-A5",
+        "WBX-B9",
+        "WBX-C2"
+      ],
+      "dependency_reasons": {
+        "WBX-A4": "트랙 A 마지막 구현",
+        "WBX-A5": "AC-04 사용자 기록",
+        "WBX-B9": "트랙 B 전체(B8 contract 포함)",
+        "WBX-C2": "트랙 C 전체"
+      },
+      "acceptance_ids": [
+        "WBX-AC-01",
+        "WBX-AC-02",
+        "WBX-AC-03",
+        "WBX-AC-04",
+        "WBX-AC-05",
+        "WBX-AC-06",
+        "WBX-AC-07",
+        "WBX-AC-08",
+        "WBX-AC-09",
+        "WBX-AC-10",
+        "WBX-AC-11",
+        "WBX-AC-12",
+        "WBX-AC-13",
+        "WBX-AC-14",
+        "WBX-AC-15",
+        "WBX-AC-16",
+        "WBX-AC-17",
+        "WBX-AC-18",
+        "WBX-AC-19",
+        "WBX-AC-20"
+      ],
+      "deliverable": "수락 기준별 증거 표, 디렉터리별 회귀, live 1회, wheel, graphify update",
+      "write_scope_hint": [
+        "tests/integration/**"
+      ],
+      "resource_claims": [
+        {
+          "resource": "integration-workspace",
+          "mode": "exclusive"
+        },
+        {
+          "resource": "runtime:/tmp/omp-workbench-<uid>",
+          "mode": "shared"
+        }
+      ],
+      "workspace_requirement": "root_integration_workspace",
+      "worker": "root",
+      "routing_hint": {
+        "reason_codes": [
+          "bounded_pattern"
+        ],
+        "evidence_refs": [
+          "SPEC.md#수락-기준"
+        ]
+      },
+      "verification_unit": "U-I1",
+      "base_requirements": [
+        "승인된 exact BRIEF r0.2 / SPEC s2 / PLAN p2 bundle",
+        "SPEC 테스트 결정의 seam S1~S8 사용자 확정(2026-10-27, WBX-D20·D21) — 충족",
+        "현재 source·dirty baseline 대조",
+        "선행 ticket의 통합·검증된 artifact"
+      ],
+      "contract_requirements": [
+        "SPEC s2 공개 계약·독립 기대값"
+      ],
+      "isolated_run_note": "CLAUDE.md sandbox 규칙; checkpoint·hash manifest exclude graphify-out/, .workflow/, .worktrees/, .venv/, 격리 home·캐시; 전후 du -sh 보고",
+      "owner": "root"
+    }
+  ],
+  "gate_items": [
+    {
+      "id": "WBX-G-A1",
+      "owner_ticket": "WBX-A1",
+      "acceptance_ids": [
+        "WBX-AC-01"
+      ],
+      "requires_tickets": [
+        "WBX-A1"
+      ],
+      "required_evidence_level": "fixture",
+      "check": "모든 로그인 page route의 nav 링크·aria-current·설정 두 클릭·로그인 화면 nav 없음(S1+S6)"
+    },
+    {
+      "id": "WBX-G-A2",
+      "owner_ticket": "WBX-A2",
+      "acceptance_ids": [
+        "WBX-AC-02",
+        "WBX-AC-03"
+      ],
+      "requires_tickets": [
+        "WBX-A2"
+      ],
+      "required_evidence_level": "fixture",
+      "check": "cache 표 route별 header, 복원 화면 POST 거절, session-check·login-restore logic(S8)"
+    },
+    {
+      "id": "WBX-G-A3",
+      "owner_ticket": "WBX-A3",
+      "acceptance_ids": [
+        "WBX-AC-05"
+      ],
+      "requires_tickets": [
+        "WBX-A3"
+      ],
+      "required_evidence_level": "fixture",
+      "check": "배너+chip markup·title, head script, 접힘 logic(S8), CSS 상호 배타(정적)"
+    },
+    {
+      "id": "WBX-G-A4",
+      "owner_ticket": "WBX-A4",
+      "acceptance_ids": [
+        "WBX-AC-06"
+      ],
+      "requires_tickets": [
+        "WBX-B3",
+        "WBX-A4"
+      ],
+      "required_evidence_level": "fixture",
+      "check": "발급 결과 세 블록·origin·링크 조건·key 없는 안내·no-store·재전송 거절"
+    },
+    {
+      "id": "WBX-G-A5",
+      "owner_ticket": "WBX-A5",
+      "acceptance_ids": [
+        "WBX-AC-04"
+      ],
+      "requires_tickets": [
+        "WBX-A2",
+        "WBX-A5"
+      ],
+      "required_evidence_level": "runtime",
+      "check": "사용자 Chrome 관찰 기록(트랙 A 뒤, 자동 갱신 없는 화면 사이 뒤로 가기)과 USAGE TLS 안내"
+    },
+    {
+      "id": "WBX-G-B1",
+      "owner_ticket": "WBX-B1",
+      "acceptance_ids": [
+        "WBX-AC-07",
+        "WBX-AC-08",
+        "WBX-AC-09",
+        "WBX-AC-10",
+        "WBX-AC-11"
+      ],
+      "requires_tickets": [
+        "WBX-B1"
+      ],
+      "required_evidence_level": "runtime",
+      "check": "loopback 실제 HTTP로 endpoint 9개·인증·오류표·한도·2단계 취소·allow_from·enabled=false"
+    },
+    {
+      "id": "WBX-G-B2",
+      "owner_ticket": "WBX-B2",
+      "acceptance_ids": [
+        "WBX-AC-13",
+        "WBX-AC-14"
+      ],
+      "requires_tickets": [
+        "WBX-B1",
+        "WBX-B2"
+      ],
+      "required_evidence_level": "runtime",
+      "check": "wb_inbox.py subprocess로 등급별 동작·env 조회·권한 경고·key 비노출"
+    },
+    {
+      "id": "WBX-G-B3",
+      "owner_ticket": "WBX-B3",
+      "acceptance_ids": [
+        "WBX-AC-11",
+        "WBX-AC-15"
+      ],
+      "requires_tickets": [
+        "WBX-B1",
+        "WBX-B2",
+        "WBX-B3"
+      ],
+      "required_evidence_level": "fixture",
+      "check": "/skill/ 4파일·치환·404·allow_from·wheel 포함(.env 제외)"
+    },
+    {
+      "id": "WBX-G-B4",
+      "owner_ticket": "WBX-B4",
+      "acceptance_ids": [
+        "WBX-AC-17"
+      ],
+      "requires_tickets": [
+        "WBX-B1",
+        "WBX-B2",
+        "WBX-B4"
+      ],
+      "required_evidence_level": "runtime",
+      "check": "실제 OMP 설정 관측과 한 turn 실험 판정 기록"
+    },
+    {
+      "id": "WBX-G-B5",
+      "owner_ticket": "WBX-B5",
+      "acceptance_ids": [
+        "WBX-AC-16"
+      ],
+      "requires_tickets": [
+        "WBX-B3",
+        "WBX-B4",
+        "WBX-B5"
+      ],
+      "required_evidence_level": "runtime",
+      "check": "실제 Hub+fake OMP의 /proc env, 내부 REST, isolation 통과·거절, allow_from loopback 제외"
+    },
+    {
+      "id": "WBX-G-B8",
+      "owner_ticket": "WBX-B8",
+      "acceptance_ids": [
+        "WBX-AC-12"
+      ],
+      "requires_tickets": [
+        "WBX-B1",
+        "WBX-B5",
+        "WBX-B6",
+        "WBX-B7",
+        "WBX-B8"
+      ],
+      "required_evidence_level": "runtime",
+      "check": "외부·내부 /mcp 404, MCP client 없는 suite GREEN, 기존 key REST 동작"
+    },
+    {
+      "id": "WBX-G-C0",
+      "owner_ticket": "WBX-C0",
+      "acceptance_ids": [
+        "WBX-AC-18"
+      ],
+      "requires_tickets": [
+        "WBX-C0"
+      ],
+      "required_evidence_level": "static",
+      "check": "mockup 2~3개와 사용자 선택 기록(BRIEF WBX-D14 방향 A, SPEC s2) — 충족"
+    },
+    {
+      "id": "WBX-G-C1",
+      "owner_ticket": "WBX-C1",
+      "acceptance_ids": [
+        "WBX-AC-19"
+      ],
+      "requires_tickets": [
+        "WBX-C0",
+        "WBX-C1"
+      ],
+      "required_evidence_level": "fixture",
+      "check": "모든 page의 공통 stylesheet·구성 요소 class, dark 규칙, 외부 URL 없음, CSP 불변"
+    },
+    {
+      "id": "WBX-G-C2",
+      "owner_ticket": "WBX-C2",
+      "acceptance_ids": [
+        "WBX-AC-20"
+      ],
+      "requires_tickets": [
+        "WBX-C1",
+        "WBX-C2"
+      ],
+      "required_evidence_level": "fixture",
+      "check": "dashboard 네 구역, meta refresh 없음, JSON 값 독립 계산 일치, 세션 없음 거절"
+    },
+    {
+      "id": "WBX-G-I1",
+      "owner_ticket": "WBX-I1",
+      "acceptance_ids": [
+        "WBX-AC-01",
+        "WBX-AC-02",
+        "WBX-AC-03",
+        "WBX-AC-04",
+        "WBX-AC-05",
+        "WBX-AC-06",
+        "WBX-AC-07",
+        "WBX-AC-08",
+        "WBX-AC-09",
+        "WBX-AC-10",
+        "WBX-AC-11",
+        "WBX-AC-12",
+        "WBX-AC-13",
+        "WBX-AC-14",
+        "WBX-AC-15",
+        "WBX-AC-16",
+        "WBX-AC-17",
+        "WBX-AC-18",
+        "WBX-AC-19",
+        "WBX-AC-20"
+      ],
+      "requires_tickets": [
+        "WBX-A1",
+        "WBX-A2",
+        "WBX-A3",
+        "WBX-A4",
+        "WBX-A5",
+        "WBX-B1",
+        "WBX-B2",
+        "WBX-B3",
+        "WBX-B4",
+        "WBX-B5",
+        "WBX-B6",
+        "WBX-B7",
+        "WBX-B8",
+        "WBX-B9",
+        "WBX-C0",
+        "WBX-C1",
+        "WBX-C2",
+        "WBX-I1"
+      ],
+      "required_evidence_level": "runtime",
+      "check": "통합 회귀·live·wheel·수락 기준별 증거 연결(사용자 browser·대상 host는 pending 명시)"
+    }
+  ],
+  "acceptance_trace": [
+    {
+      "acceptance_id": "WBX-AC-01",
+      "tickets": [
+        "WBX-A1"
+      ],
+      "seam": "S1+S6 (확정, WBX-D20·D21)",
+      "final_integration": "WBX-I1"
+    },
+    {
+      "acceptance_id": "WBX-AC-02",
+      "tickets": [
+        "WBX-A2"
+      ],
+      "seam": "S1 (확정, WBX-D20·D21)",
+      "final_integration": "WBX-I1"
+    },
+    {
+      "acceptance_id": "WBX-AC-03",
+      "tickets": [
+        "WBX-A2"
+      ],
+      "seam": "S1+S8 (확정, WBX-D20·D21)",
+      "final_integration": "WBX-I1"
+    },
+    {
+      "acceptance_id": "WBX-AC-04",
+      "tickets": [
+        "WBX-A2",
+        "WBX-A5"
+      ],
+      "seam": "S7(사용자) (확정, WBX-D20·D21)",
+      "final_integration": "WBX-A5"
+    },
+    {
+      "acceptance_id": "WBX-AC-05",
+      "tickets": [
+        "WBX-A3"
+      ],
+      "seam": "S1+S6+S8 (확정, WBX-D20·D21)",
+      "final_integration": "WBX-I1"
+    },
+    {
+      "acceptance_id": "WBX-AC-06",
+      "tickets": [
+        "WBX-A4"
+      ],
+      "seam": "S1+S6 (확정, WBX-D20·D21)",
+      "final_integration": "WBX-I1"
+    },
+    {
+      "acceptance_id": "WBX-AC-07",
+      "tickets": [
+        "WBX-B1",
+        "WBX-B6"
+      ],
+      "seam": "S2 (확정, WBX-D20·D21)",
+      "final_integration": "WBX-I1"
+    },
+    {
+      "acceptance_id": "WBX-AC-08",
+      "tickets": [
+        "WBX-B1",
+        "WBX-B6"
+      ],
+      "seam": "S1+S2 (확정, WBX-D20·D21)",
+      "final_integration": "WBX-I1"
+    },
+    {
+      "acceptance_id": "WBX-AC-09",
+      "tickets": [
+        "WBX-B1",
+        "WBX-B6"
+      ],
+      "seam": "S2 (확정, WBX-D20·D21)",
+      "final_integration": "WBX-I1"
+    },
+    {
+      "acceptance_id": "WBX-AC-10",
+      "tickets": [
+        "WBX-B1",
+        "WBX-B6"
+      ],
+      "seam": "S2 (확정, WBX-D20·D21)",
+      "final_integration": "WBX-I1"
+    },
+    {
+      "acceptance_id": "WBX-AC-11",
+      "tickets": [
+        "WBX-B1",
+        "WBX-B3"
+      ],
+      "seam": "S1+S3 (확정, WBX-D20·D21)",
+      "final_integration": "WBX-I1"
+    },
+    {
+      "acceptance_id": "WBX-AC-12",
+      "tickets": [
+        "WBX-B1",
+        "WBX-B5",
+        "WBX-B6",
+        "WBX-B7",
+        "WBX-B8",
+        "WBX-B9"
+      ],
+      "seam": "S2+S3+S5 (확정, WBX-D20·D21)",
+      "final_integration": "WBX-I1"
+    },
+    {
+      "acceptance_id": "WBX-AC-13",
+      "tickets": [
+        "WBX-B2"
+      ],
+      "seam": "S4+S5 (확정, WBX-D20·D21)",
+      "final_integration": "WBX-I1"
+    },
+    {
+      "acceptance_id": "WBX-AC-14",
+      "tickets": [
+        "WBX-B2"
+      ],
+      "seam": "S4 (확정, WBX-D20·D21)",
+      "final_integration": "WBX-I1"
+    },
+    {
+      "acceptance_id": "WBX-AC-15",
+      "tickets": [
+        "WBX-B3"
+      ],
+      "seam": "S1+S5 (확정, WBX-D20·D21)",
+      "final_integration": "WBX-I1"
+    },
+    {
+      "acceptance_id": "WBX-AC-16",
+      "tickets": [
+        "WBX-B5"
+      ],
+      "seam": "S3 (확정, WBX-D20·D21)",
+      "final_integration": "WBX-I1"
+    },
+    {
+      "acceptance_id": "WBX-AC-17",
+      "tickets": [
+        "WBX-B4"
+      ],
+      "seam": "실제 OMP probe (확정, WBX-D20·D21)",
+      "final_integration": "WBX-I1"
+    },
+    {
+      "acceptance_id": "WBX-AC-18",
+      "tickets": [
+        "WBX-C0"
+      ],
+      "seam": "사용자 선택 (확정, WBX-D20·D21)",
+      "final_integration": "WBX-I1"
+    },
+    {
+      "acceptance_id": "WBX-AC-19",
+      "tickets": [
+        "WBX-C1"
+      ],
+      "seam": "S1+S6+S5 (확정, WBX-D20·D21)",
+      "final_integration": "WBX-I1"
+    },
+    {
+      "acceptance_id": "WBX-AC-20",
+      "tickets": [
+        "WBX-C2"
+      ],
+      "seam": "S1+S6+S8 (확정, WBX-D20·D21)",
+      "final_integration": "WBX-I1"
+    }
+  ],
+  "requirements_identity": "5aac0eb95de1fabdceee87fedc936f3d0c64265c3dc788ad0094fd70ed03a309",
+  "revision_history": [
+    {
+      "revision": "p1",
+      "note": "초안, seam 사용자 확인 전"
+    },
+    {
+      "revision": "p2",
+      "note": "U1~U10 사용자 결정 반영(2026-10-27); seam 확정, C0 충족, B5 내부 key 제한, B2 --new, S8 node seam"
+    }
+  ]
+}

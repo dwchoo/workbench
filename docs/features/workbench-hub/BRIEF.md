@@ -65,7 +65,7 @@ HB-D01~HB-D10은 2026-10-25 인터뷰의 사용자 결정이고, HB-D11~HB-D15�
 | ID | 상태·근거 | 결정 |
 |---|---|---|
 | HB-D01 | 사용자 결정 | 요구사항을 두 BRIEF로 나눈다. (B) Hub·다중 WB 프로젝트를 먼저, (A) Web Board를 그 위에 진행한다. 기존 task-inbox r0.2는 (A)의 입력이다. Core가 완성되었으므로 Phase 2를 지금 시작할 수 있다. |
-| HB-D02 | 사용자 결정 | 소유자는 한 사람, 한 OS 사용자다. 외부 MCP client도 소유자 자신의 agent다. 계정 구조는 나중에 확장할 수 있게 둔다. |
+| HB-D02 | 사용자 결정 | 소유자는 한 사람, 한 OS 사용자다. 외부 MCP client도 소유자 자신의 agent다. 계정 구조는 나중에 확장할 수 있게 둔다. [2026-10-27 개정: 외부 agent는 MCP 대신 REST API와 `wb-inbox` skill로 접근한다. [web-board-ux](../web-board-ux/BRIEF.md) WBX-D05, [ADR-0006](../../adr/0006-rest-skill-single-external-contact.md)] |
 | HB-D03 | 사용자 결정 | 기존 용어 "WB 프로젝트"를 쓴다. root 하나 = WB 프로젝트 하나 = backend 하나다. 같은 폴더에 두 번째 WB 프로젝트를 두지 않고 여러 폴더를 묶지 않는다. 사용자가 말한 "workspace"는 WB 프로젝트를 뜻한다. |
 | HB-D04 | 사용자 결정 | Hub는 자체 manager·worker가 없다. registry, 수명 관리(목록·진입·켜기·끄기), 웹 서버를 맡는다. Hub가 죽어도 실행 중 WB 프로젝트는 영향이 없고, `wb hub stop`은 WB 프로젝트를 멈추지 않는다. (A)의 Board agent는 Hub가 실행하지만 어느 WB 프로젝트의 manager·worker도 아니다. |
 | HB-D05 | 사용자 결정 | `wb`를 실행할 때 Hub가 없으면 background로 자동 시작한다. `wb hub stop`까지 남고 terminal을 닫아도 유지된다. 재부팅 뒤에는 다음 `wb` 실행에서 시작한다. 부팅 시 자동 시작은 선택 기능 `wb hub enable`(systemd --user)이며 기본은 꺼짐이다. OS 사용자당 Hub는 하나다(lock). |

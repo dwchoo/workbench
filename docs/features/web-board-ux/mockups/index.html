@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>Hub 웹 mockup 비교 - WB Hub</title>
+<link rel="stylesheet" href="index.css">
+</head>
+<body>
+<main>
+<h1>Hub 웹 mockup 비교 (WBX-D14)</h1>
+<p class="lead">Dashboard(<code>/</code>)와 로그인 화면의 정적 mockup 세 방향입니다. 하나를 고르면 그 <code>style.css</code>가 트랙 C(WBX-D12)의 design system 출발점이 됩니다. 모든 화면은 light·dark(<code>prefers-color-scheme</code>, 오른쪽 위 달 버튼은 <code>data-theme</code> 덮어쓰기), 375px 폭, 외부 resource 없음, inline script·style 없음을 지킵니다. 달 버튼과 배너 닫기만 작은 <code>app.js</code>를 쓰고, JS 없이도 화면은 완전합니다.</p>
+<div class="grid">
+  <section class="opt" aria-labelledby="oa">
+    <h2 id="oa">A. 차분한 관리 콘솔</h2>
+    <div class="preview" aria-hidden="true"><iframe src="a/dashboard.html" tabindex="-1" title="A 미리보기"></iframe></div>
+    <p>중립 회색과 파랑 하나. sidebar 없는 상단 nav, 현재 화면은 밑줄. 얇은 선 card와 옅은 색 알약 chip. 가장 기본적인 admin 느낌입니다.</p>
+    <div class="links"><a href="a/dashboard.html">대시보드</a><a href="a/dashboard-collapsed.html">배너 접힌 상태</a><a href="a/login.html">로그인</a></div>
+  </section>
+  <section class="opt" aria-labelledby="ob">
+    <h2 id="ob">B. 촘촘한 ops 콘솔</h2>
+    <div class="preview" aria-hidden="true"><iframe src="b/dashboard.html" tabindex="-1" title="B 미리보기"></iframe></div>
+    <p>monospace, 항상 어두운 header 막대, 13px 밀도, 표 줄무늬와 <code>[실행 중]</code> 꺾쇠 chip. 상태 코드(<code>NEEDS_INFO</code>)를 그대로 보이고 한 화면에 가장 많은 정보가 들어갑니다.</p>
+    <div class="links"><a href="b/dashboard.html">대시보드</a><a href="b/dashboard-collapsed.html">배너 접힌 상태</a><a href="b/login.html">로그인</a></div>
+  </section>
+  <section class="opt" aria-labelledby="oc">
+    <h2 id="oc">C. 카드 중심 친근형</h2>
+    <div class="preview" aria-hidden="true"><iframe src="c/dashboard.html" tabindex="-1" title="C 미리보기"></iframe></div>
+    <p>보라 accent, 둥근 큰 card, 아이콘 타일이 있는 요약, 꽉 찬 색 chip, 알약 nav. "내 답이 필요한 요청"이 맨 위 큰 띠로 눈에 먼저 들어옵니다.</p>
+    <div class="links"><a href="c/dashboard.html">대시보드</a><a href="c/dashboard-collapsed.html">배너 접힌 상태</a><a href="c/login.html">로그인</a></div>
+  </section>
+</div>
+<h2>비교</h2>
+<div class="table-wrap" tabindex="0" role="region" aria-label="비교 표 (가로로 스크롤)">
+<table>
+  <thead><tr><th scope="col">기준</th><th scope="col">A 차분</th><th scope="col">B ops</th><th scope="col">C 카드</th></tr></thead>
+  <tbody>
+    <tr><th scope="row">밀도 (요청 10줄 표)</th><td>보통</td><td>가장 촘촘 (화면 한 장에 다 보임)</td><td>가장 넉넉 (스크롤 많음)</td></tr>
+    <tr><th scope="row">상태 chip</th><td>옅은 알약 + 글리프</td><td>꺾쇠 테두리 + 글리프</td><td>꽉 찬 색 알약 + 글리프</td></tr>
+    <tr><th scope="row">"내 답이 필요한 요청"</th><td>노란 요약 card (7번째)</td><td>요약 띠의 빨간 숫자 + 별도 목록</td><td>맨 위 전폭 강조 띠</td></tr>
+    <tr><th scope="row">CSS 크기</th><td>약 15 KB</td><td>약 16 KB</td><td>약 17 KB</td></tr>
+    <tr><th scope="row">잘 맞는 사람</th><td>무난한 기본값을 원할 때</td><td>터미널 도구에 익숙하고 정보량을 원할 때</td><td>한눈에 상태를 훑고 싶을 때</td></tr>
+  </tbody>
+</table>
+</div>
+<p class="note">모든 상태 이름은 현행 코드의 한국어 label(신규·검토 중·추가 정보 필요·실행 준비·실행 중·닫힘)과 대기 사유 문구를 그대로 씁니다. 데이터는 가상입니다. 선택은 BRIEF의 WBX-D14에 기록합니다.</p>
+</main>
+</body>
+</html>

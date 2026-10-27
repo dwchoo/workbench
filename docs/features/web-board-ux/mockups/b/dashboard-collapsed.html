@@ -1,0 +1,111 @@
+<!doctype html>
+<html lang="ko" data-banner="collapsed">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>대시보드 - WB Hub</title>
+<link rel="stylesheet" href="style.css">
+<script src="app.js"></script>
+</head>
+<body class="page-dash">
+<div class="banner" role="alert">
+  <span class="banner-icon"><svg class="icon" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M12 3l10 18H2zM12 10v5M12 18h.01"/></svg></span>
+  <span class="banner-text">평문 HTTP로 LAN에 열려 있습니다. VPN 등 네트워크 보호가 필요합니다.</span>
+  <button type="button" class="banner-close js-only" data-banner-close>닫기</button>
+</div>
+<header class="site-header">
+  <input type="checkbox" id="nav-toggle" class="nav-toggle" aria-label="메뉴 열기">
+  <a class="brand" href="dashboard.html"><span class="brand-mark" aria-hidden="true"></span>WB Hub</a>
+  <label for="nav-toggle" class="nav-burger" title="메뉴"><svg class="icon" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M4 7h16M4 12h16M4 17h16"/></svg><span class="sr-only">메뉴</span></label>
+  <nav class="nav" aria-label="주요 화면">
+    <a class="nav-link" href="dashboard.html" aria-current="page">대시보드</a>
+    <a class="nav-link" href="#">요청</a>
+    <a class="btn btn-sm btn-primary nav-new" href="#"><svg class="icon" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M12 5v14M5 12h14"/></svg>새 요청</a>
+    <a class="nav-link" href="#">Board agent<span class="dot dot-ok" aria-hidden="true"></span><span class="sr-only">(실행 중)</span></a>
+    <details class="menu">
+      <summary class="nav-link">설정<svg class="icon" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M6 9l6 6 6-6"/></svg></summary>
+      <div class="menu-list">
+        <a href="#">비밀번호</a>
+        <a href="#">API key</a>
+        <a href="#">감사 기록</a>
+      </div>
+    </details>
+  </nav>
+  <button type="button" class="http-chip" data-banner-open aria-describedby="http-tip"><svg class="icon" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M12 3l10 18H2zM12 10v5M12 18h.01"/></svg>평문 HTTP<span id="http-tip" class="tip" role="tooltip">평문 HTTP로 LAN에 열려 있습니다. VPN 등 네트워크 보호가 필요합니다.</span></button>
+  <a class="notify" href="#" aria-label="내 답이 필요한 요청 3건"><svg class="icon" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M6 16v-5a6 6 0 1 1 12 0v5l2 2H4zM10 21h4"/></svg><span class="notify-count">3</span></a>
+  <div class="tools">
+    <button type="button" class="btn btn-ghost btn-icon js-only" data-theme-toggle aria-label="밝게/어둡게 전환" title="밝게/어둡게 전환"><svg class="icon" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M20 14.5A8 8 0 0 1 9.5 4 8 8 0 1 0 20 14.5z"/></svg></button>
+    <form class="logout" method="get" action="login.html"><input type="hidden" name="csrf" value="mock"><button class="btn" type="submit">로그아웃</button></form>
+  </div>
+</header>
+<main class="wrap">
+<div class="page-head"><h1>대시보드</h1><p class="updated">숫자와 표는 자동으로 갱신됩니다 · 마지막 갱신 14:32:08</p></div>
+<section class="summary" aria-labelledby="sum-h">
+  <h2 id="sum-h" class="sr-only">요약</h2>
+  <a class="stat " data-kind="running" href="#"><span class="stat-label">프로젝트 실행 중</span><strong class="stat-value">3</strong><span class="stat-sub">전체 5개 중</span></a>
+  <a class="stat " data-kind="closed" href="#"><span class="stat-label">프로젝트 꺼짐</span><strong class="stat-value">1</strong><span class="stat-sub">연결 없음/불명 1</span></a>
+  <a class="stat " data-kind="new" href="#"><span class="stat-label">신규 <code>NEW</code></span><strong class="stat-value">2</strong><span class="stat-sub">검토 대기</span></a>
+  <a class="stat " data-kind="reviewing" href="#"><span class="stat-label">검토 중 <code>REVIEWING</code></span><strong class="stat-value">1</strong><span class="stat-sub">manager 검토</span></a>
+  <a class="stat " data-kind="needs" href="#"><span class="stat-label">추가 정보 필요 <code>NEEDS_INFO</code></span><strong class="stat-value">2</strong><span class="stat-sub">질문 답변 대기</span></a>
+  <a class="stat " data-kind="running" href="#"><span class="stat-label">실행 중 <code>RUNNING</code></span><strong class="stat-value">2</strong><span class="stat-sub">승인된 요청</span></a>
+  <a class="stat stat-attn" data-kind="attn" href="#"><span class="stat-label">내 답이 필요한 요청</span><strong class="stat-value">3</strong><span class="stat-sub">추가 정보 필요 2 · 재시도 한도 소진 1</span></a>
+</section>
+<div class="layout">
+<div class="primary">
+<section class="card" aria-labelledby="proj-h">
+  <div class="card-head"><h2 id="proj-h">프로젝트</h2><span class="card-note">5개 · 이름을 누르면 상세</span></div>
+  <div class="table-wrap" tabindex="0" role="region" aria-label="프로젝트 표 (가로로 스크롤)">
+  <table class="data">
+    <thead><tr><th scope="col">이름</th><th scope="col">상태</th><th scope="col">대기 사유</th><th scope="col">검토 방식</th><th scope="col">바로가기</th></tr></thead>
+    <tbody>
+    <tr><th scope="row"><a class="proj-link" href="#">billing-service</a></th><td><span class="chip p-on">켜짐</span></td><td><span class="wait">manager 입력창에 글이 있어 알림 대기</span></td><td>자동</td><td class="links"><a href="#">상태</a><a href="#">요청 <span class="pend">대기 1 · 질문 1</span></a></td></tr>
+    <tr><th scope="row"><a class="proj-link" href="#">mobile-app</a></th><td><span class="chip p-on">켜짐</span></td><td><span class="wait">모델 오류로 보류</span></td><td>수동</td><td class="links"><a href="#">상태</a><a href="#">요청 <span class="pend">대기 1</span></a></td></tr>
+    <tr><th scope="row"><a class="proj-link" href="#">docs-site</a></th><td><span class="chip p-off">꺼짐</span></td><td><span class="none">—</span></td><td>자동</td><td class="links"><a href="#">상태</a><a href="#">요청 <span class="pend">0</span></a></td></tr>
+    <tr><th scope="row"><a class="proj-link" href="#">data-pipeline</a></th><td><span class="chip p-unknown">연결 없음/불명</span></td><td><span class="none">—</span></td><td>수동</td><td class="links"><a href="#">상태</a><a href="#">요청 <span class="pend">—</span></a></td></tr>
+    <tr><th scope="row"><a class="proj-link" href="#">infra-scripts</a></th><td><span class="chip p-on">켜짐</span></td><td><span class="none">—</span></td><td>자동</td><td class="links"><a href="#">상태</a><a href="#">요청 <span class="pend">0</span></a></td></tr>
+    </tbody>
+  </table>
+  </div>
+</section>
+<section class="card" aria-labelledby="req-h">
+  <div class="card-head"><h2 id="req-h">최근 요청</h2><a class="card-link" href="#">전체 보기</a></div>
+  <div class="table-wrap" tabindex="0" role="region" aria-label="최근 요청 표 (가로로 스크롤)">
+  <table class="data">
+    <thead><tr><th scope="col">제목</th><th scope="col">프로젝트</th><th scope="col">상태</th><th scope="col">출처</th><th scope="col">갱신</th></tr></thead>
+    <tbody>
+    <tr><th scope="row"><a href="#">결제 webhook 재시도 간격 조정</a><span class="flag">내 답 필요</span></th><td class="proj">billing-service</td><td><span class="chip s-needs">추가 정보 필요</span></td><td class="src">Board agent</td><td class="when">3분 전</td></tr>
+    <tr><th scope="row"><a href="#">로그인 화면 오류 문구 정리</a></th><td class="proj">mobile-app</td><td><span class="chip s-new">신규</span></td><td class="src">소유자</td><td class="when">12분 전</td></tr>
+    <tr><th scope="row"><a href="#">월간 리포트 CSV 컬럼 추가</a><span class="flag">내 답 필요</span></th><td class="proj">data-pipeline</td><td><span class="chip s-reviewing">검토 중</span></td><td class="src">key: ci-agent</td><td class="when">25분 전</td></tr>
+    <tr><th scope="row"><a href="#">README 설치 절차 갱신</a></th><td class="proj">docs-site</td><td><span class="chip s-ready">실행 준비</span></td><td class="src">소유자</td><td class="when">1시간 전</td></tr>
+    <tr><th scope="row"><a href="#">푸시 알림 권한 안내 문구</a></th><td class="proj">mobile-app</td><td><span class="chip s-running">실행 중</span></td><td class="src">Board agent</td><td class="when">1시간 전</td></tr>
+    <tr><th scope="row"><a href="#">백업 스크립트 로그 회전</a></th><td class="proj">infra-scripts</td><td><span class="chip s-closed">닫힘 · 성공</span></td><td class="src">key: ci-agent</td><td class="when">어제</td></tr>
+    <tr><th scope="row"><a href="#">환불 API 응답 코드 점검</a></th><td class="proj">billing-service</td><td><span class="chip s-new">신규</span></td><td class="src">key: review-bot</td><td class="when">어제</td></tr>
+    <tr><th scope="row"><a href="#">오래된 의존성 정리</a><span class="flag">내 답 필요</span></th><td class="proj">data-pipeline</td><td><span class="chip s-needs">추가 정보 필요</span></td><td class="src">key: review-bot</td><td class="when">어제</td></tr>
+    <tr><th scope="row"><a href="#">다크 모드 아이콘 대비</a></th><td class="proj">mobile-app</td><td><span class="chip s-closed">닫힘 · 거절</span></td><td class="src">소유자</td><td class="when">2일 전</td></tr>
+    <tr><th scope="row"><a href="#">배포 문서 링크 점검</a></th><td class="proj">docs-site</td><td><span class="chip s-running">실행 중</span></td><td class="src">Board agent</td><td class="when">2일 전</td></tr>
+    </tbody>
+  </table>
+  </div>
+</section>
+</div>
+<aside class="side" aria-label="요약 카드">
+  <section class="card agent-card" aria-labelledby="agent-h">
+    <div class="card-head"><h2 id="agent-h">Board agent</h2></div>
+    <p class="agent-state"><span class="dot dot-ok" aria-hidden="true"></span><strong>실행 중</strong></p>
+    <dl class="kv"><dt>마지막 활동</dt><dd>2분 전</dd><dt>처리 중인 요청</dt><dd>1건</dd></dl>
+    <a class="btn btn-primary btn-block" href="#">열기</a>
+  </section>
+  <section class="card attn-card" aria-labelledby="attn-h">
+    <div class="card-head"><h2 id="attn-h">내 답이 필요한 요청</h2><span class="count">3</span></div>
+    <ul class="attn-list">
+      <li><a href="#">결제 webhook 재시도 간격 조정</a><span class="meta">billing-service · 추가 정보 필요 · 3분 전</span></li>
+      <li><a href="#">월간 리포트 CSV 컬럼 추가</a><span class="meta">data-pipeline · 재시도 한도 소진 · 결정 대기 · 25분 전</span></li>
+      <li><a href="#">오래된 의존성 정리</a><span class="meta">data-pipeline · 추가 정보 필요 · 어제</span></li>
+    </ul>
+  </section>
+</aside>
+</div>
+</main>
+</body>
+</html>

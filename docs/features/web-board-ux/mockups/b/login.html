@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>로그인 - WB Hub</title>
+<link rel="stylesheet" href="style.css">
+<script src="app.js"></script>
+</head>
+<body class="page-login">
+<div class="banner" role="alert">
+  <span class="banner-icon"><svg class="icon" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M12 3l10 18H2zM12 10v5M12 18h.01"/></svg></span>
+  <span class="banner-text">평문 HTTP로 LAN에 열려 있습니다. VPN 등 네트워크 보호가 필요합니다.</span>
+  <button type="button" class="banner-close js-only" data-banner-close>닫기</button>
+</div>
+<header class="site-header site-header-min">
+  <a class="brand" href="login.html"><span class="brand-mark" aria-hidden="true"></span>WB Hub</a>
+  <button type="button" class="http-chip" data-banner-open aria-describedby="http-tip"><svg class="icon" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M12 3l10 18H2zM12 10v5M12 18h.01"/></svg>평문 HTTP<span id="http-tip" class="tip" role="tooltip">평문 HTTP로 LAN에 열려 있습니다. VPN 등 네트워크 보호가 필요합니다.</span></button>
+  <div class="tools"><button type="button" class="btn btn-ghost btn-icon js-only" data-theme-toggle aria-label="밝게/어둡게 전환" title="밝게/어둡게 전환"><svg class="icon" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M20 14.5A8 8 0 0 1 9.5 4 8 8 0 1 0 20 14.5z"/></svg></button></div>
+</header>
+<main class="login-main">
+  <section class="card login-card" aria-labelledby="login-h">
+    <h1 id="login-h">로그인</h1>
+    <p class="lead">소유자 비밀번호를 입력하세요. 사용자 이름은 없습니다.</p>
+    <p class="alert alert-error" role="alert"><svg class="icon" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M12 3l10 18H2zM12 10v5M12 18h.01"/></svg>비밀번호가 맞지 않습니다</p>
+    <form class="stack" method="get" action="dashboard.html">
+      <input type="hidden" name="login_token" value="mock">
+      <label class="field"><span class="field-label">비밀번호</span>
+        <input type="password" name="password" autocomplete="current-password" required autofocus aria-invalid="true"></label>
+      <button class="btn btn-primary btn-block" type="submit">로그인</button>
+    </form>
+    <p class="hint">시도가 너무 잦으면 잠시 기다려야 합니다.</p>
+  </section>
+</main>
+</body>
+</html>

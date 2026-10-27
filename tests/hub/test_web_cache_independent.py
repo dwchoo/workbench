@@ -37,6 +37,7 @@ SESSION_PAGE = 'private, no-cache'
 NO_STORE = 'no-store'
 STATIC = 'public, max-age=3600'
 FAVICON = 'public, max-age=86400'
+SKILL = 'no-cache'  # SPEC row `/skill/…` (WBX-B3): "Host마다 내용이 다름"
 SESSION_CHECK = '/static/session-check.js'
 LOGIN_RESTORE = '/static/login-restore.js'
 PARAMS = {**audit.PARAMS, 'tail': 'nope'}
@@ -44,6 +45,10 @@ PARAMS = {**audit.PARAMS, 'tail': 'nope'}
 SPEC_NO_STORE = {('POST', '/settings/keys')} | {(m, f'/requests/{{rid}}/{v}') for m in ('GET', 'HEAD')
                                                   for v in ('raw', 'full', 'artifact')}
 STATES = ('none', 'valid', 'logged_out', 'forged')
+
+
+def is_skill(route: str) -> bool:
+    return route == '/skill' or route.startswith('/skill/')
 
 
 class Doc(HTMLParser):
@@ -146,6 +151,8 @@ class HubCase(unittest.IsolatedAsyncioTestCase):
     def spec_expected(method, route, access, state, status, ctype) -> str:
         if route == '/favicon.ico' and status == 204:
             return FAVICON
+        if is_skill(route) and status in (200, 404):
+            return SKILL  # SPEC row `/skill/…`: any session state; the served text or the 404 of a GET/HEAD
         if (method, route) in SPEC_NO_STORE:
             return NO_STORE
         if (state == 'valid' and access == audit.SESSION and ctype == 'text/html' and not 300 <= status < 400):
@@ -221,6 +228,9 @@ class MatrixTests(HubCase):
             with self.subTest(o.label):
                 if o.route == '/favicon.ico' and o.status == 204:
                     self.assertEqual(o.headers['Cache-Control'], FAVICON)  # SPEC: unchanged
+                    continue
+                if is_skill(o.route) and o.status in (200, 404):
+                    self.assertEqual(o.headers['Cache-Control'], SKILL)  # SPEC row `/skill/…`, session-independent
                     continue
                 self.assertEqual(o.headers['Cache-Control'], NO_STORE)
 

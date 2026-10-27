@@ -28,6 +28,8 @@ SECURITY_HEADERS = {"Content-Security-Policy": CSP, "X-Content-Type-Options": "n
 STATIC_PREFIX = "/static/"
 BODY_LIMIT = 256 * 1024  # SPEC 입력 한도: HTTP 요청 body (form, ``/mcp``) -> 413
 STATIC_CACHE = "public, max-age=3600"
+SKILL_PREFIX = "/skill/"  # WBX-B3: the served text differs per Host, so it is always revalidated
+SKILL_CACHE = "no-cache"
 SESSION_PAGE_CACHE = "private, no-cache"
 NO_STORE = "no-store"
 
@@ -127,6 +129,8 @@ def cache_control(request: web.Request, response: web.StreamResponse) -> str:
     static file stays ``no-store``."""
     if request.path.startswith(STATIC_PREFIX) and response.status == 200:
         return STATIC_CACHE
+    if (request.path.startswith(SKILL_PREFIX) or request.path == SKILL_PREFIX[:-1]) and response.status in (200, 404):
+        return SKILL_CACHE
     if (request.method, route_of(request)) in NO_STORE_ROUTES:
         return NO_STORE
     if (session_of(request) is not None and access_of(request) == "page" and response.content_type == "text/html"

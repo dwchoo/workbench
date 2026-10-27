@@ -1,5 +1,9 @@
 include pyproject.toml
 recursive-include build_support *.py
 recursive-include omp_bridge *.ts *.md *.py *.yml
+include skills/README.md
+include skills/wb-inbox/SKILL.md
+include skills/wb-inbox/wb_inbox.py
+include skills/wb-inbox/.env.example
 recursive-include src/workbench *.json
 recursive-include src/workbench/hub/web/static *

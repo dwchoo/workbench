@@ -30,7 +30,8 @@ def mode_of(path: Path) -> int:
 
 
 WEB_KEYS = {'bind': '"127.0.0.1"', 'port': '8780', 'tls_cert': '""', 'tls_key': '""',
-            'allow_insecure_http': 'true', 'server_names': '[]', 'allow_from': '[]'}  # allow_from: 2026-10-27
+            'allow_insecure_http': 'true', 'server_names': '[]', 'allow_from': '[]',
+            'skill_repo_url': '""'}  # allow_from: 2026-10-27; skill_repo_url: WBX-B3
 BOARD_KEYS = {'model': '""', 'role_prompt_file': '""', 'shell': '""'}
 COMMENTED_KEY = re.compile(r'^# ?([a-z_]+) = (.+)$')
 

@@ -81,7 +81,15 @@ EXPECTED = {
     ('*', '/api/v1/requests/{rid}/result'): OWN,
     ('*', '/api/v1'): OWN,  # the bare prefix: the catch-all's 404 too
     ('*', '/api/v1/{tail}'): OWN,  # catch-all: 404 not_found after the key check
+    # WBX-B3 ``/skill/``: a fixed public list (GET/HEAD) plus a public 404 for every other ``/skill/…`` path
+    ('GET', '/skill/README.md'): PUBLIC,
+    ('GET', '/skill/wb-inbox/SKILL.md'): PUBLIC,
+    ('GET', '/skill/wb-inbox/wb_inbox.py'): PUBLIC,
+    ('GET', '/skill/wb-inbox/.env.example'): PUBLIC,
+    ('GET', '/skill'): PUBLIC,
+    ('GET', '/skill/{tail}'): PUBLIC,
 }
+SKILL_ROUTES = frozenset(key for key in EXPECTED if key[1] == '/skill' or key[1].startswith('/skill/'))
 REST_ROUTES = frozenset(key for key in EXPECTED if key[1] == '/api/v1' or key[1].startswith('/api/v1/'))
 # Unsafe routes that do not use the session CSRF token, and why (each is checked by behaviour below).
 CSRF_EXEMPT = {('POST', '/login'): 'pre-session login token', ('*', '/mcp'): 'Bearer API key; cookies ignored',
@@ -231,6 +239,15 @@ class BehaviourAuditTests(RouteAuditCase):
                          'audit', 'settings', 'raw', 'artifact', 'full'):
                 with self.subTest(path=path, word=word):
                     self.assertNotIn(word, path.split('/'))
+
+    async def test_skill_routes_are_read_only_and_answer_without_a_session(self):
+        concrete = {'/skill/{tail}': '/skill/nothing-here'}
+        self.assertEqual({method for method, _path in SKILL_ROUTES}, {'GET'})
+        for _method, path in sorted(SKILL_ROUTES):
+            with self.subTest(route=path):
+                status, text = await self.send('GET', concrete.get(path, path), cookie=False)
+                self.assertIn(status, (200, 404), text)
+                self.assertNotIn('csrf', text)
 
     async def test_login_post_needs_its_own_login_token(self):
         status, text = await self.send('POST', '/login', cookie=False, data={'password': PASSWORD})

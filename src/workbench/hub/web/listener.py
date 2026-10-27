@@ -251,7 +251,7 @@ class WebListener:
         addresses = web_config.addresses
         warn = insecure_warning(addresses, tls=tls)
         policy = OriginPolicy(web_config.bind, tls, web_config.server_names, binds=addresses,
-                              allow_from=web_config.allow_from)
+                              allow_from=web_config.allow_from, skill_repo_url=web_config.skill_repo_url)
         if self.services is None:
             self.services = WebServices(self.passwords, db, policy, insecure_warning=warn, clock=self.clock,
                                         projects=lambda: self.projects(),

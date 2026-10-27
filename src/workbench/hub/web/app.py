@@ -22,7 +22,7 @@ from .refusals import RefusalLog
 from .middleware import (PRINCIPAL, SERVICES, SESSION, api, own_auth, principal_of, public,  # noqa: F401
                          session_of)
 from .pages import board as board_page
-from .pages import control, login, settings
+from .pages import control, login, settings, skill
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 # Open WebSockets (TI-17 adds each one); the listener closes them with 1001 when the Hub stops.
@@ -39,6 +39,7 @@ class OriginPolicy:
     server_names: tuple[str, ...] = ()
     binds: tuple[str, ...] = ()  # every listening address (2026-10-27); empty: ``bind`` alone
     allow_from: tuple = ()  # client networks (``ipaddress``); empty: every client (2026-10-27)
+    skill_repo_url: str = ""  # ``[web] skill_repo_url``: the README's "Source repository" line (WBX-B3); empty: none
 
     @property
     def scheme(self) -> str:
@@ -174,6 +175,7 @@ def create_app(services: WebServices, *, routes: Iterable[Callable[[web.Applicat
     login.register(app)
     settings.make_register(lambda: services.projects())(app)
     control.register(app)
+    skill.register(app)
     for register in routes:
         register(app)
     return app

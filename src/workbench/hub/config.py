@@ -18,6 +18,7 @@ import ssl
 import stat
 import tomllib
 from typing import Iterable, Mapping
+from urllib.parse import urlsplit
 
 from workbench.backend.paths import write_private_bytes
 
@@ -32,6 +33,7 @@ SERVER_NAME_MAX = 253
 SERVER_NAMES_MAX = 64
 BIND_MAX = 16  # ``[web] bind`` list entries
 ALLOW_FROM_MAX = 256  # ``[web] allow_from`` entries
+SKILL_REPO_URL_MAX = 2048  # ``[web] skill_repo_url`` characters (WBX-B3)
 _IPV4_MAPPED = ipaddress.ip_network("::ffff:0:0/96")
 _LABEL_CHARS = frozenset("abcdefghijklmnopqrstuvwxyz0123456789-")
 CONFIG_FILE_MODE, CONFIG_DIR_MODE = 0o600, 0o700
@@ -95,6 +97,10 @@ enabled = false
 #   예(Tailscale VPN과 이 컴퓨터만): allow_from = ["100.64.0.0/10", "127.0.0.1", "::1"]
 # allow_from = []
 
+# skill_repo_url: skill 저장소 주소. 기본값 ""(없음). 있으면 /skill/README.md에 "Source repository: <주소>" 줄로 보입니다.
+# http 또는 https 주소만 됩니다(사용자 정보와 공백 없음).
+# skill_repo_url = ""
+
 [board_agent]
 # model: Board agent가 쓸 OMP 모델. 기본값 ""(omp-models.yml의 manager 항목).
 # 바꾼 값은 다음 Board agent 시작(재시작) 때 적용됩니다.
@@ -136,6 +142,8 @@ class WebConfig:
     # limits client IPs (empty: no filter).
     binds: tuple[str, ...] = ()
     allow_from: tuple[Network, ...] = ()
+    # WBX-B3: the README ``/skill/`` serves gets a "Source repository" line with this URL ("" = none).
+    skill_repo_url: str = ""
 
     @property
     def addresses(self) -> tuple[str, ...]:
@@ -317,6 +325,22 @@ def _allow_entry(value: object) -> Network | None:
     return network
 
 
+def _skill_repo_url(value: object) -> bool:
+    """``""`` (none), or a short ASCII ``http(s)`` URL with a host and no userinfo, whitespace or control characters."""
+    if not isinstance(value, str) or len(value) > SKILL_REPO_URL_MAX:
+        return False
+    if value == "":
+        return True
+    if not value.isascii() or not value.isprintable() or " " in value:
+        return False
+    try:
+        parts = urlsplit(value)
+        parts.port  # noqa: B018 - raises ValueError for a bad port
+    except ValueError:
+        return False
+    return parts.scheme in ("http", "https") and bool(parts.hostname) and "@" not in parts.netloc
+
+
 def _web(table: dict) -> WebConfig:
     values = {}
     for key, value in table.items():
@@ -335,6 +359,10 @@ def _web(table: dict) -> WebConfig:
             if None in networks:
                 raise ConfigInvalid(item)
             values[key] = tuple(dict.fromkeys(networks))
+        elif key == "skill_repo_url":
+            if not _skill_repo_url(value):
+                raise ConfigInvalid(item)
+            values[key] = value
         elif key == "port":
             if type(value) is not int or not 0 <= value <= 65535:
                 raise ConfigInvalid(item)

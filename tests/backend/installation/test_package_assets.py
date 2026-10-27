@@ -6,6 +6,7 @@ from pathlib import Path
 import shutil
 import subprocess
 import sys
+import tarfile
 import tempfile
 import unittest
 import zipfile
@@ -21,10 +22,17 @@ class PackageAssetsTests(unittest.TestCase):
         cls.artifact_run = Path(tempfile.mkdtemp(prefix='package-', dir=RUN))
         cls.source = cls.artifact_run / 'source'
         cls.source.mkdir()
-        for name in ('src', 'omp_bridge', 'build_support'):
+        for name in ('src', 'omp_bridge', 'build_support', 'skills'):
             if (ROOT / name).exists():
                 shutil.copytree(ROOT / name, cls.source / name,
                                 ignore=shutil.ignore_patterns('__pycache__', '*.pyc', '*.egg-info', '_assets'))
+        # WBX-B3: a developer's local API key file sits in the source being built; no artifact may carry it.
+        for folder in ('skills', 'skills/wb-inbox'):
+            (cls.source / folder / '.env').write_text('WB_API_KEY=wbk_local_secret_for_test\n')
+        # Only the four allowlisted files ship: `.env.*` variants and unrelated stray files must not.
+        for stray in ('skills/wb-inbox/.env.local', 'skills/wb-inbox/.env.production', 'skills/.env.local',
+                      'skills/wb-inbox/notes.md', 'skills/wb-inbox/helper.py', 'skills/stray.txt', 'skills/extra.md'):
+            (cls.source / stray).write_text('WB_API_KEY=wbk_local_secret_for_test\n')
         for name in ('pyproject.toml', 'MANIFEST.in'):
             if (ROOT / name).exists():
                 shutil.copy2(ROOT / name, cls.source / name)
@@ -78,6 +86,39 @@ class PackageAssetsTests(unittest.TestCase):
         self.assertTrue(location.startswith(str(self.artifact_run / 'tools')))
         self.assertNotIn(str(self.source), location)
 
+
+    def test_user_skill_files_ship_for_hub_serving_and_no_env_file_does(self):
+        # Expected: the repo's committed skill files (SPEC "Packaging": README, SKILL.md, wb_inbox.py, .env.example).
+        names = ('README.md', 'wb-inbox/SKILL.md', 'wb-inbox/wb_inbox.py', 'wb-inbox/.env.example')
+        with zipfile.ZipFile(self.wheel) as archive:
+            skill_entries = sorted(name for name in archive.namelist() if name.startswith('workbench/_assets/skills/'))
+            self.assertEqual(skill_entries, sorted(f'workbench/_assets/skills/{name}' for name in names))
+            for name in names:
+                self.assertEqual(archive.read(f'workbench/_assets/skills/{name}'), (ROOT / 'skills' / name).read_bytes(), name)
+            self.assertFalse([n for n in archive.namelist() if n.rsplit('/', 1)[-1] == '.env'])
+            self.assertNotIn(b'wbk_local_secret_for_test', b''.join(archive.read(n) for n in archive.namelist()))
+        with tarfile.open(self.sdist) as archive:
+            members = archive.getnames()
+            self.assertFalse([n for n in members if n.rsplit('/', 1)[-1] == '.env'])
+            self.assertEqual(sorted(n.split('/', 1)[1] for n in members
+                                    if n.split('/', 1)[1:2] and n.split('/', 1)[1].startswith('skills/')
+                                    and not archive.getmember(n).isdir()),
+                             sorted(f'skills/{name}' for name in names))
+        installed = self.command([str(self.python), '-I', '-c', r"""
+from pathlib import Path
+import workbench
+root = Path(workbench.__file__).parent / '_assets' / 'skills'
+print(' '.join(sorted(p.relative_to(root).as_posix() for p in root.rglob('*') if p.is_file())))
+"""]).split()
+        self.assertEqual(sorted(installed), sorted(names))
+        # The Hub resolves them through canonical_path("skills/…"): the installed bytes are the repo's.
+        resolved = self.command([str(self.python), '-I', '-c', r"""
+from hashlib import sha256
+from workbench.assets import canonical_path
+for name in %r:
+    print(sha256(canonical_path('skills/' + name).read_bytes()).hexdigest())
+""" % (names,)]).split()
+        self.assertEqual(resolved, [sha256((ROOT / 'skills' / name).read_bytes()).hexdigest() for name in names])
 
     def test_installed_default_assets_are_readable_and_role_filtered_outside_checkout(self):
         output = self.command([str(self.python), '-I', '-c', r"""

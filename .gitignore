@@ -11,3 +11,5 @@ __pycache__/
 
 # Workbench user skills: local API key settings.
 skills/**/.env
+skills/**/.env.*
+!skills/**/.env.example

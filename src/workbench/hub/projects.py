@@ -279,6 +279,149 @@ def power_off(entry: registry.Entry, ask: Callable[[list], bool], out: TextIO) -
     return Outcome(False, WORK_KEPT_CHANGING, refusals[-1], {"active": active, "refusals": refusals})
 
 
+# -- stop all (2026-10-27 사용자 요청: 전체 끄기) ----------------------------------------------
+STOPPED = "stopped"  # confirmed with a verified result
+ALREADY_OFF = "already_off"  # listed on, but its backend is gone by the time it was asked
+FAILED = "failed"  # asked but not stopped, or stopped without a verified result (reason/detail)
+UNCONFIRMED = "unconfirmed"  # unknown/starting row: not asked, and not known to be off (never counted as off)
+CLOSING = "closing"  # a shutdown is already in progress (someone else's)
+MISMATCH_SKIPPED = "mismatch"  # the registry entry does not match its folder: nothing can be running from it
+WORK_CHANGED = "work_changed"  # the work changed since the shown list (reason of a FAILED item)
+STOP_ALL_FAILURES = (FAILED, UNCONFIRMED)  # the statuses that make a stop-all end non-zero
+
+
+@dataclass(frozen=True)
+class StopItem:
+    """One project's line of a stop-all. ``active`` is the work list the backend showed (if asked)."""
+    entry: registry.Entry
+    status: str
+    reason: str | None = None
+    detail: str | None = None
+    active: list = field(default_factory=list)
+
+    @property
+    def failed(self) -> bool:
+        return self.status in STOP_ALL_FAILURES
+
+
+def entry_from_row(row: dict) -> registry.Entry:
+    """The registry entry of a Hub ``list`` row (what the TUI's per-project actions are built from)."""
+    return registry.Entry(root=row["root"], project_id=row["project_id"], name=row["name"],
+                          registered_at=0.0, source="tui")
+
+
+def classify_rows(rows: list[dict]) -> tuple[list[registry.Entry], list[StopItem]]:
+    """``(on entries to stop, held items)`` from Hub ``list`` rows. ``off`` rows drop out; ``unknown`` and
+    ``starting`` rows are ``unconfirmed`` (unknown is never off); ``closing`` and ``mismatch`` are told as
+    they are."""
+    targets: list[registry.Entry] = []
+    held: list[StopItem] = []
+    for row in rows:
+        power, detail = row.get("power"), row.get("power_detail")
+        if power == "on":
+            targets.append(entry_from_row(row))
+        elif power == "off":
+            continue
+        elif power == "closing":
+            held.append(StopItem(entry_from_row(row), CLOSING))
+        elif power == "mismatch":
+            held.append(StopItem(entry_from_row(row), MISMATCH_SKIPPED, detail=detail))
+        else:  # unknown, starting, or a state this version does not know
+            held.append(StopItem(entry_from_row(row), UNCONFIRMED, reason=str(power), detail=detail))
+    return targets, held
+
+
+def _failed_item(entry: registry.Entry, outcome: Outcome, active: list | None = None) -> StopItem:
+    return StopItem(entry, FAILED, outcome.reason, outcome.detail, list(active or []))
+
+
+def _not_running_item(entry: registry.Entry, outcome: Outcome, active: list | None = None) -> StopItem:
+    """``not_running`` is "already off" only when a fresh look agrees; anything else is not off."""
+    from .status import observe_entry
+    try:
+        row = observe_entry(entry)
+    except Exception:
+        row = {"power": "unknown"}
+    if row.get("power") == "off":
+        return StopItem(entry, ALREADY_OFF)
+    return StopItem(entry, FAILED, outcome.reason, f"{outcome.detail} (지금 상태: {row.get('power')})",
+                    list(active or []))
+
+
+def _confirm_shown(entry: registry.Entry, pending: dict, out: TextIO | None) -> Outcome:
+    """Confirm with the token of the list the user was shown. A refused token (expired while earlier
+    projects were stopped, or work changed) asks once more and goes on only when the new list is exactly
+    the shown one; otherwise nothing of this project is stopped (``work_changed``)."""
+    token, shown, backend = pending["token"], pending["active"], pending["backend"]
+    outcome = power_off_confirm(entry, token, out, backend)
+    if outcome.reason != SHUTDOWN_TOKEN_MISMATCH:
+        return outcome
+    fresh = power_off_request(entry)
+    if not fresh.ok:
+        return fresh
+    if fresh.data["active"] != shown or fresh.data["backend"] != backend:
+        return Outcome(False, WORK_CHANGED, WORK_CHANGED_TEXT, {"active": fresh.data["active"]})
+    return power_off_confirm(entry, fresh.data["token"], out, fresh.data["backend"])
+
+
+def power_off_all(entries: list[registry.Entry], ask: Callable[[list[tuple[registry.Entry, list]]], bool],
+                  out: TextIO | None = None) -> list[StopItem]:
+    """Stop every entry in ``entries`` (the ``on`` ones) with the same two steps as :func:`power_off`
+    (``power_off_request`` then ``power_off_confirm``), after ONE ``ask([(entry, active), ...])``.
+
+    Step 1 asks every project's backend for its work list (nothing is stopped); an entry that cannot be
+    asked is reported at once. A False ``ask`` stops nothing (every asked entry is ``declined``). Step 2
+    confirms the projects one after the other with the token of the list that was shown; a result that
+    is not ``verified`` is ``failed`` (never a success, C-AC-22), and one project's failure never stops
+    the others from being stopped. Returns the items in ``entries`` order.
+    """
+    items: dict[str, StopItem] = {}
+    pending: dict[str, dict] = {}
+    for entry in entries:
+        outcome = power_off_request(entry)
+        if outcome.ok:
+            pending[entry.root] = outcome.data
+        elif outcome.reason == NOT_RUNNING:
+            items[entry.root] = _not_running_item(entry, outcome)
+        else:
+            items[entry.root] = _failed_item(entry, outcome)
+    asked = [entry for entry in entries if entry.root in pending]
+    if asked:
+        if not ask([(entry, pending[entry.root]["active"]) for entry in asked]):
+            for entry in asked:
+                items[entry.root] = StopItem(entry, DECLINED, active=pending[entry.root]["active"])
+        else:
+            for entry in asked:
+                shown = pending[entry.root]["active"]
+                outcome = _confirm_shown(entry, pending[entry.root], out)
+                if outcome.ok:
+                    items[entry.root] = StopItem(entry, STOPPED, active=shown)
+                elif outcome.reason == NOT_RUNNING:
+                    items[entry.root] = _not_running_item(entry, outcome, shown)
+                else:
+                    items[entry.root] = _failed_item(entry, outcome, shown)
+    return [items[entry.root] for entry in entries]
+
+
+def stop_item_line(item: StopItem) -> str:
+    """The one result line of a project (CLI and TUI alike)."""
+    name = f'"{item.entry.name}"'
+    cause = f"{item.reason}: {item.detail}" if item.reason and item.detail else (item.reason or item.detail or "")
+    if item.status == STOPPED:
+        return f"{name}: 껐습니다"
+    if item.status == ALREADY_OFF:
+        return f"{name}: 이미 꺼져 있습니다"
+    if item.status == DECLINED:
+        return f"{name}: 취소했습니다 (끄지 않았습니다)"
+    if item.status == CLOSING:
+        return f"{name}: 이미 종료 중입니다"
+    if item.status == MISMATCH_SKIPPED:
+        return f"{name}: 불일치({item.detail})라 건너뜁니다"
+    if item.status == UNCONFIRMED:
+        return f"{name}: 상태 불명({cause})이라 끄지 않았고 꺼졌는지도 확인하지 못했습니다"
+    return f"{name}: 끄지 못했습니다 ({cause})"
+
+
 _REPLY_ENVELOPE = ("v", "id", "type", "ok")
 
 

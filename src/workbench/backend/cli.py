@@ -1087,6 +1087,9 @@ def confirm_shutdown(client: UiClient, token: str, *, progress=None) -> Shutdown
 def cmd_shutdown(args: argparse.Namespace) -> int:
     """C-AC-22: show the active work, confirm, then wait for the backend's own result; a result that is not
     verified, or none at all, is never shown as success, and no failure ends in a traceback (CW-16 O4)."""
+    if getattr(args, "all", False):
+        from workbench.hub.cli import cmd_shutdown_all
+        return cmd_shutdown_all(args)
     layout = _layout(args)
     try:
         client = _verified_client(layout, name="workbench-cli", timeout=10)
@@ -1361,6 +1364,8 @@ def parser() -> argparse.ArgumentParser:
     shutdown = common(sub.add_parser("shutdown", aliases=["down"], help="request and confirm a full backend shutdown"))
     shutdown.add_argument("--yes", action="store_true", help="confirm without prompting")
     shutdown.add_argument("--json", action="store_true")
+    shutdown.add_argument("--all", action="store_true",
+                          help="켜진 WB 프로젝트를 모두 끈다(진행 중 작업을 한 번에 보이고 한 번만 확인; 2026-10-27 사용자 요청)")
     shutdown.set_defaults(handler=cmd_shutdown)
     logs = sub.add_parser("logs", help="inspect stored logs and perform explicit user cleanup")
     logs_sub = logs.add_subparsers(dest="logs_kind", required=True)

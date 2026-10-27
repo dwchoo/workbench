@@ -242,6 +242,91 @@ def cmd_hub_list(args: argparse.Namespace) -> int:
     return EXIT_OK
 
 
+def list_rows() -> dict:
+    """The very ``list`` the Hub answers (``status.Lister`` over the registry and each project's live
+    status), read in this process so ``wb shutdown --all`` needs no Hub to be running."""
+    import asyncio
+    from .status import Lister
+    return asyncio.run(Lister(hub_layout()).list(fresh=True))
+
+
+def _stdin_is_terminal() -> bool:
+    try:
+        return sys.stdin is not None and sys.stdin.isatty()
+    except (OSError, ValueError):
+        return False
+
+
+def cmd_shutdown_all(args: argparse.Namespace) -> int:
+    """``wb shutdown --all`` (2026-10-27 사용자 요청: 전체 끄기): stop every project that is on.
+
+    The project list is the Hub ``list`` (registry + each project's live status, read in this process:
+    no Hub has to run). Each project is stopped through ``projects.power_off_all``, i.e. the very
+    ``shutdown_request`` -> ``shutdown_confirm`` steps of ``wb shutdown``, after the work of all of them is
+    shown once and a single ``[y/N]`` (``--yes`` skips it; without a terminal and without ``--yes``: exit 2).
+    Exit 0 when every project that was on is stopped (or already off); 1 when one failed, was not
+    confirmed or the question was answered no."""
+    from . import projects
+    if args.data_dir:
+        print("--all은 --data-dir와 함께 쓸 수 없습니다. --all은 Hub에 등록된 모든 프로젝트가 대상입니다.", file=sys.stderr)
+        return EXIT_REQUIREMENT
+    info = sys.stderr if args.json else sys.stdout  # --json keeps stdout for the one result object
+    listing = list_rows()
+    if (listing.get("registry") or {}).get("state") != "ok":
+        print(f"Hub registry가 손상되어 목록을 읽지 못했습니다: {(listing.get('registry') or {}).get('path')}. "
+              "아무것도 끄지 않았습니다.", file=sys.stderr)
+        return EXIT_FAILURE
+    targets, held = projects.classify_rows(listing.get("rows") or [])
+    state = {"no_terminal": False}
+
+    def ask(pending: list) -> bool:
+        print(f"켜진 WB 프로젝트 {len(pending)}개를 모두 끕니다:", file=info)
+        for entry, active in pending:
+            print(f'  "{entry.name}" ({entry.root})', file=info)
+            print("    active work:" if active else "    no active work reported", file=info)
+            for item in active:
+                print(f"      - {json.dumps(item, ensure_ascii=False, sort_keys=True)}", file=info)
+        if args.yes:
+            return True
+        if not (_stdin_is_terminal() and sys.stdout.isatty()):
+            state["no_terminal"] = True
+            print("확인할 terminal이 없어 아무것도 끄지 않았습니다. 끄려면 --yes를 붙여 다시 실행하세요.", file=sys.stderr)
+            return False
+        try:
+            answer = input(f"위 {len(pending)}개 프로젝트의 backend, 두 OMP session과 host shell을 모두 끌까요? [y/N] ")
+        except (EOFError, KeyboardInterrupt):
+            print("\ncancelled (nothing was stopped; use --yes to confirm)", file=sys.stderr)
+            return False
+        return answer.strip().lower() == "y"
+
+    try:
+        items = projects.power_off_all(targets, ask, out=None if args.json else sys.stderr) if targets else []
+    except KeyboardInterrupt:
+        print("\ncancelled", file=sys.stderr)
+        return EXIT_FAILURE
+    items = [*items, *held]
+    if state["no_terminal"]:
+        return EXIT_REQUIREMENT
+    if not items:
+        if args.json:
+            _print_json({"projects": []})
+        else:
+            print("켜진 WB 프로젝트가 없습니다.")
+        return EXIT_OK
+    if args.json:
+        _print_json({"projects": [{"name": item.entry.name, "root": item.entry.root, "status": item.status,
+                                   "reason": item.reason, "detail": item.detail} for item in items]})
+    else:
+        for item in items:
+            print(projects.stop_item_line(item))
+        if not targets and not any(item.failed for item in items):
+            print("켜진 WB 프로젝트가 없습니다.")
+    declined = any(item.status == projects.DECLINED for item in items)
+    if declined:
+        print("cancelled")
+    return EXIT_FAILURE if declined or any(item.failed for item in items) else EXIT_OK
+
+
 REVIEW_MODE_TIMEOUT = 15.0
 
 

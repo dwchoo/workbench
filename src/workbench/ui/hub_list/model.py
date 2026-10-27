@@ -41,6 +41,14 @@ class PowerOff:
 
 
 @dataclass(frozen=True)
+class PowerOffAll:
+    """``X`` (2026-10-27 사용자 요청: 전체 끄기): the on entries at the moment of the key and the rows
+    that are neither on nor off (reported, never counted as stopped)."""
+    entries: tuple
+    held: tuple
+
+
+@dataclass(frozen=True)
 class Refresh:
     pass
 
@@ -230,6 +238,19 @@ class HubListModel:
     def _refuse(self, row: dict, what: str) -> None:
         self.notice = f'"{row["name"]}": {power_text(row)} 상태라 {what}'
 
+    def _power_off_all(self):
+        """``X``: every on row at once (``projects.classify_rows``); none on is a notice, not an action."""
+        from workbench.hub import projects
+        targets, held = projects.classify_rows(self.rows)
+        if targets:
+            return PowerOffAll(tuple(targets), tuple(held))
+        unconfirmed = [item for item in held if item.failed]
+        if unconfirmed:
+            self.notice = f"끌 수 있는 켜진 프로젝트가 없고 {len(unconfirmed)}개는 상태 불명입니다(꺼졌는지 확인하지 못했습니다)"
+        else:
+            self.notice = "켜진 WB 프로젝트가 없습니다."
+        return None
+
     def press(self, key: str):
         self.notice = ""
         if self.modal is not None:  # any key closes it; only y starts, and only the entry it was opened for
@@ -251,6 +272,8 @@ class HubListModel:
             self.modal = Modal(entry_of(row), attach=key == "enter")
         elif key == "x" and power == "on":
             return PowerOff(entry_of(row))
+        elif key == "X":
+            return self._power_off_all()
         elif row is not None and key in ("enter", "o", "x"):
             if power == "off":  # x
                 self.notice = f'"{row["name"]}"은(는) 이미 꺼져 있습니다'

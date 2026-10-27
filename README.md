@@ -107,6 +107,7 @@ wb
 | `wb status` | 현재 프로젝트 backend 상태 표시. `--json`은 JSON 출력 |
 | `wb doctor [--json]` | 설치·OMP·프로젝트·DB·backend·update 상태를 수정 없이 진단 |
 | `wb shutdown` | active work를 표시하고 확인을 받은 뒤 backend, 두 OMP session, host shell 전체 종료 |
+| `wb shutdown --all` | 켜진 모든 WB 프로젝트의 active work를 한 번에 표시하고 한 번만 확인한 뒤 프로젝트마다 같은 종료를 차례로 실행. `--yes`는 확인 생략. 프로젝트별 결과를 한 줄씩 표시하고 하나라도 못 껐으면 exit 1 (2026-10-27 사용자 요청: 전체 끄기) |
 | `wb update [--ref REF]` | 현재 사용자 작업 확인·승인 종료·private 백업 후 uv Git 설치 업데이트 |
 | `wb confirm-boot` | 상태가 boot 확인을 요구할 때 환경 조건을 확인하고 진행 여부를 명시적으로 확인 |
 | `wb setup` | 사용자 범위 OMP 준비·선택 |
@@ -150,6 +151,7 @@ Hub는 OS 사용자당 하나만 background로 실행되는 관리 프로세스�
 | `Enter` | 켜진 프로젝트에 연결. 꺼진 프로젝트는 "켤까요? [y/N]"을 묻고 `y`일 때만 켜서 연결 |
 | `o` | 꺼진 프로젝트를 연결 없이 켜기 (같은 확인) |
 | `x` | 켜진 프로젝트 끄기 (진행 중 작업을 보여 주고 확인, 기존 `wb shutdown`과 같은 종료) |
+| `X` | 켜진 프로젝트 전체 끄기 (모든 프로젝트의 진행 중 작업을 한 번에 보여 주고 `[y/N]` 한 번. 2026-10-27 사용자 요청: 전체 끄기) |
 | `r` | 새로 고침 |
 | `q` | 종료 |
 

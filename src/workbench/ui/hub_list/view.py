@@ -16,7 +16,7 @@ from workbench.ui.hub_list.model import HubListModel
 from workbench.ui.product.view import _clip_cells
 
 TITLE = "Workbench Hub"
-FOOTER = "↑↓/jk 이동  Enter 진입  o 켜기  x 끄기  r 새로 고침  q 종료"
+FOOTER = "↑↓/jk 이동  Enter 진입  o 켜기  x 끄기  X 전체 끄기  r 새로 고침  q 종료"
 NAME, STATE = 0, 2  # columns that stay visible
 DROP_ORDER = (7, 6, 5, 4, 3, 1)  # 마지막 활동, 요청, 대기 사유, 명령, Task·단계, 경로
 MIN_WIDTH = 6  # a shrunk column keeps at least this much (이름 and 상태: ``FLOOR``)

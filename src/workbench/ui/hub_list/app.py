@@ -24,7 +24,7 @@ from workbench.hub.client import HubClient
 from workbench.hub.paths import hub_layout
 from workbench.hub.process import HubNotRunning, HubUnknown, HubUnresponsive
 from workbench.hub.status import POLL_INTERVAL, check_entry
-from workbench.ui.hub_list.model import Attach, HubListModel, PowerOff, PowerOn, Quit, Refresh
+from workbench.ui.hub_list.model import Attach, HubListModel, PowerOff, PowerOffAll, PowerOn, Quit, Refresh
 from workbench.ui.product.input import JAMO_KEYS
 from workbench.ui.hub_list.view import draw
 
@@ -234,6 +234,23 @@ def _ask_stop(active: list) -> bool:
         return False
 
 
+def _ask_stop_all(pending: list) -> bool:
+    """The one question of ``X``: every running project with its work, then a single ``[y/N]``."""
+    _flush_input()
+    print(f"켜진 WB 프로젝트 {len(pending)}개를 모두 끕니다:")
+    for entry, active in pending:
+        print(f'  "{entry.name}" ({entry.root})')
+        print("    active work:" if active else "    no active work reported")
+        for item in active:
+            print(f"      - {json.dumps(item, ensure_ascii=False, sort_keys=True)}")
+    try:
+        return input(f"위 {len(pending)}개 프로젝트의 backend, 두 OMP session과 host shell을 모두 끌까요? [y/N] "
+                     ).strip().lower() == "y"
+    except (EOFError, KeyboardInterrupt):
+        print()
+        return False
+
+
 def _first_line(text: str) -> str:
     lines = [line.strip() for line in text.splitlines() if line.strip()]
     return lines[0] if lines else ""
@@ -308,6 +325,30 @@ def _power_off(action: PowerOff, model: HubListModel) -> None:
         model.notice = f"{name}을(를) 끄지 못했습니다({outcome.reason})"
 
 
+def _power_off_all(action: PowerOffAll, model: HubListModel) -> None:
+    """``X``: ``projects.power_off_all`` (the per-project ``x`` steps for every running project, one
+    question), then the result lines; the poller refreshes the list when the action ends."""
+    try:
+        items = projects.power_off_all(list(action.entries), _ask_stop_all, out=sys.stdout)
+    except KeyboardInterrupt:
+        print()
+        model.notice = "전체 끄기를 중단했습니다(이미 시작된 종료는 계속될 수 있습니다)"
+        return
+    if items and all(item.status == projects.DECLINED for item in items):
+        model.notice = "전체 끄기를 취소했습니다(아무것도 끄지 않았습니다)"
+        return
+    items = [*items, *action.held]
+    for item in items:
+        print(projects.stop_item_line(item))
+    stopped = sum(item.status == projects.STOPPED for item in items)
+    failed = sum(item.failed for item in items)
+    _wait_enter()
+    if failed:
+        model.notice = f"{stopped}개를 껐고 {failed}개를 끄지 못했습니다(상태 불명 포함)"
+    else:
+        model.notice = f"{stopped}개 프로젝트를 껐습니다"
+
+
 def execute(action: object, model: HubListModel) -> int | None:
     """Run one action with curses ended; an exit code ends the app, None returns to the list."""
     if isinstance(action, Attach):
@@ -316,6 +357,8 @@ def execute(action: object, model: HubListModel) -> int | None:
         return _power_on(action, model)
     if isinstance(action, PowerOff):
         _power_off(action, model)
+    if isinstance(action, PowerOffAll):
+        _power_off_all(action, model)
     return None
 
 

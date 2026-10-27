@@ -31,6 +31,14 @@ header nav a.new-request { padding: 0.1rem 0.6rem; border: 1px solid var(--accen
 main { max-width: 64rem; margin: 1rem auto; padding: 0 1rem; }
 .banner { padding: 0.5rem 1rem; }
 .banner.insecure { background: var(--warn-bg); color: var(--warn-fg); border-bottom: 1px solid #e0c36a; }
+/* Plain-HTTP banner (WBX-A3): static/insecure-banner.js puts class wb-insecure-collapsed on <html> when the owner closed
+   the banner. Collapsed shows the header chip, anything else (no class, no JavaScript, blocked storage) shows the
+   banner, so one of the two is always visible. */
+.insecure-chip { display: none; position: relative; padding: 0 0.5rem; border-radius: 1rem; background: var(--warn-bg); color: var(--warn-fg); border: 1px solid #e0c36a; font-size: 0.85rem; cursor: pointer; }
+.wb-insecure-collapsed .insecure-chip { display: inline-block; }
+.wb-insecure-collapsed .banner.insecure { display: none; }
+.banner-close { margin-left: 0.75rem; }
+.insecure-chip:hover::after, .insecure-chip:focus::after { content: attr(title); position: absolute; top: 100%; left: 0; z-index: 2; width: max-content; max-width: 20rem; margin-top: 0.25rem; padding: 0.4rem 0.6rem; border: 1px solid #e0c36a; border-radius: 0.25rem; background: var(--warn-bg); color: var(--warn-fg); box-shadow: 0 2px 6px rgba(0, 0, 0, 0.2); font-size: 0.9rem; white-space: normal; }
 .error { color: var(--err); }
 form.stack { display: flex; flex-direction: column; gap: 0.5rem; max-width: 20rem; }
 pre { white-space: pre-wrap; word-break: break-word; background: #f0f0f0; padding: 0.5rem; }

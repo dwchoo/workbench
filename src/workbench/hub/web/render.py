@@ -73,6 +73,9 @@ class NavContext:
 # (web-board-ux SPEC "Cache 정책과 bfcache"); every page frame with the nav loads it.
 SESSION_CHECK_SCRIPT = "/static/session-check.js"
 
+# The plain-HTTP banner remembers "collapsed" in localStorage and tells base.css via a class on <html> (SPEC "평문 HTTP 배너 접기").
+INSECURE_BANNER_SCRIPT = "/static/insecure-banner.js"
+
 BOARD_DOT_TITLES = {"on": "실행 중", "off": "중지", "error": "오류"}
 NAV_LINKS = (("대시보드", "/"), ("요청", "/requests"), ("새 요청", "/requests/new"), ("Board agent", "/board"))
 SETTINGS_LINKS = (("비밀번호", "/settings"), ("API key", "/settings/keys"), ("감사 기록", "/settings/audit"))
@@ -148,17 +151,22 @@ def layout(title: str, body: object, *, insecure_warning: bool = False, csrf: st
     :data:`SESSION_CHECK_SCRIPT`."""
     if nav is not None and SESSION_CHECK_SCRIPT not in scripts:
         scripts = (SESSION_CHECK_SCRIPT, *scripts)
-    banner = tag("div", INSECURE_WARNING_TEXT, class_="banner insecure", role="alert") if insecure_warning else ""
+    banner = tag("div", html_join([INSECURE_WARNING_TEXT, " ", tag("button", "닫기", type="button", class_="banner-close",
+                                                                    hidden=True)]),
+                 class_="banner insecure", role="alert") if insecure_warning else ""
+    chip = tag("span", "평문 HTTP", class_="insecure-chip", tabindex="0", title=INSECURE_WARNING_TEXT) if insecure_warning else ""
     logout = (tag("form", html_join([csrf_field(csrf), tag("button", "로그아웃", type="submit")]),
                   method="post", action="/logout", class_="logout") if csrf else "")
     header = tag("header", html_join([tag("a", TITLE, href="/", class_="brand"),
                                       nav_markup(nav) if nav is not None else "",
-                                      tag("span", "", id="wb-badge", class_="badge"), logout]))
+                                      chip, tag("span", "", id="wb-badge", class_="badge"), logout]))
     head = html_join([void("meta", charset="utf-8"),
                       void("meta", name="viewport", content="width=device-width, initial-scale=1"),
                       *([void("meta", http_equiv="refresh", content=str(int(refresh)))] if refresh else []),
                       *(void("meta", name=name, content=content) for name, content in (metas or {}).items()),
                       tag("title", f"{title} - {TITLE}" if title else TITLE),
+                      # Synchronous (not deferred): the stored collapsed state reaches <html> before first paint.
+                      *([tag("script", "", src=INSECURE_BANNER_SCRIPT)] if insecure_warning else []),
                       void("link", rel="stylesheet", href="/static/base.css"),
                       *(void("link", rel="stylesheet", href=href) for href in stylesheets),
                       *(tag("script", "", src=src, defer=True) for src in scripts),

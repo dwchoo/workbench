@@ -402,6 +402,16 @@ Web Board 이전에 `wb hub enable`을 한 사용자는 **`wb hub enable`을 한
 - **옛 backend**: `backend_too_old`가 보이면 `wb update`로 backend를 새 버전으로 다시 시작한다.
 - 웹 로그는 `hub.log`(Hub 사용 안내의 위치 표)에 있다.
 
+### 10.5 뒤로 가기마다 Chrome 경고
+
+평문 HTTP(`http://<LAN 주소>:<port>`)로 열면 Chrome이 Workbench 화면 사이에서 뒤로 가기를 할 때마다 "안전하지 않은 연결" 경고를 띄울 수 있다. 이 경고는 Chrome의 HTTPS 우선 동작에서 나오며, Workbench는 경고를 끌 수 없다.
+
+- **근본 해결은 TLS다.** `wb hub tls --self-signed`로 인증서를 만들고 `wb hub reload`로 반영한 뒤 `https://`로 연다(1.3). HTTPS로 열면 이 HTTPS 우선 경고는 나오지 않는다(자체 서명 인증서는 처음 열 때 지문을 확인하고 예외를 수락한다).
+- Chrome 설정 "Always use secure connections"(설정 > 개인정보 보호 및 보안 > 보안)가 켜져 있으면 평문 HTTP 주소로 이동할 때마다 경고가 나온다. 경고를 보고할 때 이 설정이 켜져 있었는지도 함께 적는다.
+- Workbench 쪽 완화: 로그인한 화면은 `Cache-Control: private, no-cache`로 보내므로 브라우저가 뒤로 가기 때 그 화면을 메모리(bfcache)에서 바로 복원할 수 있다. 복원된 화면은 세션을 다시 확인하고, 로그아웃·만료됐으면 로그인 화면으로 간다. 복원된 화면에서 보낸 form은 서버가 세션·CSRF로 막는다(로그인 화면 또는 "화면이 오래되었습니다" 안내).
+- 다음 화면은 계속 `no-store`라 뒤로 가기 때 다시 받아 온다(경고가 남을 수 있다): 로그인 화면, API key 발급 결과(원문 key), 요청의 전체 보기·raw 로그·산출물.
+- 이 완화가 실제 Chrome에서 경고를 줄이는지는 아직 확인 전이다. 대시보드(`/`)는 10초마다 새로 고치므로 확인은 요청 목록·상세처럼 자동 갱신이 없는 화면 사이에서 한다.
+
 ## 11. 알려진 한계: 대상 host에서 확인할 것
 
 개발 host에서는 검증하지 못한 항목이다. 처음 쓰는 컴퓨터에서 한 번 확인한다.

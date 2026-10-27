@@ -188,7 +188,8 @@ class BoardTests(ProjectsCase):
         response, page = await self.page('/')
         metas = [attrs for attrs in page.tags('meta') if attrs.get('http-equiv') == 'refresh']
         self.assertEqual([attrs['content'] for attrs in metas], ['10'])
-        self.assertEqual([attrs.get('src') for attrs in page.tags('script')], ['/static/badge.js'])
+        self.assertEqual([attrs.get('src') for attrs in page.tags('script')],
+                         ['/static/session-check.js', '/static/badge.js'])  # WBX-A2
         self.assertNotIn('style=', response.body_text)
         self.assertNotIn('onclick', response.body_text)
         self.assertIn('id="wb-badge"', response.body_text)
@@ -373,7 +374,8 @@ class NoPaneInputTests(ProjectsCase):
                     lowered = response.body_text.lower()
                     for marker in self.PANE_MARKERS:
                         self.assertNotIn(marker, lowered, path)
-                    self.assertEqual([a.get('src') for a in page.tags('script')], ['/static/badge.js'], path)
+                    self.assertEqual([a.get('src') for a in page.tags('script')],
+                                     ['/static/session-check.js', '/static/badge.js'], path)  # WBX-A2
                     # The global nav's narrow-screen toggle (WBX-A1) is the one non-hidden input allowed.
                     self.assertFalse([a for a in page.tags('input') if a.get('type') not in ('hidden', None)
                                       and a.get('id') != 'wb-nav-toggle'], path)

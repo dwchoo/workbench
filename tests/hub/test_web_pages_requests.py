@@ -930,7 +930,7 @@ HOSTILE_BODY = ('<script>alert(1)</script>\n<img src=x onerror=alert(1)>\n"><b o
                 '[click](javascript:alert(1)) <a href="javascript:alert(1)">x</a>\n'
                 '\u202e txt-after-rlo \u2066\u2069 \u200b zero-width\n' + 'L' * 60000)
 HOSTILE_COMMENT = HOSTILE_BODY[:HOSTILE_BODY.index('L')] + 'L' * 12000
-SCRIPT_SRCS = {'/static/badge.js'}
+SCRIPT_SRCS = {'/static/session-check.js', '/static/badge.js'}  # WBX-A2 adds session-check
 
 
 class SafetyTests(RequestsCase):
@@ -1032,9 +1032,10 @@ class SafetyTests(RequestsCase):
                      f'/requests/{request_id}/cancel', f'/requests/{uuid.uuid4()}'):
             response, page = await self.page(path)
             self.assertEqual(response.headers['Content-Security-Policy'], web_auth.CSP, path)
-            self.assertEqual(response.headers['Cache-Control'], 'no-store', path)
+            self.assertEqual(response.headers['Cache-Control'], 'private, no-cache', path)  # WBX-A2 (SPEC cache table)
             self.assertTrue(response.headers['Content-Type'].startswith('text/html'), path)
-            self.assertEqual([a.get('src') for a in page.tags('script')], ['/static/badge.js'], path)
+            self.assertEqual([a.get('src') for a in page.tags('script')], ['/static/session-check.js', '/static/badge.js'],
+                             path)
             self.assertIn('/static/app.css', [a.get('href') for a in page.tags('link')], path)
             self.assertEqual([n for _, attrs in page.elements for n in attrs if n.startswith('on')], [], path)
             self.assertEqual([a for a in page.tags('style')], [], path)

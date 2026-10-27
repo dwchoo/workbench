@@ -1,0 +1,99 @@
+// WBX-A2 / seam S8: static/session-check.js against stub browser globals (no browser). A logged-in screen restored
+// from the back/forward cache (pageshow with persisted) asks /api/badge; 401 -> location.replace("/login"); any other
+// answer or a network error changes nothing. A normal load (persisted false) sends nothing. Expected values come
+// from the web-board-ux SPEC "Cache 정책과 bfcache" bullets. The real bfcache is a user Chrome check (S7).
+import test from "node:test";
+import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import vm from "node:vm";
+
+const SOURCE = readFileSync(new URL("../../../src/workbench/hub/web/static/session-check.js", import.meta.url), "utf8");
+
+// A fresh window per test: the script runs as a classic deferred script with window === globalThis.
+function load(answer) {
+  const listeners = {};
+  const fetches = [];
+  const navigations = [];
+  const window = {
+    addEventListener(type, handler) { (listeners[type] ||= []).push(handler); },
+    location: {
+      replace(url) { navigations.push(["replace", url]); },
+      assign(url) { navigations.push(["assign", url]); },
+      reload() { navigations.push(["reload"]); },
+      set href(url) { navigations.push(["href", url]); },
+    },
+    fetch(url, options) {
+      fetches.push([url, options]);
+      return answer();
+    },
+  };
+  window.window = window;
+  window.self = window;
+  vm.createContext(window);
+  vm.runInContext(SOURCE, window, { filename: "session-check.js" });
+  async function pageshow(persisted) {
+    for (const handler of listeners.pageshow || []) handler({ type: "pageshow", persisted });
+    for (let i = 0; i < 10; i += 1) await new Promise((resolve) => setImmediate(resolve));  // settle the fetch chain
+  }
+  return { listeners, fetches, navigations, pageshow };
+}
+
+const reply = (status) => () => Promise.resolve({ status, ok: status >= 200 && status < 300,
+                                                   json: () => Promise.resolve({ pending: 0, needs_info: 0 }) });
+
+test("a normal load sends nothing and goes nowhere", async () => {
+  const page = load(reply(401));
+  assert.equal((page.listeners.pageshow || []).length, 1, "one pageshow listener");
+  await page.pageshow(false);
+  assert.deepEqual(page.fetches, []);
+  assert.deepEqual(page.navigations, []);
+});
+
+test("a restored page asks /api/badge with the session cookie and no cache", async () => {
+  const page = load(reply(200));
+  await page.pageshow(true);
+  assert.equal(page.fetches.length, 1);
+  const [url, options] = page.fetches[0];
+  assert.equal(url, "/api/badge");
+  assert.equal(options.credentials, "same-origin");
+  assert.equal(options.cache, "no-store");
+  assert.deepEqual(page.navigations, [], "a live session stays on the page");
+});
+
+test("a restored page whose session is gone (401) replaces itself with /login", async () => {
+  const page = load(reply(401));
+  await page.pageshow(true);
+  assert.deepEqual(page.navigations, [["replace", "/login"]]);
+});
+
+test("other answers change nothing", async () => {
+  for (const status of [200, 204, 403, 404, 500, 502, 503]) {
+    const page = load(reply(status));
+    await page.pageshow(true);
+    assert.equal(page.fetches.length, 1, String(status));
+    assert.deepEqual(page.navigations, [], String(status));
+  }
+});
+
+test("a network error (the Hub restarting) changes nothing and is not left unhandled", async () => {
+  const unhandled = [];
+  const onUnhandled = (reason) => unhandled.push(reason);
+  process.on("unhandledRejection", onUnhandled);
+  try {
+    const page = load(() => Promise.reject(new TypeError("Failed to fetch")));
+    await page.pageshow(true);
+    assert.equal(page.fetches.length, 1);
+    assert.deepEqual(page.navigations, []);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    assert.deepEqual(unhandled, []);
+  } finally {
+    process.off("unhandledRejection", onUnhandled);
+  }
+});
+
+test("each restore asks again", async () => {
+  const page = load(reply(200));
+  await page.pageshow(true);
+  await page.pageshow(true);
+  assert.equal(page.fetches.length, 2);
+});

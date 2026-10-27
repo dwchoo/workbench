@@ -202,7 +202,9 @@ class Board200PolicyTests(CspCase):
 
     async def test_the_response_is_not_cacheable_and_keeps_the_other_security_headers(self):
         response = await self.board_get()
-        self.assertEqual(response.headers['Cache-Control'], 'no-store')
+        # WBX-A2 (web-board-ux SPEC cache table): a logged-in page is private, no-cache; never shared, always
+        # revalidated, and without validators every load is a fresh response with a fresh nonce.
+        self.assertEqual(response.headers['Cache-Control'], 'private, no-cache')
         for name in ('ETag', 'Last-Modified', 'Expires'):
             self.assertNotIn(name, response.headers)
         self.assertEqual(response.headers['X-Content-Type-Options'], 'nosniff')
@@ -246,7 +248,7 @@ class Board200PolicyTests(CspCase):
         self.assertEqual(directives['style-src'], ["'self'", f"'nonce-{nonce}'"])
         self.assertEqual(directives['style-src-attr'], ["'unsafe-inline'"])
         self.assertGreaterEqual(entropy_bytes(nonce), 16)
-        self.assertEqual(response.headers['Cache-Control'], 'no-store')
+        self.assertEqual(response.headers['Cache-Control'], 'private, no-cache')  # WBX-A2, as the GET
         self.assertNotEqual(nonce, header_nonce((await self.board_get()).headers['Content-Security-Policy']),
                             'a HEAD nonce is not shared with the next GET')
         again = await self.head('/board', cookies=self.cookies)
@@ -281,7 +283,9 @@ class StrictElsewhereTests(CspCase):
             response = await self.get(path, cookies=cookies)
             self.assert_strict(response, f'{what} {path} -> {response.status}')
             self.assertNotIn('style-nonce', response.body_text, what)
-            self.assertEqual(response.headers['Cache-Control'], 'no-store', what)
+            # WBX-A2 (SPEC cache table): the login screen stays no-store, logged-in pages are private, no-cache.
+            self.assertEqual(response.headers['Cache-Control'], 'no-store' if cookies is None else 'private, no-cache',
+                             what)
             ok += response.status == 200
         self.assertGreaterEqual(ok, 9, 'most of these must be real 200 pages, or the check proves little')
 

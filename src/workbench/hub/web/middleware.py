@@ -28,6 +28,8 @@ SECURITY_HEADERS = {"Content-Security-Policy": CSP, "X-Content-Type-Options": "n
 STATIC_PREFIX = "/static/"
 BODY_LIMIT = 256 * 1024  # SPEC 입력 한도: HTTP 요청 body (form, ``/mcp``) -> 413
 STATIC_CACHE = "public, max-age=3600"
+SESSION_PAGE_CACHE = "private, no-cache"
+NO_STORE = "no-store"
 
 SESSION_COOKIE = "wb_hub_session"
 SESSION_MAX_AGE = 86400
@@ -103,10 +105,34 @@ async def security_headers(request: web.Request, response: web.StreamResponse) -
     headers.update(SECURITY_HEADERS)
     headers["Content-Security-Policy"] = csp_for(request, response)
     headers["Server"] = "wb-hub"
+    headers["Cache-Control"] = cache_control(request, response)
+
+
+# SPEC exceptions to the logged-in page rule, as ``(method, route pattern)``: every response of these (also a refusal
+# or error page) is ``no-store``. ``POST /settings/keys`` shows the one-time raw key; the request result views show
+# raw logs, reports and project files.
+NO_STORE_ROUTES = frozenset({("POST", "/settings/keys")} | {
+    (method, f"/requests/{{rid}}/{view}") for method in ("GET", "HEAD") for view in ("raw", "full", "artifact")})
+
+
+def route_of(request: web.Request) -> str | None:
+    """The pattern of the route this request matched (``/requests/{rid}/raw``), ``None`` for an unmatched path."""
+    resource = getattr(request.match_info.route, "resource", None)
+    return None if resource is None else resource.canonical
+
+
+def cache_control(request: web.Request, response: web.StreamResponse) -> str:
+    """The web-board-ux SPEC "Cache 정책과 bfcache" table (WBX-D02). A logged-in page's HTML may be kept for the
+    back/forward cache (``private, no-cache``: never shared, always revalidated); everything else that is not a
+    static file stays ``no-store``."""
     if request.path.startswith(STATIC_PREFIX) and response.status == 200:
-        headers["Cache-Control"] = STATIC_CACHE
-    else:
-        headers["Cache-Control"] = "no-store"
+        return STATIC_CACHE
+    if (request.method, route_of(request)) in NO_STORE_ROUTES:
+        return NO_STORE
+    if (session_of(request) is not None and access_of(request) == "page" and response.content_type == "text/html"
+            and not 300 <= response.status < 400):
+        return SESSION_PAGE_CACHE
+    return NO_STORE
 
 
 def parse_authority(text: str, default_port: int) -> tuple[object, int] | None:
@@ -431,5 +457,5 @@ def stale_form_page(request: web.Request) -> web.Response:
         render.tag("p", STALE_FORM_TEXT, class_="error", role="alert"),
         render.tag("p", render.tag("a", "돌아가기", href=back_link(request))),
         render.tag("p", render.tag("code", "csrf_failed"))])
-    return render.page("화면이 오래되었습니다", body, status=403,
+    return render.page("화면이 오래되었습니다", body, status=403, scripts=(render.SESSION_CHECK_SCRIPT,),
                        insecure_warning=request.app[SERVICES].insecure_warning)

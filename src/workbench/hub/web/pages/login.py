@@ -30,6 +30,8 @@ WRONG_PASSWORD = "비밀번호가 맞지 않습니다"
 LOGIN_EXPIRED = "로그인 화면이 만료되었습니다. 다시 로그인하세요."
 WAIT_TEXT = "로그인 시도가 너무 잦습니다. {seconds}초 뒤 다시 시도하세요."
 USER_AGENT_LIMIT = 256
+# A login screen restored from the back/forward cache reloads for a fresh login token (web-board-ux SPEC).
+LOGIN_SCRIPTS = ("/static/login-restore.js",)
 
 
 def login_form(token: str, *, error: str | None = None) -> render.Markup:
@@ -66,7 +68,7 @@ def login_page(request: web.Request, *, status: int = 200, error: str | None = N
     services = request.app[SERVICES]
     token = (None if fresh else login_token_of(request)) or secrets.token_urlsafe(32)
     response = render.page("로그인", login_form(token, error=error), status=status,
-                           insecure_warning=services.insecure_warning)
+                           insecure_warning=services.insecure_warning, scripts=LOGIN_SCRIPTS)
     if headers:
         response.headers.update(headers)
     response.set_cookie(LOGIN_COOKIE, token, max_age=LOGIN_COOKIE_MAX_AGE, path="/login", httponly=True,

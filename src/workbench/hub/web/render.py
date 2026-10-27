@@ -69,6 +69,10 @@ class NavContext:
     board_state: str = "off"
 
 
+# A logged-in screen restored from the back/forward cache asks ``/api/badge`` whether its session still lives
+# (web-board-ux SPEC "Cache 정책과 bfcache"); every page frame with the nav loads it.
+SESSION_CHECK_SCRIPT = "/static/session-check.js"
+
 BOARD_DOT_TITLES = {"on": "실행 중", "off": "중지", "error": "오류"}
 NAV_LINKS = (("대시보드", "/"), ("요청", "/requests"), ("새 요청", "/requests/new"), ("Board agent", "/board"))
 SETTINGS_LINKS = (("비밀번호", "/settings"), ("API key", "/settings/keys"), ("감사 기록", "/settings/audit"))
@@ -140,7 +144,10 @@ def layout(title: str, body: object, *, insecure_warning: bool = False, csrf: st
     ``stylesheets``/``scripts`` are extra ``/static/...`` URLs a page asks for (never inline); ``refresh`` is a
     ``<meta http-equiv="refresh">`` interval in seconds (the status board's 10 s, no JavaScript). ``module_scripts``
     are ``<script type="module" src>`` (run after the plain deferred ones, in order); ``metas`` is ``{name: content}``
-    for data a script reads (the Board page's CSRF token)."""
+    for data a script reads (the Board page's CSRF token). A frame with ``nav`` (a logged-in screen) also loads
+    :data:`SESSION_CHECK_SCRIPT`."""
+    if nav is not None and SESSION_CHECK_SCRIPT not in scripts:
+        scripts = (SESSION_CHECK_SCRIPT, *scripts)
     banner = tag("div", INSECURE_WARNING_TEXT, class_="banner insecure", role="alert") if insecure_warning else ""
     logout = (tag("form", html_join([csrf_field(csrf), tag("button", "로그아웃", type="submit")]),
                   method="post", action="/logout", class_="logout") if csrf else "")

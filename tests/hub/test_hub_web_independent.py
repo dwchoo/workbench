@@ -692,8 +692,11 @@ class SessionTests(HubCase):
                 self.assertEqual(headers.get('Content-Security-Policy'), CSP)
                 self.assertEqual(headers.get('X-Content-Type-Options'), 'nosniff')
                 self.assertEqual(headers.get('X-Frame-Options'), 'DENY')
-        for label in ('login page', 'home', 'settings', 'redirect', '404', '421', '403 csrf'):
+        for label in ('login page', 'redirect', '404', '421'):
             self.assertEqual(replies[label].headers.get('Cache-Control'), 'no-store', label)
+        # WBX-A2 (web-board-ux SPEC cache table): logged-in HTML pages, the stale form page included.
+        for label in ('home', 'settings', '403 csrf'):
+            self.assertEqual(replies[label].headers.get('Cache-Control'), 'private, no-cache', label)
         self.assertEqual(replies['login page'].status, 200)
         self.assertEqual(replies['413'].status, 413)
         self.assertEqual(replies['static'].status, 200)

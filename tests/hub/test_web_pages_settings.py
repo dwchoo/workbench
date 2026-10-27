@@ -282,7 +282,7 @@ class AuditPageTests(SettingsCase):
             self.assertIn(text, first)
         self.assertIn('login_failure', second)
         self.assertIn('anonymous', second)
-        self.assertEqual(page.headers['Cache-Control'], 'no-store')
+        self.assertEqual(page.headers['Cache-Control'], 'private, no-cache')  # WBX-A2 (SPEC cache table)
 
     async def test_pages_of_fifty_with_links_and_junk_page_numbers(self):
         for number in range(120):

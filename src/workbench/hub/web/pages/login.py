@@ -11,6 +11,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import hmac
 import math
+import re
 import secrets
 
 from aiohttp import web
@@ -42,11 +43,26 @@ def login_form(token: str, *, error: str | None = None) -> render.Markup:
     return render.html_join(parts)
 
 
+# ``secrets.token_urlsafe(32)``: 43 characters of the URL-safe base64 alphabet.
+_LOGIN_TOKEN = re.compile(r"[A-Za-z0-9_-]{43}")
+
+
+def login_token_of(request: web.Request) -> str | None:
+    """The request's ``wb_hub_login`` cookie when it is well-formed (a token this Hub could have issued)."""
+    value = request.cookies.get(LOGIN_COOKIE)
+    return value if isinstance(value, str) and _LOGIN_TOKEN.fullmatch(value) else None
+
+
 def login_page(request: web.Request, *, status: int = 200, error: str | None = None,
-               headers: dict | None = None) -> web.Response:
-    """The login form with a fresh double-submit token (cookie and hidden field)."""
+               headers: dict | None = None, fresh: bool = False) -> web.Response:
+    """The login form with the double-submit token (cookie and hidden field).
+
+    2026-10-27 hotfix: a well-formed ``wb_hub_login`` cookie is reused (and re-set to refresh its Max-Age), so a
+    second ``GET /login`` (another tab, a prefetch, the browser's favicon fetch redirected here) never invalidates a
+    form that is already open. A new token only when the cookie is absent or malformed, or ``fresh``.
+    """
     services = request.app[SERVICES]
-    token = secrets.token_urlsafe(32)
+    token = (None if fresh else login_token_of(request)) or secrets.token_urlsafe(32)
     response = render.page("로그인", login_form(token, error=error), status=status,
                            insecure_warning=services.insecure_warning)
     if headers:
@@ -252,7 +268,26 @@ async def post_password(request: web.Request) -> web.Response:
     return response
 
 
+FAVICON_PATH = "/favicon.ico"
+FAVICON_CACHE = "public, max-age=86400"
+
+
+@public
+async def get_favicon(request: web.Request) -> web.Response:
+    """``204``: browsers ask for it on every page; as an unknown page path it was redirected to ``/login``, and that
+    login page replaced the open form's token (2026-10-27 hotfix). Never a redirect, never a cookie."""
+    return web.Response(status=204)
+
+
+async def _favicon_cache(request: web.Request, response: web.StreamResponse) -> None:
+    """``on_response_prepare`` after ``security_headers`` (which says ``no-store`` for non-static paths)."""
+    if request.path == FAVICON_PATH and response.status == 204:
+        response.headers["Cache-Control"] = FAVICON_CACHE
+
+
 def register(app: web.Application) -> None:
+    app.router.add_get(FAVICON_PATH, get_favicon)
+    app.on_response_prepare.append(_favicon_cache)
     app.router.add_get("/login", get_login)
     app.router.add_post("/login", post_login)
     app.router.add_post("/logout", post_logout)

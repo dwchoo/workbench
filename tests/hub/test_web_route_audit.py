@@ -34,6 +34,7 @@ PUBLIC, OWN, API, SESSION = 'public', 'own', 'api', 'session'
 # (method, path) -> access. GET routes also answer HEAD with the same mark (aiohttp adds it).
 EXPECTED = {
     ('GET', '/static'): PUBLIC,
+    ('GET', '/favicon.ico'): PUBLIC,  # 2026-10-27 hotfix: 204, never a redirect to /login or a cookie
     ('GET', '/login'): PUBLIC,
     ('POST', '/login'): PUBLIC,
     ('POST', '/logout'): SESSION,

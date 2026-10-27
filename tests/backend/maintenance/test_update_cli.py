@@ -283,6 +283,49 @@ class InstalledFixture(unittest.TestCase):
         self.assertFalse(manifest['backup_complete'])
         self.assertEqual(manifest['installation'],'not_started')
 
+    def unreadable_session_process(self, pid, comm):
+        entry = self.proc/str(pid)
+        (entry/'fd').mkdir(parents=True)
+        (entry/'cmdline').write_bytes(comm.encode()+b'\0')
+        (entry/'comm').write_text(comm+'\n')
+        (entry/'fd').chmod(0)
+        self.addCleanup((entry/'fd').chmod, 0o700)
+
+    def test_unreadable_session_processes_are_listed_and_recorded_but_do_not_block(self):
+        import json
+        project, data, backend = self.project('project-a', [])
+        self.unreadable_session_process(32774, 'systemd')
+        self.unreadable_session_process(32778, '(sd-pam)')
+        status, output, error = self.invoke()
+        self.assertEqual(status, 0, output+error)
+        self.assertIn('업데이트 완료', output)
+        lines = [line for line in output.splitlines() if line.startswith('확인하지 못한 process')]
+        self.assertEqual(lines, ['확인하지 못한 process(쓰기 여부 미확인, 건너뜀): 32774 systemd, 32778 (sd-pam)'])
+        manifest = json.loads(next((self.home/'state/omp-workbench/updates').glob('*/manifest.json')).read_text())
+        expected = [{'pid':32774, 'comm':'systemd'}, {'pid':32778, 'comm':'(sd-pam)'}]
+        self.assertEqual(manifest['projects'][0]['writer_checks'],
+                         [{'check':'before_backup', 'unverified_processes':expected},
+                          {'check':'after_backup', 'unverified_processes':expected}])
+
+    def test_long_unverified_process_list_is_truncated_to_one_line(self):
+        project, data, backend = self.project('project-a', [])
+        for offset in range(12):
+            self.unreadable_session_process(32700+offset, f'agent{offset}')
+        status, output, error = self.invoke()
+        self.assertEqual(status, 0, output+error)
+        lines = [line for line in output.splitlines() if line.startswith('확인하지 못한 process')]
+        self.assertEqual(len(lines), 1)
+        self.assertTrue(lines[0].endswith('32707 agent7 외 4개'), lines[0])
+
+    def test_idle_update_without_unverified_processes_prints_no_unverified_line(self):
+        import json
+        project, data, backend = self.project('project-a', [])
+        status, output, error = self.invoke()
+        self.assertEqual(status, 0, output+error)
+        self.assertNotIn('확인하지 못한 process', output)
+        manifest = json.loads(next((self.home/'state/omp-workbench/updates').glob('*/manifest.json')).read_text())
+        self.assertEqual([check['unverified_processes'] for check in manifest['projects'][0]['writer_checks']], [[], []])
+
     def test_start_shows_maintenance_resume_without_replay_or_state_changes(self):
         import hashlib, json
         from workbench.backend.paths import write_private_json
@@ -411,3 +454,109 @@ class InstalledFixture(unittest.TestCase):
         self.assertFalse(self.applied.exists())
         self.assertFalse((self.home/'state/omp-workbench/updates').exists())
         self.assertEqual(before,{str(path):path.read_bytes() for path in data.rglob('*') if path.is_file()})
+
+
+class WriterScan(unittest.TestCase):
+    """require_no_writers over a fake /proc: unreadable same-uid processes are skipped and listed."""
+
+    def setUp(self):
+        self.scratch = tempfile.TemporaryDirectory(prefix='wu-scan-')
+        self.addCleanup(self.scratch.cleanup)
+        base = Path(self.scratch.name)
+        self.proc = base/'proc'
+        self.proc.mkdir()
+        self.root = base/'project/.wb'
+        self.root.mkdir(parents=True)
+        (self.root/'records.sqlite3').write_bytes(b'')
+
+    def process(self, pid, comm, fds=()):
+        entry = self.proc/str(pid)
+        (entry/'fd').mkdir(parents=True)
+        (entry/'fdinfo').mkdir()
+        (entry/'comm').write_text(comm+'\n')
+        for number, target, flags in fds:
+            (entry/'fd'/str(number)).symlink_to(target)
+            if flags is not None:
+                (entry/'fdinfo'/str(number)).write_text(f'pos:\t0\nflags:\t{flags}\nmnt_id:\t1\n')
+        return entry
+
+    def deny(self, path):
+        path.chmod(0)
+        self.addCleanup(path.chmod, 0o700)
+
+    def scan(self):
+        from workbench.backend import maintenance
+        with patch.object(maintenance, 'PROC', self.proc):
+            return maintenance.require_no_writers(self.root)
+
+    def test_unlistable_fd_directory_is_skipped_and_reported_with_pid_and_comm(self):
+        self.deny(self.process(32774, 'systemd')/'fd')
+        self.deny(self.process(32778, '(sd-pam)')/'fd')
+        self.process(32790, 'bash', [(0, '/dev/null', '0100002')])
+        self.assertEqual(self.scan(), [{'pid':32774, 'comm':'systemd'}, {'pid':32778, 'comm':'(sd-pam)'}])
+
+    def test_process_exiting_mid_scan_is_skipped_silently(self):
+        from workbench.backend import maintenance
+        gone = self.process(41000, 'short-lived', [(3, self.root/'records.sqlite3', '0100002')])
+        real = os.readlink
+        def readlink(path, *args, **kwargs):
+            if Path(path).parent.parent == gone:
+                raise ProcessLookupError(3, 'No such process')
+            return real(path, *args, **kwargs)
+        with patch.object(maintenance.os, 'readlink', side_effect=readlink):
+            self.assertEqual(self.scan(), [])
+
+    def test_write_mode_fd_under_root_refuses_naming_pid_comm_and_path(self):
+        from workbench.backend.paths import DataDirError
+        self.deny(self.process(32774, 'systemd')/'fd')
+        target = self.root/'records.sqlite3'
+        self.process(52000, 'sqlite-writer', [(7, target, '0100002')])
+        with self.assertRaises(DataDirError) as raised:
+            self.scan()
+        message = str(raised.exception)
+        for expected in ('52000', 'sqlite-writer', str(target)):
+            self.assertIn(expected, message)
+
+    def test_fd_under_root_with_unreadable_or_unparsable_fdinfo_refuses_naming_pid_comm_and_path(self):
+        from workbench.backend.paths import DataDirError
+        target = self.root/'records.sqlite3'
+        cases = {'unreadable': '0100000', 'unparsable': 'zz', 'missing-value': '', 'no-flags-line': None}
+        for offset, (name, flags) in enumerate(cases.items()):
+            with self.subTest(name):
+                pid = 53000+offset
+                entry = self.process(pid, 'reader-'+name, [(9, target, flags)])
+                if name == 'unreadable':
+                    (entry/'fdinfo'/'9').chmod(0)
+                elif name == 'no-flags-line':
+                    (entry/'fdinfo'/'9').write_text('pos:\t0\n')
+                try:
+                    with self.assertRaises(DataDirError) as raised:
+                        self.scan()
+                    message = str(raised.exception)
+                    for expected in (str(pid), 'reader-'+name, str(target)):
+                        self.assertIn(expected, message)
+                finally:
+                    (entry/'fdinfo'/'9').chmod(0o600)
+                    import shutil
+                    shutil.rmtree(entry)
+
+    def test_read_only_fd_under_root_is_not_a_writer(self):
+        self.process(54000, 'reader', [(4, self.root/'records.sqlite3', '0100000')])
+        self.assertEqual(self.scan(), [])
+
+    def test_unreadable_fd_links_are_skipped_and_reported(self):
+        fd = self.process(32780, 'sshd', [(5, self.root/'records.sqlite3', '0100002')])/'fd'
+        fd.chmod(0o400)  # listable but links unreadable (EACCES on readlink)
+        self.addCleanup(fd.chmod, 0o700)
+        self.assertEqual(self.scan(), [{'pid':32780, 'comm':'sshd'}])
+
+    def test_other_scan_error_still_refuses_naming_pid_comm_and_errno(self):
+        import errno
+        from workbench.backend import maintenance
+        from workbench.backend.paths import DataDirError
+        self.process(55000, 'odd', [(1, '/dev/null', '0100002')])
+        with patch.object(maintenance.os, 'readlink', side_effect=OSError(errno.EIO, 'I/O error')), \
+                self.assertRaises(DataDirError) as raised:
+            self.scan()
+        for expected in ('55000', 'odd', f'errno {errno.EIO}'):
+            self.assertIn(expected, str(raised.exception))

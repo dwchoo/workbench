@@ -329,6 +329,16 @@ def _wait_hub_exit(record):
         time.sleep(0.02)
 
 
+UNVERIFIED_SHOWN = 8
+
+
+def unverified_line(processes):
+    """fd를 볼 권한이 없어 건너뛴 같은 uid process를 한 줄로 요약한다."""
+    shown = ', '.join(f"{entry['pid']} {entry['comm']}" for entry in processes[:UNVERIFIED_SHOWN])
+    rest = len(processes) - UNVERIFIED_SHOWN
+    return '확인하지 못한 process(쓰기 여부 미확인, 건너뜀): ' + shown + (f' 외 {rest}개' if rest > 0 else '')
+
+
 def _run(args, fence_descriptor):
     install = installation()
     with tempfile.TemporaryDirectory(prefix='wb-update-') as temporary, ExitStack() as stack:
@@ -404,6 +414,16 @@ def _run(args, fence_descriptor):
             raise DataDirError(f'업데이트 확인 실패 ({type(error).__name__}); 원본·updates manifest와 실행 상태를 확인하세요.'
                                + hub_note) from error
         print(f"업데이트 {install['previous']} -> {target}\n백업: {run}")
+        reported = set()
+
+        def writer_check(item, check, root):
+            """writer 부재를 확인하고, 건너뛴 process를 manifest에 남기며 새로 본 것만 한 줄로 알린다."""
+            unverified = require_no_writers(root)
+            item['writer_checks'].append({'check':check, 'unverified_processes':unverified})
+            fresh = [entry for entry in unverified if entry['pid'] not in reported]
+            reported.update(entry['pid'] for entry in fresh)
+            if fresh:
+                print(unverified_line(fresh))
         try:
             for identity, client, pending, item in live:
                 item['shutdown'] = shutdown(identity, client, pending)
@@ -419,10 +439,11 @@ def _run(args, fence_descriptor):
                     stack.callback(lock.release)
                 elif identity.record is not None:
                     raise DataDirError('WB writer lock 미확인')
-                require_no_writers(root)
+                item['writer_checks'] = []
+                writer_check(item, 'before_backup', root)
                 item['backup'] = 'projects/'+str(number)
                 item.update(update_backup.snapshot(root, run/item['backup']))
-                require_no_writers(root)
+                writer_check(item, 'after_backup', root)
                 item['resume'] = shlex.join(['wb','start','--data-dir',str(root)])
             manifest['backup_complete'] = True
             write_private_json(run/'manifest.json', manifest)

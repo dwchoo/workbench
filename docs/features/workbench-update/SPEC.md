@@ -22,7 +22,7 @@ Linux·Python 중심, 기존 uv tool/Git 설치와 기존 backend identity·shut
 `wb update [--ref REF]` 및 기존 alias의 같은 parser. 실행 cwd에 프로젝트가 없어도 설치 상태와 다른 실행 중 WB를 조사할 수 있다. REF는 branch/tag/commit이며 shell/URL/option 인자로 해석하지 않는다. uv 관리 Git 출처를 현재 실행 interpreter·distribution metadata·tool receipt와 대조하고, source URL의 인증 정보는 출력하지 않는다. Git ref는 설치 전에 한 commit으로 고정하고 이전/목표 identity를 기록한다. 지원하지 않는 설치는 자동 전환하지 않는다. 초기 버전에는 active work 확인을 우회하는 `--yes`/`--force`를 제공하지 않는다.
 
 ### 확인과 실행 상태
-설치 관리와 backend start가 공유하는 사용자 범위 update fence를 둔다. 설치 확인 전 준비는 읽기/출처 확인에 한정한다. 사용자 승인 전에는 pause·종료·작업 기록 생성·백업을 하지 않는다. 표시한 작업/프로세스 identity가 바뀌거나 확인 token이 만료되면 새 확인 없이 다른 작업을 종료하지 않는다. 승인 후 새 자동 작업을 억제하고 재개 정보를 포착해 기존 shutdown을 실행한다. shutdown 결과와 exact PID/start ticks·writer 부재를 확인한 뒤에만 백업·설치한다. idle backend도 설치 전에 종료·상태 보존하되 active work가 없으면 별도 질문을 요구하지 않는다.
+설치 관리와 backend start가 공유하는 사용자 범위 update fence를 둔다. 설치 확인 전 준비는 읽기/출처 확인에 한정한다. 사용자 승인 전에는 pause·종료·작업 기록 생성·백업을 하지 않는다. 표시한 작업/프로세스 identity가 바뀌거나 확인 token이 만료되면 새 확인 없이 다른 작업을 종료하지 않는다. 승인 후 새 자동 작업을 억제하고 재개 정보를 포착해 기존 shutdown을 실행한다. shutdown 결과와 exact PID/start ticks·writer 부재를 확인한 뒤에만 백업·설치한다. writer 확인에서 fd를 볼 권한이 없는(EACCES/EPERM) 같은 uid process는 capability·non-dumpable session process(`systemd --user` 등)이므로 건너뛰되 pid·comm을 출력과 manifest에 남긴다. 읽을 수 있는 fd가 WB 원본을 가리키면 쓰기 모드이거나 access flags 미확인일 때 거절한다. idle backend도 설치 전에 종료·상태 보존하되 active work가 없으면 별도 질문을 요구하지 않는다.
 
 ### 백업과 재개
 업데이트용 manifest와 재개 metadata는 일반 작업 메모가 아닌 유지보수 상태다. 기존 records-v1의 manager/worker actor를 위조하거나 일반 메모를 프로젝트 docs에 쓰지 않는다. 해당 작업/Task/run/revision·worktree/프로젝트 경로·양 역할 session ID·종료 결과·결과 불명 작업·기록/로그 위치·재개 명령을 구조화해 보존한다. 원문 대화/기록은 백업 원본에 유지하며 새 모델 호출로 요약하지 않는다.

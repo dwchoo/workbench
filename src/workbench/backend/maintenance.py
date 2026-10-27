@@ -1,6 +1,7 @@
 """업데이트에서 재사용하는 읽기 전용 현재 사용자 WB 탐색."""
 from __future__ import annotations
 
+import errno
 import os
 import fcntl
 import stat
@@ -111,28 +112,70 @@ def discover(args):
     return result
 
 
+_GONE = (FileNotFoundError, ProcessLookupError)
+_DENIED = (errno.EACCES, errno.EPERM)
+
+
+def _comm(process):
+    try:
+        return (process/'comm').read_text().strip() or '?'
+    except (OSError, ValueError):
+        return '?'
+
+
 def require_no_writers(root):
-    """현재 사용자의 열린 descriptor 경로·access flags만 확인한다."""
+    """현재 사용자의 열린 descriptor 경로·access flags만 확인한다.
+
+    fd 목록이나 fd link를 볼 권한이 없는 같은 uid process(capability를 가졌거나
+    non-dumpable인 ``systemd --user``·``(sd-pam)``·``sshd`` 등)는 건너뛰고
+    ``[{pid, comm}]``으로 돌려준다. 읽을 수 있는 fd가 WB 원본을 가리키면 access
+    flags를 확인하지 못해도 거부한다."""
     root = Path(root)
+    unverified = []
     for process in PROC.iterdir():
         if not process.name.isdigit() or int(process.name) == os.getpid():
             continue
+        pid = int(process.name)
         try:
             if process.stat().st_uid != os.geteuid():
                 continue
-            for descriptor in (process/'fd').iterdir():
-                try:
-                    value = os.readlink(descriptor)
-                    path = Path(value.removesuffix(' (deleted)'))
-                    if not path.is_absolute() or not path.is_relative_to(root):
-                        continue
-                    fields = (process/'fdinfo'/descriptor.name).read_text().splitlines()
-                    flags = [int(line.split()[1], 8) for line in fields if line.startswith('flags:')]
-                    if len(flags) != 1 or flags[0] & os.O_ACCMODE:
-                        raise DataDirError('WB 원본을 쓰는 process가 남아 있거나 access 상태 미확인입니다.')
-                except FileNotFoundError:
-                    continue
-        except FileNotFoundError:
-            continue
+            descriptors = list((process/'fd').iterdir())
+        except _GONE:
+            continue  # 확인 중 종료한 process
         except OSError as exc:
-            raise DataDirError('WB 원본 writer 부재를 확인할 수 없습니다.') from exc
+            if exc.errno in _DENIED:
+                unverified.append({'pid':pid, 'comm':_comm(process)})
+                continue
+            raise DataDirError(f'WB 원본 writer 부재를 확인할 수 없습니다: pid {pid} ({_comm(process)}), '
+                               f'errno {exc.errno}') from exc
+        denied = False
+        for descriptor in descriptors:
+            try:
+                value = os.readlink(descriptor)
+            except _GONE:
+                continue
+            except OSError as exc:
+                if exc.errno in _DENIED:
+                    denied = True
+                    continue
+                raise DataDirError(f'WB 원본 writer 부재를 확인할 수 없습니다: pid {pid} ({_comm(process)}), '
+                                   f'errno {exc.errno}') from exc
+            path = Path(value.removesuffix(' (deleted)'))
+            if not path.is_absolute() or not path.is_relative_to(root):
+                continue
+            try:
+                fields = (process/'fdinfo'/descriptor.name).read_text().splitlines()
+                flags = [int(line.split()[1], 8) for line in fields if line.startswith('flags:')]
+            except _GONE:
+                continue  # fd가 닫혔거나 process가 종료했다.
+            except (OSError, ValueError, IndexError) as exc:
+                raise DataDirError('WB 원본을 연 process의 access 상태를 확인할 수 없습니다: '
+                                   f'pid {pid} ({_comm(process)}) {path}') from exc
+            if len(flags) != 1:
+                raise DataDirError('WB 원본을 연 process의 access 상태를 확인할 수 없습니다: '
+                                   f'pid {pid} ({_comm(process)}) {path}')
+            if flags[0] & os.O_ACCMODE:
+                raise DataDirError(f'WB 원본을 쓰는 process가 남아 있습니다: pid {pid} ({_comm(process)}) {path}')
+        if denied:
+            unverified.append({'pid':pid, 'comm':_comm(process)})
+    return sorted(unverified, key=lambda item: item['pid'])

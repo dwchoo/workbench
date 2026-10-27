@@ -36,6 +36,7 @@ Projects = Callable[[], Iterable[tuple[str, str]]]
 
 
 BADGE_SCRIPTS = ("/static/badge.js",)  # header badge slot (D-24); no inline script
+COPY_SCRIPTS = BADGE_SCRIPTS + ("/static/copy.js",)  # pages with client setup blocks (WBX-A4)
 
 
 def settings_nav() -> render.Markup:
@@ -43,6 +44,47 @@ def settings_nav() -> render.Markup:
         render.tag("a", "비밀번호", href="/settings"), " ",
         render.tag("a", "API key", href="/settings/keys"), " ",
         render.tag("a", "감사 기록", href="/settings/audit")]), class_="subnav")
+
+
+def hub_origin(request: web.Request) -> str:
+    """The address the browser used: the listener's scheme + the (already validated) Host header, the same rule
+    as ``/skill/``."""
+    return f"{request.app[SERVICES].policy.scheme}://{request.headers.get('Host', '')}"
+
+
+ENV_GUIDE = ("agent 머신의 <skill 폴더>/.env 또는 ~/.config/omp-workbench/client.env에 붙여 넣고 "
+             "chmod 600 하세요.")
+AGENT_LINE = ("Install the wb-inbox skill by following {readme}, then use it; its settings (WB_HUB_URL, WB_API_KEY) "
+              "are in <skill folder>/.env or ~/.config/omp-workbench/client.env.")
+
+
+def copy_button(target: str) -> render.Markup:
+    """Hidden until ``/static/copy.js`` shows it; the result goes into the ``<target>-status`` line."""
+    return render.html_join([
+        render.tag("button", "복사", type="button", class_="copy", data_copy_target=target, hidden=True), " ",
+        render.tag("span", "", class_="copy-status", id=f"{target}-status", role="status")])
+
+
+def client_setup(origin: str, repo_url: str, key: object) -> render.Markup:
+    """The three client setup blocks (SPEC "Key 발급 결과의 client 설정 안내"): ``.env``, skill README links, one line
+    for the agent. ``key`` is the raw key (issue page) or the ``<YOUR_KEY>`` placeholder (list page); the agent line
+    never has it (WBX-D17)."""
+    readme = f"{origin}/skill/README.md"
+    links = [render.tag("a", readme, href=readme)]
+    if repo_url:
+        links += [" · ", render.tag("a", "GitHub", href=repo_url)]
+    return render.html_join([
+        render.tag("h3", ".env"),
+        render.tag("pre", render.html_join([f"WB_HUB_URL={origin}\nWB_API_KEY=", key]), id="client-env"),
+        copy_button("client-env"),
+        render.tag("p", ENV_GUIDE),
+        render.tag("h3", "Skill README"),
+        render.tag("pre", readme, id="client-readme"),
+        copy_button("client-readme"),
+        render.tag("p", render.html_join(links)),
+        render.tag("h3", "Agent에게 붙여 넣을 한 줄"),
+        render.tag("pre", AGENT_LINE.format(readme=readme), id="client-agent"),
+        copy_button("client-agent")])
 
 
 def when(timestamp: float | None) -> str:
@@ -63,12 +105,13 @@ def status_text(info: auth.ApiKeyInfo, now: float) -> str:
     return "사용 중"
 
 
-def _page(request: web.Request, title: str, body: object, *, status: int = 200) -> web.Response:
+def _page(request: web.Request, title: str, body: object, *, status: int = 200,
+          scripts: tuple = BADGE_SCRIPTS) -> web.Response:
     services, session = request.app[SERVICES], session_of(request)
     parts = [render.tag("h1", "설정"), settings_nav(), body]
     return render.page(title, render.html_join(parts), status=status,
                        insecure_warning=services.insecure_warning, csrf=session.csrf,
-                       nav=render.nav_for(request), scripts=BADGE_SCRIPTS)
+                       nav=render.nav_for(request), scripts=scripts)
 
 
 def _form_text(form, name: str) -> str:
@@ -135,9 +178,12 @@ class KeyPages:
         services = request.app[SERVICES]
         keys = await services.blocking(services.api_keys.list)
         registry = await self._registry(services)
-        body = render.html_join([render.tag("h2", "API key"), self._key_rows(keys, float(services.clock())),
+        setup = render.tag("details", render.html_join([
+            render.tag("summary", "Client 설정 안내 (API key는 <YOUR_KEY> 자리에 발급 결과의 값을 넣으세요)"),
+            client_setup(hub_origin(request), services.policy.skill_repo_url, "<YOUR_KEY>")]), class_="client-setup")
+        body = render.html_join([render.tag("h2", "API key"), self._key_rows(keys, float(services.clock())), setup,
                                  self._issue_form(session_of(request).csrf, registry, error=error)])
-        return _page(request, "API key", body, status=status)
+        return _page(request, "API key", body, status=status, scripts=COPY_SCRIPTS)
 
     async def get_keys(self, request: web.Request) -> web.Response:
         return await self._keys_page(request)
@@ -185,9 +231,10 @@ class KeyPages:
             render.tag("h2", "API key를 발급했습니다"),
             *warning,
             render.tag("p", "이 key는 지금 한 번만 보입니다. 지금 복사해 안전한 곳에 두세요.", class_="notice"),
-            render.tag("p", render.tag("code", issued.raw, class_="raw-key")),
+            client_setup(hub_origin(request), services.policy.skill_repo_url,
+                         render.tag("span", issued.raw, class_="raw-key")),
             render.tag("p", render.tag("a", "API key 목록으로", href="/settings/keys"))])
-        return _page(request, "API key 발급", body)
+        return _page(request, "API key 발급", body, scripts=COPY_SCRIPTS)
 
     @staticmethod
     async def _audit(services, event: str, address: str | None, detail: dict, now: float) -> bool:

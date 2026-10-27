@@ -43,3 +43,6 @@ main { max-width: 64rem; margin: 1rem auto; padding: 0 1rem; }
 form.stack { display: flex; flex-direction: column; gap: 0.5rem; max-width: 20rem; }
 pre { white-space: pre-wrap; word-break: break-word; background: #f0f0f0; padding: 0.5rem; }
 input, button { font: inherit; padding: 0.25rem 0.5rem; }
+.client-setup { margin: 1rem 0; }
+.client-setup summary { cursor: pointer; }
+.copy-status { font-size: 0.9rem; color: var(--fg); }

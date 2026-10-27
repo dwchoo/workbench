@@ -18,7 +18,7 @@ from workbench.backend.paths import (BackendLocked, DataDirError, InstanceLock, 
                                      unlink_stale_socket, write_private_json)
 from workbench.contracts import hub_v1
 
-from . import config as hub_config, mcp, registry
+from . import config as hub_config, mcp, registry, rest
 from .inbox import backend_port
 from .inbox.dispatch import Dispatcher
 from .inbox.limits import InboxError
@@ -187,10 +187,11 @@ class Hub:
 
     def web_routes(self) -> list:
         """Route registrations the web app adds to its defaults: the status board and project pages over this
-        Hub's list, the request pages over its inbox, ``/mcp`` and the Board restart endpoint."""
+        Hub's list, the request pages over its inbox, ``/mcp``, the ``/api/v1/`` REST (WBX-B1, the same processing
+        layer as ``/mcp``) and the Board restart endpoint."""
         return [project_pages.routes(self.lister.list, self.inbox, self.lister.list_one),
                 request_pages.routes(self.inbox, self._dispatch_targets), mcp.routes(self.mcp),
-                board_routes(lambda: self.board)]
+                rest.routes(self.mcp), board_routes(lambda: self.board)]
 
     # --- Board agent set (TI-16) -----------------------------------------------------------------
 

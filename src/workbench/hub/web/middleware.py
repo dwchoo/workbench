@@ -347,7 +347,15 @@ def principal_of(request: web.Request) -> Principal | None:
     return request.get(PRINCIPAL)
 
 
+REST_PREFIX = "/api/v1/"
+# The fixed sentences of the refusals a REST request can get from these checks (web-board-ux SPEC "외부 요청 API").
+REST_MESSAGES = {"origin_mismatch": "origin not allowed"}
+
+
 def refuse(request: web.Request, status: int, reason: str, *, access: str | None = None) -> web.Response:
+    if request.path.startswith(REST_PREFIX) or request.path == REST_PREFIX[:-1]:  # REST error shape (WBX-B1)
+        return web.json_response({"error": {"code": reason, "message": REST_MESSAGES.get(reason, reason)}},
+                                 status=status)
     access = access or access_of(request)
     if access in (ACCESS_API, ACCESS_OWN):
         return web.json_response({"ok": False, "reason": reason}, status=status)

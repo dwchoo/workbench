@@ -1,11 +1,11 @@
 """Route and permission audit of the Hub web app (TI-19 security review fix 6, seam T2).
 
 Every route of the real Hub's web app (``create_app(services, routes=Hub(...).web_routes())``) is pinned here with its
-access mark: ``public`` (no session), ``own`` (the handler authenticates by itself: ``/mcp`` with an API key),
+access mark: ``public`` (no session), ``own`` (the handler authenticates by itself: ``/mcp`` and ``/api/v1/…`` with an API key),
 ``api`` (session, 401 refusals) or ``session`` (session, ``303 /login``). A route added without a pin fails the audit,
 and so does a changed mark. Every unsafe-method route needs the session's CSRF token; the only exemptions are
-``POST /login`` (pre-session double-submit login token) and ``/mcp`` (Bearer API key, cookies ignored), and both are
-checked by behaviour too. Expected values come from the SPEC "웹 route와 화면" and "Principal과 권한" tables.
+``POST /login`` (pre-session double-submit login token), ``/mcp`` and the ``/api/v1/`` REST routes (Bearer API key,
+cookies ignored), and each is checked by behaviour too. Expected values come from the SPEC "웹 route와 화면" and "Principal과 권한" tables.
 Run with ``discover -s tests/hub -p 'test_web_route_audit.py'``.
 """
 from __future__ import annotations
@@ -71,9 +71,21 @@ EXPECTED = {
     ('GET', '/ws/board'): API,
     ('GET', '/board'): SESSION,
     ('GET', '/board/restart'): SESSION,
+    # WBX-B1 REST ``/api/v1/`` (Bearer API key in the handler; method rules in the handler: 405 + Allow)
+    ('*', '/api/v1/projects'): OWN,
+    ('*', '/api/v1/requests'): OWN,
+    ('*', '/api/v1/requests/{rid}'): OWN,
+    ('*', '/api/v1/requests/{rid}/comments'): OWN,
+    ('*', '/api/v1/requests/{rid}/state'): OWN,
+    ('*', '/api/v1/requests/{rid}/cancel'): OWN,
+    ('*', '/api/v1/requests/{rid}/result'): OWN,
+    ('*', '/api/v1'): OWN,  # the bare prefix: the catch-all's 404 too
+    ('*', '/api/v1/{tail}'): OWN,  # catch-all: 404 not_found after the key check
 }
+REST_ROUTES = frozenset(key for key in EXPECTED if key[1] == '/api/v1' or key[1].startswith('/api/v1/'))
 # Unsafe routes that do not use the session CSRF token, and why (each is checked by behaviour below).
-CSRF_EXEMPT = {('POST', '/login'): 'pre-session login token', ('*', '/mcp'): 'Bearer API key; cookies ignored'}
+CSRF_EXEMPT = {('POST', '/login'): 'pre-session login token', ('*', '/mcp'): 'Bearer API key; cookies ignored',
+               **{route: 'Bearer API key; cookies ignored (WBX-B1 REST)' for route in REST_ROUTES}}
 PARAMS = {'key_id': 'abcdefghij', 'project_id': str(uuid.uuid4()), 'action': 'power-on', 'rid': str(uuid.uuid4())}
 
 
@@ -199,6 +211,26 @@ class BehaviourAuditTests(RouteAuditCase):
                                                                 'Accept': 'application/json'},
                                        data=b'{"jsonrpc":"2.0","id":1,"method":"ping"}')
         self.assertEqual(status, 401, text)
+
+    async def test_rest_ignores_the_session_cookie_on_every_route_and_method(self):
+        concrete = {'/api/v1/{tail}': '/api/v1/nope'}
+        for _method, path in sorted(REST_ROUTES):
+            target = concrete[path] if path in concrete else path.format(**PARAMS)
+            for method in ('GET', 'POST', 'PATCH'):
+                with self.subTest(route=path, method=method):
+                    headers = {'Content-Type': 'application/json', 'X-CSRF-Token': self.session.csrf}
+                    status, text = await self.send(method, target, headers=headers, data=b'{}')
+                    self.assertEqual(status, 401, text)
+                    self.assertIn('"unauthorized"', text)
+
+    async def test_rest_offers_no_terminal_link_backend_control_review_or_settings_endpoint(self):
+        rest = sorted(path for _method, path in route_marks(self.app) if path.startswith('/api/v1'))
+        self.assertEqual(rest, sorted(path for _method, path in REST_ROUTES))
+        for path in rest:
+            for word in ('terminal', 'ws', 'board', 'link', 'power', 'backend', 'review', 'key', 'password',
+                         'audit', 'settings', 'raw', 'artifact', 'full'):
+                with self.subTest(path=path, word=word):
+                    self.assertNotIn(word, path.split('/'))
 
     async def test_login_post_needs_its_own_login_token(self):
         status, text = await self.send('POST', '/login', cookie=False, data={'password': PASSWORD})

@@ -49,10 +49,11 @@ def void(element: str, /, **attributes: object) -> Markup:
     return Markup(f"<{element}{_attributes(attributes)}>")
 
 
-def data_table(rows: object, class_: str = "") -> Markup:
+def data_table(rows: object, class_: str = "", **wrap: object) -> Markup:
     """A data table: ``table.data`` inside ``div.table-wrap``, which scrolls sideways on a narrow screen so the page
-    itself never does. ``rows`` is the already built ``<tr>`` markup (header row first)."""
-    return tag("div", tag("table", rows, class_=f"data {class_}".strip()), class_="table-wrap")
+    itself never does. ``rows`` is the already built ``<tr>``/``<thead>``/``<tbody>`` markup (header row first);
+    ``wrap`` are attributes of the wrapping ``div`` (the dashboard gives it an ``id`` and ``hidden``)."""
+    return tag("div", tag("table", rows, class_=f"data {class_}".strip()), class_="table-wrap", **wrap)
 
 
 def pre(text: object) -> Markup:

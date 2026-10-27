@@ -126,9 +126,9 @@ class BoardObservationTests(ProjectsCase):
         response, page = await self.page('/')
         rows = page.data_rows()
         self.assertEqual(rows[0][2], '연결 없음/불명')
-        self.assertEqual(rows[0][6:], ['—', '—', '—'])  # requests, last activity, review mode: unknown, not 0
+        self.assertEqual(rows[0][6:9], ['—', '—', '—'])  # requests, last activity, review mode: unknown, not 0
         self.assertEqual(rows[1][2], '불일치(root_missing)')
-        self.assertNotIn('꺼짐', response.body_text)
+        self.assertNotIn('꺼짐', ' '.join(cell for row in rows for cell in row))  # the cards' own '프로젝트 꺼짐' label is not a row
 
     async def test_a_row_without_a_known_power_value_is_unknown_not_off(self):
         self.rows = [{'root': '/srv/work/alpha', 'name': 'alpha', 'project_id': self.a}]
@@ -142,7 +142,7 @@ class BoardObservationTests(ProjectsCase):
         self.assertEqual(page.data_rows(), [])
         self.assertIn('프로젝트 상태를 읽지 못했습니다', response.body_text)
         self.assertNotIn('/secret', response.body_text)
-        self.assertNotIn('꺼짐', response.body_text)
+        self.assertNotIn('꺼짐', ' '.join(cell for row in page.data_rows() for cell in row))  # no row says off
 
     async def test_an_unreadable_registry_is_not_an_empty_list(self):
         self.registry_state = 'invalid'
@@ -177,19 +177,23 @@ class BoardTests(ProjectsCase):
         response, page = await self.page('/')
         self.assertEqual(response.status, 200)
         header = [row for row, data in zip(page.rows, page.row_is_data) if not data][0]
-        self.assertEqual(header, ['이름', '경로', '상태', 'Task·단계', '명령', '대기 사유', '요청', '마지막 활동', '검토 방식'])
+        # the Hub list columns (HB-D09) plus the review mode, then the shortcuts column of the dashboard (WBX-C2)
+        self.assertEqual(header, ['이름', '경로', '상태', 'Task·단계', '명령', '대기 사유', '요청', '마지막 활동', '검토 방식',
+                                  '바로가기'])
         rows = page.data_rows()
         self.assertEqual(rows[0], ['alpha', '/srv/work/alpha', '켜짐', '로그인 수정 · running', 'build (실행 중)',
-                                   'manager 입력창에 글이 있어 알림 대기', '대기 2 · 질문 1', '2분 전', '수동'])
-        self.assertEqual(rows[1], ['beta', '/srv/work/beta', '꺼짐', '—', '—', '—', '0', '—', '자동'])
+                                   'manager 입력창에 글이 있어 알림 대기', '대기 2 · 질문 1', '2분 전', '수동', '상태 요청'])
+        self.assertEqual(rows[1], ['beta', '/srv/work/beta', '꺼짐', '—', '—', '—', '0', '—', '자동', '상태 요청'])
         self.assertEqual([links[0] for links in page.data_links()], [f'/projects/{self.a}', f'/projects/{self.b}'])
+        self.assertEqual(page.data_links()[0][1:], [f'/projects/{self.a}', f'/requests?project={self.a}'])
 
-    async def test_board_refreshes_every_ten_seconds_with_the_badge_script_and_no_inline_code(self):
+    async def test_board_has_no_meta_refresh_and_loads_the_badge_and_dashboard_scripts_and_no_inline_code(self):
+        # WBX-C2 (AC-20): the 10 s <meta http-equiv=refresh> is gone; static/dashboard.js redraws the numbers instead.
         response, page = await self.page('/')
         metas = [attrs for attrs in page.tags('meta') if attrs.get('http-equiv') == 'refresh']
-        self.assertEqual([attrs['content'] for attrs in metas], ['10'])
+        self.assertEqual(metas, [])
         self.assertEqual([attrs.get('src') for attrs in page.tags('script')],
-                         ['/static/session-check.js', '/static/badge.js'])  # WBX-A2
+                         ['/static/session-check.js', '/static/badge.js', '/static/dashboard.js'])  # WBX-A2, C2
         self.assertNotIn('style=', response.body_text)
         self.assertNotIn('onclick', response.body_text)
         self.assertIn('id="wb-badge"', response.body_text)
@@ -374,8 +378,10 @@ class NoPaneInputTests(ProjectsCase):
                     lowered = response.body_text.lower()
                     for marker in self.PANE_MARKERS:
                         self.assertNotIn(marker, lowered, path)
-                    self.assertEqual([a.get('src') for a in page.tags('script')],
-                                     ['/static/session-check.js', '/static/badge.js'], path)  # WBX-A2
+                    scripts = ['/static/session-check.js', '/static/badge.js']  # WBX-A2
+                    if path == '/':
+                        scripts.append('/static/dashboard.js')  # WBX-C2: the dashboard's refresh
+                    self.assertEqual([a.get('src') for a in page.tags('script')], scripts, path)
                     # The global nav's narrow-screen toggle (WBX-A1) is the one non-hidden input allowed.
                     self.assertFalse([a for a in page.tags('input') if a.get('type') not in ('hidden', None)
                                       and a.get('id') != 'wb-nav-toggle'], path)

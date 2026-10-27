@@ -17,7 +17,7 @@ from ... import presentation, projects as project_library, web_control
 from ...inbox.limits import InboxError
 from .. import render
 from ..middleware import SERVICES, principal_of, see_other, session_of
-from . import board_status, requests as request_pages
+from . import board_status, dashboard, requests as request_pages
 from .board_status import REGISTRY_TEXT, PORT, fetch, frame, project_url, review_mode_text
 from .control import CONTROL
 
@@ -323,6 +323,7 @@ def routes(rows: Callable[..., Awaitable[dict]], inbox, one: Callable[..., Await
     pages. ``one(project_id)`` observes a single project afresh (confirm pages); without it the whole list is."""
     def register(app: web.Application) -> None:
         board_status.register(app, board_status.StatusPort(rows, inbox, one))
+        dashboard.register(app)
         app.router.add_get("/projects/{project_id}", get_project)
         app.router.add_get("/projects/{project_id}/{action}", get_confirm)
         app.router.add_post("/projects/{project_id}/review-mode", post_review_mode)

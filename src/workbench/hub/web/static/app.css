@@ -53,3 +53,63 @@ li.kind-system { border-left-color: var(--border-strong); font-style: italic; }
   dd { margin-bottom: 0.4rem; }
   .page-login main { padding-top: 1.5rem; }
 }
+
+/* ===== dashboard "/" (WBX-C2): summary cards, project and request tables, Board agent and waiting cards ===== */
+.page-head { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 0.2rem 1rem; margin: calc(var(--gap) * 0.5) 0 var(--gap); }
+.page-head h1 { margin: 0; }
+.updated { margin: 0; color: var(--muted); font-size: 0.85rem; }
+main .page-head + .error { margin-top: 0; }
+
+/* summary cards: as many columns as fit, so a phone gets two or one per row without a media query */
+.summary { display: grid; gap: var(--gap); grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr)); margin-bottom: var(--gap); }
+main section.summary + section, main .summary > h2 { margin-top: 0; }
+.stat { min-width: 0; display: grid; gap: 0.15rem; padding: var(--pad); background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-lg); box-shadow: var(--card-shadow); color: inherit; text-decoration: none; }
+.stat:hover { border-color: var(--border-strong); }
+.stat-label, .stat-sub { color: var(--muted); font-size: 0.85rem; }
+.stat-value { font-size: 1.9rem; font-weight: 700; line-height: 1.1; }
+.stat-attn { background: var(--warn-bg); border-color: var(--warn-bd); color: var(--warn-fg); }
+.stat-attn .stat-label, .stat-attn .stat-sub { color: inherit; }
+
+/* two columns (tables | agent and waiting cards) only where the 20 rem side column fits */
+.layout { display: grid; gap: var(--gap); grid-template-columns: minmax(0, 1fr); }
+.primary, .side { display: grid; gap: var(--gap); min-width: 0; align-content: start; }
+.primary > .card + .card, .side > .card + .card { margin-top: 0; }
+@media (min-width: 1000px) { .layout { grid-template-columns: minmax(0, 1fr) 20rem; } }
+
+/* a card holding a table: the head sits in the card, the table runs edge to edge under it */
+.card-head { display: flex; align-items: center; justify-content: space-between; gap: 0.75rem; }
+.card-head h2 { margin: 0; font-size: 1.05rem; }
+.card-note, .card-link { font-size: 0.85rem; color: var(--muted); }
+.card-link { color: var(--link); }
+.dash-card { padding: 0; }
+.dash-card > .card-head { padding: var(--pad) var(--pad) 0.8rem; }
+.dash-card > .error, .dash-card > .empty { margin: 0; padding: 0 var(--pad) var(--pad); }
+.dash-card > .error { margin: 0 var(--pad) var(--pad); padding: 0.6rem 0.8rem; }
+.dash-card > .table-wrap { margin: 0; border: 0; border-top: 1px solid var(--border); border-radius: 0 0 var(--radius-lg) var(--radius-lg); }
+.dash-card .proj-link, .dash-card td.proj, .dash-card td.src { white-space: nowrap; }
+.dash-card td.title { min-width: 14rem; }
+.wait { display: inline-block; min-width: 7rem; }
+.dash-card table.board { --cell-x: 0.6rem; font-size: 0.9rem; }
+.dash-card td.path { min-width: 9rem; color: var(--muted); font-family: var(--mono); font-size: 0.75rem; overflow-wrap: anywhere; }
+.links { white-space: nowrap; }
+.links a + a { margin-left: 0.9rem; }
+.when { color: var(--muted); font-size: 0.85em; white-space: nowrap; }
+.flag { display: inline-block; margin-left: 0.5rem; padding: 0 0.4rem; border: 1px solid var(--warn-bd); border-radius: 4px; background: var(--warn-bg); color: var(--warn-fg); font-size: 0.72rem; font-weight: 700; white-space: nowrap; }
+
+/* power chips of the project table (the state glyph keeps colour from being the only cue) */
+.p-on { --cb: var(--chip-running-bg); --cf: var(--chip-running-fg); --g: "\25CF"; }
+.p-off { --cb: var(--chip-closed-bg); --cf: var(--chip-closed-fg); --g: "\25CB"; }
+.p-busy { --cb: var(--chip-reviewing-bg); --cf: var(--chip-reviewing-fg); --g: "\25D0"; }
+.p-unknown { --cb: var(--chip-unknown-bg); --cf: var(--chip-unknown-fg); --g: "?"; }
+
+/* side cards: Board agent state and the requests waiting for the owner */
+.agent-card, .attn-card { padding-bottom: var(--pad); }
+.agent-card > .card-head, .attn-card > .card-head { padding: 0 0 0.8rem; }
+.agent-state { display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.6rem; }
+.count { min-width: 1.5rem; padding: 0 0.45rem; border-radius: 999px; background: var(--badge-bg); color: var(--badge-fg); font-size: 0.8rem; font-weight: 700; text-align: center; }
+.attn-list { margin: 0; padding: 0; list-style: none; }
+.attn-list li { display: grid; gap: 0.1rem; padding: 0.6rem 0; border-top: 1px solid var(--border); }
+.attn-list li:first-child { border-top: 0; }
+.attn-list .meta { font-size: 0.82rem; }
+.attn-card > .empty { margin-top: 0; margin-bottom: 0; }
+.attn-list:empty { display: none; }

@@ -46,10 +46,16 @@ class RealHubStatusPages(unittest.TestCase):
 
         status, _, board = browser.request('GET', '/')
         self.assertEqual(status, 200)
-        self.assertIn('<meta http-equiv="refresh" content="10">', board)
+        self.assertNotIn('http-equiv="refresh"', board)  # WBX-C2: the dashboard redraws through /api/dashboard
+        self.assertIn('src="/static/dashboard.js"', board)
         self.assertIn('alpha', board)
         self.assertIn(f'href="/projects/{project_id}"', board)
         self.assertIn('꺼짐', board)  # a registered project whose backend is not running
+        status, headers, body = browser.request('GET', '/api/dashboard')  # WBX-C2: the dashboard's session JSON
+        self.assertEqual((status, headers['Content-Type'].split(';')[0], headers['Cache-Control']), (200, 'application/json', 'no-store'))
+        dashboard = json.loads(body)
+        self.assertEqual([(item['name'], item['power_kind']) for item in dashboard['projects']], [('alpha', 'off')])
+        self.assertEqual(dashboard['summary']['projects']['closed'], 1)
         self.assertIn('자동', board)
 
         status, _, page = browser.request('GET', f'/projects/{project_id}')

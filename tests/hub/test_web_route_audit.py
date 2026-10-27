@@ -53,6 +53,7 @@ EXPECTED = {
     ('POST', '/projects/{project_id}/{action}'): SESSION,
     ('GET', '/requests'): SESSION,
     ('GET', '/api/badge'): API,
+    ('GET', '/api/dashboard'): API,  # WBX-C2: the dashboard's session JSON (401, no-store)
     ('GET', '/requests/new'): SESSION,
     ('POST', '/requests'): SESSION,
     ('GET', '/requests/{rid}'): SESSION,

@@ -59,6 +59,8 @@ class WebServices:
     policy: OriginPolicy
     insecure_warning: bool = False
     clock: Callable[[], float] = time.time
+    # The Board agent's state dot in the nav: ``"on"``/``"off"``/``"error"`` (non-blocking; the Hub supplies it).
+    board_state: Callable[[], str] = lambda: "off"
     sessions: auth.SessionStore = field(init=False)
     throttle: auth.LoginThrottle = field(init=False)
     audit: auth.AuditLog = field(init=False)

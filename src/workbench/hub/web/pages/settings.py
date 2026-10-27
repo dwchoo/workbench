@@ -35,6 +35,9 @@ REJECTED_TEXT = {
 Projects = Callable[[], Iterable[tuple[str, str]]]
 
 
+BADGE_SCRIPTS = ("/static/badge.js",)  # header badge slot (D-24); no inline script
+
+
 def settings_nav() -> render.Markup:
     return render.tag("nav", render.html_join([
         render.tag("a", "비밀번호", href="/settings"), " ",
@@ -64,7 +67,8 @@ def _page(request: web.Request, title: str, body: object, *, status: int = 200) 
     services, session = request.app[SERVICES], session_of(request)
     parts = [render.tag("h1", "설정"), settings_nav(), body]
     return render.page(title, render.html_join(parts), status=status,
-                       insecure_warning=services.insecure_warning, csrf=session.csrf)
+                       insecure_warning=services.insecure_warning, csrf=session.csrf,
+                       nav=render.nav_for(request), scripts=BADGE_SCRIPTS)
 
 
 def _form_text(form, name: str) -> str:

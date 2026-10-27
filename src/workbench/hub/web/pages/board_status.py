@@ -46,7 +46,7 @@ def frame(request: web.Request, title: str, body: object, *, status: int = 200,
           refresh: int | None = None) -> web.Response:
     services, session = request.app[SERVICES], session_of(request)
     return render.page(title, body, status=status, insecure_warning=services.insecure_warning, csrf=session.csrf,
-                       stylesheets=STYLESHEETS, scripts=SCRIPTS, refresh=refresh)
+                       stylesheets=STYLESHEETS, scripts=SCRIPTS, refresh=refresh, nav=render.nav_for(request))
 
 
 def normalized(row: dict) -> dict:

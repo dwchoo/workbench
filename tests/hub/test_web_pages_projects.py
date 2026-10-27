@@ -374,7 +374,9 @@ class NoPaneInputTests(ProjectsCase):
                     for marker in self.PANE_MARKERS:
                         self.assertNotIn(marker, lowered, path)
                     self.assertEqual([a.get('src') for a in page.tags('script')], ['/static/badge.js'], path)
-                    self.assertFalse([a for a in page.tags('input') if a.get('type') not in ('hidden', None)], path)
+                    # The global nav's narrow-screen toggle (WBX-A1) is the one non-hidden input allowed.
+                    self.assertFalse([a for a in page.tags('input') if a.get('type') not in ('hidden', None)
+                                      and a.get('id') != 'wb-nav-toggle'], path)
 
 
 class StartReviewTests(ProjectsCase):
@@ -609,10 +611,11 @@ class ControlPostTests(ProjectsCase):
                     'unknown_project': 404, 'forbidden': 403, 'internal_error': 500}
         for reason, status in expected.items():
             with self.subTest(reason=reason):
-                self.control.replies['pause'] = web_control.Result(False, 'pause', self.a, reason, 'detail')
+                # The sentinel is not "detail": the global nav's settings menu is a <details> element (WBX-A1).
+                self.control.replies['pause'] = web_control.Result(False, 'pause', self.a, reason, 'LEAKED-DETAIL')
                 response = await self.submit('pause')
                 self.assertEqual(response.status, status)
-                self.assertNotIn('detail', response.body_text)
+                self.assertNotIn('LEAKED-DETAIL', response.body_text)
 
     async def test_power_off_confirm_runs_with_the_page_token_and_succeeds_only_when_verified(self):
         self.control.replies['power_off_confirm'] = web_control.Result(

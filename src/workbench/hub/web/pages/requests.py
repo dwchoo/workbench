@@ -85,7 +85,7 @@ def _query_url(path: str, **params: object) -> str:
 def _frame(request: web.Request, title: str, body: object, *, status: int = 200) -> web.Response:
     services, session = request.app[SERVICES], session_of(request)
     return render.page(title, body, status=status, insecure_warning=services.insecure_warning, csrf=session.csrf,
-                       stylesheets=STYLESHEETS, scripts=SCRIPTS)
+                       stylesheets=STYLESHEETS, scripts=SCRIPTS, nav=render.nav_for(request))
 
 
 async def _projects(request: web.Request) -> list[ProjectRef]:

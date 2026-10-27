@@ -55,7 +55,8 @@ def frame(request: web.Request, title: str, body: object, *, status: int = 200, 
                        stylesheets=STYLESHEETS if board else STYLESHEETS[:1],
                        scripts=SCRIPTS if board else SCRIPTS[:1],
                        module_scripts=MODULE_SCRIPTS if board else (),
-                       metas={"csrf-token": session.csrf, "style-nonce": style_nonce(request)} if board else None)
+                       metas={"csrf-token": session.csrf, "style-nonce": style_nonce(request)} if board else None,
+                       nav=render.nav_for(request))
 
 
 def tab_button(name: str, label: str, first: bool) -> render.Markup:

@@ -6,6 +6,7 @@ style exists anywhere (CSP ``script-src 'self'; style-src 'self'``).
 """
 from __future__ import annotations
 
+from dataclasses import dataclass
 import html
 
 from aiohttp import web
@@ -60,9 +61,80 @@ def csrf_field(csrf: str | None) -> Markup:
     return hidden("csrf", csrf) if csrf else Markup("")
 
 
+@dataclass(frozen=True, slots=True)
+class NavContext:
+    """What the global nav needs from a request: the page ``path`` and the Board agent's ``board_state``."""
+
+    path: str
+    board_state: str = "off"
+
+
+BOARD_DOT_TITLES = {"on": "실행 중", "off": "중지", "error": "오류"}
+NAV_LINKS = (("대시보드", "/"), ("요청", "/requests"), ("새 요청", "/requests/new"), ("Board agent", "/board"))
+SETTINGS_LINKS = (("비밀번호", "/settings"), ("API key", "/settings/keys"), ("감사 기록", "/settings/audit"))
+
+
+def nav_for(request: web.Request) -> NavContext:
+    """The nav context of a logged-in request; a broken ``board_state`` reads as ``error``."""
+    from .middleware import SERVICES
+    try:
+        state = request.app[SERVICES].board_state()
+    except Exception:  # noqa: BLE001 - the nav never fails a page
+        state = "error"
+    return NavContext(request.path, state if isinstance(state, str) and state in BOARD_DOT_TITLES else "error")
+
+
+def _under(path: str, prefix: str) -> bool:
+    return path == prefix or path.startswith(prefix + "/")
+
+
+def current_href(path: str) -> str | None:
+    """The nav link of the screen at ``path`` (SPEC "전역 nav": by path prefix), None for any other path."""
+    if path == "/" or _under(path, "/projects"):
+        return "/"
+    if path == "/requests/new":
+        return "/requests/new"
+    if _under(path, "/requests"):
+        return "/requests"
+    if _under(path, "/board"):
+        return "/board"
+    if _under(path, "/settings/keys"):
+        return "/settings/keys"
+    if _under(path, "/settings/audit"):
+        return "/settings/audit"
+    if _under(path, "/settings"):
+        return "/settings"
+    return None
+
+
+def nav_markup(nav: NavContext) -> Markup:
+    here = current_href(nav.path)
+
+    def link(label: str, href: str, suffix: object = "") -> Markup:
+        return tag("a", html_join([label, suffix]), href=href, aria_current="page" if href == here else None,
+                   class_="new-request" if href == "/requests/new" else None)
+    title = BOARD_DOT_TITLES.get(nav.board_state, "오류")
+    dot = tag("span", "", class_=f"dot dot-{nav.board_state}", title=title)
+    # The state is text too (visually hidden, next to the link), so the dot is never colour-only.
+    state_text = tag("span", title, class_="visually-hidden")
+    links = []
+    for label, href in NAV_LINKS:
+        links.append(link(label, href, html_join([" ", dot]) if href == "/board" else ""))
+        if href == "/board":
+            links.append(state_text)
+    in_settings = here is not None and here.startswith("/settings")
+    summary = tag("summary", "설정", aria_current="page" if in_settings else None)
+    links.append(tag("details", html_join([summary, *(link(label, href) for label, href in SETTINGS_LINKS)]),
+                     class_="nav-settings"))
+    # Narrow screens collapse the nav with no JavaScript: a checkbox before the nav, ``:checked ~ nav`` in base.css.
+    toggle = void("input", type="checkbox", id="wb-nav-toggle", class_="nav-toggle")
+    toggle_label = tag("label", "메뉴", for_="wb-nav-toggle", class_="nav-toggle-label")
+    return html_join([toggle, toggle_label, tag("nav", html_join(links), aria_label="주요")])
+
+
 def layout(title: str, body: object, *, insecure_warning: bool = False, csrf: str | None = None,
            stylesheets: tuple = (), scripts: tuple = (), refresh: int | None = None,
-           module_scripts: tuple = (), metas: dict | None = None) -> Markup:
+           module_scripts: tuple = (), metas: dict | None = None, nav: NavContext | None = None) -> Markup:
     """The page frame: plain-HTTP banner, header with the badge slot and (when logged in) logout.
 
     ``stylesheets``/``scripts`` are extra ``/static/...`` URLs a page asks for (never inline); ``refresh`` is a
@@ -73,6 +145,7 @@ def layout(title: str, body: object, *, insecure_warning: bool = False, csrf: st
     logout = (tag("form", html_join([csrf_field(csrf), tag("button", "로그아웃", type="submit")]),
                   method="post", action="/logout", class_="logout") if csrf else "")
     header = tag("header", html_join([tag("a", TITLE, href="/", class_="brand"),
+                                      nav_markup(nav) if nav is not None else "",
                                       tag("span", "", id="wb-badge", class_="badge"), logout]))
     head = html_join([void("meta", charset="utf-8"),
                       void("meta", name="viewport", content="width=device-width, initial-scale=1"),
@@ -89,8 +162,9 @@ def layout(title: str, body: object, *, insecure_warning: bool = False, csrf: st
 
 def page(title: str, body: object, *, status: int = 200, insecure_warning: bool = False,
          csrf: str | None = None, stylesheets: tuple = (), scripts: tuple = (),
-         refresh: int | None = None, module_scripts: tuple = (), metas: dict | None = None) -> web.Response:
+         refresh: int | None = None, module_scripts: tuple = (), metas: dict | None = None,
+         nav: NavContext | None = None) -> web.Response:
     return web.Response(status=status, text=layout(title, body, insecure_warning=insecure_warning, csrf=csrf,
                                                    stylesheets=stylesheets, scripts=scripts, refresh=refresh,
-                                                   module_scripts=module_scripts, metas=metas),
+                                                   module_scripts=module_scripts, metas=metas, nav=nav),
                         content_type="text/html", charset="utf-8")

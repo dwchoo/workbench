@@ -7,6 +7,27 @@ header .brand { font-weight: 600; color: var(--fg); text-decoration: none; }
 header .badge:empty { display: none; }
 header .badge { padding: 0 0.5rem; border-radius: 1rem; background: var(--accent); color: #fff; font-size: 0.85rem; }
 header .logout { margin-left: auto; }
+header { flex-wrap: wrap; }
+/* Global nav (WBX-A1; track C restyles it). Narrow screens fold it behind a checkbox, no JavaScript. */
+.nav-toggle { position: absolute; width: 1px; height: 1px; opacity: 0; }
+.nav-toggle-label { display: none; padding: 0.15rem 0.6rem; border: 1px solid #aaa; border-radius: 0.25rem; cursor: pointer; }
+.nav-toggle:focus-visible + .nav-toggle-label { outline: 2px solid var(--accent); }
+header nav[aria-label] { display: flex; flex-wrap: wrap; align-items: center; gap: 0.75rem; }
+header nav a, header nav summary { color: var(--fg); text-decoration: none; cursor: pointer; }
+header nav a[aria-current="page"], header nav summary[aria-current="page"] { font-weight: 600; border-bottom: 2px solid var(--accent); }
+header nav a.new-request { padding: 0.1rem 0.6rem; border: 1px solid var(--accent); border-radius: 0.25rem; color: var(--accent); }
+.nav-settings { position: relative; }
+.nav-settings[open] > a { display: block; padding: 0.25rem 0.75rem; background: #fff; }
+.nav-settings[open] { z-index: 1; }
+.visually-hidden { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
+.dot { display: inline-block; width: 0.6rem; height: 0.6rem; border-radius: 50%; background: #999; }
+.dot-on { background: #1d7a1d; }
+.dot-error { background: var(--err); }
+@media (max-width: 45rem) {
+  .nav-toggle-label { display: inline-block; }
+  header nav[aria-label] { display: none; flex-basis: 100%; order: 10; flex-direction: column; align-items: flex-start; }
+  .nav-toggle:checked ~ nav[aria-label] { display: flex; }
+}
 main { max-width: 64rem; margin: 1rem auto; padding: 0 1rem; }
 .banner { padding: 0.5rem 1rem; }
 .banner.insecure { background: var(--warn-bg); color: var(--warn-fg); border-bottom: 1px solid #e0c36a; }

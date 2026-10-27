@@ -197,7 +197,7 @@ async def get_home(request: web.Request) -> web.Response:
         return await handler(request)
     services = request.app[SERVICES]
     return render.page("", render.tag("h1", "WB Hub"), insecure_warning=services.insecure_warning,
-                       csrf=session_of(request).csrf)
+                       csrf=session_of(request).csrf, nav=render.nav_for(request), scripts=settings.BADGE_SCRIPTS)
 
 
 MISMATCH_TEXT = "새 비밀번호 두 칸이 서로 다릅니다"
@@ -223,7 +223,8 @@ def password_form(*, error: str | None = None, csrf: str) -> render.Markup:
 def settings_page(request: web.Request, *, status: int = 200, error: str | None = None) -> web.Response:
     services, session = request.app[SERVICES], session_of(request)
     return render.page("설정", password_form(error=error, csrf=session.csrf), status=status,
-                       insecure_warning=services.insecure_warning, csrf=session.csrf)
+                       insecure_warning=services.insecure_warning, csrf=session.csrf, nav=render.nav_for(request),
+                       scripts=settings.BADGE_SCRIPTS)
 
 
 async def get_settings(request: web.Request) -> web.Response:

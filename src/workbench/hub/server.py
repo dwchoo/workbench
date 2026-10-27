@@ -174,6 +174,17 @@ class Hub:
         except registry.RegistryError:
             return []
 
+    def board_state(self) -> str:
+        """The nav's Board agent dot (WBX-A1): ``on`` while the agent channel is starting/running, ``off`` with no
+        set, never started, stopped or exited, ``error`` for any other state or an invalid ``hub.toml``. Non-blocking."""
+        if self.board is None:
+            return "error" if self.config_info.get("state") == "config_invalid" else "off"
+        agent = (self.board.status() or {}).get("agent")
+        state = agent.get("state") if isinstance(agent, dict) else None
+        if state in ("starting", "running"):
+            return "on"
+        return "off" if state in (None, "not_started", "stopped", "exited") else "error"
+
     def web_routes(self) -> list:
         """Route registrations the web app adds to its defaults: the status board and project pages over this
         Hub's list, the request pages over its inbox, ``/mcp`` and the Board restart endpoint."""
@@ -248,11 +259,13 @@ class Hub:
             self.web = WebListener(self.layout.state_dir, config=None, config_error=exc, tls=None,
                                    routes=self.web_routes(), config_file=path)
             self.web.projects = self.project_pairs
+            self.web.board_state = self.board_state
             return
         self.config_info = {"path": str(path), "loaded_at": time.time(), "state": "ok"}
         self.web = WebListener(self.layout.state_dir, config=loaded, config_error=None, tls=tls,
                                routes=self.web_routes(), config_file=path)
         self.web.projects = self.project_pairs
+        self.web.board_state = self.board_state
         if not loaded.web.enabled:  # the Board agent set is used only from the web: none while web is off
             return
         self.ensure_board(loaded.board_agent)

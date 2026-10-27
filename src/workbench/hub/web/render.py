@@ -49,6 +49,12 @@ def void(element: str, /, **attributes: object) -> Markup:
     return Markup(f"<{element}{_attributes(attributes)}>")
 
 
+def data_table(rows: object, class_: str = "") -> Markup:
+    """A data table: ``table.data`` inside ``div.table-wrap``, which scrolls sideways on a narrow screen so the page
+    itself never does. ``rows`` is the already built ``<tr>`` markup (header row first)."""
+    return tag("div", tag("table", rows, class_=f"data {class_}".strip()), class_="table-wrap")
+
+
 def pre(text: object) -> Markup:
     return tag("pre", text)
 
@@ -75,6 +81,10 @@ SESSION_CHECK_SCRIPT = "/static/session-check.js"
 
 # The plain-HTTP banner remembers "collapsed" in localStorage and tells base.css via a class on <html> (SPEC "평문 HTTP 배너 접기").
 INSECURE_BANNER_SCRIPT = "/static/insecure-banner.js"
+
+# Every page (the login form and error pages too) loads the same two stylesheets first: tokens, base and the shared
+# components in base.css, the page-level layout pieces in app.css (WBX-AC-19). A page's own ``stylesheets`` come after.
+SHARED_STYLESHEETS = ("/static/base.css", "/static/app.css")
 
 BOARD_DOT_TITLES = {"on": "실행 중", "off": "중지", "error": "오류"}
 NAV_LINKS = (("대시보드", "/"), ("요청", "/requests"), ("새 요청", "/requests/new"), ("Board agent", "/board"))
@@ -131,8 +141,8 @@ def nav_markup(nav: NavContext) -> Markup:
             links.append(state_text)
     in_settings = here is not None and here.startswith("/settings")
     summary = tag("summary", "설정", aria_current="page" if in_settings else None)
-    links.append(tag("details", html_join([summary, *(link(label, href) for label, href in SETTINGS_LINKS)]),
-                     class_="nav-settings"))
+    menu = tag("div", html_join(link(label, href) for label, href in SETTINGS_LINKS), class_="menu-list")
+    links.append(tag("details", html_join([summary, menu]), class_="nav-settings"))
     # Narrow screens collapse the nav with no JavaScript: a checkbox before the nav, ``:checked ~ nav`` in base.css.
     toggle = void("input", type="checkbox", id="wb-nav-toggle", class_="nav-toggle")
     toggle_label = tag("label", "메뉴", for_="wb-nav-toggle", class_="nav-toggle-label")
@@ -141,21 +151,24 @@ def nav_markup(nav: NavContext) -> Markup:
 
 def layout(title: str, body: object, *, insecure_warning: bool = False, csrf: str | None = None,
            stylesheets: tuple = (), scripts: tuple = (), refresh: int | None = None,
-           module_scripts: tuple = (), metas: dict | None = None, nav: NavContext | None = None) -> Markup:
+           module_scripts: tuple = (), metas: dict | None = None, nav: NavContext | None = None,
+           body_class: str | None = None) -> Markup:
     """The page frame: plain-HTTP banner, header with the badge slot and (when logged in) logout.
 
     ``stylesheets``/``scripts`` are extra ``/static/...`` URLs a page asks for (never inline); ``refresh`` is a
     ``<meta http-equiv="refresh">`` interval in seconds (the status board's 10 s, no JavaScript). ``module_scripts``
     are ``<script type="module" src>`` (run after the plain deferred ones, in order); ``metas`` is ``{name: content}``
-    for data a script reads (the Board page's CSRF token). A frame with ``nav`` (a logged-in screen) also loads
+    for data a script reads (the Board page's CSRF token); ``body_class`` is a page-kind class on ``<body>`` (the login
+    screen's ``page-login``). A frame with ``nav`` (a logged-in screen) also loads
     :data:`SESSION_CHECK_SCRIPT`."""
     if nav is not None and SESSION_CHECK_SCRIPT not in scripts:
         scripts = (SESSION_CHECK_SCRIPT, *scripts)
     banner = tag("div", html_join([INSECURE_WARNING_TEXT, " ", tag("button", "닫기", type="button", class_="banner-close",
                                                                     hidden=True)]),
                  class_="banner insecure", role="alert") if insecure_warning else ""
-    chip = tag("span", "평문 HTTP", class_="insecure-chip", tabindex="0", title=INSECURE_WARNING_TEXT) if insecure_warning else ""
-    logout = (tag("form", html_join([csrf_field(csrf), tag("button", "로그아웃", type="submit")]),
+    chip = tag("span", "평문 HTTP", class_="insecure-chip", role="button", tabindex="0",
+               title=INSECURE_WARNING_TEXT) if insecure_warning else ""
+    logout = (tag("form", html_join([csrf_field(csrf), tag("button", "로그아웃", type="submit", class_="btn btn-sm")]),
                   method="post", action="/logout", class_="logout") if csrf else "")
     header = tag("header", html_join([tag("a", TITLE, href="/", class_="brand"),
                                       nav_markup(nav) if nav is not None else "",
@@ -167,19 +180,19 @@ def layout(title: str, body: object, *, insecure_warning: bool = False, csrf: st
                       tag("title", f"{title} - {TITLE}" if title else TITLE),
                       # Synchronous (not deferred): the stored collapsed state reaches <html> before first paint.
                       *([tag("script", "", src=INSECURE_BANNER_SCRIPT)] if insecure_warning else []),
-                      void("link", rel="stylesheet", href="/static/base.css"),
-                      *(void("link", rel="stylesheet", href=href) for href in stylesheets),
+                      *(void("link", rel="stylesheet", href=href)
+                        for href in (*SHARED_STYLESHEETS, *(h for h in stylesheets if h not in SHARED_STYLESHEETS))),
                       *(tag("script", "", src=src, defer=True) for src in scripts),
                       *(tag("script", "", src=src, type="module") for src in module_scripts)])
     return Markup("<!doctype html>" + tag("html", html_join([tag("head", head), tag(
-        "body", html_join([banner, header, tag("main", body)]))]), lang="ko"))
+        "body", html_join([banner, header, tag("main", body)]), class_=body_class)]), lang="ko"))
 
 
 def page(title: str, body: object, *, status: int = 200, insecure_warning: bool = False,
          csrf: str | None = None, stylesheets: tuple = (), scripts: tuple = (),
          refresh: int | None = None, module_scripts: tuple = (), metas: dict | None = None,
-         nav: NavContext | None = None) -> web.Response:
+         nav: NavContext | None = None, body_class: str | None = None) -> web.Response:
     return web.Response(status=status, text=layout(title, body, insecure_warning=insecure_warning, csrf=csrf,
                                                    stylesheets=stylesheets, scripts=scripts, refresh=refresh,
-                                                   module_scripts=module_scripts, metas=metas, nav=nav),
+                                                   module_scripts=module_scripts, metas=metas, nav=nav, body_class=body_class),
                         content_type="text/html", charset="utf-8")

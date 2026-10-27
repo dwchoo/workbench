@@ -90,8 +90,8 @@ def review_mode_form(request: web.Request, project_id: str, mode: object) -> ren
         render.tag("form", render.html_join([
             render.csrf_field(session_of(request).csrf),
             render.tag("label", render.html_join(["검토 방식 ", render.tag("select", render.html_join(options),
-                                                                        name="mode")])),
-            render.tag("button", "저장", type="submit")]),
+                                                                        name="mode")]), class_="field"),
+            render.tag("button", "저장", type="submit", class_="btn")]),
             method="post", action=project_url(project_id, "/review-mode"), class_="inline")]), id="review-mode")
 
 
@@ -134,7 +134,7 @@ async def get_project(request: web.Request) -> web.Response:
         body.append(render.tag("p", BUSY_TEXT, class_="notice", role="status"))
     elif controls:
         body.append(render.tag("div", render.html_join(
-            render.tag("a", CONTROL_LABELS[action], href=project_url(project_id, f"/{action}"), class_="button")
+            render.tag("a", CONTROL_LABELS[action], href=project_url(project_id, f"/{action}"), class_="btn")
             for action in controls), class_="actions", id="controls"))
     elif row.get("power") in UNCONTROLLABLE_TEXT:
         body.append(render.tag("p", UNCONTROLLABLE_TEXT[row["power"]], class_="notice", role="status"))
@@ -219,7 +219,7 @@ def confirm_page(request: web.Request, project_id: str, row: dict, action: str, 
     fields = [render.csrf_field(csrf)]
     if token:
         fields.append(render.hidden("token", token))
-    fields.append(render.tag("button", "확인", type="submit"))
+    fields.append(render.tag("button", "확인", type="submit", class_="btn btn-primary"))
     body.append(render.tag("form", render.html_join(fields), method="post",
                            action=project_url(project_id, f"/{action}"), class_="inline"))
     body.append(render.tag("p", render.tag("a", "취소", href=project_url(project_id))))

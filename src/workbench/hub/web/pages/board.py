@@ -68,7 +68,7 @@ def tab_button(name: str, label: str, first: bool) -> render.Markup:
 def panel(name: str, info: object, first: bool) -> render.Markup:
     head = render.tag("div", render.html_join([
         render.tag("span", channel_label(info), id=f"state-{name}", class_="channel-state", data_channel=name),
-        render.tag("a", "재시작", href=f"/board/restart?channel={name}", class_="button", id=f"restart-{name}")]),
+        render.tag("a", "재시작", href=f"/board/restart?channel={name}", class_="btn btn-sm", id=f"restart-{name}")]),
         class_="panel-head")
     return render.tag("section", render.html_join([head, render.tag("div", "", id=f"term-{name}", class_="term")]),
                       id=f"panel-{name}", class_="panel active" if first else "panel", data_channel=name,
@@ -83,12 +83,12 @@ def board_page(request: web.Request, board) -> web.Response:
     status = board.status() or {}
     bar = render.tag("div", render.html_join([
         render.tag("span", "연결 중", id="board-connection", class_="connection", role="status"),
-        render.tag("button", "다시 연결", type="button", id="board-reconnect", hidden=True),
-        render.tag("a", "다시 로그인", href="/login", id="board-login", class_="button", hidden=True)]),
+        render.tag("button", "다시 연결", type="button", id="board-reconnect", class_="btn", hidden=True),
+        render.tag("a", "다시 로그인", href="/login", id="board-login", class_="btn", hidden=True)]),
         class_="board-bar")
     banner = render.tag("div", render.html_join([
         render.tag("span", BANNER_PREFIX),
-        render.tag("button", "다시 가져오기", type="button", id="board-retake")]),
+        render.tag("button", "다시 가져오기", type="button", id="board-retake", class_="btn btn-sm")]),
         id="board-banner", class_="banner taken", role="alert", hidden=True)
     tabs = render.tag("div", render.html_join(
         tab_button(name, label, index == 0) for index, (name, label) in enumerate(CHANNELS)),
@@ -104,7 +104,7 @@ def confirm_page(request: web.Request, channel: str) -> web.Response:
     label = dict(CHANNELS)[channel]
     form = render.tag("form", render.html_join([
         render.csrf_field(session_of(request).csrf), render.hidden("channel", channel),
-        render.tag("button", "확인", type="submit")]), method="post", action="/board/restart", class_="inline")
+        render.tag("button", "확인", type="submit", class_="btn btn-primary")]), method="post", action="/board/restart", class_="inline")
     return frame(request, f"{label} 재시작 확인", render.html_join([
         render.tag("h1", f"{label} 재시작 확인"), render.tag("p", RESTART_EFFECT[channel]), form,
         render.tag("p", render.tag("a", "취소", href="/board"))]))

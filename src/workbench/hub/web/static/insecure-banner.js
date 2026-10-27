@@ -2,7 +2,8 @@
    localStorage "wb.insecureBanner" = "collapsed" puts class "wb-insecure-collapsed" on <html> before first paint, and
    base.css shows the banner or the header chip by that class (one of them is always visible). Once the DOM exists the
    close button (hidden in the markup, so it stays inert without JavaScript) collapses + stores, and the chip expands
-   + deletes the stored value. Every storage access is guarded: a storage that throws leaves the banner expanded. */
+   + deletes the stored value. Focus follows the swap (close -> chip, chip -> close button). Every storage access is
+   guarded: a storage that throws leaves the banner expanded. */
 (function () {
   "use strict";
   var KEY = "wb.insecureBanner";
@@ -20,8 +21,13 @@
       if (collapsed) { store.setItem(KEY, COLLAPSED); } else { store.removeItem(KEY); }
     } catch (error) { /* private window or blocked storage: this page only */ }
   }
-  function collapse() { root.classList.add(CLASS); remember(true); }
-  function expand() { root.classList.remove(CLASS); remember(false); }
+  // The control that was just used disappears with the state change; hand focus to the one that replaces it so a
+  // keyboard or screen-reader user is not dropped on <body>. Only after the class change, when the target is visible.
+  function focusOn(element) {
+    try { if (element && typeof element.focus === "function") { element.focus(); } } catch (error) { /* best effort */ }
+  }
+  function collapse() { root.classList.add(CLASS); remember(true); focusOn(document.querySelector(".insecure-chip")); }
+  function expand() { root.classList.remove(CLASS); remember(false); focusOn(document.querySelector(".banner-close")); }
 
   try {
     var store = storage();

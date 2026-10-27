@@ -99,7 +99,7 @@ async def get_board(request: web.Request) -> web.Response:
     if problem is not None:
         body.append(render.tag("p", problem, class_="error", role="alert"))
     elif rows:
-        body.append(render.tag("table", render.html_join(table_rows), class_="board"))
+        body.append(render.data_table(render.html_join(table_rows), "board"))
     else:
         body.append(render.tag("p", "등록된 프로젝트가 없습니다", class_="empty"))
     body.append(render.tag("p", render.tag("a", "요청 목록", href="/requests")))

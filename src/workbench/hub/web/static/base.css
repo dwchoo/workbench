@@ -1,48 +1,279 @@
-/* WB Hub base layout (no inline style anywhere: CSP style-src 'self'). */
-:root { --fg: #1d1f21; --bg: #fafafa; --muted: #666; --accent: #2457a6; --warn-bg: #fff3cd; --warn-fg: #7a4d00; --err: #a61b1b; }
-* { box-sizing: border-box; }
-body { margin: 0; font-family: system-ui, sans-serif; color: var(--fg); background: var(--bg); line-height: 1.5; }
-header { display: flex; align-items: center; gap: 1rem; padding: 0.5rem 1rem; border-bottom: 1px solid #ddd; background: #fff; }
-header .brand { font-weight: 600; color: var(--fg); text-decoration: none; }
-header .badge:empty { display: none; }
-header .badge { padding: 0 0.5rem; border-radius: 1rem; background: var(--accent); color: #fff; font-size: 0.85rem; }
-header .logout { margin-left: auto; }
-header { flex-wrap: wrap; }
-/* Global nav (WBX-A1; track C restyles it). Narrow screens fold it behind a checkbox, no JavaScript. */
-.nav-toggle { position: absolute; width: 1px; height: 1px; opacity: 0; }
-.nav-toggle-label { display: none; padding: 0.15rem 0.6rem; border: 1px solid #aaa; border-radius: 0.25rem; cursor: pointer; }
-.nav-toggle:focus-visible + .nav-toggle-label { outline: 2px solid var(--accent); }
-header nav[aria-label] { display: flex; flex-wrap: wrap; align-items: center; gap: 0.75rem; }
-header nav a, header nav summary { color: var(--fg); text-decoration: none; cursor: pointer; }
-header nav a[aria-current="page"], header nav summary[aria-current="page"] { font-weight: 600; border-bottom: 2px solid var(--accent); }
-header nav a.new-request { padding: 0.1rem 0.6rem; border: 1px solid var(--accent); border-radius: 0.25rem; color: var(--accent); }
-.nav-settings { position: relative; }
-.nav-settings[open] > a { display: block; padding: 0.25rem 0.75rem; background: #fff; }
-.nav-settings[open] { z-index: 1; }
-.visually-hidden { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
-.dot { display: inline-block; width: 0.6rem; height: 0.6rem; border-radius: 50%; background: #999; }
-.dot-on { background: #1d7a1d; }
-.dot-error { background: var(--err); }
-@media (max-width: 45rem) {
-  .nav-toggle-label { display: inline-block; }
-  header nav[aria-label] { display: none; flex-basis: 100%; order: 10; flex-direction: column; align-items: flex-start; }
-  .nav-toggle:checked ~ nav[aria-label] { display: flex; }
+/* WB Hub design system, part 1: tokens, base, and the components every screen shares (header, nav, banner, buttons,
+   forms, cards, tables, chips, alerts). Hand written from mockups/a/style.css (WBX-D14, direction A: calm console).
+   No external resource and no inline style anywhere: CSP style-src 'self'. Colours exist only as tokens below; light
+   follows the system, dark follows prefers-color-scheme, and data-theme="light|dark" on <html> forces either. */
+
+/* ===== 1. TOKENS ===== */
+:root {
+  --font: system-ui, -apple-system, "Segoe UI", "Noto Sans KR", "Malgun Gothic", sans-serif;
+  --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  --fs: 15px;
+  --radius: 8px;
+  --radius-lg: 12px;
+  --pad: 1.1rem;
+  --gap: 1rem;
+  --gutter: 1.25rem;
+  --maxw: 74rem;
+  --btn-y: 0.45rem;
+  --btn-x: 0.9rem;
+  --cell-y: 0.7rem;
+  --cell-x: 1.1rem;
+  --card-shadow: none;
+  --term-bg: #000;
 }
-main { max-width: 64rem; margin: 1rem auto; padding: 0 1rem; }
-.banner { padding: 0.5rem 1rem; }
-.banner.insecure { background: var(--warn-bg); color: var(--warn-fg); border-bottom: 1px solid #e0c36a; }
-/* Plain-HTTP banner (WBX-A3): static/insecure-banner.js puts class wb-insecure-collapsed on <html> when the owner closed
-   the banner. Collapsed shows the header chip, anything else (no class, no JavaScript, blocked storage) shows the
-   banner, so one of the two is always visible. */
-.insecure-chip { display: none; position: relative; padding: 0 0.5rem; border-radius: 1rem; background: var(--warn-bg); color: var(--warn-fg); border: 1px solid #e0c36a; font-size: 0.85rem; cursor: pointer; }
+:root {
+  color-scheme: light;
+  --bg: #f5f6f8;
+  --surface: #fff;
+  --surface-2: #eef0f3;
+  --text: #1b1f24;
+  --muted: #566070;
+  --border: #dde1e7;
+  --border-strong: #8a93a1;
+  --link: #1f4fb4;
+  --accent: #2458c5;
+  --accent-hover: #1c47a3;
+  --accent-fg: #fff;
+  --focus: #1f6feb;
+  --ok: #1a7f37;
+  --danger: #b42318;
+  --err-bg: #fdecea;
+  --err-fg: #8f1d12;
+  --err-bd: #f1b7b0;
+  --warn-bg: #fff4d6;
+  --warn-fg: #6b4500;
+  --warn-bd: #e5c466;
+  --hdr-bg: #fff;
+  --hdr-fg: #1b1f24;
+  --hdr-muted: #566070;
+  --hdr-bd: #dde1e7;
+  --badge-bg: #b42318;
+  --badge-fg: #fff;
+  --shadow: 0 6px 20px rgba(20, 30, 50, 0.14);
+  --chip-new-bg: #e3edff;
+  --chip-new-fg: #1a4aa6;
+  --chip-reviewing-bg: #ece4fb;
+  --chip-reviewing-fg: #552da8;
+  --chip-needs-bg: #ffecc2;
+  --chip-needs-fg: #704200;
+  --chip-ready-bg: #dcf2ee;
+  --chip-ready-fg: #0b5e53;
+  --chip-running-bg: #dcf1e2;
+  --chip-running-fg: #13602a;
+  --chip-closed-bg: #e8ebef;
+  --chip-closed-fg: #414a56;
+  --chip-unknown-bg: #fde6e3;
+  --chip-unknown-fg: #8f2a1c;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --bg: #111418;
+    --surface: #1a1e24;
+    --surface-2: #232831;
+    --text: #e6e9ee;
+    --muted: #a3acba;
+    --border: #2c323b;
+    --border-strong: #6b7686;
+    --link: #8ab4ff;
+    --accent: #7aa2f7;
+    --accent-hover: #93b4f8;
+    --accent-fg: #0b1220;
+    --focus: #8ab4ff;
+    --ok: #4cc38a;
+    --danger: #ff8a80;
+    --err-bg: #3b1815;
+    --err-fg: #ffb4ab;
+    --err-bd: #7a2e28;
+    --warn-bg: #3a2d0c;
+    --warn-fg: #ffe2a0;
+    --warn-bd: #7a5e1b;
+    --hdr-bg: #1a1e24;
+    --hdr-fg: #e6e9ee;
+    --hdr-muted: #a3acba;
+    --hdr-bd: #2c323b;
+    --badge-bg: #ff8a80;
+    --badge-fg: #3a0a06;
+    --shadow: 0 6px 20px rgba(0, 0, 0, 0.5);
+    --chip-new-bg: #1c2e50;
+    --chip-new-fg: #b6d0ff;
+    --chip-reviewing-bg: #2d2450;
+    --chip-reviewing-fg: #d6c8ff;
+    --chip-needs-bg: #46330f;
+    --chip-needs-fg: #ffd98a;
+    --chip-ready-bg: #113732;
+    --chip-ready-fg: #9de3d6;
+    --chip-running-bg: #133a20;
+    --chip-running-fg: #a5e8b8;
+    --chip-closed-bg: #2a2f37;
+    --chip-closed-fg: #c6cdd8;
+    --chip-unknown-bg: #3e1d19;
+    --chip-unknown-fg: #ffb9ae;
+  }
+}
+:root[data-theme="light"] {
+  color-scheme: light;
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #111418;
+  --surface: #1a1e24;
+  --surface-2: #232831;
+  --text: #e6e9ee;
+  --muted: #a3acba;
+  --border: #2c323b;
+  --border-strong: #6b7686;
+  --link: #8ab4ff;
+  --accent: #7aa2f7;
+  --accent-hover: #93b4f8;
+  --accent-fg: #0b1220;
+  --focus: #8ab4ff;
+  --ok: #4cc38a;
+  --danger: #ff8a80;
+  --err-bg: #3b1815;
+  --err-fg: #ffb4ab;
+  --err-bd: #7a2e28;
+  --warn-bg: #3a2d0c;
+  --warn-fg: #ffe2a0;
+  --warn-bd: #7a5e1b;
+  --hdr-bg: #1a1e24;
+  --hdr-fg: #e6e9ee;
+  --hdr-muted: #a3acba;
+  --hdr-bd: #2c323b;
+  --badge-bg: #ff8a80;
+  --badge-fg: #3a0a06;
+  --shadow: 0 6px 20px rgba(0, 0, 0, 0.5);
+  --chip-new-bg: #1c2e50;
+  --chip-new-fg: #b6d0ff;
+  --chip-reviewing-bg: #2d2450;
+  --chip-reviewing-fg: #d6c8ff;
+  --chip-needs-bg: #46330f;
+  --chip-needs-fg: #ffd98a;
+  --chip-ready-bg: #113732;
+  --chip-ready-fg: #9de3d6;
+  --chip-running-bg: #133a20;
+  --chip-running-fg: #a5e8b8;
+  --chip-closed-bg: #2a2f37;
+  --chip-closed-fg: #c6cdd8;
+  --chip-unknown-bg: #3e1d19;
+  --chip-unknown-fg: #ffb9ae;
+}
+
+/* ===== 2. BASE ===== */
+*, *::before, *::after { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+body { margin: 0; background: var(--bg); color: var(--text); font: var(--fs)/1.5 var(--font); overflow-wrap: anywhere; }
+h1, h2, h3, p, dl, dd { margin: 0; }
+a { color: var(--link); }
+code { font-family: var(--mono); font-size: 0.85em; }
+:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+[hidden] { display: none !important; }
+.visually-hidden { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
+main { max-width: var(--maxw); margin: 0 auto; padding: var(--gap) var(--gutter) 2rem; }
+.none, .empty { color: var(--muted); }
+
+/* ===== 3. COMPONENTS ===== */
+/* -- button: .btn, .btn-primary, .btn-danger, .btn-sm, .btn-block (links and buttons alike) */
+.btn, .copy { display: inline-flex; align-items: center; justify-content: center; gap: 0.4rem; padding: var(--btn-y) var(--btn-x); border: 1px solid var(--border-strong); border-radius: var(--radius); background: var(--surface); color: var(--text); font: inherit; font-weight: 600; line-height: 1.3; text-decoration: none; cursor: pointer; }
+.btn:hover, .copy:hover { background: var(--surface-2); }
+.btn-primary { background: var(--accent); border-color: var(--accent); color: var(--accent-fg); }
+.btn-primary:hover { background: var(--accent-hover); border-color: var(--accent-hover); }
+.btn-danger { border-color: var(--danger); color: var(--danger); }
+.btn-sm, .copy { padding: 0.2rem 0.6rem; font-size: 0.85rem; }
+.btn-block { display: flex; width: 100%; }
+
+/* -- form: .field (label above control), .check (checkbox or radio next to its text), .stack (vertical form) */
+input, select, textarea { max-width: 100%; padding: 0.4rem 0.6rem; border: 1px solid var(--border-strong); border-radius: var(--radius); background: var(--surface); color: var(--text); font: inherit; font-weight: 400; }
+input[type="checkbox"], input[type="radio"] { width: auto; padding: 0; accent-color: var(--accent); }
+input[aria-invalid="true"] { border-color: var(--danger); }
+.field { display: grid; gap: 0.35rem; font-size: 0.9rem; font-weight: 600; }
+.field input, .field select, .field textarea { width: 100%; padding: 0.55rem 0.7rem; font-size: var(--fs); }
+.check { display: flex; align-items: center; gap: 0.5rem; }
+.stack { display: grid; gap: 1rem; }
+form.stack { max-width: 24rem; }
+.stack > .btn:not(.btn-block) { justify-self: start; }
+form.wide { max-width: 42rem; }
+fieldset { display: grid; gap: 0.4rem; min-width: 0; margin: 0; padding: 0.6rem 0.9rem; border: 1px solid var(--border); border-radius: var(--radius); }
+legend { padding: 0 0.3rem; font-weight: 600; font-size: 0.9rem; }
+form.inline { display: inline; }
+
+/* -- card */
+.card { min-width: 0; padding: var(--pad); background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-lg); box-shadow: var(--card-shadow); }
+.card + .card { margin-top: var(--gap); }
+.card > :first-child { margin-top: 0; }
+.card > :last-child { margin-bottom: 0; }
+
+/* -- alert and notice: .error and .alert are failure messages, .notice a success or hint */
+.error, .alert { margin: var(--gap) 0; padding: 0.6rem 0.8rem; border: 1px solid var(--err-bd); border-radius: var(--radius); background: var(--err-bg); color: var(--err-fg); font-weight: 600; }
+.notice { margin: var(--gap) 0; padding: 0.6rem 0.8rem; border: 1px solid var(--ok); border-radius: var(--radius); background: var(--chip-running-bg); color: var(--chip-running-fg); }
+
+/* -- table: table.data inside .table-wrap, which scrolls sideways on a narrow screen instead of the page */
+.table-wrap { max-width: 100%; margin: var(--gap) 0; overflow-x: auto; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-lg); }
+table.data { width: 100%; min-width: 38rem; border-collapse: collapse; }
+table.data th, table.data td { padding: var(--cell-y) var(--cell-x); text-align: left; vertical-align: top; overflow-wrap: break-word; word-break: keep-all; }
+table.data thead th, table.data tr:first-child th { background: var(--surface-2); border-bottom: 1px solid var(--border); color: var(--muted); font-size: 0.8rem; font-weight: 600; white-space: nowrap; }
+table.data tr + tr > * { border-top: 1px solid var(--border); }
+table.data tr + tr:hover { background: var(--surface-2); }
+table.data td.title { min-width: 12rem; }
+table.data a { font-weight: 600; text-decoration: none; }
+table.data a:hover { text-decoration: underline; }
+
+/* -- chip: a state or status word with a tint and a glyph (the colour is never the only cue) */
+.chip { display: inline-flex; align-items: center; gap: 0.3rem; padding: 0.12rem 0.6rem; border-radius: 999px; background: var(--cb); color: var(--cf); font-size: 0.8rem; font-weight: 600; white-space: nowrap; }
+.chip::before { content: var(--g); font-size: 0.85em; }
+.s-new { --cb: var(--chip-new-bg); --cf: var(--chip-new-fg); --g: "+"; }
+.s-reviewing { --cb: var(--chip-reviewing-bg); --cf: var(--chip-reviewing-fg); --g: "\25D0"; }
+.s-needs { --cb: var(--chip-needs-bg); --cf: var(--chip-needs-fg); --g: "?"; }
+.s-ready { --cb: var(--chip-ready-bg); --cf: var(--chip-ready-fg); --g: "\2713"; }
+.s-running { --cb: var(--chip-running-bg); --cf: var(--chip-running-fg); --g: "\25B6"; }
+.s-closed { --cb: var(--chip-closed-bg); --cf: var(--chip-closed-fg); --g: "\25A0"; }
+.s-unknown { --cb: var(--chip-unknown-bg); --cf: var(--chip-unknown-fg); --g: "?"; }
+
+/* -- status dot (the Board agent in the nav); its state is also spelled out in visually-hidden text */
+.dot { display: inline-block; width: 0.55rem; height: 0.55rem; border-radius: 50%; background: var(--border-strong); }
+.dot-on { background: var(--ok); }
+.dot-error { background: var(--danger); }
+
+/* -- plain-HTTP banner (WBX-A3). static/insecure-banner.js puts class wb-insecure-collapsed on <html> when the owner
+   closed the banner: collapsed shows the header chip, anything else (no class, no JavaScript, blocked storage) shows
+   the banner, so exactly one of the two is visible. Only these three rules may set display on banner or chip. */
+.banner { padding: 0.55rem var(--gutter); background: var(--warn-bg); color: var(--warn-fg); border-bottom: 1px solid var(--warn-bd); font-size: 0.9rem; text-align: center; }
+.banner-close { margin-left: 0.75rem; padding: 0.15rem 0.6rem; border: 1px solid currentColor; border-radius: var(--radius); background: transparent; color: inherit; font: inherit; font-size: 0.85rem; cursor: pointer; }
+.insecure-chip { display: none; position: relative; order: 4; padding: 0.15rem 0.6rem; border: 1px solid var(--warn-bd); border-radius: 999px; background: var(--warn-bg); color: var(--warn-fg); font-size: 0.8rem; font-weight: 600; cursor: pointer; }
 .wb-insecure-collapsed .insecure-chip { display: inline-block; }
 .wb-insecure-collapsed .banner.insecure { display: none; }
-.banner-close { margin-left: 0.75rem; }
-.insecure-chip:hover::after, .insecure-chip:focus::after { content: attr(title); position: absolute; top: 100%; left: 0; z-index: 2; width: max-content; max-width: 20rem; margin-top: 0.25rem; padding: 0.4rem 0.6rem; border: 1px solid #e0c36a; border-radius: 0.25rem; background: var(--warn-bg); color: var(--warn-fg); box-shadow: 0 2px 6px rgba(0, 0, 0, 0.2); font-size: 0.9rem; white-space: normal; }
-.error { color: var(--err); }
-form.stack { display: flex; flex-direction: column; gap: 0.5rem; max-width: 20rem; }
-pre { white-space: pre-wrap; word-break: break-word; background: #f0f0f0; padding: 0.5rem; }
-input, button { font: inherit; padding: 0.25rem 0.5rem; }
-.client-setup { margin: 1rem 0; }
-.client-setup summary { cursor: pointer; }
-.copy-status { font-size: 0.9rem; color: var(--fg); }
+.insecure-chip:hover::after, .insecure-chip:focus-visible::after { content: attr(title); position: absolute; top: 100%; right: 0; z-index: 40; width: max-content; max-width: min(20rem, calc(100vw - 2rem)); margin-top: 0.4rem; padding: 0.6rem 0.8rem; border: 1px solid var(--warn-bd); border-radius: var(--radius); background: var(--warn-bg); color: var(--warn-fg); box-shadow: var(--shadow); font-size: 0.9rem; font-weight: 400; text-align: left; white-space: normal; }
+
+/* -- header and global nav (WBX-A1). Narrow screens fold the nav behind a checkbox, no JavaScript. */
+header { position: sticky; top: 0; z-index: 30; display: flex; flex-wrap: wrap; align-items: center; gap: 0.4rem 1rem; padding: 0.55rem var(--gutter); background: var(--hdr-bg); color: var(--hdr-fg); border-bottom: 1px solid var(--hdr-bd); }
+header .brand { order: 1; display: inline-flex; align-items: center; gap: 0.5rem; color: var(--hdr-fg); font-weight: 700; text-decoration: none; }
+header .brand::before { content: ""; width: 0.9rem; height: 0.9rem; border-radius: 3px; background: var(--accent); }
+header .badge { order: 5; min-width: 1.3rem; padding: 0 0.4rem; border-radius: 999px; background: var(--badge-bg); color: var(--badge-fg); font-size: 0.78rem; font-weight: 700; text-align: center; }
+header .badge:empty { display: none; }
+header .logout { order: 6; margin: 0; }
+.nav-toggle { position: absolute; width: 1px; height: 1px; opacity: 0; }
+.nav-toggle-label { display: none; order: 2; padding: 0.25rem 0.7rem; border: 1px solid var(--hdr-muted); border-radius: var(--radius); color: var(--hdr-fg); font-size: 0.9rem; cursor: pointer; }
+.nav-toggle:focus-visible + .nav-toggle-label { outline: 2px solid var(--focus); outline-offset: 2px; }
+header nav[aria-label] { order: 3; display: flex; flex-wrap: wrap; align-items: center; gap: 0.25rem; margin-right: auto; }
+header nav a, header nav summary { display: inline-flex; align-items: center; gap: 0.4rem; padding: 0.4rem 0.65rem; border-bottom: 2px solid transparent; border-radius: 4px 4px 0 0; color: var(--hdr-muted); font-weight: 500; text-decoration: none; cursor: pointer; }
+header nav a:hover, header nav summary:hover { color: var(--hdr-fg); }
+header nav a[aria-current="page"], header nav summary[aria-current="page"] { border-bottom-color: var(--accent); color: var(--hdr-fg); font-weight: 700; }
+header nav a.new-request { margin: 0 0.35rem; padding: 0.3rem 0.8rem; border: 1px solid var(--accent); border-radius: var(--radius); background: var(--accent); color: var(--accent-fg); font-weight: 600; }
+header nav a.new-request:hover { background: var(--accent-hover); color: var(--accent-fg); }
+.nav-settings { position: relative; }
+.nav-settings > summary { list-style: none; }
+.menu-list { position: absolute; top: calc(100% + 4px); left: 0; z-index: 35; min-width: 11rem; display: flex; flex-direction: column; padding: 0.3rem; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); box-shadow: var(--shadow); }
+header nav .menu-list a { padding: 0.45rem 0.7rem; border-bottom: 0; border-radius: calc(var(--radius) - 2px); color: var(--text); }
+header nav .menu-list a:hover { background: var(--surface-2); }
+header nav .menu-list a[aria-current="page"] { font-weight: 700; color: var(--link); }
+.page-login header .brand { margin-right: auto; }
+@media (max-width: 45rem) {
+  header .brand { margin-right: auto; }
+  .nav-toggle-label { display: inline-block; }
+  header nav[aria-label] { display: none; order: 10; flex: 1 0 100%; flex-direction: column; align-items: stretch; margin-right: 0; }
+  .nav-toggle:checked ~ nav[aria-label] { display: flex; }
+  header nav a.new-request { align-self: flex-start; margin: 0.3rem 0.65rem; }
+  .menu-list { position: static; margin: 0.2rem 0 0.2rem 1rem; box-shadow: none; }
+  header { position: relative; gap: 0.4rem 0.5rem; padding-right: 0.75rem; padding-left: 0.75rem; }
+  .insecure-chip { padding: 0.1rem 0.45rem; font-size: 0.75rem; }
+}

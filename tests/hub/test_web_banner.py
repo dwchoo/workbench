@@ -152,6 +152,14 @@ class BannerShownTests(BannerCase):
                 self.assertEqual(dom.chips[0]['text'].strip(), '평문 HTTP')
                 self.assertEqual(dom.chips[0]['attrs'].get('tabindex'), '0')
 
+    async def test_the_chip_is_exposed_as_a_button_because_enter_and_space_activate_it(self):
+        # WBX-A3 verification follow-up (accessibility): a focusable span that the keyboard activates is a button.
+        for path in SCREENS:
+            with self.subTest(path=path):
+                dom = await self.dom(path, session=path != '/login')
+                self.assertEqual(dom.chips[0]['attrs'].get('role'), 'button', path)
+                self.assertEqual(dom.chips[0]['attrs'].get('tabindex'), '0', path)
+
 
 class BannerAbsentTests(BannerCase):
     insecure = False

@@ -145,33 +145,33 @@ class KeyPages:
                 scope_text(info.scope), when(info.last_used_at),
                 when(info.expires_at) if info.expires_at is not None else "없음",
                 status_text(info, now), action)])))
-        return render.tag("table", render.html_join(rows), class_="keys")
+        return render.data_table(render.html_join(rows), "keys")
 
     def _issue_form(self, csrf: str, registry: list, *, error: str | None = None) -> render.Markup:
         parts = [render.tag("h2", "API key 발급")]
         if error:
             parts.append(render.tag("p", error, class_="error", role="alert"))
         projects = [render.tag("label", render.html_join([
-            render.void("input", type="checkbox", name="project", value=project_id), f" {name} ({project_id})"]))
+            render.void("input", type="checkbox", name="project", value=project_id), f" {name} ({project_id})"]), class_="check")
             for project_id, name in registry]
         parts.append(render.tag("form", render.html_join([
             render.csrf_field(csrf),
             render.tag("label", render.html_join(["이름 ", render.void(
-                "input", type="text", name="name", maxlength=auth.KEY_NAME_MAX, required=True)])),
+                "input", type="text", name="name", maxlength=auth.KEY_NAME_MAX, required=True)]), class_="field"),
             render.tag("label", render.html_join(["등급 ", render.tag("select", render.html_join([
                 render.tag("option", label, value=grade) for grade, label in GRADE_LABELS.items()]),
-                name="grade")])),
+                name="grade")]), class_="field"),
             render.tag("fieldset", render.html_join([
                 render.tag("legend", "범위"),
                 # Default "선택한 프로젝트" with nothing chosen: every-project scope is an explicit pick (fix 3).
                 render.tag("label", render.html_join([render.void(
-                    "input", type="radio", name="scope", value="all"), " 전체 프로젝트"])),
+                    "input", type="radio", name="scope", value="all"), " 전체 프로젝트"]), class_="check"),
                 render.tag("label", render.html_join([render.void(
-                    "input", type="radio", name="scope", value="projects", checked=True), " 선택한 프로젝트"])),
+                    "input", type="radio", name="scope", value="projects", checked=True), " 선택한 프로젝트"]), class_="check"),
                 *projects])),
             render.tag("label", render.html_join(["만료(일, 비우면 없음) ", render.void(
-                "input", type="number", name="expires_days", min=1, max=auth.KEY_EXPIRY_DAYS_MAX)])),
-            render.tag("button", "발급", type="submit")]), method="post", action="/settings/keys", class_="stack"))
+                "input", type="number", name="expires_days", min=1, max=auth.KEY_EXPIRY_DAYS_MAX)]), class_="field"),
+            render.tag("button", "발급", type="submit", class_="btn btn-primary")]), method="post", action="/settings/keys", class_="stack"))
         return render.html_join(parts)
 
     async def _keys_page(self, request: web.Request, *, status: int = 200, error: str | None = None) -> web.Response:
@@ -180,7 +180,7 @@ class KeyPages:
         registry = await self._registry(services)
         setup = render.tag("details", render.html_join([
             render.tag("summary", "Client 설정 안내 (API key는 <YOUR_KEY> 자리에 발급 결과의 값을 넣으세요)"),
-            client_setup(hub_origin(request), services.policy.skill_repo_url, "<YOUR_KEY>")]), class_="client-setup")
+            client_setup(hub_origin(request), services.policy.skill_repo_url, "<YOUR_KEY>")]), class_="client-setup card")
         body = render.html_join([render.tag("h2", "API key"), self._key_rows(keys, float(services.clock())), setup,
                                  self._issue_form(session_of(request).csrf, registry, error=error)])
         return _page(request, "API key", body, status=status, scripts=COPY_SCRIPTS)
@@ -279,7 +279,7 @@ class KeyPages:
             render.tag("h2", "API key 폐기"),
             render.tag("p", f"'{info.name}' ({info.key_id}) key를 폐기합니다. 이 key로 하는 다음 호출부터 401이 됩니다."),
             render.tag("form", render.html_join([
-                render.csrf_field(csrf), render.tag("button", "폐기", type="submit")]),
+                render.csrf_field(csrf), render.tag("button", "폐기", type="submit", class_="btn btn-danger")]),
                 method="post", action=f"/settings/keys/{info.key_id}/revoke"),
             render.tag("p", render.tag("a", "취소", href="/settings/keys"))])
         return _page(request, "API key 폐기", body)
@@ -322,7 +322,7 @@ async def get_audit(request: web.Request) -> web.Response:
     if result.page < last:
         links.append(render.tag("a", "다음", href=f"/settings/audit?page={result.page + 1}"))
     body = render.html_join([render.tag("h2", f"감사 기록 ({result.total}건)"),
-                             render.tag("table", render.html_join(rows), class_="audit"),
+                             render.data_table(render.html_join(rows), "audit"),
                              render.tag("p", render.html_join(links), class_="pager")])
     return _page(request, "감사 기록", body)
 

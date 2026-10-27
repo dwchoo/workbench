@@ -66,6 +66,16 @@ def state_label(state: object) -> str:
     return STATE_LABELS.get(state, str(state))
 
 
+# The chip colour of each request state (base.css ``.s-<kind>``); a state this page does not know is ``unknown``.
+STATE_KINDS = {"NEW": "new", "REVIEWING": "reviewing", "NEEDS_INFO": "needs", "READY": "ready", "RUNNING": "running",
+               "CLOSED": "closed"}
+
+
+def state_chip(state: object, label: str) -> render.Markup:
+    """The state as a chip: the same words as before inside ``span.chip.s-<kind>`` (the colour is never the only cue)."""
+    return render.tag("span", label, class_=f"chip s-{STATE_KINDS.get(state, 'unknown')}")
+
+
 def when(epoch: object) -> str:
     if not isinstance(epoch, (int, float)):
         return EMPTY
@@ -195,9 +205,9 @@ async def get_list(request: web.Request) -> web.Response:
                 blank="모든 프로젝트"),
         _select("state", [(name, STATE_LABELS[name]) for name in STATES], state, blank="모든 상태"),
         render.tag("label", render.html_join([render.void("input", type="checkbox", name="archive", value="1",
-                                                          checked=archive), " 보관함(닫힘 포함)"])),
+                                                          checked=archive), " 보관함(닫힘 포함)"]), class_="check"),
         render.void("input", type="search", name="q", value=text or "", placeholder="검색어"),
-        render.tag("button", "찾기", type="submit")]), method="get", action="/requests", class_="filters")
+        render.tag("button", "찾기", type="submit", class_="btn")]), method="get", action="/requests", class_="filters")
     body = [render.tag("h1", "요청"), render.tag("p", render.tag("a", "새 요청", href="/requests/new")), form]
     if error is not None:
         body.append(_error_block(error))
@@ -214,10 +224,10 @@ async def get_list(request: web.Request) -> web.Response:
             render.tag("td", f"#{item['seq']}"), render.tag("td", names.get(item["project_id"], item["project_id"])),
             render.tag("td", render.tag("a", render.tag("bdi", item["title"]), href=request_url(item["request_id"])),
                        class_="title"),
-            render.tag("td", label), render.tag("td", item["origin"]["label"]),
+            render.tag("td", state_chip(item["state"], label)), render.tag("td", item["origin"]["label"]),
             render.tag("td", when(item["updated_at"]))])))
     if result["requests"]:
-        body.append(render.tag("table", render.html_join(rows), class_="requests"))
+        body.append(render.data_table(render.html_join(rows), "requests"))
     elif error is None:
         body.append(render.tag("p", "요청이 없습니다", class_="empty"))
     pager = []
@@ -232,7 +242,7 @@ async def get_list(request: web.Request) -> web.Response:
 
 # -- create -----------------------------------------------------------------------------------------
 def _field_row(label: str, control: object) -> render.Markup:
-    return render.tag("label", render.html_join([label, render.void("br"), control]))
+    return render.tag("label", render.html_join([label, control]), class_="field")
 
 
 def _textarea(name: str, text: str, **attributes: object) -> render.Markup:
@@ -256,7 +266,7 @@ def create_form(request: web.Request, projects: list[ProjectRef], *, project: st
         # No maxlength: HTML counts UTF-16 units (an emoji is 2) and cuts IME input; the server counts code points.
         _field_row("제목", render.void("input", type="text", name="title", value=title, required=True)),
         _field_row("본문", _textarea("body", body, rows=12, required=True)),
-        render.tag("button", "제출", type="submit")]), method="post", action="/requests", class_="stack wide"))
+        render.tag("button", "제출", type="submit", class_="btn btn-primary")]), method="post", action="/requests", class_="stack wide"))
     parts.append(render.tag("p", render.tag("a", "요청 목록", href="/requests")))
     return render.html_join(parts)
 
@@ -360,7 +370,7 @@ def _post_form(request: web.Request, action: str, fields: dict, button: str, *, 
                class_: str | None = None) -> render.Markup:
     hidden = [render.hidden(name, value) for name, value in fields.items()]
     return render.tag("form", render.html_join([render.csrf_field(session_of(request).csrf), *hidden, extra,
-                                                render.tag("button", button, type="submit")]),
+                                                render.tag("button", button, type="submit", class_="btn")]),
                       method="post", action=action, class_=class_)
 
 
@@ -408,7 +418,7 @@ def detail_page(request: web.Request, detail: dict, *, notice: str | None = None
     if detail["state"] == "CLOSED" and detail["outcome"]:
         state = f"{state}({OUTCOME_LABELS.get(detail['outcome'], detail['outcome'])})"
     facts = [_definition("프로젝트", names.get(detail["project_id"], detail["project_id"])),
-             _definition("출처", detail["origin"]["label"]), _definition("상태", state),
+             _definition("출처", detail["origin"]["label"]), _definition("상태", state_chip(detail["state"], state)),
              _definition("revision", f"r{detail['revision']}"), _definition("접수", when(detail["created_at"])),
              _definition("갱신", when(detail["updated_at"]))]
     if detail.get("cancel_state"):
@@ -416,10 +426,10 @@ def detail_page(request: web.Request, detail: dict, *, notice: str | None = None
                                  else "취소 요청됨"))
     summary = render.tag("section", render.html_join([
         render.tag("h1", render.html_join([f"#{detail['seq']} ", render.tag("bdi", detail["title"])])),
-        render.tag("dl", render.html_join(facts))]), id="summary")
+        render.tag("dl", render.html_join(facts))]), id="summary", class_="card")
     buttons = []
     if "edit" in allowed:
-        buttons.append(render.tag("a", "편집", href=request_url(rid, "/edit"), class_="button"))
+        buttons.append(render.tag("a", "편집", href=request_url(rid, "/edit"), class_="btn"))
     if "set_state" in allowed:
         target, label = {"NEW": ("NEEDS_INFO", "추가 정보 필요로 지정"), "NEEDS_INFO": ("NEW", "신규로 되돌리기"),
                          "CLOSED": ("NEW", "다시 열기")}[detail["state"]]
@@ -429,8 +439,8 @@ def detail_page(request: web.Request, detail: dict, *, notice: str | None = None
     if review_label is not None:
         buttons.append(_post_form(request, request_url(rid, "/start-review"), {}, review_label, class_="inline"))
     if "cancel" in allowed:
-        buttons.append(render.tag("a", "취소", href=request_url(rid, "/cancel"), class_="button danger"))
-    buttons.append(render.tag("a", "전체 보기", href=request_url(rid, "/full"), class_="button"))  # TI-14
+        buttons.append(render.tag("a", "취소", href=request_url(rid, "/cancel"), class_="btn btn-danger"))
+    buttons.append(render.tag("a", "전체 보기", href=request_url(rid, "/full"), class_="btn"))  # TI-14
     body = [summary]
     if notice in NOTICES:
         body.append(render.tag("p", NOTICES[notice], class_="notice", role="status"))
@@ -726,7 +736,7 @@ def _full_task_section(rid: str, full: dict) -> render.Markup:
                                                    render.tag("td", str(run.get("exit_code")))])) for run in runs]
         parts.append(_definition("진행", view.get("status") or EMPTY))
         if rows:
-            parts.append(render.tag("table", render.html_join([render.tag("tr", render.html_join(
+            parts.append(render.data_table(render.html_join([render.tag("tr", render.html_join(
                 [render.tag("th", "run"), render.tag("th", "상태"), render.tag("th", "exit")])), *rows])))
         return render.tag("section", render.html_join([render.tag("h2", "실행 기록"), *parts]), id="runs")
     task = full["task"]
@@ -740,14 +750,14 @@ def _full_task_section(rid: str, full: dict) -> render.Markup:
         render.tag("td", str(run["exit_code"])), render.tag("td", when(run["started_at"])),
         render.tag("td", when(run["ended_at"])), render.tag("td", _raw_link(rid, run["run_id"]))]))
         for run in task["runs"]]
-    runs = render.tag("table", render.html_join([render.tag("tr", render.html_join([
+    runs = render.data_table(render.html_join([render.tag("tr", render.html_join([
         render.tag("th", name) for name in ("run", "상태", "exit", "시작", "끝", "원문")])), *run_rows])) \
         if run_rows else render.tag("p", "run이 없습니다", class_="none")
     command_rows = [render.tag("tr", render.html_join([
         render.tag("td", str(command["command_id"])), render.tag("td", str(command["owner"])),
         render.tag("td", str(command["exit_code"])), render.tag("td", _raw_link(rid, command["command_id"]))]))
         for command in task["commands"]]
-    commands = render.tag("table", render.html_join([render.tag("tr", render.html_join([
+    commands = render.data_table(render.html_join([render.tag("tr", render.html_join([
         render.tag("th", name) for name in ("명령", "주체", "exit", "출력")])), *command_rows])) \
         if command_rows else render.tag("p", "명령이 없습니다", class_="none")
     reports = [render.tag("li", render.html_join([render.tag("div", f"[{report['kind']}] {when(report['at'])}",
@@ -768,7 +778,7 @@ def full_page(request: web.Request, value: dict, rid: str) -> web.Response:
         _field_row("산출물 경로(프로젝트 root 기준)", render.void("input", name="path", required=True)),
         _field_row("offset", render.void("input", name="offset", value="0", inputmode="numeric")),
         _field_row("length", render.void("input", name="length", value=str(MAX_RESULT_PAGE), inputmode="numeric")),
-        render.tag("button", "열기", type="submit")]), method="get", action=request_url(rid, "/artifact"),
+        render.tag("button", "열기", type="submit", class_="btn")]), method="get", action=request_url(rid, "/artifact"),
         class_="stack")
     body = [render.tag("h1", "전체 보기"), detail_link,
             render.tag("section", render.html_join([render.tag("h2", "결과 요약"),

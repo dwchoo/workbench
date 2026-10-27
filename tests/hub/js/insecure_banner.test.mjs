@@ -42,6 +42,11 @@ function load({ stored = {}, storage = "ok", readyState = "complete", withButton
   };
   const button = withButton ? element() : null;
   const chip = withChip ? element({ hidden: false }) : null;
+  // Focus calls with the <html> class as it was at that moment: the target has to be visible already (a focus() on a
+  // display:none element is ignored by the browser, and focus would fall back to <body>).
+  for (const target of [button, chip]) {
+    if (target) { target.focusCalls = []; target.focus = () => { target.focusCalls.push(classes.has(CLASS)); }; }
+  }
   doc.querySelector = (selector) => (selector === ".banner-close" ? button : selector === ".insecure-chip" ? chip : null);
   const values = new Map(Object.entries(stored));
   const calls = [];
@@ -163,4 +168,52 @@ test("the script only touches the one storage key", () => {
   page.button.fire("click");
   page.chip.fire("click");
   for (const [, key] of page.calls) assert.equal(key, KEY);
+});
+
+// WBX-A3 verification follow-up (accessibility): the control that was just used disappears, so focus has to move to the
+// control that took its place instead of falling back to <body>.
+test("closing the banner moves focus to the header chip, after the chip became visible", () => {
+  const page = load({ readyState: "complete" });
+  page.button.fire("click");
+  assert.deepEqual(page.chip.focusCalls, [true]);
+  assert.deepEqual(page.button.focusCalls, []);
+});
+
+test("expanding by clicking the chip moves focus to the close button, after the banner became visible", () => {
+  const page = load({ stored: { [KEY]: "collapsed" }, readyState: "complete" });
+  page.chip.fire("click");
+  assert.deepEqual(page.button.focusCalls, [false]);
+  assert.deepEqual(page.chip.focusCalls, []);
+});
+
+test("expanding with Enter or Space also moves focus to the close button", () => {
+  for (const key of ["Enter", " "]) {
+    const page = load({ stored: { [KEY]: "collapsed" }, readyState: "complete" });
+    page.chip.fire("keydown", { key });
+    assert.deepEqual(page.button.focusCalls, [false], JSON.stringify(key));
+  }
+});
+
+test("a key that does not expand moves no focus, and a page load moves no focus", () => {
+  const page = load({ stored: { [KEY]: "collapsed" }, readyState: "complete" });
+  page.chip.fire("keydown", { key: "Tab" });
+  assert.deepEqual([page.chip.focusCalls, page.button.focusCalls], [[], []]);
+});
+
+test("a stored 'collapsed' at load time does not steal focus", () => {
+  const page = load({ stored: { [KEY]: "collapsed" }, readyState: "loading" });
+  page.ready();
+  assert.deepEqual([page.chip.focusCalls, page.button.focusCalls], [[], []]);
+});
+
+test("elements without focus() (or a missing counterpart) never make closing or expanding throw", () => {
+  const page = load({ readyState: "complete" });
+  delete page.chip.focus;
+  delete page.button.focus;
+  page.button.fire("click");
+  page.chip.fire("click");
+  const lone = load({ withChip: false, readyState: "complete" });
+  lone.button.fire("click");
+  const alone = load({ withButton: false, stored: { [KEY]: "collapsed" }, readyState: "complete" });
+  alone.chip.fire("click");
 });

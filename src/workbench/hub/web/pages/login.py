@@ -35,16 +35,18 @@ LOGIN_SCRIPTS = ("/static/login-restore.js",)
 
 
 def login_form(token: str, *, error: str | None = None) -> render.Markup:
-    parts = [render.tag("h1", "로그인")]
+    """The login card: title, lead line, the failure alert (when there is one) and the password form."""
+    parts = [render.tag("h1", "로그인"), render.tag("p", "소유자 비밀번호를 입력하세요. 사용자 이름은 없습니다.", class_="lead")]
     if error:
         parts.append(render.tag("p", error, class_="error", role="alert"))
     parts.append(render.tag("form", render.html_join([
         render.hidden(LOGIN_FIELD, token),
         render.tag("label", render.html_join(["비밀번호 ", render.void(
             "input", type="password", name="password", autocomplete="current-password", required=True,
-            autofocus=True)])),
-        render.tag("button", "로그인", type="submit")]), method="post", action="/login", class_="stack"))
-    return render.html_join(parts)
+            autofocus=True)]), class_="field"),
+        render.tag("button", "로그인", type="submit", class_="btn btn-primary btn-block")]),
+        method="post", action="/login", class_="stack"))
+    return render.tag("section", render.html_join(parts), class_="card login-card")
 
 
 # ``secrets.token_urlsafe(32)``: 43 characters of the URL-safe base64 alphabet.
@@ -68,7 +70,7 @@ def login_page(request: web.Request, *, status: int = 200, error: str | None = N
     services = request.app[SERVICES]
     token = (None if fresh else login_token_of(request)) or secrets.token_urlsafe(32)
     response = render.page("로그인", login_form(token, error=error), status=status,
-                           insecure_warning=services.insecure_warning, scripts=LOGIN_SCRIPTS)
+                           insecure_warning=services.insecure_warning, scripts=LOGIN_SCRIPTS, body_class="page-login")
     if headers:
         response.headers.update(headers)
     response.set_cookie(LOGIN_COOKIE, token, max_age=LOGIN_COOKIE_MAX_AGE, path="/login", httponly=True,
@@ -214,11 +216,11 @@ def password_form(*, error: str | None = None, csrf: str) -> render.Markup:
 
     def field(label: str, name: str, autocomplete: str) -> render.Markup:
         return render.tag("label", render.html_join([label + " ", render.void(
-            "input", type="password", name=name, autocomplete=autocomplete, required=True)]))
+            "input", type="password", name=name, autocomplete=autocomplete, required=True)]), class_="field")
     parts.append(render.tag("form", render.html_join([
         render.csrf_field(csrf), field("현재 비밀번호", "current", "current-password"),
         field("새 비밀번호", "new", "new-password"), field("새 비밀번호 확인", "confirm", "new-password"),
-        render.tag("button", "바꾸기", type="submit")]), method="post", action="/settings/password", class_="stack"))
+        render.tag("button", "바꾸기", type="submit", class_="btn btn-primary")]), method="post", action="/settings/password", class_="stack"))
     return render.html_join(parts)
 
 

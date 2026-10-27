@@ -8,3 +8,6 @@ __pycache__/
 /graphify-out/
 /.workflow/
 /.venv/
+
+# Workbench user skills: local API key settings.
+skills/**/.env

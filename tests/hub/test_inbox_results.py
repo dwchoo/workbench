@@ -1,6 +1,6 @@
 """TI-14 request results: summary by default, full view, raw pages and artifact pages (P2-AC-31, TI-T10, P2-AC-13).
 
-Seams: T4 (MCP ``inbox_result`` through a real loopback Hub web app and the stdlib MCP client), T2 (the web request
+Seams: S2 (REST ``GET /api/v1/requests/{id}/result`` through a real loopback Hub web app and the stdlib REST client), T2 (the web request
 pages through the real ``create_app``) and T6 (the Hub's raw page read through a real backend's ui_v1 ``raw_query``).
 In T4/T2 the backend is the test's port object: ``task_status``/``raw_query`` answer what the test chose, in the
 shapes of the ui_v1 contract (Task Inbox SPEC "Hub → backend"), so the expected values are the test's own bytes,
@@ -20,8 +20,9 @@ REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO / 'src'))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from support.mcp_hub import McpHub  # noqa: E402
+from support.rest_hub import RestHub  # noqa: E402
 import test_web_pages_requests as pages  # noqa: E402  (module import: its test classes stay uncollected here)
+from test_inbox_results_independent import RestTools  # noqa: E402  (REST calls named by operation, with the SPEC status check)
 from workbench.hub.inbox import results  # noqa: E402
 from workbench.hub.inbox.backend_port import BackendPortError  # noqa: E402
 from workbench.hub.inbox.service import Principal  # noqa: E402
@@ -78,17 +79,20 @@ class FakeBackend:
                 'next_offset': offset + len(chunk) if offset + len(chunk) < len(data) else None}
 
 
-# --- T4: MCP ---------------------------------------------------------------------------------------
+# --- S2: REST ---------------------------------------------------------------------------------------
 
-class McpResultCase(unittest.TestCase):
+class RestResultCase(unittest.TestCase):
     def setUp(self):
-        self.hub = McpHub(self)
+        self.hub = RestHub(self)
         self.backend = FakeBackend()
-        self.hub.server.results = results.Results(self.hub.inbox, port=self.backend)
-        self.r1 = self.hub.client(self.hub.key('r1', 'requester', {'projects': [self.hub.a]})).start()
-        self.r2 = self.hub.client(self.hub.key('r2', 'requester', {'projects': [self.hub.a]})).start()
+        self.hub.api.results = results.Results(self.hub.inbox, port=self.backend)
+        self.r1 = self.client(self.hub.key('r1', 'requester', {'projects': [self.hub.a]}))
+        self.r2 = self.client(self.hub.key('r2', 'requester', {'projects': [self.hub.a]}))
         self.rid = self.r1.tool('inbox_submit', project_id=self.hub.a, title='Train', body='Run it',
                                 idempotency_key='k-1')['request_id']
+
+    def client(self, key: str) -> RestTools:
+        return RestTools(self.hub.rest(key))
 
     def linked(self, rid: str | None = None, view: dict | None = None) -> str:
         rid = rid or self.rid
@@ -97,7 +101,7 @@ class McpResultCase(unittest.TestCase):
         return rid
 
 
-class SummaryTests(McpResultCase):
+class SummaryTests(RestResultCase):
     def test_default_is_the_summary_and_full_false_is_the_same(self):
         self.linked()
         value = self.r1.tool('inbox_result', request_id=self.rid)
@@ -125,7 +129,7 @@ class SummaryTests(McpResultCase):
         self.assertNotIn('ARTIFACT-TEXT', json.dumps(value))
 
 
-class FullTests(McpResultCase):
+class FullTests(RestResultCase):
     def test_full_has_the_runs_worker_reports_and_commands_of_the_linked_task(self):
         self.linked()
         value = self.r1.tool('inbox_result', request_id=self.rid, full=True)
@@ -156,7 +160,7 @@ class FullTests(McpResultCase):
         self.assertEqual(full['view']['runs'][0]['run_id'], RUN)
 
 
-class RawTests(McpResultCase):
+class RawTests(RestResultCase):
     def raw(self, **arguments) -> dict:
         return self.r1.tool('inbox_result', request_id=self.rid, full=True, **arguments)['raw']
 
@@ -208,7 +212,7 @@ class RawTests(McpResultCase):
                                           'runs': [{'run_id': other_run, 'status': 'finished', 'exit_code': 0}],
                                           'commands': []}
         self.backend.logs[('run', other_run)] = b'OTHER-PROJECT-LOG'
-        editor = self.hub.client(self.hub.key('ed', 'editor')).start()
+        editor = self.client(self.hub.key('ed', 'editor'))
         theirs = editor.tool('inbox_submit', project_id=self.hub.b, title='B', body='b', idempotency_key='b-1')
         self.hub.link_running(theirs['request_id'], self.hub.b, task_id=other_task)
         for run_id in (other_run, str(uuid.uuid4()), 'not-a-uuid', '../../etc/passwd'):
@@ -223,7 +227,7 @@ class RawTests(McpResultCase):
         self.assertEqual(self.backend.calls, [])
 
 
-class ArtifactCase(McpResultCase):
+class ArtifactCase(RestResultCase):
     def artifact(self, path: str, **arguments) -> dict:
         return self.r1.tool('inbox_result', request_id=self.rid, full=True, artifact_path=path, **arguments)
 
@@ -231,7 +235,7 @@ class ArtifactCase(McpResultCase):
         return self.r1.tool_error('inbox_result', request_id=self.rid, full=True, artifact_path=path, **arguments)
 
 
-class ArtifactLinkTests(McpResultCase):
+class ArtifactLinkTests(RestResultCase):
     """Security review fix 3: artifacts are a Task's results, so only a request with a linked Task reads them."""
 
     def test_a_request_without_a_linked_task_reads_no_artifact(self):
@@ -324,7 +328,7 @@ class ArtifactTests(ArtifactCase):
         self.assertEqual(self.backend.calls, [])
 
 
-class BackendOffTests(McpResultCase):
+class BackendOffTests(RestResultCase):
     def test_full_with_the_backend_off_is_the_last_task_view_and_raw_is_backend_not_running(self):
         self.linked()
         self.backend.down = 'backend_not_running'
@@ -355,7 +359,7 @@ class BackendOffTests(McpResultCase):
                 self.assertEqual(error['code'], 'backend_unreachable')
 
     def test_the_real_port_on_a_project_whose_backend_is_off(self):
-        self.hub.server.results = results.Results(self.hub.inbox)
+        self.hub.api.results = results.Results(self.hub.inbox)
         self.linked()
         (self.hub.root_a / 'a.txt').write_text('A')
         full = self.r1.tool('inbox_result', request_id=self.rid, full=True)['full']
@@ -366,7 +370,7 @@ class BackendOffTests(McpResultCase):
                                       artifact_path='a.txt')['artifact']['text'], 'A')
 
 
-class PermissionTests(McpResultCase):
+class PermissionTests(RestResultCase):
     CALLS = ({'full': True}, {'full': True, 'run_id': RUN}, {'full': True, 'artifact_path': 'a.txt'}, {})
 
     def setUp(self):
@@ -380,18 +384,18 @@ class PermissionTests(McpResultCase):
                 self.r1.tool('inbox_result', request_id=self.rid, **arguments)
 
     def test_another_requester_and_an_out_of_scope_editor_get_not_found_and_nothing_is_read(self):
-        outside = self.hub.client(self.hub.key('ed-b', 'editor', {'projects': [self.hub.b]})).start()
+        outside = self.client(self.hub.key('ed-b', 'editor', {'projects': [self.hub.b]}))
         for client in (self.r2, outside):
             for arguments in self.CALLS:
                 with self.subTest(arguments=arguments):
                     call = client.call('inbox_result', request_id=self.rid, **arguments)
-                    self.assertEqual(call['structuredContent']['error']['code'], 'not_found')
-                    self.assertNotIn('A-ARTIFACT', json.dumps(call))
+                    self.assertEqual((call.status, call.error['code']), (404, 'not_found'))
+                    self.assertNotIn('A-ARTIFACT', call.body.decode())
         self.assertEqual(self.backend.calls, [])
 
     def test_editors_in_scope_and_the_board_agent_see_every_request_in_scope(self):
-        editor = self.hub.client(self.hub.key('ed-a', 'editor', {'projects': [self.hub.a]})).start()
-        board = self.hub.client(self.hub.keys.rotate_system_key(now=self.hub.now[0]).raw).start()
+        editor = self.client(self.hub.key('ed-a', 'editor', {'projects': [self.hub.a]}))
+        board = self.client(self.hub.keys.rotate_system_key(now=self.hub.now[0]).raw)
         clients = [editor, board]
         for client in clients:
             value = client.tool('inbox_result', request_id=self.rid, full=True, artifact_path='a.txt')
@@ -720,7 +724,7 @@ class ProtectedDirectoryTests(unittest.TestCase):
     def setUp(self):
         import tempfile
         from workbench.hub.inbox.service import InboxService, ProjectRef
-        from support.mcp_hub import make_project
+        from support.rest_hub import make_project
         base = Path(tempfile.mkdtemp(prefix='wb-p23-')).resolve()
         self.addCleanup(__import__('shutil').rmtree, base, True)
         self.home, self.project_id = make_project(base, 'home')
@@ -776,7 +780,7 @@ class ProtectedDirectoryTests(unittest.TestCase):
 
     def test_a_project_root_inside_a_protected_directory_serves_nothing(self):
         from workbench.hub.inbox.service import InboxService, ProjectRef
-        from support.mcp_hub import make_project
+        from support.rest_hub import make_project
         from workbench.hub.inbox.limits import InboxError
         nested, nested_id = make_project(self.home / '.ssh', 'proj')
         (nested / 'a.txt').write_text('INSIDE-SSH')

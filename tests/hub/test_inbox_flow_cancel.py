@@ -239,7 +239,7 @@ def _live_base():
 
 class LiveCancelTests(_live_base()):
     """T6: a real backend (fake OMPs), its worker running a host ``sleep`` for a linked Task, and the real Hub with
-    its web listener, ``/mcp`` and an editor API key."""
+    its web listener, ``/api/v1/`` and an editor API key."""
 
     def hub_with_web(self, *titles: str):
         import subprocess
@@ -267,12 +267,10 @@ class LiveCancelTests(_live_base()):
             db.close()
         return root, project_id, ids, ui
 
-    def mcp(self):
-        from support.mcp_client import McpClient
-        client = McpClient(self.host, self.port, self.key)
-        client.initialize()
-        client.initialized()
-        return client
+    def rest(self):
+        from support.rest_client import RestClient
+        from test_inbox_results_independent import RestTools  # REST calls named by operation
+        return RestTools(RestClient(self.host, self.port, self.key))
 
     def running_command(self, ui, root: Path, rid: str, seconds: str) -> tuple[str, int]:
         """A linked Task whose worker runs ``sleep SECONDS`` in the host shell; its Task id and the sleep pid."""
@@ -311,10 +309,10 @@ class LiveCancelTests(_live_base()):
                       if '"cancel_requested"' in line]
         return [item for item in found if item.get('type') == 'cancel_requested']
 
-    def test_mcp_two_step_cancel_stops_the_command_and_closes_only_after_it_ended(self):
+    def test_rest_two_step_cancel_stops_the_command_and_closes_only_after_it_ended(self):
         root, _project_id, (rid,), ui = self.hub_with_web('Run the long job')
         task_id, pid = self.running_command(ui, root, rid, '714.1')
-        client = self.mcp()
+        client = self.rest()
         first = client.tool('inbox_cancel', request_id=rid)
         self.assertEqual(first['status'], 'confirm_required', first)
         command = first['impact']['command']
@@ -337,13 +335,15 @@ class LiveCancelTests(_live_base()):
     def test_a_task_that_changed_before_the_confirmation_is_refused_and_nothing_is_stopped(self):
         root, _project_id, (rid,), ui = self.hub_with_web('Short job')
         task_id, pid = self.running_command(ui, root, rid, '4.1')
-        client = self.mcp()
+        client = self.rest()
         first = client.tool('inbox_cancel', request_id=rid)
         self.assertEqual(first['status'], 'confirm_required', first)
         self.until(lambda: not os.path.exists(f'/proc/{pid}'), 30, 'the command ended on its own')
+        # the Task has changed as far as the Hub knows (else the confirmation races the backend noticing the exit)
+        self.until(lambda: not (self.view(root, rid).get('command') or {}).get('command_id'), 30,
+                   'the Hub saw the command end')
         refused = client.call('inbox_cancel', request_id=rid, confirm_token=first['confirm_token'])
-        self.assertTrue(refused['isError'], refused)
-        self.assertEqual(refused['structuredContent']['error']['code'], 'token_mismatch', refused)
+        self.assertEqual((refused.status, refused.error['code']), (409, 'token_mismatch'), refused.body)
         self.assertEqual(self.stop_records(root), [], 'P2-AC-41: no command stop record')
         self.assertEqual(self.flow_cancels(root), [], 'the Task was not cancelled')
         row = self.row(root, rid)

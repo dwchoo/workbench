@@ -2,7 +2,7 @@
 linked-Task requirement for artifact reads.
 
 Expected outcomes come from the orchestrator's contract decisions, not from the worker's tests:
-- MCP results mark text authored by anyone but the owner/Hub with per-item ``untrusted_text: true`` (requests,
+- REST results (``/api/v1/``) mark text authored by anyone but the owner/Hub with per-item ``untrusted_text: true`` (requests,
   revisions, comments, list items); a result that holds any such text also gets ``untrusted_text: true`` and a fixed
   ``note`` at its top level. Owner text is never marked.
 - Artifact reads need a request with a linked Task (else ``not_found``) and refuse secret-looking basenames
@@ -29,8 +29,8 @@ tearDownModule = base.tearDownModule
 OWNER_TITLE = 'owner-authored-title-7f3a'
 
 
-class OwnerCase(base.McpCase):
-    """``base.McpCase`` plus an owner-authored request (no Task, no worker text) of project alpha."""
+class OwnerCase(base.RestCase):
+    """``base.RestCase`` plus an owner-authored request (no Task, no worker text) of project alpha."""
 
     def setUp(self):
         super().setUp()
@@ -175,9 +175,9 @@ class SecretDenylistTests(OwnerCase):
             for client in ('r1', 'ed-all'):
                 with self.subTest(path=path, client=client):
                     call = self.c[client].call('inbox_result', request_id=self.rid, full=True, artifact_path=path)
-                    self.assertTrue(call['isError'], call)
-                    self.assertEqual(call['structuredContent']['error']['code'], 'forbidden')
-                    self.assertNotIn(self.contents[path], json.dumps(call))
+                    self.assertEqual(call.status, 403, call.body)
+                    self.assertEqual(call.error['code'], 'forbidden')
+                    self.assertNotIn(self.contents[path], call.body.decode())
 
     def test_the_absolute_and_dotted_spellings_are_forbidden_too(self):
         root = self.hub.root_a

@@ -1,7 +1,7 @@
 """Independent verification of the cancel confirm fingerprint (SPEC "취소", BRIEF P2-AC-41, user decision 2026-10-26).
 
-Contract, taken from the SPEC and the decision rather than from the implementation: a cancel confirm token (MCP
-``inbox_cancel`` and the web cancel confirm of a request that links a Task) is bound to user-meaningful state only --
+Contract, taken from the SPEC and the decision rather than from the implementation: a cancel confirm token (REST
+``POST /api/v1/requests/{id}/cancel`` and the web cancel confirm of a request that links a Task) is bound to user-meaningful state only --
 request ``state``, ``revision``, ``task_id``, ``spec_revision``, ``cancel_state``, ``title``, ``body``, the number of
 people-written (non-``system``) comments, the linked Task's ``status`` and ``closed`` flag, and the running
 ``command_id``. Notice-ledger bookkeeping (``delivery_*``, system ledger comments), the request ``version`` /
@@ -9,10 +9,10 @@ people-written (non-``system``) comments, the linked Task's ``status`` and ``clo
 between issue and use gives ``token_mismatch`` and nothing is cancelled; the comparison is inside the writer
 transaction. A web pre-run cancel without a Task still compares ``base_version``.
 
-Seams: the real loopback Hub with ``/mcp`` and the stdlib MCP client (``support.mcp_hub``), the real
+Seams: the real loopback Hub with ``/api/v1/`` and the stdlib REST client (``support.rest_hub``), the real
 ``requests`` web pages over a real inbox store, and ``InboxService`` itself. Ledger and Task changes are driven through
 the real ``Dispatcher`` (``tick()``) with a fake backend port (notice outcomes via ``record_delivery`` as the backend
-reports them), the service's manager/owner API and the MCP tools -- not by writing SQL. The oracle of "what is
+reports them), the service's manager/owner API and the REST endpoints -- not by writing SQL. The oracle of "what is
 user-meaningful" is computed here from the stored rows (``user_state``), so a scenario that does not really isolate a
 ledger-only change (or really change a bound field) fails the test itself. A backend cancel is one committed
 ``cancel_requested`` event. Run with ``discover -s tests/hub -p 'test_inbox_cancel_fingerprint_independent.py'``.
@@ -35,7 +35,8 @@ REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO / 'src'))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from support.mcp_hub import McpHub  # noqa: E402
+from support.rest_hub import RestHub  # noqa: E402
+from test_inbox_results_independent import ERROR_STATUS, RestTools  # noqa: E402  (REST calls named by operation)
 from test_inbox_service import make_project  # noqa: E402
 from test_web_pages_requests import Page, RequestsCase  # noqa: E402
 from workbench.hub.inbox.dispatch import Dispatcher  # noqa: E402
@@ -498,14 +499,14 @@ class FunctionCase(World, unittest.TestCase):
         self.assertNotEqual(original, decomposed)  # what the user saw differs: not folded
 
 
-# -- transport 2: MCP ----------------------------------------------------------------------------------------------
+# -- transport 2: REST ----------------------------------------------------------------------------------------------
 @per_scenario
-class McpCase(Scenarios, World, unittest.TestCase):
+class RestCase(Scenarios, World, unittest.TestCase):
     def setUp(self):
-        self.hub = McpHub(self)
-        self.r1 = self.hub.client(self.hub.key('r1', 'requester', {'projects': [self.hub.a]})).start()
-        self.ed = self.hub.client(self.hub.key('ed', 'editor', {'projects': [self.hub.a]})).start()
-        self.ed2 = self.hub.client(self.hub.key('ed2', 'editor', {'projects': [self.hub.a]})).start()
+        self.hub = RestHub(self)
+        self.r1 = RestTools(self.hub.rest(self.hub.key('r1', 'requester', {'projects': [self.hub.a]})))
+        self.ed = RestTools(self.hub.rest(self.hub.key('ed', 'editor', {'projects': [self.hub.a]})))
+        self.ed2 = RestTools(self.hub.rest(self.hub.key('ed2', 'editor', {'projects': [self.hub.a]})))
         self.idem = 0
         self.init_world(self.hub.inbox, self.hub.a, self.hub.root_a)
 
@@ -523,16 +524,17 @@ class McpCase(Scenarios, World, unittest.TestCase):
         return value['confirm_token']
 
     def use(self, rid, handle, client=None):
-        result = (client or self.r1).call('inbox_cancel', request_id=rid, confirm_token=handle)
-        if result['isError'] is False:
-            self.assertEqual(result['structuredContent']['status'], 'cancel_requested')
+        reply = (client or self.r1).call('inbox_cancel', request_id=rid, confirm_token=handle)
+        if reply.status < 400:
+            self.assertEqual((reply.status, reply.json['status']), (202, 'cancel_requested'))  # SPEC: 202 on a token confirm
             return 'ok'
-        return result['structuredContent']['error']['code']
+        self.assertEqual(reply.status, ERROR_STATUS[reply.error['code']])  # SPEC: token_mismatch is 409
+        return reply.error['code']
 
     def cancels(self) -> int:
         return len(self.hub.cancels)
 
-    def test_a_requesters_and_an_editors_comment_through_mcp_refuse_the_token(self):
+    def test_a_requesters_and_an_editors_comment_through_rest_refuse_the_token(self):
         for name, comment in (('requester', lambda rid: self.r1.tool('inbox_comment', request_id=rid, body='more')),
                               ('editor', lambda rid: self.ed.tool('inbox_comment', request_id=rid, body='more'))):
             with self.subTest(name):
@@ -542,7 +544,7 @@ class McpCase(Scenarios, World, unittest.TestCase):
                 self.assertEqual(self.use(rid, handle), 'token_mismatch')
                 self.assertEqual(self.cancels(), 0)
 
-    def test_an_editors_update_through_mcp_refuses_the_token(self):
+    def test_an_editors_update_through_rest_refuses_the_token(self):
         rid = self.prepared(lambda rid: None)
         handle = self.issue(rid)
         self.ed.tool('inbox_update', request_id=rid, base_version=self.snap(rid)['version'], title='Renamed')

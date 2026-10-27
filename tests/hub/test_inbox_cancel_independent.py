@@ -6,7 +6,7 @@ SIGKILL, signals to the command only). Not the implementer's tests.
 
 Seam: the ``ProjectSandbox`` of ``test_project_control`` (temp HOME/XDG, a short private ``XDG_RUNTIME_DIR``,
 ``WORKBENCH_HUB_AUTOSTART=0``, the fake OMP of ``tests/recovery_boot``), a real Hub (``wb hub start``) with its web
-listener and ``/mcp``, and the worker's terminal command typed into the worker pane as a model's tool call would
+listener and ``/api/v1/``, and the worker's terminal command typed into the worker pane as a model's tool call would
 (``tool terminal {...}``). The command is a host ``sleep``.
 
 Independent oracles: ``/proc`` (the command pid, the backend pid + start ticks, pane pids), the command-stop records in
@@ -30,7 +30,9 @@ import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+from support.rest_client import RestClient  # noqa: E402
 from test_inbox_flow_link import LinkCase  # noqa: E402
+from test_inbox_results_independent import ERROR_STATUS, RestTools  # noqa: E402  (REST calls named by operation)
 
 PASSWORD = 'correct horse battery'
 IGNORE_INT = "(trap '' INT; exec sleep {seconds})"  # a command that outlives SIGINT (dies on SIGTERM)
@@ -69,7 +71,7 @@ def is_alive(pid: int, ticks: int | None = None) -> bool:
 class CancelLive(LinkCase):
     def live(self, *titles: str, requesters: tuple[str, ...] = ()):
         """A project with ``titles`` seeded (by the owner, or by each ``requesters`` key in turn), its backend on, the
-        real Hub (web + MCP) linked. Returns ``(root, project_id, ids, ui, keys)``."""
+        real Hub (web + REST) linked. Returns ``(root, project_id, ids, ui, keys)``."""
         import subprocess as sp
         import time as _time
         from workbench.hub import auth
@@ -118,12 +120,16 @@ class CancelLive(LinkCase):
         return root, project_id, ids, ui, keys
 
     # -- clients -----------------------------------------------------------------------------
-    def mcp(self, key):
-        from support.mcp_client import McpClient
-        client = McpClient(self.host, self.port, key.raw)
-        client.initialize()
-        client.initialized()
-        return client
+    def rest(self, key):
+        return RestTools(RestClient(self.host, self.port, key.raw))
+
+    def assert_refused(self, reply, *codes):
+        """A refusal: an error status that is the SPEC status of one of ``codes`` (any code if none given)."""
+        self.assertGreaterEqual(reply.status, 400, reply.body)
+        if codes:
+            self.assertIn(reply.error['code'], codes, reply.body)
+        self.assertEqual(reply.status, ERROR_STATUS[reply.error['code']], reply.body)
+        return reply.error['code']
 
     def browser(self):
         from test_web_requests_hub import Browser
@@ -226,14 +232,14 @@ class CancelLive(LinkCase):
         return samples
 
 
-class McpUserStopTests(CancelLive):
+class RestUserStopTests(CancelLive):
     def test_a_confirmed_cancel_stops_only_the_command_and_the_request_waits_for_its_end(self):
         root, _project_id, (rid,), ui, keys = self.live('Run the long job')
         outsider = self.sentinel('719.9')
         task_id, pid, command = self.start_command(ui, root, rid, IGNORE_INT.format(seconds='719.1'), '719.1')
         self.assertEqual(command['label'], IGNORE_INT.format(seconds='719.1'))
         survivors = self.processes(root)
-        client = self.mcp(keys['editor'])
+        client = self.rest(keys['editor'])
         first = client.tool('inbox_cancel', request_id=rid)
         self.assertEqual(first['status'], 'confirm_required', first)
         self.assertEqual((first['impact']['task_id'], first['impact']['command']['command_id']),
@@ -245,8 +251,8 @@ class McpUserStopTests(CancelLive):
         self.assertEqual(done['stop'], {'status': 'stopping', 'command_id': command['command_id']})
         self.assertNotIn(done['status'], ('cancelled', 'closed'), 'P2-AC-30: acceptance is not the end')
         again = client.call('inbox_cancel', request_id=rid, confirm_token=first['confirm_token'])
-        self.assertTrue(again['isError'], 'the same token twice')
-        self.assertEqual(again['structuredContent']['error']['code'], 'token_mismatch', again)
+        self.assert_refused(again, 'token_mismatch')  # the same token twice: 409
+        self.assertEqual(again.status, 409)
         samples = self.observe_until_closed(root, rid, pid, 60)
         self.assertEqual(samples[-1][0], 'CLOSED', samples[-5:])
         self.assertFalse(is_alive(pid), 'the command had ended when the request closed')
@@ -268,7 +274,7 @@ class McpUserStopTests(CancelLive):
         self.assert_survive(survivors)
         self.assertTrue(is_alive(*outsider), 'an unrelated process in its own session is never signalled')
         late = client.call('inbox_cancel', request_id=rid)
-        self.assertTrue(late['isError'], 'a closed request cannot be cancelled again')
+        self.assert_refused(late)  # a closed request cannot be cancelled again
         self.assertEqual(len(self.user_stops(root)), 1)
         self.until(lambda: [n for n in self.inbox_notices() if n['request_id'] == rid and n['event'] == 'cancelled'],
                    40, 'the manager is told of the cancel once')
@@ -276,20 +282,19 @@ class McpUserStopTests(CancelLive):
     def test_a_requester_may_cancel_only_its_own_request(self):
         root, _project_id, (rid,), ui, keys = self.live('Mine', requesters=('req-a', 'req-b'))
         task_id, pid, command = self.start_command(ui, root, rid, IGNORE_INT.format(seconds='719.2'), '719.2')
-        other = self.mcp(keys['req-b'])
+        other = self.rest(keys['req-b'])
         for attempt in (lambda: other.call('inbox_cancel', request_id=rid),
                         lambda: other.call('inbox_cancel', request_id=rid, confirm_token='x' * 32)):
             denied = attempt()
-            self.assertTrue(denied['isError'], denied)
-            self.assertIn(denied['structuredContent']['error']['code'], ('not_found', 'forbidden'), denied)
+            self.assert_refused(denied, 'not_found', 'forbidden')
         self.assertEqual((self.user_stops(root), self.flow_cancels(root)), ([], []), 'a foreign key stops nothing')
         self.assertTrue(is_alive(pid))
         self.assertEqual(self.row(root, rid)['cancel_state'], None)
-        own = self.mcp(keys['req-a'])
+        own = self.rest(keys['req-a'])
         first = own.tool('inbox_cancel', request_id=rid)
         self.assertEqual(first['status'], 'confirm_required', first)
         stolen = other.call('inbox_cancel', request_id=rid, confirm_token=first['confirm_token'])
-        self.assertTrue(stolen['isError'], 'a token issued to another key is no use')
+        self.assert_refused(stolen)  # a token issued to another key is no use
         self.assertEqual(self.user_stops(root), [])
         done = own.tool('inbox_cancel', request_id=rid, confirm_token=first['confirm_token'])
         self.assertEqual((done['status'], done['stop']['command_id']), ('cancel_requested', command['command_id']))
@@ -331,15 +336,15 @@ class RaceAndFailureTests(CancelLive):
     def test_a_manager_cancel_between_confirm_and_token_refuses_the_token_and_stops_nothing(self):
         root, _project_id, (rid,), ui, keys = self.live('Racy job')
         task_id, pid, command = self.start_command(ui, root, rid, IGNORE_INT.format(seconds='719.4'), '719.4')
-        client = self.mcp(keys['editor'])
+        client = self.rest(keys['editor'])
         first = client.tool('inbox_cancel', request_id=rid)
         self.assertEqual(first['status'], 'confirm_required', first)
         cancelled = self.tool(ui, 'to_worker', {'kind': 'work', 'message': 'stop it', 'task_id': task_id,
                                                 'cancel': True})
         self.assertIn(cancelled['status'], ('cancelled', 'cancel_requested'), cancelled)
         refused = client.call('inbox_cancel', request_id=rid, confirm_token=first['confirm_token'])
-        self.assertTrue(refused['isError'], refused)
-        self.assertEqual(refused['structuredContent']['error']['code'], 'token_mismatch', refused)
+        self.assert_refused(refused, 'token_mismatch')
+        self.assertEqual(refused.status, 409)
         self.assertEqual(self.user_stops(root), [], 'no user stop')
         self.assertEqual([item['by'] for item in self.flow_cancels(root)], ['manager'], 'only the manager cancelled')
         row = self.row(root, rid)
@@ -362,7 +367,7 @@ class RaceAndFailureTests(CancelLive):
     def test_a_stopped_backend_refuses_before_any_change_and_an_unanswered_one_is_never_a_success(self):
         root, project_id, (rid,), ui, keys = self.live('Backend job')
         task_id, pid, command = self.start_command(ui, root, rid, IGNORE_INT.format(seconds='719.5'), '719.5')
-        client = self.mcp(keys['editor'])
+        client = self.rest(keys['editor'])
         backend_pid, backend_ticks, _record = self.box.backend_ref(root)
         first = client.tool('inbox_cancel', request_id=rid)
         before = self.row(root, rid)
@@ -378,13 +383,14 @@ class RaceAndFailureTests(CancelLive):
         self.addCleanup(resume)
         silent = client.call('inbox_cancel', request_id=rid, confirm_token=first['confirm_token'])
         row = self.row(root, rid)
-        if silent['isError']:  # nothing could be sent (the hello never completes): refused, the request reverted
-            self.assertEqual(silent['structuredContent']['error']['code'], 'backend_unreachable', silent)
+        if silent.status >= 400:  # nothing could be sent (the hello never completes): refused, the request reverted
+            self.assert_refused(silent, 'backend_unreachable')
             self.assertEqual((row['state'], row['cancel_state']), ('RUNNING', None), 'a refusal leaves no cancel behind')
             reverted = True
         else:  # sent and not answered: surfaced as unknown, never as a success
-            result = silent['structuredContent']
-            self.assertEqual((result['status'], result.get('cancel')), ('cancel_requested', 'unknown'), silent)
+            result = silent.json
+            self.assertEqual(silent.status, 202, silent.body)
+            self.assertEqual((result['status'], result.get('cancel')), ('cancel_requested', 'unknown'), silent.body)
             self.assertEqual((row['state'], row['cancel_state']), ('RUNNING', 'requested'))
             self.assertIn('알 수 없', ' '.join(body for kind, body in self.comments(root, rid) if kind == 'system'))
             reverted = False
@@ -414,7 +420,7 @@ class RaceAndFailureTests(CancelLive):
     def test_a_backend_that_is_off_refuses_a_running_cancel_and_leaves_the_request_unchanged(self):
         root, project_id, (rid,), ui, keys = self.live('Off job')
         task_id, pid, command = self.start_command(ui, root, rid, IGNORE_INT.format(seconds='719.6'), '719.6')
-        client = self.mcp(keys['editor'])
+        client = self.rest(keys['editor'])
         first = client.tool('inbox_cancel', request_id=rid)
         self.assertEqual(first['status'], 'confirm_required', first)
         backend_pid, backend_ticks, _record = self.box.backend_ref(root)
@@ -423,20 +429,18 @@ class RaceAndFailureTests(CancelLive):
         self.until(lambda: not is_alive(backend_pid, backend_ticks), 30, 'the backend ended')
         before = self.row(root, rid)
         refused = client.call('inbox_cancel', request_id=rid, confirm_token=first['confirm_token'])
-        self.assertTrue(refused['isError'], refused)
-        self.assertIn(refused['structuredContent']['error']['code'], ('backend_not_running', 'token_mismatch'), refused)
+        self.assert_refused(refused, 'backend_not_running', 'token_mismatch')
         after = self.row(root, rid)
         self.assertEqual((after['state'], after['cancel_state'], after['version']),
                          (before['state'], None, before['version']), 'the request is unchanged')
         self.assertEqual(self.user_stops(root), [])
         self.assertEqual([item for item in self.flow_cancels(root) if item.get('by') == 'user'], [])
         fresh = client.call('inbox_cancel', request_id=rid)
-        if fresh['isError']:
-            self.assertIn(fresh['structuredContent']['error']['code'], ('backend_not_running',), fresh)
+        if fresh.status >= 400:
+            self.assert_refused(fresh, 'backend_not_running')
         else:  # the first call may issue a token; the confirmation is then refused
-            retried = client.call('inbox_cancel', request_id=rid, confirm_token=fresh['structuredContent']['confirm_token'])
-            self.assertTrue(retried['isError'], retried)
-            self.assertEqual(retried['structuredContent']['error']['code'], 'backend_not_running', retried)
+            retried = client.call('inbox_cancel', request_id=rid, confirm_token=fresh.json['confirm_token'])
+            self.assert_refused(retried, 'backend_not_running')
         self.assertEqual(self.row(root, rid)['cancel_state'], None)
         self.assertEqual(self.row(root, rid)['state'], before['state'])
 
@@ -447,7 +451,7 @@ class RaceAndFailureTests(CancelLive):
         task_id, pid, command = self.start_command(ui, root, rid, IGNORE_ALL.format(seconds='719.7'), '719.7')
         sleep_ticks = ticks_of(pid)
         self.addCleanup(lambda: os.kill(pid, signal.SIGKILL) if is_alive(pid, sleep_ticks) else None)
-        client = self.mcp(keys['editor'])
+        client = self.rest(keys['editor'])
         first = client.tool('inbox_cancel', request_id=rid)
         done = client.tool('inbox_cancel', request_id=rid, confirm_token=first['confirm_token'])
         self.assertEqual(done['status'], 'cancel_requested', done)

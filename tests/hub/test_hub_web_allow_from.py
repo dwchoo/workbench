@@ -14,12 +14,12 @@ import sys
 import tempfile
 import unittest
 
-from aiohttp import ClientSession, DummyCookieJar, TCPConnector, test_utils, web
+from aiohttp import ClientSession, DummyCookieJar, TCPConnector, test_utils
 
 REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO / 'src'))
 
-from workbench.hub import auth, mcp  # noqa: E402
+from workbench.hub import auth, rest  # noqa: E402
 from workbench.hub.web import middleware  # noqa: E402
 from workbench.hub.web.app import OriginPolicy, WebServices, board_routes, create_app  # noqa: E402
 
@@ -30,15 +30,16 @@ def nets(*texts: str) -> tuple:
     return tuple(ipaddress.ip_network(text) for text in texts)
 
 
-class _RecordingMcp:
-    """Stands in for ``McpServer``: records that the ``/mcp`` handler ran."""
+class _RecordingApi:
+    """Stands in for ``InboxApi`` under the real ``/api/v1/`` handlers: the first thing a REST handler does is
+    ``authenticate`` (a key check, or the 401), so ``calls`` counts the requests that reached a handler."""
 
     def __init__(self):
         self.calls = 0
 
-    async def handle(self, request):
+    async def authenticate(self, request):
         self.calls += 1
-        return web.json_response({'ok': True})
+        return None
 
 
 class AllowFromCase(unittest.IsolatedAsyncioTestCase):
@@ -65,8 +66,8 @@ class AllowFromCase(unittest.IsolatedAsyncioTestCase):
             self.entered += 1
             return enter()
         self.services.throttle.try_enter = counting_enter
-        self.mcp = _RecordingMcp()
-        app = create_app(self.services, routes=[mcp.routes(self.mcp), board_routes(lambda: None)])
+        self.api = _RecordingApi()
+        app = create_app(self.services, routes=[rest.routes(self.api), board_routes(lambda: None)])
         self.server = test_utils.TestServer(app, host=bind, port=0)
         await self.server.start_server()
         self.addAsyncCleanup(self.server.close)
@@ -95,14 +96,17 @@ class RefusedClientTests(AllowFromCase):
         await self.serve(allow_from=nets('10.0.0.0/8', '::1'))
         cases = [('GET', '/login', {}, None), ('POST', '/login', {}, {'login_token': 'x', 'password': PASSWORD}),
                  ('GET', '/static/app.css', {}, None), ('GET', '/', {}, None), ('GET', '/settings', {}, None),
-                 ('POST', '/mcp', {'Authorization': 'Bearer wbk_x', 'Content-Type': 'application/json'}, b'{}'),
+                 ('POST', '/api/v1/requests', {'Authorization': 'Bearer wbk_x', 'Content-Type': 'application/json'},
+                  b'{}'),
+                 ('GET', '/api/v1/projects', {'Authorization': 'Bearer wbk_x'}, None),
+                 ('GET', '/api/v1/no/such/endpoint', {'Authorization': 'Bearer wbk_x'}, None),
                  ('GET', '/ws/board', self.WS_HEADERS, None), ('GET', '/no/such/page', {}, None),
                  ('GET', '/login', {'Host': 'evil.example'}, None),
                  ('GET', '/login', {'Cookie': f'{middleware.SESSION_COOKIE}=abc'}, None)]
         for method, path, headers, data in cases:
             with self.subTest(method=method, path=path, headers=headers):
                 self.assert_refused(await self.call(method, path, headers=headers, data=data))
-        self.assertEqual(self.mcp.calls, 0, 'the /mcp handler never ran')
+        self.assertEqual(self.api.calls, 0, 'no /api/v1/ handler ran')
         self.assertEqual(self.verified, 0, 'no session lookup')
         self.assertEqual(self.entered, 0, 'no login throttle')
 
@@ -121,6 +125,13 @@ class AllowedClientTests(AllowFromCase):
         self.assertEqual(response.status, 200)
         self.assertTrue(any(value.startswith('wb_hub_login=') for value in response.headers.getall('Set-Cookie')))
         self.assertEqual((await self.call('GET', '/login', headers={'Host': 'evil.example'})).status, 421)
+
+    async def test_a_listed_client_reaches_the_rest_handlers(self):
+        # the positive control of the refused client's ``api.calls == 0``: a listed client does reach a handler
+        await self.serve(allow_from=nets('127.0.0.1'))
+        response = await self.call('GET', '/api/v1/projects', headers={'Authorization': 'Bearer wbk_x'})
+        self.assertEqual(response.status, 401)
+        self.assertEqual(self.api.calls, 1)
 
     async def test_no_allow_from_serves_everyone(self):
         await self.serve(allow_from=())

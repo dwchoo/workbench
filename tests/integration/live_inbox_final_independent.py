@@ -1,13 +1,13 @@
 """TI-19 / Phase 2 final integration (part B): the Task Inbox end to end on a real Hub, a real backend and fake OMPs.
 
-Everything is a real process on loopback: ``wb hub start`` (web listener on ``127.0.0.1:0``, ``/mcp``), real
+Everything is a real process on loopback: ``wb hub start`` (web listener on ``127.0.0.1:0``, ``/api/v1/``), real
 backends whose manager/worker are the fake OMP of ``tests/recovery_boot/fake_omp.py`` (no model, no provider, no
-network), the web through a cookie-keeping ``http.client`` browser stand-in and ``/mcp`` through the stdlib
-``McpClient``. The fake manager's ``workbench_inbox`` / ``to_worker`` calls are bridge ``tool_request`` frames sent
+network), the web through a cookie-keeping ``http.client`` browser stand-in and ``/api/v1/`` through the stdlib
+``RestClient``. The fake manager's ``workbench_inbox`` / ``to_worker`` calls are bridge ``tool_request`` frames sent
 on the real backend UI socket (the way a model's tool call arrives). Expected values come from the SPEC / USAGE
 texts, ``/proc`` (fd tables, ``/proc/locks``, pids) and the inbox / task databases read with stdlib ``sqlite3``.
 
-Not covered here (``pending`` on the target host): real browser rendering, LAN/VPN reachability, GPU, Codex CLI MCP
+Not covered here (``pending`` on the target host): real browser rendering, LAN/VPN reachability, GPU, Codex CLI
 compatibility, real systemd/linger, the online advisory check.
 
 Run: ``PYTHONPATH=src:. python -m unittest discover -s tests/integration -p 'live_inbox*.py'``.
@@ -33,7 +33,7 @@ sys.path.insert(0, str(HUB_TESTS))
 import test_inbox_flow_link as link  # noqa: E402
 import test_web_requests_hub as web_hub  # noqa: E402
 from fixtures.web_sandbox import tcp_listening, wait_until as web_wait  # noqa: E402
-from support.mcp_client import McpClient  # noqa: E402
+from support.rest_client import RestClient  # noqa: E402
 from test_project_control import alive, wait_until  # noqa: E402
 
 PASSWORD = 'correct horse battery'
@@ -122,11 +122,18 @@ class FinalCase(link.LinkCase):
         self.assertEqual(status, 200, reply)
         return RAW_KEY.search(reply).group(0)
 
-    def mcp(self, key: str) -> McpClient:
-        client = McpClient(self.host, self.port, key)
-        client.initialize()
-        client.initialized()
-        return client
+    def rest(self, key: str) -> RestClient:
+        return RestClient(self.host, self.port, key)
+
+    def ok(self, reply, status: int = 200) -> dict:
+        """The JSON body of a reply that has the expected success status."""
+        self.assertEqual(reply.status, status, reply.body)
+        return reply.json
+
+    def refused(self, reply, status: int, code: str) -> dict:
+        """The ``error`` object of a refusal with the SPEC status of its code."""
+        self.assertEqual((reply.status, reply.json['error']['code']), (status, code), reply.body)
+        return reply.json['error']
 
     def web_submit(self, browser: web_hub.Browser, project_id: str, title: str, body: str) -> str:
         _status, _headers, page = browser.request('GET', '/requests/new')
@@ -160,7 +167,7 @@ class FinalCase(link.LinkCase):
 class OwnerFlowTests(FinalCase):
     def test_owner_login_submit_auto_review_link_run_close_and_both_result_views(self):
         """Item 1 (owner origin): web login -> request -> auto notice -> manager show -> to_worker(request_id) ->
-        host command -> RUNNING -> manager close success -> web and MCP summary / full views; item 6: single writer."""
+        host command -> RUNNING -> manager close success -> web and REST summary / full views; item 6: single writer."""
         root, project_id, _ids, ui = self.start_web_hub()
         browser = self.login()
         rid = self.web_submit(browser, project_id, 'Owner request', 'Build the thing\nline two')
@@ -208,56 +215,58 @@ class OwnerFlowTests(FinalCase):
         self.assertEqual(status, 200)
         self.assertIn(task_id, full, 'web full view lists the linked Task')
         self.assertTrue(headers['Content-Type'].startswith('text/html'))
-        # MCP: an editor key sees the summary and the full view
-        editor = self.mcp(self.issue_key(browser, 'ti19-editor', 'editor'))
-        summary = editor.tool('inbox_result', request_id=rid)
+        # REST: an editor key sees the summary and the full view
+        editor = self.rest(self.issue_key(browser, 'ti19-editor', 'editor'))
+        summary = self.ok(editor.get(f'/requests/{rid}/result'))
         self.assertIn('TI19-SUMMARY', json.dumps(summary, ensure_ascii=False))
-        fullview = editor.tool('inbox_result', request_id=rid, full=True)
+        fullview = self.ok(editor.get(f'/requests/{rid}/result', full=True))
         self.assertIn(task_id, json.dumps(fullview, ensure_ascii=False))
 
-    def test_requester_key_submit_isolation_and_result_through_mcp(self):
+    def test_requester_key_submit_isolation_and_result_through_rest(self):
         """Item 1 (external requester key origin) + P2-AC-33-style isolation of one requester from another."""
         root, project_id, _ids, ui = self.start_web_hub()
         browser = self.login()
         key_a = self.issue_key(browser, 'req-a', 'requester')
         key_b = self.issue_key(browser, 'req-b', 'requester')
-        a, b = self.mcp(key_a), self.mcp(key_b)
-        names = {tool['name'] for tool in a.list_tools()}
-        self.assertNotIn('inbox_update', names)
-        self.assertNotIn('inbox_set_state', names)
-        self.assertIn('inbox_submit', names)
-        first = a.tool('inbox_submit', project_id=project_id, title='From A', body='external body',
-                       idempotency_key='ti19-idem-1')
-        again = a.tool('inbox_submit', project_id=project_id, title='From A', body='external body',
-                       idempotency_key='ti19-idem-1')
+        a, b = self.rest(key_a), self.rest(key_b)
+        submission = {'project_id': project_id, 'title': 'From A', 'body': 'external body',
+                      'idempotency_key': 'ti19-idem-1'}
+        created = a.post('/requests', submission)
+        first = self.ok(created, 201)  # SPEC: a new request is 201 + Location
+        again_reply = a.post('/requests', submission)
+        again = self.ok(again_reply, 200)  # the same key and content: 200 with the existing request
         self.assertEqual((first['created'], again['created'], again['request_id']),
                          (True, False, first['request_id']))
+        self.assertEqual(created.header('location'), f'/api/v1/requests/{first["request_id"]}')
         rid = first['request_id']
+        # a requester key has no editor endpoints (the old tool list hid them; REST answers 403 forbidden)
+        self.refused(a.patch(f'/requests/{rid}', {'base_version': 1, 'title': 'Hijacked'}), 403, 'forbidden')
+        self.refused(a.post(f'/requests/{rid}/state', {'base_version': 1, 'to': 'NEEDS_INFO'}), 403, 'forbidden')
         self.until(lambda: self.row(root, rid)['state'] == 'REVIEWING', 40)
         notice = [n for n in self.inbox_notices() if n['request_id'] == rid][0]
         self.assertEqual(notice['origin'], 'key:req-a')
         shown = self.inbox(ui, 'show', rid)
         self.assertEqual((shown['request']['origin']['kind'], shown['request']['origin'].get('name')), ('api_key', 'req-a'))
         # another requester can neither read nor learn that it exists
-        error = b.tool_error('inbox_get', request_id=rid)
-        missing = b.tool_error('inbox_get', request_id='11111111-2222-4333-8444-555555555555')
+        error = self.refused(b.get(f'/requests/{rid}'), 404, 'not_found')
+        missing = self.refused(b.get('/requests/11111111-2222-4333-8444-555555555555'), 404, 'not_found')
         self.assertEqual(error['code'], missing['code'])
-        self.assertEqual([item['request_id'] for item in b.tool('inbox_list')['requests']], [])
-        # an API key cannot do web things; a web cookie cannot do MCP things
-        reply = a.raw('POST', json.dumps({'jsonrpc': '2.0', 'id': 9, 'method': 'tools/list'}).encode(),
-                      {'Authorization': None, 'Cookie': '; '.join(f'{k}={v}' for k, v in browser.cookies.items())})
-        self.assertEqual(reply.status, 401, 'MCP never accepts the web cookie')
+        self.assertEqual([item['request_id'] for item in self.ok(b.get('/requests'))['requests']], [])
+        # an API key cannot do web things; a web cookie cannot do REST things
+        reply = a.get('/projects', headers={'Authorization': None,
+                                            'Cookie': '; '.join(f'{k}={v}' for k, v in browser.cookies.items())})
+        self.assertEqual(reply.status, 401, 'REST never accepts the web cookie')
         status, _headers, _ = web_hub.Browser(self.host, self.port).request('GET', '/requests')
         self.assertIn(status, (303, 401))
         # the manager runs and closes it; the requester reads the summary and the full view
         task_id, _sleeper = self.command_running(ui, root, rid, '716.4')
         closed = self.inbox(ui, 'close', rid, outcome='failed', summary='It failed TI19-REQ-SUMMARY.')
         self.assertEqual(closed['state'], 'CLOSED')
-        got = a.tool('inbox_result', request_id=rid)
+        got = self.ok(a.get(f'/requests/{rid}/result'))
         self.assertIn('TI19-REQ-SUMMARY', json.dumps(got, ensure_ascii=False))
-        full = a.tool('inbox_result', request_id=rid, full=True)
+        full = self.ok(a.get(f'/requests/{rid}/result', full=True))
         self.assertIn(task_id, json.dumps(full, ensure_ascii=False))
-        self.assertEqual(b.tool_error('inbox_result', request_id=rid)['code'], error['code'])
+        self.assertEqual(self.refused(b.get(f'/requests/{rid}/result'), 404, 'not_found')['code'], error['code'])
 
 
 class HubLifetimeTests(FinalCase):

@@ -1,8 +1,8 @@
-"""Korean (Hangul) text in the Hub web pages and MCP tools (seams T2 and T4).
+"""Korean (Hangul) text in the Hub web pages and the REST API (seams S1 and S2).
 
 Pages: the real ``create_app`` with the request pages over a real inbox store (``test_web_pages_requests``), the
-settings pages (``test_web_pages_settings``) and the login page (``test_hub_web_auth``). MCP: the real loopback
-Hub and the stdlib MCP client (``test_hub_mcp``). Expected values are the test's own Hangul text, the SPEC
+settings pages (``test_web_pages_settings``) and the login page (``test_hub_web_auth``). REST: the real loopback
+Hub (``support.rest_hub``) and the stdlib REST client (``support.rest_client``). Expected values are the test's own Hangul text, the SPEC
 "입력 한도" table (title 1~200 Unicode code points, body <= 64 KiB and comment <= 16 KiB of UTF-8 bytes) and rows
 read back with stdlib ``sqlite3``. Run with ``discover -s tests/hub -p 'test_web_hangul.py'``.
 """
@@ -15,7 +15,7 @@ from urllib.parse import urlencode
 
 import aiohttp
 
-import test_hub_mcp as mcp_case  # module imports: their test classes stay uncollected here
+from support.rest_hub import RestHub
 import test_hub_web_auth as web_auth
 import test_web_pages_requests as request_case
 import test_web_pages_settings as settings_case
@@ -178,27 +178,44 @@ class HangulPasswordTests(web_auth.WebAppCase):
         self.assertNotEqual((await self.login('한글 비밀번호 열쇄')).status, 303)
 
 
-class HangulMcpTests(mcp_case.ToolCase):
-    def test_hangul_round_trips_through_mcp_json(self):
+class HangulRestTests(unittest.TestCase):
+    def setUp(self):
+        self.hub = RestHub(self)
+        self.r1 = self.hub.rest(self.hub.key('r1', 'requester', {'projects': [self.hub.a]}))
+
+    def requests(self) -> list[tuple]:
+        return self.hub.inbox_rows('SELECT request_id, state, origin_kind, origin_name, title FROM requests '
+                                   'ORDER BY seq')
+
+    def test_hangul_round_trips_through_rest_json(self):
         title, body = '한글 요청 \u1112\u1161\u11ab ㄱ', '본문 😀\n둘째 줄'
-        value = self.submit(title=title, body=body)
-        shown = self.r1.tool('inbox_get', request_id=value['request_id'])['request']
-        self.assertEqual((shown['title'], shown['body']), (title, body))
+        reply = self.r1.post('/requests', {'project_id': self.hub.a, 'title': title, 'body': body,
+                                           'idempotency_key': 'hangul-1'})
+        self.assertEqual(reply.status, 201, reply.body)
+        value = reply.json
+        shown = self.r1.get(f'/requests/{value["request_id"]}')
+        self.assertEqual(shown.status, 200, shown.body)
+        self.assertEqual((shown.json['request']['title'], shown.json['request']['body']), (title, body))
         self.assertEqual(self.requests()[-1][4], title)
-        result = self.r1.call('inbox_get', request_id=value['request_id'])
-        self.assertEqual(json.loads(result['content'][0]['text'])['request']['title'], title)
-        found = self.r1.tool('inbox_list', query='한글 요청')['requests']
-        self.assertEqual([item['request_id'] for item in found], [value['request_id']])
+        # SPEC: the body is ASCII-escaped JSON (user text can never make it unencodable) and decodes to the Hangul
+        self.assertEqual(shown.header('content-type').split(';')[0], 'application/json')
+        shown.body.decode('ascii')
+        self.assertNotIn(title.encode('utf-8'), shown.body)
+        self.assertEqual(json.loads(shown.body.decode('ascii'))['request']['title'], title)
+        found = self.r1.get('/requests', query='한글 요청')
+        self.assertEqual(found.status, 200, found.body)
+        self.assertEqual([item['request_id'] for item in found.json['requests']], [value['request_id']])
 
     def test_inbox_projects_query_matches_hangul_names_composed_or_decomposed(self):
-        board = self.hub.client(self.hub.keys.rotate_system_key(now=self.hub.now[0]).raw).start()
+        board = self.hub.rest(self.hub.keys.rotate_system_key(now=self.hub.now[0]).raw)
         self.hub.rows[0]['name'] = '알파 프로젝트'
         self.hub.rows[1]['name'] = unicodedata.normalize('NFD', '베타 실험')
         for query, expected in (('알파', '알파 프로젝트'), (unicodedata.normalize('NFD', '알파'), '알파 프로젝트'),
                                 ('베타', unicodedata.normalize('NFD', '베타 실험'))):
             with self.subTest(query=ascii(query)):
-                names = [item['name'] for item in board.tool('inbox_projects', query=query)['projects']]
-                self.assertEqual(names, [expected])
+                reply = board.get('/projects', query=query)
+                self.assertEqual(reply.status, 200, reply.body)
+                self.assertEqual([item['name'] for item in reply.json['projects']], [expected])
 
 
 if __name__ == '__main__':

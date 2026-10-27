@@ -4,7 +4,7 @@ Expected outcomes come from the Task Inbox SPEC ("결과 조회", "입력 한도
 TI-14 "독립 초점" and the Root decision "artifact scope = project root minus .wb/.git, no ``..``, no symlink anywhere
 in the path, no hardlinked file, no FIFO/device/socket" - not from the worker's tests. The backend is this file's own
 fake (``task_status``/``raw_query`` in the ui_v1 shapes of the SPEC "Hub -> backend"); files, symlinks, hard links,
-FIFOs and sockets are the test's own. Real loopback Hub (``McpHub``) / real ``create_app`` + stdlib clients. Temp HOME
+FIFOs and sockets are the test's own. Real loopback Hub (``RestHub``, ``/api/v1/``) / real ``create_app`` + stdlib clients. Temp HOME
 and XDG dirs, a short private ``XDG_RUNTIME_DIR``, ``WORKBENCH_HUB_AUTOSTART=0``; no real backend is started.
 Run with ``discover -s tests/hub -p 'test_inbox_results*.py'``.
 """
@@ -31,10 +31,10 @@ REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO / 'src'))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from support.mcp_client import McpClient  # noqa: E402
-from support.mcp_hub import McpHub  # noqa: E402
+from support.rest_client import RestClient  # noqa: E402
+from support.rest_hub import RestHub  # noqa: E402
 import test_web_pages_requests as pages  # noqa: E402  (module import: its test classes stay uncollected here)
-from workbench.hub import mcp  # noqa: E402
+from workbench.hub import inbox_api, rest  # noqa: E402
 from workbench.hub.inbox import results  # noqa: E402
 from workbench.hub.inbox.backend_port import BackendPortError  # noqa: E402
 from workbench.hub.inbox.limits import InboxError  # noqa: E402
@@ -259,17 +259,72 @@ class Unblock:
         self.stop.set()
 
 
-class McpCase(unittest.TestCase):
+# SPEC "오류 → HTTP status": the status every error code must come with (``RestTools.tool_error`` checks it).
+ERROR_STATUS = {'invalid_input': 400, 'unauthorized': 401, 'forbidden': 403, 'origin_mismatch': 403, 'not_found': 404,
+                'conflict': 409, 'invalid_transition': 409, 'idempotency_conflict': 409, 'token_mismatch': 409,
+                'backend_not_running': 409, 'too_large': 413, 'internal_error': 500, 'project_unavailable': 503,
+                'inbox_busy': 503, 'inbox_mismatch': 503, 'backend_unreachable': 503, 'hub_stopping': 503,
+                'busy': 503}
+# SPEC endpoint table: operation -> (method, path); ``request_id`` is the path's id, the other arguments are the
+# query (GET) or the JSON body, ``states`` is the repeated ``state`` query parameter.
+ROUTES = {'inbox_projects': ('GET', '/projects'), 'inbox_submit': ('POST', '/requests'),
+          'inbox_list': ('GET', '/requests'), 'inbox_get': ('GET', '/requests/{rid}'),
+          'inbox_comment': ('POST', '/requests/{rid}/comments'), 'inbox_update': ('PATCH', '/requests/{rid}'),
+          'inbox_set_state': ('POST', '/requests/{rid}/state'), 'inbox_cancel': ('POST', '/requests/{rid}/cancel'),
+          'inbox_result': ('GET', '/requests/{rid}/result')}
+
+
+class RestTools:
+    """One key's REST calls, named by the operation (what the MCP tests called): ``call`` is the reply, ``tool`` the
+    body of a 2xx reply, ``tool_error`` the ``error`` object of a refusal whose status is its code's SPEC status."""
+
+    def __init__(self, client):
+        self.client = client
+
+    def call(self, name, **arguments):
+        method, path = ROUTES[name]
+        if 'request_id' in arguments:
+            path = path.format(rid=quote(arguments.pop('request_id'), safe=''))
+        if method == 'GET':
+            if 'states' in arguments:
+                arguments['state'] = arguments.pop('states')
+            # Attack paths are sent as they are: '/' stays literal (a path of 2100 directories must fit the request
+            # line) and a lone surrogate becomes its raw (invalid UTF-8) bytes, as the web tests do.
+            parts = []
+            for name, value in arguments.items():
+                for item in value if isinstance(value, list) else [value]:
+                    text = ('true' if item else 'false') if isinstance(item, bool) else str(item)
+                    parts.append(f'{name}={quote(text, safe="/", errors="surrogatepass")}')
+            return self.client.raw('GET', rest.PREFIX + path + ('?' + '&'.join(parts) if parts else ''))
+        return self.client.call(method, path, arguments)
+
+    def tool(self, name, **arguments):
+        reply = self.call(name, **arguments)
+        if not 200 <= reply.status < 300:
+            raise AssertionError(f'{name} failed: {reply.status} {reply.body!r}')
+        return reply.json
+
+    def tool_error(self, name, **arguments):
+        reply = self.call(name, **arguments)
+        if reply.status < 400:
+            raise AssertionError(f'{name} unexpectedly succeeded: {reply.status} {reply.body!r}')
+        error = reply.error
+        if reply.status != ERROR_STATUS[error['code']]:
+            raise AssertionError(f'{name}: {error["code"]} came with HTTP {reply.status}')
+        return error
+
+
+class RestCase(unittest.TestCase):
     def setUp(self):
-        self.hub = McpHub(self)
+        self.hub = RestHub(self)
         self.backend = Backend()
         self.reader = results.Results(self.hub.inbox, port=self.backend)
-        self.hub.server.results = self.reader
+        self.hub.api.results = self.reader
         self.keys = {name: self.hub.key(name, grade, scope) for name, grade, scope in (
             ('r1', 'requester', {'projects': [self.hub.a]}), ('r2', 'requester', {'projects': [self.hub.a]}),
             ('rb', 'requester', {'projects': [self.hub.b]}), ('ed-a', 'editor', {'projects': [self.hub.a]}),
             ('ed-b', 'editor', {'projects': [self.hub.b]}), ('ed-all', 'editor', {'all': True}))}
-        self.c = {name: self.hub.client(key, timeout=10).start() for name, key in self.keys.items()}
+        self.c = {name: RestTools(self.hub.rest(key, timeout=10)) for name, key in self.keys.items()}
         self.rid = self.submit('r1', self.hub.a, 'one')
         self.rid2 = self.submit('r2', self.hub.a, 'two')
         self.rid_b = self.submit('rb', self.hub.b, 'three')
@@ -295,7 +350,7 @@ class McpCase(unittest.TestCase):
         return page_bytes(self.result(full=True, run_id=run_id, **arguments)['raw'])
 
 
-class SummaryDefaultTests(McpCase):
+class SummaryDefaultTests(RestCase):
     def test_default_summary_has_no_raw_report_command_or_artifact_content(self):
         (self.hub.root_a / 'out.txt').write_text('ARTIFACT-CONTENT')
         for arguments in ({}, {'full': False}, {'full': False, 'run_id': RUN}, {'run_id': RUN, 'offset': 0, 'length': 5},
@@ -311,13 +366,23 @@ class SummaryDefaultTests(McpCase):
         self.assertEqual(self.backend.calls, [], 'the summary never asks the backend')
 
     def test_only_a_real_true_turns_the_full_view_on(self):
-        for flag in ('true', 'TRUE', 1, 'yes', 'full', 0, '', None, [], {}):
+        # REST (SPEC "Query"): a boolean query value is exactly ``true`` or ``false``; every other spelling is a
+        # 400 ``invalid_input`` (over MCP the JSON types ``1``, ``0``, ``null`` ... were the "not a real true").
+        for flag in ('TRUE', 'True', '1', 'yes', 'full', '0', '', 'false ', ' true', 'tru'):
             with self.subTest(full=flag):
                 call = self.c['r1'].call('inbox_result', request_id=self.rid, full=flag, run_id=RUN)
-                text = json.dumps(call)
+                self.assertEqual(call.status, 400, call.body)
+                self.assertEqual(call.error['code'], 'invalid_input')
+                text = call.body.decode()
                 self.assertNotIn(REPORT, text)
                 self.assertNotIn('"raw"', text)
                 self.assertNotIn('"full"', text)
+        call = self.c['r1'].call('inbox_result', request_id=self.rid, full=False, run_id=RUN)
+        self.assertEqual(call.status, 200, call.body)
+        text = call.body.decode()
+        self.assertNotIn(REPORT, text)
+        self.assertNotIn('"raw"', text)
+        self.assertNotIn('"full"', text)
         self.assertFalse(self.backend.raw_calls())
 
     def test_closed_request_summary_is_the_managers_text_only(self):
@@ -327,7 +392,7 @@ class SummaryDefaultTests(McpCase):
         self.assertNotIn(VIEW_LOG, json.dumps(value))
 
 
-class FullViewTests(McpCase):
+class FullViewTests(RestCase):
     def test_full_view_shows_reports_commands_and_run_sources_but_no_log_bytes_or_host_paths(self):
         value = self.result(full=True)
         task = value['full']['task']
@@ -346,7 +411,7 @@ class FullViewTests(McpCase):
         self.assertEqual(self.backend.calls, [('task_status', self.hub.root_a, (TASK,), True)])
 
 
-class RawLinkageTests(McpCase):
+class RawLinkageTests(RestCase):
     def test_runs_and_commands_of_other_tasks_are_not_found_and_never_read(self):
         foreign = [OTHER_RUN, OTHER_COMMAND, FOREIGN_RUN, FOREIGN_COMMAND, str(uuid.uuid4()), TASK, self.rid,
                    RUN.upper(), '{' + RUN + '}', RUN.replace('-', ''), 'urn:uuid:' + RUN, RUN + ' ', ' ' + RUN,
@@ -383,7 +448,7 @@ class RawLinkageTests(McpCase):
         self.assertEqual(self.backend.raw_calls(), [])
 
 
-class RawPageTests(McpCase):
+class RawPageTests(RestCase):
     def test_pages_across_backend_read_boundaries_are_the_exact_bytes(self):
         step = 32 * 1024
         for offset, length in ((0, 1), (step - 1, 2), (step - 10, 20), (step, 1), (step + 1, step), (2 * step - 3, 6),
@@ -430,21 +495,24 @@ class RawPageTests(McpCase):
             with self.subTest(offset=offset):
                 self.assertEqual(self.error(full=True, run_id=RUN, offset=offset, length=1)['code'], 'invalid_input')
         for arguments in ({'length': 0}, {'length': -1}, {'length': 131073}, {'length': 2 ** 40}, {'offset': -1},
-                          {'length': True}, {'offset': False}, {'length': 1.5}, {'offset': '0'}, {'length': '5'}):
+                          {'length': True}, {'offset': False}, {'length': 1.5}, {'offset': 'x'}, {'length': '5x'},
+                          {'length': ''}, {'offset': '+1'}, {'length': ' 5'}):
+            # REST (SPEC "Query"): an integer is an unsigned decimal, so ``-1``, ``1.5``, ``true``, ``+1`` ... are
+            # 400 ``invalid_input`` (over MCP the JSON types ``true``/``1.5``/``"5"`` were the wrong-type cases).
             with self.subTest(arguments=arguments):
                 self.assertEqual(self.error(full=True, run_id=RUN, **arguments)['code'], 'invalid_input')
         self.assertEqual(self.raw_bytes(RUN, offset=0, length=131072), RUN_LOG, 'one page covers a 100 KB log')
         self.assertEqual(self.raw_bytes(RUN), RUN_LOG, 'the default page is 131072 bytes from the start')
 
 
-class BackendOffTests(McpCase):
+class BackendOffTests(RestCase):
     def test_raw_is_backend_not_running_and_nothing_cached_leaks(self):
         self.assertEqual(self.raw_bytes(RUN, offset=0, length=50), RUN_LOG[:50])
         self.assertIn(REPORT, json.dumps(self.result(full=True)))
         self.backend.down = 'backend_not_running'
         call = self.c['r1'].call('inbox_result', request_id=self.rid, full=True, run_id=RUN)
-        self.assertEqual(call['structuredContent']['error']['code'], 'backend_not_running')
-        text = json.dumps(call)
+        self.assertEqual((call.status, call.error['code']), (409, 'backend_not_running'))
+        text = call.body.decode()
         self.assertNotIn(base64.b64encode(RUN_LOG[:8]).decode(), text)
         full = self.result(full=True)
         text = json.dumps(full)
@@ -475,7 +543,7 @@ class BackendOffTests(McpCase):
         self.assertEqual(self.backend.calls, [])
 
 
-class ArtifactAttackTests(McpCase):
+class ArtifactAttackTests(RestCase):
     REJECT = {'forbidden', 'not_found', 'invalid_input'}
 
     def setUp(self):
@@ -494,10 +562,11 @@ class ArtifactAttackTests(McpCase):
                 with Unblock(self.hub.root_a / 'pipe'):
                     call = self.c['r1'].call('inbox_result', request_id=self.rid, full=True, artifact_path=path)
                 self.assertLess(time.monotonic() - started, 3.0, 'refused promptly (no FIFO/device blocking)')
-                self.assertTrue(call['isError'], call)
-                text = json.dumps(call)
-                code = call['structuredContent']['error']['code']
+                self.assertGreaterEqual(call.status, 400, call.body)
+                text = call.body.decode()
+                code = call.error['code']
                 self.assertIn(code, self.REJECT, text)
+                self.assertEqual(call.status, ERROR_STATUS[code], text)
                 for secret in Tree.SECRETS:
                     self.assertNotIn(secret, text)
                 self.assertNotIn(base, text, 'no host path in the error')
@@ -564,7 +633,7 @@ class ArtifactAttackTests(McpCase):
         self.assertEqual(self.error(full=True, artifact_path='inside.txt')['code'], 'forbidden')
 
 
-class ArtifactRaceTests(McpCase):
+class ArtifactRaceTests(RestCase):
     """TOCTOU: the target changes after the path judgement and before/while it is opened."""
 
     def setUp(self):
@@ -704,7 +773,7 @@ class ArtifactRaceTests(McpCase):
         self.assertEqual(other_file | other_dir, set())
 
 
-class MalformedBackendTests(McpCase):
+class MalformedBackendTests(RestCase):
     """Known gaps from the security review: a malformed or limit-ignoring ``raw_query`` answer must end as a clean
     ``InboxError`` (never ``internal_error``) and must never make a page larger than the one asked for."""
 
@@ -739,12 +808,12 @@ class MalformedBackendTests(McpCase):
             self.serve(answer)
             with self.subTest(label=label):
                 call = self.c['r1'].call('inbox_result', request_id=self.rid, full=True, run_id=RUN, offset=0, length=5)
-                text = json.dumps(call)
-                if call['isError']:
-                    self.assertIn(call['structuredContent']['error']['code'],
-                                  {'backend_unreachable', 'not_found', 'invalid_input'}, text)
+                text = call.body.decode()
+                if call.status >= 400:
+                    self.assertIn(call.error['code'], {'backend_unreachable', 'not_found', 'invalid_input'}, text)
+                    self.assertEqual(call.status, ERROR_STATUS[call.error['code']], text)
                 else:  # an empty/partial page is acceptable only if it carries no data that was not served
-                    self.assertLessEqual(len(page_bytes(call['structuredContent']['raw'])), 5)
+                    self.assertLessEqual(len(page_bytes(call.json['raw'])), 5)
 
     def test_a_backend_that_ignores_limit_cannot_oversize_a_page(self):
         calls = []
@@ -760,8 +829,8 @@ class MalformedBackendTests(McpCase):
             with self.subTest(offset=offset, length=length):
                 call = self.c['r1'].call('inbox_result', request_id=self.rid, full=True, run_id=RUN, offset=offset,
                                          length=length)
-                self.assertFalse(call['isError'], call)
-                page = call['structuredContent']['raw']
+                self.assertEqual(call.status, 200, call.body)
+                page = call.json['raw']
                 data = page_bytes(page)
                 self.assertLessEqual(len(data), length, 'a page is never longer than the length asked for')
                 self.assertEqual(data, RUN_LOG[offset:offset + len(data)])
@@ -778,7 +847,7 @@ class MalformedBackendTests(McpCase):
         self.assertLessEqual(len(page_bytes(page)), 131072)
 
 
-class ArtifactEdgeTests(McpCase):
+class ArtifactEdgeTests(RestCase):
     def setUp(self):
         super().setUp()
         self.tree = Tree(self.hub.root_a, self.hub.base, self.hub.root_b)
@@ -792,8 +861,9 @@ class ArtifactEdgeTests(McpCase):
                 with Unblock(self.hub.root_a / 'pipe'):
                     call = self.c['r1'].call('inbox_result', request_id=self.rid, full=True, artifact_path=path)
                 self.assertLess(time.monotonic() - started, 3.0)
-                self.assertTrue(call['isError'])
-                self.assertIn(call['structuredContent']['error']['code'], {'forbidden', 'not_found', 'invalid_input'})
+                self.assertGreaterEqual(call.status, 400)
+                self.assertIn(call.error['code'], {'forbidden', 'not_found', 'invalid_input'})
+                self.assertEqual(call.status, ERROR_STATUS[call.error['code']])
 
     @unittest.skipIf(os.geteuid() == 0, 'root ignores file modes')
     def test_an_unreadable_file_is_a_clean_refusal(self):
@@ -802,9 +872,10 @@ class ArtifactEdgeTests(McpCase):
         target.chmod(0)
         self.addCleanup(target.chmod, 0o600)
         call = self.c['r1'].call('inbox_result', request_id=self.rid, full=True, artifact_path='private.txt')
-        self.assertTrue(call['isError'])
-        self.assertIn(call['structuredContent']['error']['code'], {'forbidden', 'not_found'})
-        self.assertNotIn('MODE-000-SECRET', json.dumps(call))
+        self.assertGreaterEqual(call.status, 400)
+        self.assertIn(call.error['code'], {'forbidden', 'not_found'})
+        self.assertEqual(call.status, ERROR_STATUS[call.error['code']])
+        self.assertNotIn('MODE-000-SECRET', call.body.decode())
 
     def test_a_huge_sparse_file_is_read_page_wise_not_loaded(self):
         big = self.hub.root_a / 'sparse.bin'
@@ -849,15 +920,21 @@ class ArtifactEdgeTests(McpCase):
             with self.subTest(name=name):
                 self.assertEqual(page_bytes(self.result(full=True, artifact_path=name)['artifact']), name.encode())
 
-    def test_artifact_arguments_that_are_not_strings_are_invalid_input(self):
-        for value in (1, True, ['inside.txt'], {'p': 'inside.txt'}, 1.5):
+    def test_artifact_arguments_that_are_not_one_string_are_a_clean_refusal(self):
+        # REST has no JSON types in a query: a number or boolean is just a (missing) file name, and a repeated
+        # ``artifact_path`` is the SPEC's 400 ``invalid_input`` (``state`` is the only repeatable parameter).
+        for value in (1, True, 1.5, ['inside.txt', 'inside.txt'], ['inside.txt', 'sub/note.txt']):
             with self.subTest(value=value):
                 call = self.c['r1'].call('inbox_result', request_id=self.rid, full=True, artifact_path=value)
-                self.assertTrue(call['isError'])
-                self.assertNotEqual(call['structuredContent']['error']['code'], 'internal_error')
+                self.assertGreaterEqual(call.status, 400)
+                self.assertNotEqual(call.error['code'], 'internal_error')
+                self.assertLess(call.status, 500)
+        repeated = self.c['r1'].call('inbox_result', request_id=self.rid, full=True,
+                                     artifact_path=['inside.txt', 'inside.txt'])
+        self.assertEqual((repeated.status, repeated.error['code']), (400, 'invalid_input'))
 
 
-class VisibilityTests(McpCase):
+class VisibilityTests(RestCase):
     CALLS = ({'full': True}, {'full': True, 'run_id': RUN}, {'full': True, 'artifact_path': 'inside.txt'},
              {'full': True, 'artifact_path': '.wb/inbox.sqlite3'}, {'full': True, 'artifact_path': 'nope'},
              {'full': True, 'run_id': RUN, 'artifact_path': '../x'}, {})
@@ -876,8 +953,8 @@ class VisibilityTests(McpCase):
             for arguments in self.CALLS:
                 with self.subTest(client=name, arguments=arguments):
                     call = self.c[name].call('inbox_result', request_id=self.rid, **arguments)
-                    self.assertEqual(call['structuredContent']['error']['code'], 'not_found')
-                    text = json.dumps(call)
+                    self.assertEqual((call.status, call.error['code']), (404, 'not_found'))
+                    text = call.body.decode()
                     for secret in ('INSIDE-PUBLIC', REPORT, VIEW_LOG):
                         self.assertNotIn(secret, text)
         self.assertEqual(self.backend.calls, [], 'a request the principal cannot see touches no backend')
@@ -898,8 +975,9 @@ class VisibilityTests(McpCase):
     def test_an_unknown_request_id_is_not_found(self):
         for rid in (str(uuid.uuid4()), 'x', '../' + self.rid, self.rid.upper()):
             with self.subTest(rid=rid):
-                self.assertIn(self.c['r1'].call('inbox_result', request_id=rid, full=True)['structuredContent']
-                              ['error']['code'], {'not_found', 'invalid_input'})
+                call = self.c['r1'].call('inbox_result', request_id=rid, full=True)
+                self.assertIn(call.error['code'], {'not_found', 'invalid_input'})
+                self.assertEqual(call.status, ERROR_STATUS[call.error['code']])
 
 
 # --- T2: web pages ---------------------------------------------------------------------------------
@@ -1127,27 +1205,26 @@ class WebMalformedBackendTests(WebCase):
 
 
 class IdenticalBytesTests(WebCase):
-    """The same range through MCP ``inbox_result`` and the web page is the same bytes (and the oracle's)."""
+    """The same range through REST ``/result`` and the web page is the same bytes (and the oracle's)."""
 
     async def asyncSetUp(self):
         await super().asyncSetUp()
-        self.mcp_server = mcp.McpServer(self.inbox, results=self.reader)
+        self.rest_api = inbox_api.InboxApi(self.inbox, results=self.reader)
         self.rid = self.linked()
         (self.root_a / 'data.bin').write_bytes(RUN_LOG[:70000])
         (self.root_a / 'text.txt').write_bytes(TEXT_LOG)
         self.backend.logs[('run', RUN)] = RUN_LOG
 
     async def test_same_range_same_bytes(self):
-        # /mcp is served by a second app over the same inbox, results and key store
+        # /api/v1/ is served by a second app over the same inbox, results and key store
         from aiohttp import test_utils
         from workbench.hub.web.app import create_app
-        server = test_utils.TestServer(create_app(self.services, routes=[mcp.routes(self.mcp_server)]),
+        server = test_utils.TestServer(create_app(self.services, routes=[rest.routes(self.rest_api)]),
                                        host='127.0.0.1', port=0)
         await server.start_server()
         self.addAsyncCleanup(server.close)
         key = self.services.api_keys.issue('ed', 'editor', {'all': True}, None, now=self.now[0]).raw
-        client = McpClient('127.0.0.1', server.port, key, timeout=10)
-        await asyncio.to_thread(client.start)
+        client = RestTools(RestClient('127.0.0.1', server.port, key, timeout=10))
         cases = [('run_id', RUN, f'/requests/{self.rid}/raw?run_id={RUN}', RUN_LOG),
                  ('artifact_path', 'data.bin', f'/requests/{self.rid}/artifact?path=data.bin', RUN_LOG[:70000]),
                  ('artifact_path', 'text.txt', f'/requests/{self.rid}/artifact?path=text.txt', TEXT_LOG)]

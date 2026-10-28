@@ -25,7 +25,8 @@ import time
 from typing import Mapping, NamedTuple
 
 from workbench.backend.client import ClientError, NotRunning, UiClient, run_attach
-from workbench.backend.launcher import ISOLATION_CHECK_TIMEOUT, LaunchPlan, StartRequirementError, build_plan
+from workbench.backend.launcher import (ISOLATION_CHECK_BOUND, LaunchPlan,
+                                       StartRequirementError, build_plan)
 from workbench.backend.omp_home import OmpHomeError, auth_guidance, config_dir_value, omp_root
 from workbench.backend.paths import (BackendLocked, DataDirError, DataLayout, InstanceLock,
                                      ensure_private_dir, resolve_data_dir)
@@ -35,8 +36,9 @@ from workbench.ui.status_workbench.projection import _plain, summary_compatibili
 
 EXIT_FAILURE, EXIT_REQUIREMENT, EXIT_NOT_RUNNING = 1, 2, 3
 START_TIMEOUT = 120.0
-# The backend checks both roles one after the other (each bounded).
-ISOLATION_WAIT = 2 * ISOLATION_CHECK_TIMEOUT + 10.0
+# The backend checks both roles one after the other, each at worst ISOLATION_CHECK_BOUND (RPC timeout + stop grace +
+# SIGTERM and SIGKILL waits); the margin covers the reap and the snapshot polling.
+ISOLATION_WAIT = 2 * ISOLATION_CHECK_BOUND + 10.0
 
 
 def _records_command(args: argparse.Namespace) -> int:

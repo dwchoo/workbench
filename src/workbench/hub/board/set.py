@@ -539,7 +539,7 @@ class BoardSet:
                     self._changed()
                 return
             _log(f"agent isolation check failed: {verdict}")
-            await self._end(slot, channel)
+            await self._end(slot, channel, "isolation_failed")
             slot.state, slot.detail, slot.channel = "isolation_failed", verdict, None
             self._changed()
             await self._audit("board_stop", "hub", None, {"channel": slot.name, "pid": channel.pid,
@@ -553,7 +553,18 @@ class BoardSet:
 
     # --- exit / end ----------------------------------------------------------------------------
 
+    def _event(self, event: dict) -> None:
+        """WBX-B12: the agent's start/stop line in the Board events log (diagnostics; never raises)."""
+        record = getattr(self.launcher, "record_event", None)
+        if record is not None:
+            try:
+                record(event)
+            except Exception as exc:  # noqa: BLE001
+                _log(f"board event failed: {exc!r}")
+
     def _exited(self, channel: Channel) -> None:
+        if channel.name == "agent" and not channel.ending:
+            self._event({"event": "exit", "status": channel.returncode})
         for slot in self.slots.values():
             if slot.channel is channel and slot.state in LIVE_STATES:
                 slot.state, slot.exit_status = "exited", channel.returncode
@@ -572,9 +583,12 @@ class BoardSet:
         self.watchers.append(callback)
         return lambda: callback in self.watchers and self.watchers.remove(callback)
 
-    async def _end(self, slot: Slot, channel: Channel) -> dict[str, Any]:
+    async def _end(self, slot: Slot, channel: Channel, reason: str | None = None) -> dict[str, Any]:
+        live = channel.returncode is None  # not reaped yet: this end stops a running OMP
         channel.begin_end()
         result = await asyncio.get_running_loop().run_in_executor(None, channel.terminate, self.grace)
+        if slot.name == "agent" and live:
+            self._event({"event": "stop", "status": channel.returncode, "reason": reason})
         if result["survivors"]:
             _log(f"{slot.name} session members left after the end: {result['survivors']}")
         if slot.channel is channel:
@@ -601,7 +615,7 @@ class BoardSet:
             channel = slot.channel
             old_pid = slot.pid
             if channel is not None:
-                await self._end(slot, channel)
+                await self._end(slot, channel, f"restart:{reason}")
                 slot.channel = None
             await self._audit("board_restart", actor, address, {"channel": name, "pid": old_pid, "reason": reason})
             await self._start(slot, "restart", actor, address)
@@ -621,7 +635,7 @@ class BoardSet:
                     return
                 was_live = slot.state in LIVE_STATES
                 try:
-                    await self._end(slot, channel)
+                    await self._end(slot, channel, reason)
                 except Exception as exc:
                     _log(f"{slot.name} end failed: {exc!r}")
                 slot.channel = None

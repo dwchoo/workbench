@@ -11,7 +11,9 @@ import json
 import os
 from pathlib import Path
 import re
+import stat
 import subprocess
+import sys
 import threading
 import time
 from typing import Any, Callable, Mapping
@@ -31,6 +33,33 @@ EMPTY_DIR_NAME = "empty"
 OVERLAY_NAME = "omp-board.yml"
 MCP_FILE_NAME = "mcp.json"
 SESSIONS_DIR_NAME = "sessions"
+# WBX-B12: OMP writes ``<config root>/logs/omp.<date>.<pid>.log`` and prunes that directory itself; each Board agent
+# start keeps a redacted copy in ``board-agent/omp-logs`` (newest OMP_LOG_KEEP files, each at most OMP_LOG_FILE_LIMIT
+# bytes: its start and its end) so a later login problem can still be diagnosed.
+OMP_LOGS_DIR_NAME = "logs"
+OMP_LOG_ARCHIVE_NAME = "omp-logs"
+OMP_LOG_KEEP = 20
+OMP_LOG_FILE_LIMIT = 1 << 20
+_OMP_LOG_NAME = re.compile(r"^omp\.[0-9A-Za-z._-]+\.log$")
+_LOG_CUT = b"\n[workbench: log middle omitted]\n"
+_LOG_MARGIN = 64 << 10  # read beyond each kept window so a secret crossing the cut is redacted whole first
+OMP_EVENTS_NAME = "board-events.log"  # one JSON line per Board agent start and stop (WBX-B12)
+OMP_EVENTS_LIMIT = 256 << 10
+_REDACTED = b"[redacted]"
+# Redaction runs over the whole kept text; every pattern is linear (atomic key groups, a key never starts right
+# after another key character, quoted values stop at the line end), so no input makes a start slow.
+_KEY = rb"(?>[A-Za-z0-9_.-]+)"
+_QUOTED = rb"\"(?:[^\"\\\n]|\\.)*+\"|'(?:[^'\\\n]|\\.)*+'"
+_SCHEME = rb"(?i:bearer|basic|digest|token|negotiate)[ \t]+"
+_SENSITIVE = ("token", "secret", "password", "passwd", "apikey", "api_key", "authorization", "cookie",
+              "credential", "private_key", "session")
+_HUB_KEY = re.compile(rb"wbk_[a-z2-7]{10}_[A-Za-z0-9_-]++")  # a Hub API key (the Board system key included)
+_SK_KEY = re.compile(rb"(?<![A-Za-z0-9_-])sk-[A-Za-z0-9_-]{16,}+")
+_BEARER = re.compile(rb"(?i)(?<![A-Za-z0-9_-])(bearer\s++)[^\s\"',;]++")
+_COOKIE = re.compile(rb"(?im)^([ \t]*+(?:set-)?cookie[ \t]*+:)[^\n]*+")
+_QUOTED_FIELD = re.compile(rb"([\"'])(" + _KEY + rb")\1(\s*+[:=]\s*+)(" + _QUOTED + rb"|[^\s,;{}\[\]\"']++)")
+_PLAIN_FIELD = re.compile(rb"(?<![A-Za-z0-9_.\"'-])(" + _KEY + rb")([ \t]*+[:=][ \t]*+)(" + _QUOTED
+                          + rb"|(?:" + _SCHEME + rb")?[^\s,;&{}\[\]\"']++)")
 SERVER_NAME = "workbench-hub"
 # OMP names an MCP tool ``mcp__<server, '-' -> '_'>_<tool>`` (TI-15).
 HUB_TOOL_PREFIX = "mcp__" + SERVER_NAME.replace("-", "_") + "_"
@@ -44,6 +73,11 @@ LOCALE_KEYS = ("LC_ALL", "LC_CTYPE", "LANG")  # the C library's precedence for t
 _UTF8_LOCALE = re.compile(r"\.utf-?8(@|$)", re.IGNORECASE)
 # The isolation list without ``native``: the only provider that reads ``<agent dir>/mcp.json`` (TI-15).
 BOARD_PROVIDER_IDS = tuple(item for item in ISOLATION_PROVIDER_IDS if item != "native")
+
+
+def _log(text: str) -> None:
+    """One ``hub.log`` line (the Hub's stderr), like ``board.set``'s."""
+    print(f"[workbench] board: {text}", file=sys.stderr, flush=True)
 
 
 class BoardLaunchError(RuntimeError):
@@ -64,6 +98,7 @@ class AgentLaunch:
     env: dict[str, str] = field(repr=False)  # holds the raw system key
     cwd: str = ""
     key_id: str = ""
+    started_at: float = 0.0  # wall clock of prepare_agent (the Board events line)
 
 
 @dataclass(frozen=True, slots=True)
@@ -86,6 +121,143 @@ def prepare_board_home(state_dir: Path | str, environment: Mapping[str, str]) ->
     empty = ensure_private_dir(root / EMPTY_DIR_NAME)
     return omp_home.prepare_omp_home(root, environment, skills_dir=empty, provider_ids=BOARD_PROVIDER_IDS,
                                      agents_dir=empty)
+
+
+def _sensitive(key: bytes) -> bool:
+    name = key.decode("ascii", "replace").lower().replace("-", "_")
+    return any(word in name or word in name.replace("_", "") for word in _SENSITIVE)
+
+
+def _field(match: re.Match, key_group: int, value_group: int) -> bytes:
+    if not _sensitive(match.group(key_group)):
+        return match.group(0)
+    value = match.group(value_group)
+    quote = value[:1] if value[:1] in (b'"', b"'") else b""
+    start = match.start(value_group) - match.start(0)
+    return match.group(0)[:start] + quote + _REDACTED + quote
+
+
+def redact_log(data: bytes) -> bytes:
+    """``data`` without Hub keys, ``sk-`` keys, bearer values, cookies, or values of fields whose name says token,
+    secret, password, API key, authorization, cookie, credential or session (JSON, dict, ``key: value``, ``key=value``,
+    header forms). Linear in ``len(data)``."""
+    data = _HUB_KEY.sub(_REDACTED, data)
+    data = _SK_KEY.sub(_REDACTED, data)
+    data = _COOKIE.sub(lambda match: match.group(1) + b" " + _REDACTED, data)
+    data = _QUOTED_FIELD.sub(lambda match: _field(match, 2, 4), data)
+    data = _PLAIN_FIELD.sub(lambda match: _field(match, 1, 3), data)
+    return _BEARER.sub(lambda match: match.group(1) + _REDACTED, data)
+
+
+def _read_redacted(fd: int, size: int) -> bytes:
+    """The redacted file, or its redacted first and last ``OMP_LOG_FILE_LIMIT/2`` bytes cut at line ends; each window is
+    read and redacted with a margin first, so a secret crossing a cut is redacted whole or dropped with its line."""
+    if size <= OMP_LOG_FILE_LIMIT:
+        return redact_log(os.pread(fd, OMP_LOG_FILE_LIMIT, 0))
+    half = OMP_LOG_FILE_LIMIT // 2
+    head = redact_log(os.pread(fd, half + _LOG_MARGIN, 0))[:half]
+    if b"\n" in head:
+        head = head[:head.rindex(b"\n") + 1]
+    start = max(0, size - half - _LOG_MARGIN)
+    tail = redact_log(os.pread(fd, size - start, start))[-half:]
+    if b"\n" in tail[:-1]:
+        tail = tail[tail.index(b"\n") + 1:]
+    return head + _LOG_CUT.lstrip(b"\n") + tail
+
+
+def _open_logs_dir(path: Path) -> int | None:
+    """The OMP logs directory as an fd: a plain directory this user owns, never through a symlink."""
+    try:
+        fd = os.open(path, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC)
+    except OSError:
+        return None
+    info = os.fstat(fd)
+    if not stat.S_ISDIR(info.st_mode) or info.st_uid != os.geteuid():
+        os.close(fd)
+        return None
+    return fd
+
+
+def archive_omp_logs(state_dir: Path | str, home: omp_home.OmpHome) -> list[str]:
+    """Copy the Board home's OMP logs (regular files this user owns, never through a symlink) into
+    ``board-agent/omp-logs`` (0700, files 0600, redacted, bounded) and keep the newest :data:`OMP_LOG_KEEP` there.
+    Returns the names copied."""
+    archive = ensure_private_dir(board_dir(state_dir) / OMP_LOG_ARCHIVE_NAME)
+    source = _open_logs_dir(home.root / OMP_LOGS_DIR_NAME)
+    copied = []
+    if source is not None:
+        try:
+            names = sorted(name for name in os.listdir(source) if _OMP_LOG_NAME.match(name))
+            for name in names:
+                if _archive_one(source, name, archive):
+                    copied.append(name)
+        finally:
+            os.close(source)
+    entries = []
+    for name in os.listdir(archive):
+        if not _OMP_LOG_NAME.match(name):
+            continue
+        try:
+            entries.append((os.lstat(archive / name).st_mtime_ns, name))
+        except OSError:
+            continue
+    for _, name in sorted(entries, reverse=True)[OMP_LOG_KEEP:]:
+        try:
+            os.unlink(archive / name)
+        except OSError:
+            pass
+    return copied
+
+
+def _archive_one(source: int, name: str, archive: Path) -> bool:
+    try:
+        fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC | os.O_NONBLOCK, dir_fd=source)
+    except OSError:
+        return False  # a symlink, gone, unreadable
+    try:
+        info = os.fstat(fd)
+        if not stat.S_ISREG(info.st_mode) or info.st_uid != os.geteuid():
+            return False
+        target = archive / name
+        try:
+            kept = os.lstat(target)
+            if kept.st_mtime_ns == info.st_mtime_ns and stat.S_ISREG(kept.st_mode):
+                return False  # unchanged since the last start
+        except FileNotFoundError:
+            pass
+        write_private_bytes(target, _read_redacted(fd, info.st_size))
+        os.utime(target, ns=(info.st_atime_ns, info.st_mtime_ns), follow_symlinks=False)
+        return True
+    finally:
+        os.close(fd)
+
+
+def _stamp(seconds: float) -> str:
+    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(seconds))
+
+
+def record_board_event(state_dir: Path | str, event: Mapping[str, Any]) -> None:
+    """Append one redacted JSON line to ``board-agent/omp-logs/board-events.log`` (0600, never through a symlink);
+    past :data:`OMP_EVENTS_LIMIT` bytes only the newer half of the lines is kept."""
+    archive = ensure_private_dir(board_dir(state_dir) / OMP_LOG_ARCHIVE_NAME)
+    path = archive / OMP_EVENTS_NAME
+    line = redact_log(json.dumps(event, ensure_ascii=False, sort_keys=True).encode()).replace(b"\n", b" ") + b"\n"
+    fd = os.open(path, os.O_WRONLY | os.O_APPEND | os.O_CREAT | os.O_NOFOLLOW | os.O_CLOEXEC, 0o600)
+    try:
+        info = os.fstat(fd)
+        if not stat.S_ISREG(info.st_mode):
+            return
+        if stat.S_IMODE(info.st_mode) != 0o600:
+            os.fchmod(fd, 0o600)
+        if info.st_size + len(line) <= OMP_EVENTS_LIMIT:
+            os.write(fd, line)
+            return
+        kept = os.pread(fd, info.st_size, 0)[-(OMP_EVENTS_LIMIT // 2):]
+    finally:
+        os.close(fd)
+    if b"\n" in kept:
+        kept = kept[kept.index(b"\n") + 1:]
+    write_private_bytes(path, kept + line)
 
 
 def board_overlay() -> dict[str, Any]:
@@ -283,6 +455,12 @@ class BoardLauncher:
         except (omp_home.OmpHomeError, OSError) as exc:
             raise BoardLaunchError("home_unavailable", str(exc)) from exc
 
+    def _keep_logs(self, home: omp_home.OmpHome) -> None:
+        try:
+            archive_omp_logs(self.state_dir, home)
+        except Exception as exc:  # noqa: BLE001 - diagnostics only: never blocks a start (DataDirError, OSError, ...)
+            _log(f"OMP log copy skipped: {type(exc).__name__}: {exc}")
+
     def _rotate(self) -> auth.IssuedKey:
         try:
             return self.api_keys().rotate_system_key(now=float(self.clock()))
@@ -295,6 +473,7 @@ class BoardLauncher:
         prompt = role_prompt(self.config)
         model = board_model(self.config)
         home = await self._blocking(self._home)
+        await self._blocking(self._keep_logs, home)
         resume = await self._blocking(previous_session, home)
         issued = await self._blocking(self._rotate)
         try:
@@ -311,7 +490,8 @@ class BoardLauncher:
             raise BoardLaunchError("home_unavailable", str(exc)) from exc
         env = board_environment(self.environment, home, issued.raw)
         cwd = str(omp_home.environment_home(self.environment))
-        return AgentLaunch(board_argv(omp, overlay, prompt, resume=resume, model=model), env, cwd, issued.key_id)
+        return AgentLaunch(board_argv(omp, overlay, prompt, resume=resume, model=model), env, cwd, issued.key_id,
+                           float(self.clock()))
 
     def prepare_shell(self) -> ShellLaunch:
         """``board_agent.shell`` / ``$SHELL`` / ``/bin/sh`` in ``$HOME`` with ``hub_environment()`` + ``TERM`` and a
@@ -328,13 +508,29 @@ class BoardLauncher:
         try:
             version = launcher.omp_version(omp)
         except launcher.StartRequirementError as exc:
-            return f"check_failed:{exc}"[:REASON_LIMIT]
+            verdict = f"check_failed:{exc}"[:REASON_LIMIT]
+            self.record_event({"event": "start", "started_at": _stamp(started.started_at),
+                               "resume": "--continue" in started.argv, "isolation": verdict})
+            return verdict
         environment = {**started.env, **omp_home.withheld_user_values(hub_environment(self.environment))}
         result = launcher.check_isolation([item for item in started.argv if item != "--continue"],
                                           cwd=started.cwd, environment=environment, role=CHECK_ROLE,
                                           allowed_skills=(), omp_version=version, timeout=self.check_timeout,
                                           cancel=cancel)
-        return isolation_failure(result)
+        verdict = isolation_failure(result)
+        cleanup = result.get("cleanup") or {}
+        self.record_event({"event": "start", "started_at": _stamp(started.started_at),
+                           "resume": "--continue" in started.argv, "omp_version": version,
+                           "isolation": verdict or "ok", "check_state": result.get("state"),
+                           "check_stop": {key: cleanup.get(key) for key in ("stage", "elapsed", "returncode")}})
+        return verdict
+
+    def record_event(self, event: Mapping[str, Any]) -> None:
+        """One line in ``board-agent/omp-logs/board-events.log``; never raises (diagnostics only)."""
+        try:
+            record_board_event(self.state_dir, {"at": _stamp(self.clock()), **event})
+        except Exception as exc:  # noqa: BLE001
+            _log(f"Board event not recorded: {type(exc).__name__}: {exc}")
 
     async def check_agent(self, started: AgentLaunch, cancel: threading.Event | None = None) -> str | None:
         """The start-up isolation check (``launcher.check_isolation``): None when only Hub MCP tools are visible,

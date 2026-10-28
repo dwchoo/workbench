@@ -217,6 +217,14 @@ _PROMPT_FILE_READ_LIMIT = 4096
 CONFIG_READ_TIMEOUT = 8.0
 USER_CONFIG_KEYS = ("disabledProviders", "task.disabledAgents")
 ISOLATION_CHECK_TIMEOUT = 20.0
+# WBX-B12: after the RPC exchange the checked OMP gets stdin EOF (its clean end of an RPC session) and this long to
+# exit before any signal: it may be rotating a shared OAuth refresh token, and a kill then can lose the new token.
+# Then SIGTERM (ISOLATION_TERM_WAIT), then SIGKILL (ISOLATION_KILL_WAIT). One check is bounded by
+# ISOLATION_CHECK_BOUND (+ a short reap).
+ISOLATION_STOP_GRACE = 10.0
+ISOLATION_TERM_WAIT = 3.0
+ISOLATION_KILL_WAIT = 3.0
+ISOLATION_CHECK_BOUND = ISOLATION_CHECK_TIMEOUT + ISOLATION_STOP_GRACE + ISOLATION_TERM_WAIT + ISOLATION_KILL_WAIT
 ISOLATION_CHECK_TOKEN = "isolation-check"
 _RPC_CHECK_ARGS = ("--mode", "rpc", "--no-session", "--no-title")
 # Optional in the check: login state (provider ids and flags only, no secret).
@@ -999,38 +1007,74 @@ def _leader_exited(pid: int) -> bool:
         return True
 
 
-def _stop_group(process: subprocess.Popen, ref: ProcessRef | None) -> dict[str, Any]:
+def _close_quietly(stream) -> None:
+    try:
+        if stream is not None:
+            stream.close()
+    except OSError:
+        pass
+
+
+def _await_leader_exit(process: subprocess.Popen, grace: float) -> None:
+    """Wait up to ``grace`` for the leader to exit on its own, discarding what it still writes to stdout (a full
+    pipe must not keep it from finishing)."""
+    deadline = time.monotonic() + grace
+    fd = process.stdout.fileno() if process.stdout is not None and not process.stdout.closed else None
+    while time.monotonic() < deadline and not _leader_exited(process.pid):
+        if fd is None:
+            time.sleep(0.02)
+            continue
+        ready, _, _ = select.select([fd], [], [], 0.02)
+        if ready:
+            try:
+                if not os.read(fd, 1 << 16):
+                    fd = None
+            except OSError:
+                fd = None
+
+
+def _stop_group(process: subprocess.Popen, ref: ProcessRef | None, grace: float = 0.0) -> dict[str, Any]:
     """Stop the check's own session/process group, then reap the leader.
 
+    With ``grace`` the leader first gets stdin EOF and up to ``grace`` seconds
+    to exit by itself (WBX-B12); the rest of the group is signalled after that.
     The leader is our unreaped child and led a new session, so its PID (the
     group id) cannot be reused until we reap it: every signal below reaches
     exactly this group.
     """
     pgid = process.pid
-    for sig, grace in ((signal.SIGTERM, 3.0), (signal.SIGKILL, 3.0)):
+    began = time.monotonic()
+    stage, seconds = "exited", {}
+    if grace > 0:
+        _close_quietly(process.stdin)
+        _await_leader_exit(process, grace)
+        stage, seconds["eof"] = "eof", round(time.monotonic() - began, 3)
+    for name, sig, wait in (("sigterm", signal.SIGTERM, ISOLATION_TERM_WAIT),
+                            ("sigkill", signal.SIGKILL, ISOLATION_KILL_WAIT)):
         if _leader_exited(pgid) and not _group_members(pgid):
             break
         try:
             os.killpg(pgid, sig)
         except OSError:  # gone, or EPERM (no member may be signalled): reported in ``left``, never raised
             break
-        deadline = time.monotonic() + grace
+        sent = time.monotonic()
+        deadline = sent + wait
         while time.monotonic() < deadline and not (_leader_exited(pgid) and not _group_members(pgid)):
             time.sleep(0.02)
+        stage, seconds[name] = name, round(time.monotonic() - sent, 3)
     left = _group_members(pgid)
     try:
         process.wait(timeout=5)
     except subprocess.TimeoutExpired:
         pass
     for stream in (process.stdin, process.stdout):
-        try:
-            if stream is not None:
-                stream.close()
-        except OSError:
-            pass
+        _close_quietly(stream)
     state = LinuxProcessProbe().observe(ref).state if ref is not None else "unknown"
+    # WBX-B12: the last stop stage reached (exited: gone before any; eof: stdin EOF was enough; sigterm; sigkill),
+    # the seconds spent in each stage reached and in the whole stop.
     return {"pid": pgid, "start_ticks": ref.start_ticks if ref else None, "state": state,
-            "returncode": process.returncode, "group_left": left}
+            "returncode": process.returncode, "group_left": left, "stage": stage, "stage_seconds": seconds,
+            "elapsed": round(time.monotonic() - began, 3)}
 
 
 def _rpc_exchange(process: subprocess.Popen, requests: Sequence[tuple[str, str]], deadline: float,
@@ -1089,7 +1133,8 @@ def check_isolation(command: Sequence[str], *, cwd: Path | str, environment: Map
     home (``PI_CODING_AGENT_DIR`` in ``environment``) the check also sends
     ``get_login_providers`` and records which files the checked OMP holds open
     (``home_observation``). Bounded by ``timeout``; the check's own process
-    group is always stopped and reaped. ``keep_raw`` adds the raw RPC data
+    group is always stopped and reaped: stdin EOF first and up to
+    ``ISOLATION_STOP_GRACE`` for OMP to end by itself, then SIGTERM/SIGKILL. ``keep_raw`` adds the raw RPC data
     (tests/evidence only; not for the snapshot).
     """
     started = time.monotonic()
@@ -1124,7 +1169,7 @@ def check_isolation(command: Sequence[str], *, cwd: Path | str, environment: Map
             result["error"] = str(exc)
             data = None
         finally:
-            result["cleanup"] = _stop_group(process, ref)
+            result["cleanup"] = _stop_group(process, ref, ISOLATION_STOP_GRACE)
         stderr.seek(0)
         errors = stderr.read(1 << 16).decode("utf-8", "replace")
     result["extension_errors"] = [line.strip() for line in errors.splitlines() if "Failed to load extension" in line]

@@ -73,8 +73,8 @@ class RealSummaryIndependent(unittest.TestCase):
                 self.argv, self.options = argv, kwargs
                 self.returncode, self.stdin = None, NoParentInput()
                 self.selected_auth = user_auth_store(kwargs["env"])
-                self.copied_auth = owner.roots[-1] / "agent/agent.db"
-                self.copy_private_at_launch = self.copied_auth.is_file() and self.copied_auth.stat().st_mode & 0o777 == 0o600
+                self.linked_auth = owner.roots[-1] / "agent/agent.db"
+                self.link_target_at_launch = (os.readlink(self.linked_auth) if self.linked_auth.is_symlink() else None)
                 owner.processes.append(self)
 
             def poll(self):
@@ -164,9 +164,9 @@ class RealSummaryIndependent(unittest.TestCase):
             self.assertTrue(process.stdin.closed)
         return code, result, output, popen
 
-    def test_opt_in_off_cannot_copy_auth_create_output_or_launch(self):
+    def test_opt_in_off_cannot_link_auth_create_output_or_launch(self):
         output = self.parent / "off"
-        with patch.object(trial, "_copy_auth", side_effect=AssertionError("auth access forbidden")) as copy, \
+        with patch.object(trial, "_link_auth", side_effect=AssertionError("auth access forbidden")) as copy, \
                 patch.object(trial.subprocess, "Popen", side_effect=AssertionError("Native forbidden")) as native, \
                 patch.object(trial, "SDKSummaryAdapter", side_effect=AssertionError("SDK forbidden")):
             code, result = trial.run_real_summary(output, auth_source=self.auth)
@@ -176,35 +176,32 @@ class RealSummaryIndependent(unittest.TestCase):
         self.assertFalse(output.exists())
         self.assertTrue(all(p.read_bytes() == data for p, data in self.source_bytes.items()), "synthetic auth source bytes changed")
 
-    def test_fake_wal_blind_copy_is_private_and_invalid_copy_precedes_launch(self):
-        root = self.parent / "copy"
+    def test_auth_is_shared_by_a_symlink_never_opened_and_a_bad_source_precedes_launch(self):
+        # WBX-B12 / C-D64: a copy would fork OAuth refresh rotation and log the real account out.
+        root = self.parent / "link"
         root.mkdir(mode=0o700)
         (root / "agent").mkdir(mode=0o700)
-        connects, statements = [], []
-        real_connect = sqlite3.connect
-
-        def connect(path, **kwargs):
-            connects.append(str(path))
-            connection = real_connect(path, **kwargs)
-            connection.set_trace_callback(statements.append)
-            return connection
-
-        with patch.object(trial.sqlite3, "connect", side_effect=connect):
-            trial._copy_auth(self.auth, root)
-        copied = root / "agent/agent.db"
-        self.assertEqual(copied.stat().st_mode & 0o777, 0o600)
-        self.assertFalse(copied.is_symlink() or (root / "auth-staging").exists())
-        self.assertTrue(all(str(root) in path for path in connects))
-        self.assertFalse(any("SELECT" in statement.upper() for statement in statements))
-        with real_connect(copied) as connection:
-            self.assertEqual(connection.execute("SELECT count(*) FROM fake_auth").fetchone()[0], 1)
+        with patch.object(trial.os, "open", side_effect=AssertionError("auth store opened")), \
+                patch("sqlite3.connect", side_effect=AssertionError("auth store opened as SQLite")):
+            trial._link_auth(self.auth, root)
+        linked = root / "agent/agent.db"
+        self.assertTrue(linked.is_symlink())
+        self.assertEqual(os.readlink(linked), str(self.auth))
+        self.assertEqual(sorted(path.name for path in (root / "agent").iterdir()), ["agent.db"])
+        self.assertFalse((root / "auth-staging").exists())
         self.assertTrue(all(p.read_bytes() == data for p, data in self.source_bytes.items()), "synthetic auth source bytes changed")
-        invalid = self.parent / "invalid.db"
-        invalid.write_bytes(b"not a SQLite database")
-        code, result, _, popen = self.run_trial("invalid-copy", auth=invalid)
-        self.assertEqual(code, 2)
-        self.assertEqual((result["phase"], result["summary_requests"]), ("auth_snapshot", 0))
-        popen.assert_not_called()
+        with self.assertRaises(trial.TrialFailure):
+            trial._link_auth(Path("relative/agent.db"), root)
+        for name, bad in (("directory-auth", self.parent / "auth-dir"), ("symlink-auth", self.parent / "auth-link")):
+            with self.subTest(name=name):
+                if name == "directory-auth":
+                    bad.mkdir()
+                else:
+                    bad.symlink_to(self.auth)
+                code, result, _, popen = self.run_trial(name, auth=bad)
+                self.assertEqual(code, 2)
+                self.assertEqual((result["phase"], result["summary_requests"]), ("auth_link", 0))
+                popen.assert_not_called()
         self.assertEqual(self.dispatches, 0)
         self.assertTrue(all(not root.exists() for root in self.roots))
 
@@ -241,9 +238,9 @@ class RealSummaryIndependent(unittest.TestCase):
         self.assertEqual(record["request"]["subject"], {"schemaVersion": 1, "kind": "task", "id": result["task_id"]})
         self.assertEqual(record["request"]["sources"], result["sources"])
         process = self.processes[0]
-        self.assertTrue(process.copy_private_at_launch)
-        self.assertEqual(process.selected_auth, process.copied_auth,
-                         "Native must select the private copied auth store, never an empty default location")
+        self.assertEqual(process.link_target_at_launch, str(self.auth))
+        self.assertEqual(process.selected_auth, process.linked_auth,
+                         "Native must select the linked auth store, never an empty default location")
         self.assertEqual(result["overall_gate_status"], "inconclusive")
         self.assertFalse(result["raw_activation"])
         self.assertTrue(all(not root.exists() for root in self.roots))
@@ -273,21 +270,22 @@ class RealSummaryIndependent(unittest.TestCase):
         self.assertEqual((code, result["status"], self.dispatches), (2, "stored", 1))
         cleanup = result["cleanup"]
         self.assertEqual(cleanup["status"], "incomplete")
-        self.assertTrue(cleanup["auth_copy_removed"])
+        self.assertTrue(cleanup["auth_link_removed"])
         self.assertFalse(cleanup["private_root_removed"])
         retained = Path(cleanup["retained_private_root"])
         self.assertEqual(retained, self.roots[0])
         self.assertTrue(retained.is_dir())
         self.assertFalse((retained / "agent").exists())
+        self.assertTrue(self.auth.is_file(), "removing the link must keep its target")
         self.assertNotEqual(cleanup["remaining_owned"], [])
 
-    def test_owner_path_binary_selection_precedes_auth_and_missing_never_copies(self):
+    def test_owner_path_binary_selection_precedes_auth_and_missing_never_links(self):
         owner_bin = self.parent / "owner-bin"
         owner_bin.mkdir(mode=0o700)
         executable = owner_bin / "omp"
         executable.write_bytes(b"controlled owner PATH executable; must never execute")
         executable.chmod(0o700)
-        real_which, real_copy = shutil.which, trial._copy_auth
+        real_which, real_link = shutil.which, trial._link_auth
         events = []
 
         def lookup(command, *args, **kwargs):
@@ -296,16 +294,16 @@ class RealSummaryIndependent(unittest.TestCase):
                 events.append(("binary", str(Path(selected).resolve()) if selected else None))
             return selected
 
-        def copy_after_selection(source, root):
+        def link_after_selection(source, root):
             self.assertEqual(events, [("binary", str(executable.resolve()))])
-            events.append(("auth_copy", str(root)))
-            real_copy(source, root)
+            events.append(("auth_link", str(root)))
+            real_link(source, root)
 
         output = self.parent / "owner-path"
         with patch.dict(os.environ, {"PATH": str(owner_bin)}), self.external() as popen:
             # Override the general fixture's discovery double with real PATH semantics.
             with patch.object(trial.shutil, "which", side_effect=lookup), \
-                    patch.object(trial, "_copy_auth", side_effect=copy_after_selection):
+                    patch.object(trial, "_link_auth", side_effect=link_after_selection):
                 code, result = trial.run_real_summary(output, real_model=True, auth_source=self.auth)
         self.assertEqual((code, result["status"], self.dispatches), (0, "stored", 1))
         popen.assert_called_once()
@@ -316,7 +314,7 @@ class RealSummaryIndependent(unittest.TestCase):
         self.assertEqual(process.options["env"]["PATH"], private_path)
         self.assertNotIn(str(owner_bin), private_path.split(os.pathsep))
         self.assertEqual(result["binary_sha256"], sha256(executable.read_bytes()).hexdigest())
-        self.assertEqual([event[0] for event in events], ["binary", "auth_copy"])
+        self.assertEqual([event[0] for event in events], ["binary", "auth_link"])
         self.assertTrue(process.stdin.closed)
 
         missing_bin = self.parent / "missing-bin"
@@ -324,7 +322,7 @@ class RealSummaryIndependent(unittest.TestCase):
         events.clear()
         with patch.dict(os.environ, {"PATH": str(missing_bin)}), self.external() as popen:
             with patch.object(trial.shutil, "which", side_effect=lookup), \
-                    patch.object(trial, "_copy_auth", side_effect=AssertionError("missing binary must not access auth")) as copy:
+                    patch.object(trial, "_link_auth", side_effect=AssertionError("missing binary must not access auth")) as copy:
                 code, result = trial.run_real_summary(self.parent / "missing-binary", real_model=True, auth_source=self.auth)
         self.assertEqual((code, result["failure_reason"], result["summary_requests"]), (2, "omp_missing", 0))
         self.assertEqual(events, [("binary", None)])

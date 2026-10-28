@@ -6,14 +6,12 @@ No quality judgement, retry, fallback, parent prompt or raw rotation is performe
 from __future__ import annotations
 
 import argparse
-from contextlib import closing
 from datetime import datetime, timezone
 from hashlib import file_digest, sha256
 import json
 import os
 from pathlib import Path
 import shutil
-import sqlite3
 import stat
 import subprocess
 import sys
@@ -25,7 +23,7 @@ from workbench.backend import summary_compat_runtime as rt
 from workbench.backend.flow import HandoffJournal
 from workbench.backend.launcher import (LaunchPlan, choose_shell, default_isolation_overlay, load_model_table, omp_command,
     omp_environment, role_overlay, selector_level, selector_model, write_role_overlay)
-from workbench.backend.omp_home import config_dir_value, user_auth_store, user_omp_locations
+from workbench.backend.omp_home import auth_store_state, config_dir_value, user_auth_store, user_omp_locations
 from workbench.backend.paths import DataLayout
 from workbench.backend.summary_adapter import (SDKSummaryAdapter, SourcePiece, SummaryDeferred,
     _resolved_metadata, prepare_summary, skill_bytes, validate_result)
@@ -51,50 +49,21 @@ def _private_directory(path: Path) -> None:
     rt._private_root(path)
 
 
-def _copy_auth(source: Path, root: Path) -> None:
-    """Blind file transfer, then SQLite backup entirely inside the private root.
+def _link_auth(source: Path, root: Path) -> None:
+    """Share the given auth store through ``<root>/agent/agent.db`` -> ``source`` (C-D64), never a copy.
 
-    Opening the original SQLite in mode=ro can still create/change its WAL shm.
-    Stage its DB and optional WAL using read-only descriptors instead. No SQL,
-    credential rows, content hashes or credential values are inspected/reported.
-    A live DB/WAL pair is not guaranteed transaction-consistent or latest.
+    OAuth refresh tokens rotate on use: an OMP on a copy would spend the original's
+    refresh token and keep the new one in the copy, logging the real account out
+    (WBX-B12). Like ``omp_home.prepare_omp_home`` only ``lstat`` is used on the
+    source; it is never opened, read, hashed or copied. SQLite resolves the link,
+    so the -wal/-shm files stay next to the source.
     """
-    staging = root / "auth-staging"
-    staging.mkdir(mode=0o700)
-    try:
-        for suffix in ("", "-wal"):
-            try:
-                fd = os.open(str(source) + suffix, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC)
-            except FileNotFoundError:
-                if suffix:
-                    continue
-                raise
-            with os.fdopen(fd, "rb") as original:
-                before = os.fstat(original.fileno())
-                if not stat.S_ISREG(before.st_mode):
-                    raise TrialFailure("auth_source_not_regular")
-                target = os.open(staging / ("agent.db" + suffix),
-                                 os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_CLOEXEC, 0o600)
-                with os.fdopen(target, "wb") as private:
-                    shutil.copyfileobj(original, private)
-                after = os.fstat(original.fileno())
-                if (before.st_size, before.st_mtime_ns) != (after.st_size, after.st_mtime_ns):
-                    raise TrialFailure("auth_source_changed_during_copy")
-        destination = root / "agent/agent.db"
-        fd = os.open(destination, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_CLOEXEC, 0o600)
-        os.close(fd)
-        deadline = time.monotonic() + 5
-
-        def progress(_status, _remaining, _total):
-            if time.monotonic() > deadline:
-                raise TrialFailure("private_auth_backup_timeout")
-
-        with closing(sqlite3.connect((staging / "agent.db").as_uri() + "?mode=ro", uri=True)) as original:
-            with closing(sqlite3.connect(destination)) as private:
-                original.backup(private, pages=64, progress=progress, sleep=0.01)
-        os.chmod(destination, 0o600)
-    finally:
-        shutil.rmtree(staging)
+    source = Path(source)
+    if not source.is_absolute():
+        raise TrialFailure("auth_source_not_absolute")
+    if not auth_store_state(source).ok:
+        raise TrialFailure("auth_source_not_regular")
+    os.symlink(source, root / "agent/agent.db")
 
 
 def _fixture(layout: DataLayout):
@@ -211,7 +180,7 @@ def run_real_summary(output, *, real_model=False, auth_source=None):
               "summary_requests": 0, "paid_summary_invocations_requested": 0,
               "actual_http_requests": None, "native_io_attribution": "unknown",
               "native_output_captured": False, "quality_evaluated": False,
-              "auth_snapshot_consistency": "not_guaranteed_for_live_source",
+              "auth_store": "shared_symlink",
               "native_version": "unobserved"}
     root = bridge = process = ref = request = base = None
     outcome = {}
@@ -236,8 +205,8 @@ def run_real_summary(output, *, real_model=False, auth_source=None):
         binary = Path(binary_name).resolve(strict=True)
         with binary.open("rb") as binary_stream:
             result["binary_sha256"] = file_digest(binary_stream, "sha256").hexdigest()
-        result["phase"] = "auth_snapshot"
-        _copy_auth(Path(auth_source), root)
+        result["phase"] = "auth_link"
+        _link_auth(Path(auth_source), root)
         table = load_model_table(runtime / "omp_bridge/omp-models.yml")
         manager = table["manager"]["models"]["default"]
         child = table["worker"]["models"]["default"]
@@ -255,14 +224,12 @@ def run_real_summary(output, *, real_model=False, auth_source=None):
                 "PI_CONFIG_DIR": config_dir_value(root / "config", env),
                 "PI_CODING_AGENT_DIR": str(root / "agent")})
         locations = user_omp_locations(child_env)
-        copied_auth = root / "agent/agent.db"
-        info = copied_auth.lstat()
+        linked_auth = root / "agent/agent.db"
+        info = linked_auth.lstat()
         if (locations.config_root != root / "config" or locations.agent_dir != root / "agent"
-                or locations.auth_store != copied_auth or user_auth_store(child_env) != copied_auth
+                or locations.auth_store != linked_auth or user_auth_store(child_env) != linked_auth
                 or locations.config_root.resolve() != root / "config"
-                or user_auth_store(child_env).resolve() != copied_auth
-                or not stat.S_ISREG(info.st_mode) or info.st_uid != os.geteuid()
-                or stat.S_IMODE(info.st_mode) != 0o600):
+                or not stat.S_ISLNK(info.st_mode) or os.readlink(linked_auth) != str(auth_source)):
             raise TrialFailure("private_auth_selection_mismatch")
         overlay = write_role_overlay(root / "config", "manager", role_overlay("manager",
             project_dir=root / "project", home=root / "home", skills_dir=runtime / "omp_bridge/skills",
@@ -369,15 +336,15 @@ def run_real_summary(output, *, real_model=False, auth_source=None):
         stopped = (process is None or (cleanup.get("leader_error") is None
                    and cleanup["leader_exit_code"] is not None and not cleanup["remaining_owned"]))
         if root is not None:
-            # Remove the credential copy even if process cleanup is inconclusive.
+            # Remove the auth store link (never its target) even if process cleanup is inconclusive.
             try:
                 shutil.rmtree(root / "agent")
-                cleanup["auth_copy_removed"] = True
+                cleanup["auth_link_removed"] = True
                 if stopped and cleanup["bridge_closed"]:
                     shutil.rmtree(root)
                     cleanup["private_root_removed"] = not root.exists()
             except OSError:
-                cleanup["auth_copy_removed"] = not (root / "agent").exists()
+                cleanup["auth_link_removed"] = not (root / "agent").exists()
             if root.exists():
                 cleanup["retained_private_root"] = str(root)
         cleanup["status"] = "complete" if stopped and cleanup["bridge_closed"] and (root is None or cleanup["private_root_removed"]) else "incomplete"
@@ -400,7 +367,7 @@ def run_real_summary(output, *, real_model=False, auth_source=None):
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--real-model", action="store_true", help="explicitly allow one actual paid summary invocation")
-    parser.add_argument("--auth-source", type=Path, help="existing agent.db to copy blindly into private SDK storage")
+    parser.add_argument("--auth-source", type=Path, help="absolute path of the agent.db to share through a symlink (never copied)")
     parser.add_argument("--output", type=Path, help="fresh absolute private fixture directory (DB and sanitized result retained)")
     args = parser.parse_args(argv)
     if not args.real_model or args.auth_source is None or args.output is None:

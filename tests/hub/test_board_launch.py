@@ -317,5 +317,71 @@ class IsolationCheckTests(LauncherCase):
         self.assertIsNotNone(self.check())
 
 
+class BoardOmpLogTests(LauncherCase):
+    """WBX-B12: OMP keeps few of its own logs (``<config root>/logs/omp.<date>.<pid>.log``, pruned by OMP); every Board
+    agent start keeps a copy in the persistent Board home (``board-agent/omp-logs``) so a later login problem can be
+    diagnosed. Bounded, private, and never with a key in it."""
+
+    def omp_logs(self) -> Path:
+        return self.box.state / 'board-agent' / 'omp-root' / 'logs'
+
+    def archive(self) -> Path:
+        return self.box.state / 'board-agent' / 'omp-logs'
+
+    def plant(self, name: str, text: str, mtime: float | None = None) -> Path:
+        self.omp_logs().mkdir(parents=True, exist_ok=True)
+        path = self.omp_logs() / name
+        path.write_text(text)
+        if mtime is not None:
+            os.utime(path, (mtime, mtime))
+        return path
+
+    def test_omp_logs_survive_board_restarts_without_keys(self):
+        first = self.prepare()
+        key = first.env['WB_BOARD_MCP_KEY']
+        old = self.plant('omp.2026-10-27.111.log',
+                         f'oauth refresh failed: invalid_grant\nAuthorization: Bearer {key}\nmcp key {key}\n'
+                         '{"refresh_token": "rt-SECRET-VALUE", "access": "at-SECRET-VALUE"}\n')
+        self.prepare()  # restart: the previous run's log is kept
+        old.unlink()  # OMP pruned its own copy
+        self.plant('omp.2026-10-28.222.log', 'second run\n')
+        self.prepare()
+        archive = self.archive()
+        self.assertEqual(sorted(path.name for path in archive.iterdir()),
+                         ['omp.2026-10-27.111.log', 'omp.2026-10-28.222.log'])
+        self.assertEqual(stat.S_IMODE(archive.stat().st_mode), 0o700)
+        kept = (archive / 'omp.2026-10-27.111.log').read_text()
+        self.assertIn('invalid_grant', kept)
+        for secret in (key, key[len('wbk_') + 11:], 'rt-SECRET-VALUE'):
+            self.assertNotIn(secret, kept)
+        for path in archive.iterdir():
+            self.assertEqual(stat.S_IMODE(path.lstat().st_mode), 0o600, path)
+            self.assertTrue(stat.S_ISREG(path.lstat().st_mode), path)
+
+    def test_the_kept_logs_are_bounded_in_number_and_size(self):
+        self.prepare()
+        for index in range(25):
+            self.plant(f'omp.2026-10-01.{1000 + index}.log', f'run {index}\n', mtime=1_700_000_000 + index)
+        big = 'H' * (2 << 20) + 'TAIL-MARK\n'
+        self.plant('omp.2026-10-02.9999.log', 'HEAD-MARK\n' + big, mtime=1_700_000_100)
+        self.prepare()
+        names = sorted(path.name for path in self.archive().iterdir())
+        self.assertEqual(len(names), launch.OMP_LOG_KEEP)
+        self.assertIn('omp.2026-10-02.9999.log', names)  # the newest stay
+        self.assertNotIn('omp.2026-10-01.1000.log', names)  # the oldest go
+        kept = (self.archive() / 'omp.2026-10-02.9999.log').read_text()
+        self.assertLessEqual(len(kept.encode()), launch.OMP_LOG_FILE_LIMIT + 256)
+        self.assertTrue(kept.startswith('HEAD-MARK') and kept.endswith('TAIL-MARK\n'))  # start-up and the end
+
+    def test_a_symlinked_log_is_not_followed(self):
+        self.prepare()
+        outside = self.box.root / 'outside.txt'
+        outside.write_text('NOT-A-LOG\n')
+        self.omp_logs().mkdir(parents=True, exist_ok=True)
+        (self.omp_logs() / 'omp.2026-10-28.5.log').symlink_to(outside)
+        self.prepare()
+        self.assertFalse((self.archive() / 'omp.2026-10-28.5.log').exists())
+
+
 if __name__ == '__main__':
     unittest.main()

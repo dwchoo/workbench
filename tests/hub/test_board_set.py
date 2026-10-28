@@ -249,6 +249,30 @@ class ExitTests(SetCase):
         self.assertFalse(self.board.write('shell', b'echo late\n'))
 
 
+class EventLogTests(SetCase):
+    """WBX-B12: ``board-agent/omp-logs/board-events.log`` gets one JSON line per agent start (isolation verdict) and
+    per agent end (OMP exit status) so a later login problem can be lined up with Board starts and stops."""
+
+    def rows(self) -> list[dict]:
+        path = self.box.state / 'board-agent' / 'omp-logs' / 'board-events.log'
+        return [json.loads(line) for line in path.read_text().splitlines() if line.strip()]
+
+    def test_start_exit_and_restart_are_recorded_with_the_exit_status(self):
+        self.start()
+        self.assertTrue(self.wait(lambda: b'ready' in self.board.replay('agent')))
+        self.board.write('agent', b'exit 7\n')
+        self.assertTrue(self.wait(lambda: self.board.status()['agent']['state'] == 'exited'))
+        self.assertTrue(self.wait(lambda: any(row['event'] == 'exit' for row in self.rows())))
+        self.arun(self.board.restart('agent'))
+        self.arun(self.board.settled())
+        self.pids.add(self.board.status()['agent']['pid'])
+        self.arun(self.board.stop())
+        events = [(row['event'], row.get('status'), row.get('isolation')) for row in self.rows()]
+        self.assertEqual(events, [('start', None, 'ok'), ('exit', 7, None), ('start', None, 'ok'),
+                                  ('stop', events[-1][1], None)])
+        self.assertIsNotNone(events[-1][1])  # the stopped OMP's own exit status
+
+
 class RestartTests(SetCase):
     def test_agent_restart_ends_the_whole_session_and_continues_the_previous_omp_session(self):
         self.start()

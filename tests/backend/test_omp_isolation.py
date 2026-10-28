@@ -256,6 +256,17 @@ import json, os, subprocess, sys, time
 mode = os.environ.get("FAKE_MODE", "clean")
 record = os.environ["FAKE_RECORD"]
 child = subprocess.Popen(["sleep", "60"])  # same process group: must be cleaned too
+marks = record + ".marks"
+
+
+def note(text):
+    with open(marks, "a") as stream:
+        stream.write(text + "\n")
+
+
+if mode in ("slow_exit", "linger"):  # WBX-B12: what the stop did to this OMP
+    import signal
+    signal.signal(signal.SIGTERM, lambda *_: (note("sigterm"), os._exit(143)))
 with open(record, "w") as stream:
     json.dump({{"argv": sys.argv[1:], "pid": os.getpid(), "child": child.pid,
                "bridge": {{k: v for k, v in os.environ.items() if k.startswith("WORKBENCH_G3_")}}}}, stream)
@@ -277,6 +288,14 @@ for line in sys.stdin:
         data = {{"commands": [{{"name": "autoresearch", "source": "extension"}}]}}
     print(json.dumps({{"type": "response", "id": request["id"], "command": request["type"],
                       "success": True, "data": data}}), flush=True)
+if mode == "slow_exit":  # an OMP that needs a while to finish (e.g. a token refresh) after stdin closes
+    note("eof")
+    time.sleep(float(os.environ.get("FAKE_EXIT_DELAY", "2")))
+    note("exited")
+    sys.exit(0)
+if mode == "linger":  # an OMP that does not end on stdin EOF
+    note("eof")
+    time.sleep(60)
 '''
 
 
@@ -360,6 +379,33 @@ class FakeOmpCheckTests(unittest.TestCase):
         self.record.unlink()
         result = self.run_check("clean", extra=("--no-title",))
         self.assertEqual((result["state"], result["leaks"], result["warnings"]), ("ok", [], []))
+        self.assert_cleaned(result)
+
+    def marks(self):
+        try:
+            return Path(str(self.record) + ".marks").read_text().split()
+        except FileNotFoundError:
+            return []
+
+    def test_omp_that_exits_within_the_grace_after_stdin_closes_is_never_signalled(self):
+        # WBX-B12: OMP may be rotating an OAuth token when the check ends; it gets stdin EOF and time to finish.
+        started = time.monotonic()
+        result = self.run_check("slow_exit")
+        self.assertEqual((result["state"], result["ok"], result["error"]), ("ok", True, None))
+        self.assertEqual(self.marks(), ["eof", "exited"])
+        self.assertGreaterEqual(time.monotonic() - started, 2.0)
+        self.assert_cleaned(result)
+
+    def test_omp_still_running_after_the_grace_is_terminated_within_the_bound(self):
+        from unittest import mock
+        started = time.monotonic()
+        with mock.patch.object(launcher, "ISOLATION_STOP_GRACE", 1.0):
+            result = self.run_check("linger")
+        elapsed = time.monotonic() - started
+        self.assertEqual(self.marks(), ["eof", "sigterm"])
+        self.assertGreaterEqual(elapsed, 1.0)
+        self.assertLess(elapsed, 1.0 + 3.0 + 2.0)  # grace + the SIGTERM wait + slack
+        self.assertEqual(result["state"], "ok")
         self.assert_cleaned(result)
 
     def test_hanging_omp_times_out_and_is_cleaned_by_identity(self):
@@ -460,6 +506,11 @@ class CliIsolationWaitTests(unittest.TestCase):
         self.assertEqual(final["omp_isolation"]["state"], "leak")
         self.assertIn("waiting for the OMP isolation check", stream.getvalue())
         self.assertGreaterEqual(cli.ISOLATION_WAIT, 2 * launcher.ISOLATION_CHECK_TIMEOUT)
+
+    def test_start_waits_for_both_checks_including_their_stop_grace(self):
+        from workbench.backend import cli
+        self.assertGreaterEqual(cli.ISOLATION_WAIT,
+                                2 * (launcher.ISOLATION_CHECK_TIMEOUT + launcher.ISOLATION_STOP_GRACE))
 
     def test_a_check_still_pending_after_the_bound_is_printed_as_pending(self):
         import io

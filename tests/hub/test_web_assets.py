@@ -51,6 +51,23 @@ class PinnedDependencyTests(unittest.TestCase):
                      if pattern.search(p.read_text())]
         self.assertEqual(offenders, [])
 
+    def test_src_has_no_hub_mcp_transport_left(self):
+        """WBX-B8 (S5, SPEC "MCP 제거 순서" contract): no ``/mcp`` route or mention, no JSON-RPC transport (``jsonrpc``,
+        ``tools/list``/``tools/call``, the MCP session and protocol headers) and no ``hub/mcp.py`` in ``src/``. OMP's own
+        MCP (the manager/worker isolation and the Board's ``mcp:`` leak check, ``mcp.json``) is not the Hub transport;
+        ``/mcp`` is matched in lower case only (a route path; "versions/MCP" in prose is not one)."""
+        self.assertFalse((REPO / 'src/workbench/hub/mcp.py').exists())
+        pattern = re.compile(r'(?-i:/mcp)(?!\.json)\b|json-?rpc|tools/(list|call)\b|mcp-session-id|mcp-protocol-version'
+                             r'|McpServer|internal_mcp', re.IGNORECASE)
+        offenders = []
+        for path in sorted((REPO / 'src').rglob('*')):
+            if not path.is_file() or '__pycache__' in path.parts or path.suffix in ('.pyc', '.png', '.ico', '.woff2'):
+                continue
+            for number, line in enumerate(path.read_text(errors='replace').splitlines(), 1):
+                if pattern.search(line):
+                    offenders.append(f'{path.relative_to(REPO)}:{number}: {line.strip()[:120]}')
+        self.assertEqual(offenders, [])
+
 
 class VendoredXtermTests(unittest.TestCase):
     def test_assets_and_licenses_exist_and_are_nonempty(self):

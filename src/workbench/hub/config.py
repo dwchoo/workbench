@@ -54,7 +54,7 @@ CONFIG_TEMPLATE = """\
 # 'wb hub reload' 때라면 실행 중인 설정을 그대로 두고 잘못된 항목 이름을 알려 줍니다.
 # 아래에서 '#'으로 막힌 줄은 기본값을 보여 줍니다. 바꾸려면 '#'을 지우고 값을 고치세요.
 #
-# 웹(Task Inbox 화면, 외부 /mcp, Web Board) 켜는 방법:
+# 웹(Task Inbox 화면, 외부 요청 API /api/v1/, Web Board) 켜는 방법:
 #   1. 아래 [web]의 'enabled = false'를 'enabled = true'로 바꿉니다.
 #   2. 'wb hub passwd'로 웹 로그인 비밀번호를 정합니다.
 #   3. 'wb hub reload'로 반영합니다(Hub가 꺼져 있으면 'wb hub start').
@@ -91,7 +91,7 @@ enabled = false
 # server_names = []
 
 # allow_from: 접속을 받을 기기의 IP 주소나 대역(CIDR) 목록. 기본값 [](모든 기기, 제한 없음).
-# 목록이 있으면 그 밖의 주소는 내용 없는 403으로 거절합니다(화면, /mcp, Web Board 모두).
+# 목록이 있으면 그 밖의 주소는 내용 없는 403으로 거절합니다(화면, /api/v1/, Web Board 모두).
 # 이 컴퓨터(loopback)도 자동으로 허용하지 않으니, 여기서도 쓰려면 "127.0.0.1"과 "::1"을 넣으세요.
 # 대역은 "192.168.10.0/24"처럼 끝자리를 0으로 적습니다("192.168.10.5/24"는 잘못된 값).
 #   예(Tailscale VPN과 이 컴퓨터만): allow_from = ["100.64.0.0/10", "127.0.0.1", "::1"]

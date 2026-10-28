@@ -1,11 +1,11 @@
 """Route and permission audit of the Hub web app (TI-19 security review fix 6, seam T2).
 
 Every route of the real Hub's web app (``create_app(services, routes=Hub(...).web_routes())``) is pinned here with its
-access mark: ``public`` (no session), ``own`` (the handler authenticates by itself: ``/mcp`` and ``/api/v1/…`` with an API key),
+access mark: ``public`` (no session), ``own`` (the handler authenticates by itself: ``/api/v1/…`` with an API key),
 ``api`` (session, 401 refusals) or ``session`` (session, ``303 /login``). A route added without a pin fails the audit,
 and so does a changed mark. Every unsafe-method route needs the session's CSRF token; the only exemptions are
-``POST /login`` (pre-session double-submit login token), ``/mcp`` and the ``/api/v1/`` REST routes (Bearer API key,
-cookies ignored), and each is checked by behaviour too. Expected values come from the SPEC "웹 route와 화면" and "Principal과 권한" tables.
+``POST /login`` (pre-session double-submit login token) and the ``/api/v1/`` REST routes (Bearer API key,
+cookies ignored), and each is checked by behaviour too. ``/mcp`` is gone (WBX-B8): it answers like any unknown path. Expected values come from the SPEC "웹 route와 화면" and "Principal과 권한" tables.
 Run with ``discover -s tests/hub -p 'test_web_route_audit.py'``.
 """
 from __future__ import annotations
@@ -68,7 +68,6 @@ EXPECTED = {
     ('GET', '/requests/{rid}/full'): SESSION,
     ('GET', '/requests/{rid}/raw'): SESSION,
     ('GET', '/requests/{rid}/artifact'): SESSION,
-    ('*', '/mcp'): OWN,
     ('POST', '/board/restart'): SESSION,
     ('GET', '/ws/board'): API,
     ('GET', '/board'): SESSION,
@@ -94,7 +93,7 @@ EXPECTED = {
 SKILL_ROUTES = frozenset(key for key in EXPECTED if key[1] == '/skill' or key[1].startswith('/skill/'))
 REST_ROUTES = frozenset(key for key in EXPECTED if key[1] == '/api/v1' or key[1].startswith('/api/v1/'))
 # Unsafe routes that do not use the session CSRF token, and why (each is checked by behaviour below).
-CSRF_EXEMPT = {('POST', '/login'): 'pre-session login token', ('*', '/mcp'): 'Bearer API key; cookies ignored',
+CSRF_EXEMPT = {('POST', '/login'): 'pre-session login token',
                **{route: 'Bearer API key; cookies ignored (WBX-B1 REST)' for route in REST_ROUTES}}
 PARAMS = {'key_id': 'abcdefghij', 'project_id': str(uuid.uuid4()), 'action': 'power-on', 'rid': str(uuid.uuid4())}
 
@@ -216,11 +215,28 @@ class BehaviourAuditTests(RouteAuditCase):
                 checked += 1
         self.assertEqual(checked, 14)  # every unsafe route of EXPECTED but the two exemptions
 
-    async def test_mcp_ignores_the_session_cookie(self):
-        status, text = await self.send('POST', '/mcp', headers={'Content-Type': 'application/json',
-                                                                'Accept': 'application/json'},
-                                       data=b'{"jsonrpc":"2.0","id":1,"method":"ping"}')
-        self.assertEqual(status, 401, text)
+    async def test_mcp_is_gone_and_answers_like_any_unknown_path(self):  # WBX-B8 (SPEC "MCP 제거 순서" contract)
+        self.assertEqual([key for key in route_marks(self.app) if 'mcp' in key[1].lower()], [])
+        rpc = {'Content-Type': 'application/json', 'Accept': 'application/json'}
+        ping = b'{"jsonrpc":"2.0","id":1,"method":"ping"}'
+        for path in ('/mcp', '/mcp/', '/mcp/x'):
+            for method in ('GET', 'POST', 'DELETE'):
+                with self.subTest(path=path, method=method):
+                    # no session: the login redirect of every unknown page path, even with a Bearer key header
+                    status, text = await self.send(method, path, cookie=False,
+                                                   headers={**rpc, 'Authorization': 'Bearer wbk_abcdefghij_' + 'Q' * 43},
+                                                   data=ping)
+                    self.assertEqual(status, 303, text)
+                    self.assertNotIn('jsonrpc', text)
+            with self.subTest(path=path, method='GET', session=True):
+                status, text = await self.send('GET', path)
+                self.assertEqual(status, 404, text)
+                self.assertNotIn('jsonrpc', text)
+            for method in ('POST', 'DELETE'):
+                with self.subTest(path=path, method=method, session=True):
+                    status, text = await self.send(method, path, headers=rpc, data=ping)  # no CSRF token
+                    self.assertEqual(status, 403, text)
+                    self.assertIn('csrf_failed', text)
 
     async def test_rest_ignores_the_session_cookie_on_every_route_and_method(self):
         concrete = {'/api/v1/{tail}': '/api/v1/nope'}

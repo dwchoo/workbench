@@ -269,7 +269,7 @@ class LiveCancelTests(_live_base()):
 
     def rest(self):
         from support.rest_client import RestClient
-        from test_inbox_results_independent import RestTools  # REST calls named by operation
+        from support.rest_tools import RestTools  # REST calls named by operation
         return RestTools(RestClient(self.host, self.port, self.key))
 
     def running_command(self, ui, root: Path, rid: str, seconds: str) -> tuple[str, int]:

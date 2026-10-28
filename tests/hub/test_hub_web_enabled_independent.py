@@ -202,7 +202,7 @@ class InProcessHubDisabledTests(unittest.TestCase):
             with self.subTest(label):
                 hub, path = self.hub(toml)
                 self.assertIsNone(hub.board)
-                self.assertIsNone(hub.internal_mcp)
+                self.assertIsNone(hub.internal_rest)
                 self.assertEqual(hub.active(), [])
                 self.assertEqual(hub.web.stop_hooks, [])
                 asyncio.run(hub.web.start())
@@ -214,7 +214,7 @@ class InProcessHubDisabledTests(unittest.TestCase):
             with self.subTest(value):
                 hub, _path = self.hub(f'[web]\nenabled = {value}\n')
                 self.assertIsNone(hub.board)
-                self.assertIsNone(hub.internal_mcp)
+                self.assertIsNone(hub.internal_rest)
                 asyncio.run(hub.web.start())
                 self.assertEqual(hub.web.status(), {'state': 'config_invalid', 'detail': 'web.enabled'})
                 self.assertIsNone(hub.web.runner)
@@ -223,7 +223,7 @@ class InProcessHubDisabledTests(unittest.TestCase):
         hub, _path = self.hub('[web]\nenabled = true\n')
         self.assertIsNotNone(hub.board)
         self.assertEqual(hub.board.status(), None)  # nothing started yet
-        self.assertIsNone(hub.internal_mcp)  # lazily, with the first Board start
+        self.assertIsNone(hub.internal_rest)  # lazily, with the first Board start
         self.assertEqual(len(hub.web.stop_hooks), 1)
 
 

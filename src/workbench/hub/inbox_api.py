@@ -1,12 +1,12 @@
-"""The external request API's processing layer, shared by its transports (WBX SPEC "MCP 제거 순서", expand).
+"""The external request API's processing layer (web-board-ux SPEC "외부 요청 API").
 
-``/mcp`` (:mod:`workbench.hub.mcp`, JSON-RPC) and ``/api/v1/`` (:mod:`workbench.hub.rest`) both sit on
-:class:`InboxApi`: API key -> :class:`~workbench.hub.inbox.service.Principal` (:func:`principal_for`), the nine
-operations' argument checks (:data:`TOOLS`, :func:`check_arguments`), the error normalisation
-(:func:`error_payload`: inbox sentences for the passthrough codes, a fixed sentence for every store, lock or backend
-failure, so no path or exception text reaches a client), the untrusted-text mark (:func:`marked`), the two-step
-cancel tokens (memory only), the result and project shapes, and the dedicated executor with its per-key slots
-(security review fix 2). The transports only parse their requests and shape their answers.
+:class:`InboxApi` is what the ``/api/v1/`` handlers (:mod:`workbench.hub.rest`) share on both listeners: API key
+-> :class:`~workbench.hub.inbox.service.Principal` (:func:`principal_for`), the nine operations' argument checks
+(:data:`TOOLS`, :func:`check_arguments`), the error normalisation (:func:`error_payload`: inbox sentences for the
+passthrough codes, a fixed sentence for every store, lock or backend failure, so no path or exception text reaches a
+client), the untrusted-text mark (:func:`marked`), the two-step cancel tokens (memory only), the result and project
+shapes, and the dedicated executor with its per-key slots (security review fix 2). The REST handlers only parse
+their requests and shape their answers.
 """
 from __future__ import annotations
 
@@ -36,7 +36,7 @@ TOKENS_PER_KEY = 32  # live cancel tokens per key (the oldest is dropped)
 # loop's default executor that logins and session checks use; one key has at most CALLS_PER_KEY calls answered at
 # once and its further calls wait for a slot (never refused at once: no rate limit, D-41/P2-AC-19). Only a call that
 # waited BUSY_WAIT seconds without a slot is ``busy``.
-MCP_WORKERS = 8
+API_WORKERS = 8
 CALLS_PER_KEY = 4
 BUSY_WAIT = 30.0
 
@@ -98,17 +98,14 @@ _BASE_VERSION = {"type": "integer", "description": "The request version you last
 
 @dataclass(frozen=True, slots=True)
 class Tool:
+    """One operation: its argument schema (:func:`check_arguments`), the required arguments and whether only editor
+    keys and the Board agent may use it."""
+
     name: str
     description: str
     properties: dict
     required: tuple = ()
     editor_only: bool = False
-
-    def listing(self) -> dict:
-        schema = {"type": "object", "properties": self.properties, "additionalProperties": False}
-        if self.required:
-            schema["required"] = list(self.required)
-        return {"name": self.name, "description": self.description, "inputSchema": schema}
 
 
 TOOLS: dict[str, Tool] = {tool.name: tool for tool in (
@@ -167,10 +164,6 @@ EDITOR_KINDS = frozenset({"editor", "board_agent"})
 PROJECT_FIELDS = ("project_id", "name", "root", "power", "task", "command", "waits", "pending_requests", "review_mode")
 
 
-def visible_tools(principal: Principal) -> list[Tool]:
-    return [tool for tool in TOOLS.values() if not tool.editor_only or principal.kind in EDITOR_KINDS]
-
-
 _TYPE_CHECKS = {
     "string": lambda value: isinstance(value, str),
     "boolean": lambda value: isinstance(value, bool),
@@ -180,7 +173,7 @@ _TYPE_CHECKS = {
 
 
 def check_arguments(tool: Tool, arguments: object) -> dict:
-    """The tool's ``inputSchema`` (types, enums, required, no extra keys). A ``null`` optional argument
+    """The operation's argument schema (types, enums, required, no extra keys). A ``null`` optional argument
     counts as absent. Sizes and formats are the inbox's checks (``too_large``/``invalid_input``)."""
     if arguments is None:
         arguments = {}
@@ -326,7 +319,7 @@ class InboxApi:
         self._lock = threading.Lock()
         self._tokens: dict[str, _CancelToken] = {}  # sha256(token) -> binding
         from .web_control import DaemonExecutor
-        self.executor = DaemonExecutor(MCP_WORKERS, "hub-mcp")
+        self.executor = DaemonExecutor(API_WORKERS, "hub-api")
         self.busy_wait = busy_wait
         # key_id -> [slots semaphore, calls holding or waiting for a slot] (loop thread only; dropped at zero)
         self._slots: dict[str, list] = {}
@@ -411,18 +404,14 @@ class InboxApi:
         return {name: value[name] for name in ("state", "version")}
 
     # -- two-step cancel (SPEC "취소", D-33, P2-AC-41) --------------------------------------
-    def _tokens_per_key(self) -> int:
-        return TOKENS_PER_KEY
-
     def _issue_token(self, principal: Principal, request_id: str, fingerprint: str) -> str:
         token = secrets.token_urlsafe(24)
         now = self.monotonic()
-        cap = self._tokens_per_key()
         with self._lock:
             self._prune(now)
             own = [key for key, entry in self._tokens.items()  # insertion order: oldest first
                    if (entry.kind, entry.key_id) == (principal.kind, principal.key_id)]
-            for stale in own[:max(0, len(own) - cap + 1)]:
+            for stale in own[:max(0, len(own) - TOKENS_PER_KEY + 1)]:
                 del self._tokens[stale]
             self._tokens[_token_key(token)] = _CancelToken(principal.kind, principal.key_id, request_id, fingerprint,
                                                            deadline=now + self.token_ttl)
@@ -489,10 +478,12 @@ class InboxApi:
     async def _inbox_result(self, principal: Principal, args: dict) -> dict:
         """SPEC "결과 조회" default: the manager's ``close`` summary, else the Task state and run lines."""
         offset, length = args.get("offset", 0), args.get("length", self.results.max_page)
+        if not args.get("full") and ("run_id" in args or "artifact_path" in args):  # D-22: full views are explicit
+            raise InboxError("invalid_input", "run_id and artifact_path need full=true")
 
         def read() -> dict:
             request = self.inbox.get(principal, args["request_id"])
-            if not args.get("full"):  # page arguments without ``full`` add nothing (D-22: full views are explicit)
+            if not args.get("full"):  # the summary (``offset``/``length`` alone add nothing)
                 value = self.results.summary(request)
             elif "run_id" not in args and "artifact_path" not in args:
                 value = self.results.full(principal, args["request_id"])

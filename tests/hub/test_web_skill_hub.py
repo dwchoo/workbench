@@ -21,7 +21,7 @@ REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO / 'src'))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from workbench.hub import auth, mcp, server  # noqa: E402
+from workbench.hub import auth, rest, server  # noqa: E402
 from workbench.hub.paths import HubLayout  # noqa: E402
 from workbench.hub.web.app import OriginPolicy, WebServices  # noqa: E402
 from fixtures.web_sandbox import PASSWORD, WebSandbox, tcp_listening  # noqa: E402
@@ -96,7 +96,7 @@ class InternalListenerTests(unittest.IsolatedAsyncioTestCase):
         services = WebServices(passwords, db, OriginPolicy('127.0.0.1'))
         hub = server.Hub(HubLayout(base / 'hub'), 'detached')
         self.addCleanup(hub.inbox.close)
-        listener = mcp.InternalListener(services.api_keys, hub.mcp)
+        listener = rest.InternalListener(services.api_keys, hub.api)
         await listener.start()
         self.addAsyncCleanup(listener.stop)
         for path in ('/skill/README.md', '/skill/wb-inbox/SKILL.md', '/skill/'):

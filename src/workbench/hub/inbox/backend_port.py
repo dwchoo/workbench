@@ -12,7 +12,7 @@ socket refused, wrong peer; nothing was sent), ``backend_too_old`` (the backend 
 is unknown), or the backend's own refusal reason (``invalid_message``, ``task_changed``, ...).
 
 ``detail`` is always the fixed sentence of :data:`DETAILS` for the reason (never exception or backend text, which may
-name paths); the underlying text goes to the Hub log (stderr) only. Web and MCP layers expose only ``reason``.
+name paths); the underlying text goes to the Hub log (stderr) only. Web pages and the REST API expose only ``reason``.
 """
 from __future__ import annotations
 

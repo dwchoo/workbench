@@ -24,7 +24,7 @@ failed re-check answers that request with ``principal_mismatch`` and closes. A b
 timeout, is not counted in :data:`MAX_CONNECTIONS` and replaces an earlier one of the same project.
 :data:`BACKEND_OPS` are served only to a backend principal and :data:`LOCAL_OPS` only to any other connection
 (principal ``local``); an op of the other set is ``unsupported_type``. A refused inbox op answers ``ok:false`` with
-the inbox reason code (the MCP error code names: ``not_found``, ``forbidden``, ``invalid_input``,
+the inbox reason code (the REST API's error code names: ``not_found``, ``forbidden``, ``invalid_input``,
 ``invalid_transition``, ...) and, when the caller may see the request, its ``state``/``version``.
 
 - ``inbox_list{states?, limit?}`` -> ``{requests, next_cursor}`` (this project's requests; the default states are

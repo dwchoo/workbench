@@ -1,6 +1,6 @@
 """External request REST API ``/api/v1/`` (web-board-ux SPEC "외부 요청 API", WBX-D05..D07).
 
-The nine operations of :mod:`workbench.hub.inbox_api` (the same processing layer as ``/mcp``) as JSON resources.
+The nine operations of :mod:`workbench.hub.inbox_api` (the external request API's processing layer) as JSON resources.
 Every request needs ``Authorization: Bearer wbk_…``; the session cookie is never read. Errors are
 ``{"error": {"code", "message", "state"?, "version"?}}`` with the SPEC status of their code.
 
@@ -34,7 +34,7 @@ PREFIX = "/api/v1"
 
 
 def json_response(value: object, *, status: int = 200, headers: dict | None = None) -> web.Response:
-    # ASCII output (as /mcp): user text (lone surrogates included) can never make the body unencodable.
+    # ASCII output: user text (lone surrogates included) can never make the body unencodable.
     return web.Response(status=status, body=json.dumps(value, ensure_ascii=True).encode("ascii"),
                         content_type="application/json", headers=headers)
 
@@ -159,7 +159,7 @@ def _read_query(request: web.Request, tool: str, names: tuple) -> dict:
 
 
 class RestApi:
-    """The ``/api/v1/`` handlers over one :class:`InboxApi` (shared with ``/mcp`` during WBX expand).
+    """The ``/api/v1/`` handlers over one :class:`InboxApi` (the Hub's one, shared by both listeners).
     ``system_only``: only the system key authenticates (the Board agent's internal listener, WBX-D24)."""
 
     def __init__(self, api: InboxApi, *, system_only: bool = False):
@@ -255,7 +255,7 @@ def routes(api: InboxApi, *, system_only: bool = False) -> Callable[[web.Applica
     return register
 
 
-# --- Board agent internal listener (web-board-ux SPEC "Board agent 전환", WBX-D11/D24; moved from ``mcp``) -------
+# --- Board agent internal listener (web-board-ux SPEC "Board agent 전환", WBX-D11/D24) ---------------------------
 
 INTERNAL_HOST = "127.0.0.1"
 FLUSH_INTERVAL = 10.0  # SPEC API key: last use written every 10 s
@@ -291,7 +291,7 @@ async def _internal_host(request: web.Request, handler):
 
 def create_internal_app(api_keys: auth.ApiKeyStore, api: InboxApi, *, clock: Callable[[], float] = time.time,
                         flush_interval: float = FLUSH_INTERVAL) -> web.Application:
-    """``/api/v1/`` only (every other path 404: no ``/mcp``, ``/skill/`` or pages), Host fixed, the web listener's
+    """``/api/v1/`` only (every other path 404: no ``/skill/`` or pages), Host fixed, the web listener's
     body limit and headers, and only the system key (another valid key or a previous system key is 401)."""
     app = web.Application(middlewares=[_internal_host, body_limit], client_max_size=BODY_LIMIT)
     app[SERVICES] = _InternalServices(api_keys, clock, flush_interval)

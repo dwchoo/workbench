@@ -5,7 +5,8 @@ values are the original tests' (their source is the task-inbox SPEC "Principal�
 "결과 조회" and rows read back with stdlib ``sqlite3``); only the transport changed (tool arguments -> path, query
 and JSON body; ``isError`` + ``code`` -> HTTP status from the SPEC "오류 -> HTTP status" table + ``error.code``).
 What ``test_hub_rest.py`` / ``test_hub_rest_independent.py`` already check is not repeated here. The behaviour
-map from every MCP test to its REST test is the WBX-B6 ticket output. Run with
+map from every MCP test to its REST test is the WBX-B6 ticket output (the MCP files themselves were deleted in
+WBX-B8; the map below stays as the port's record). Run with
 ``discover -s tests/hub -p 'test_hub_rest*.py'``.
 """
 from __future__ import annotations
@@ -637,14 +638,19 @@ class ResultPortTests(PortCase):
         self.hub.link_running(self.rid, view={'runs': [
             {'run_id': 'run-1', 'status': 'finished', 'exit_code': 0, 'log': 'RAW-LOG-SECRET',
              'report': 'WORKER-REPORT'}]})
-        for query in ({}, {'full': False}, {'length': 10, 'offset': 0}, {'run_id': 'run-1'},
-                      {'artifact_path': 'inside.txt'}):
+        for query in ({}, {'full': False}, {'length': 10, 'offset': 0}):
             with self.subTest(query=query):
                 value = self.result(**query)
                 self.assertNotIn('full', value)
                 text = json.dumps(value)
                 for secret in ('RAW-LOG-SECRET', 'WORKER-REPORT', 'INSIDE-PUBLIC'):
                     self.assertNotIn(secret, text)
+        for query in ({'run_id': 'run-1'}, {'artifact_path': 'inside.txt'}):  # WBX-B8: was the summary (MCP parity)
+            with self.subTest(query=query):
+                reply = self.r1.get(f'/requests/{self.rid}/result', **query)
+                self.assertEqual((reply.status, reply.json['error']['code']), (400, 'invalid_input'), reply.body)
+                for secret in ('RAW-LOG-SECRET', 'WORKER-REPORT', 'INSIDE-PUBLIC'):
+                    self.assertNotIn(secret, reply.body.decode())
 
     def test_full_with_the_backend_off_is_the_summary_plus_the_last_task_view_not_an_error(self):
         """TI-14: ``full=true`` is served; with no backend running it is the summary and the last ``task_view``."""

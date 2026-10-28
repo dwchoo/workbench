@@ -18,11 +18,12 @@ from workbench.backend.paths import (BackendLocked, DataDirError, InstanceLock, 
                                      unlink_stale_socket, write_private_json)
 from workbench.contracts import hub_v1
 
-from . import config as hub_config, mcp, registry, rest
+from . import config as hub_config, registry, rest
 from .inbox import backend_port
 from .inbox.dispatch import Dispatcher
 from .inbox.limits import InboxError
 from .inbox.service import OPEN_STATES, InboxService, Principal, ProjectRef
+from .inbox_api import InboxApi
 from .status import Lister, check_entry
 from .paths import HubLayout, hub_layout, prepare_socket_path, prepare_state_dir
 from .web.app import board_routes
@@ -151,16 +152,16 @@ class Hub:
         self.inbox = InboxService(on_committed=lambda event: self.dispatcher.committed(event),
                                   backend_running=self._backend_running, cancel_port=backend_port.cancel_port)
         self.dispatcher = Dispatcher(self.inbox, self._dispatch_targets)
-        # TI-05: ``/mcp`` on the web listener; its processing layer also serves ``/api/v1/`` there and on the Board
-        # agent's internal listener (WBX-B5)
-        self.mcp = mcp.McpServer(self.inbox, projects=self._mcp_projects)
+        # The external request API's processing layer: ``/api/v1/`` on the web listener and on the Board agent's
+        # internal listener (WBX-B1/B5)
+        self.api = InboxApi(self.inbox, projects=self._api_projects)
         # Verified backend connections by project id (one each): outside ``tasks`` and its limit (hub_v1).
         self.backend_tasks: dict[str, asyncio.Task] = {}
         self.web: WebListener | None = None
         # TI-16: the Board agent set (None while ``hub.toml`` is invalid or web is disabled) and its internal
-        # REST listener (WBX-B5; started lazily by the set, so it never starts without one; renamed in WBX-B8).
+        # REST listener (WBX-B5; started lazily by the set, so it never starts without one).
         self.board = None
-        self.internal_mcp: rest.InternalListener | None = None
+        self.internal_rest: rest.InternalListener | None = None
         # 2026-10-27 ``wb hub reload``: what the running config came from, and the last refused reload.
         self.config_environment = None
         self.config_info: dict = {}
@@ -188,11 +189,10 @@ class Hub:
 
     def web_routes(self) -> list:
         """Route registrations the web app adds to its defaults: the status board and project pages over this
-        Hub's list, the request pages over its inbox, ``/mcp``, the ``/api/v1/`` REST (WBX-B1, the same processing
-        layer as ``/mcp``) and the Board restart endpoint."""
+        Hub's list, the request pages over its inbox, the ``/api/v1/`` REST (WBX-B1) and the Board restart endpoint."""
         return [project_pages.routes(self.lister.list, self.inbox, self.lister.list_one),
-                request_pages.routes(self.inbox, self._dispatch_targets), mcp.routes(self.mcp),
-                rest.routes(self.mcp), board_routes(lambda: self.board)]
+                request_pages.routes(self.inbox, self._dispatch_targets), rest.routes(self.api),
+                board_routes(lambda: self.board)]
 
     # --- Board agent set (TI-16) -----------------------------------------------------------------
 
@@ -203,9 +203,9 @@ class Hub:
         return services
 
     def _internal_listener(self) -> rest.InternalListener:
-        if self.internal_mcp is None:
-            self.internal_mcp = rest.InternalListener(self._web_services().api_keys, self.mcp)
-        return self.internal_mcp
+        if self.internal_rest is None:
+            self.internal_rest = rest.InternalListener(self._web_services().api_keys, self.api)
+        return self.internal_rest
 
     def _board_audit(self, event: str, actor: str, address: str | None, detail: dict) -> None:
         """``board_start``/``board_stop``/``board_restart`` rows; executor only (SQLite)."""
@@ -226,7 +226,7 @@ class Hub:
         if self.board is not None:
             await self.board.stop()
 
-    async def _mcp_projects(self) -> list[dict]:
+    async def _api_projects(self) -> list[dict]:
         """``inbox_projects`` rows: the Hub list (cached observation, request counts and review mode)."""
         return (await self.lister.list())["rows"]
 
@@ -627,7 +627,7 @@ class Hub:
             task.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
         self.lister.close()
-        self.mcp.close()  # the /mcp pool: queued calls cancelled, no wait (security review fix 2)
+        self.api.close()  # the REST pool: queued calls cancelled, no wait (security review fix 2)
         await loop.run_in_executor(None, self.dispatcher.close)  # before the inbox closes under it
         await loop.run_in_executor(None, self.inbox.close)  # releases every inbox.lock
 

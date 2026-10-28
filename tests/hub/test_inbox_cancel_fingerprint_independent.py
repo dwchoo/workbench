@@ -36,7 +36,7 @@ sys.path.insert(0, str(REPO / 'src'))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from support.rest_hub import RestHub  # noqa: E402
-from test_inbox_results_independent import ERROR_STATUS, RestTools  # noqa: E402  (REST calls named by operation)
+from support.rest_tools import ERROR_STATUS, RestTools  # noqa: E402  (REST calls named by operation)
 from test_inbox_service import make_project  # noqa: E402
 from test_web_pages_requests import Page, RequestsCase  # noqa: E402
 from workbench.hub.inbox.dispatch import Dispatcher  # noqa: E402

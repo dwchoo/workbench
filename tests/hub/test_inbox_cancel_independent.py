@@ -32,7 +32,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from support.rest_client import RestClient  # noqa: E402
 from test_inbox_flow_link import LinkCase  # noqa: E402
-from test_inbox_results_independent import ERROR_STATUS, RestTools  # noqa: E402  (REST calls named by operation)
+from support.rest_tools import ERROR_STATUS, RestTools  # noqa: E402  (REST calls named by operation)
 
 PASSWORD = 'correct horse battery'
 IGNORE_INT = "(trap '' INT; exec sleep {seconds})"  # a command that outlives SIGINT (dies on SIGTERM)

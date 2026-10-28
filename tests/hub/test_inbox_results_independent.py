@@ -33,6 +33,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from support.rest_client import RestClient  # noqa: E402
 from support.rest_hub import RestHub  # noqa: E402
+from support.rest_tools import ERROR_STATUS, RestTools  # noqa: E402  (REST calls named by operation)
 import test_web_pages_requests as pages  # noqa: E402  (module import: its test classes stay uncollected here)
 from workbench.hub import inbox_api, rest  # noqa: E402
 from workbench.hub.inbox import results  # noqa: E402
@@ -259,61 +260,6 @@ class Unblock:
         self.stop.set()
 
 
-# SPEC "오류 → HTTP status": the status every error code must come with (``RestTools.tool_error`` checks it).
-ERROR_STATUS = {'invalid_input': 400, 'unauthorized': 401, 'forbidden': 403, 'origin_mismatch': 403, 'not_found': 404,
-                'conflict': 409, 'invalid_transition': 409, 'idempotency_conflict': 409, 'token_mismatch': 409,
-                'backend_not_running': 409, 'too_large': 413, 'internal_error': 500, 'project_unavailable': 503,
-                'inbox_busy': 503, 'inbox_mismatch': 503, 'backend_unreachable': 503, 'hub_stopping': 503,
-                'busy': 503}
-# SPEC endpoint table: operation -> (method, path); ``request_id`` is the path's id, the other arguments are the
-# query (GET) or the JSON body, ``states`` is the repeated ``state`` query parameter.
-ROUTES = {'inbox_projects': ('GET', '/projects'), 'inbox_submit': ('POST', '/requests'),
-          'inbox_list': ('GET', '/requests'), 'inbox_get': ('GET', '/requests/{rid}'),
-          'inbox_comment': ('POST', '/requests/{rid}/comments'), 'inbox_update': ('PATCH', '/requests/{rid}'),
-          'inbox_set_state': ('POST', '/requests/{rid}/state'), 'inbox_cancel': ('POST', '/requests/{rid}/cancel'),
-          'inbox_result': ('GET', '/requests/{rid}/result')}
-
-
-class RestTools:
-    """One key's REST calls, named by the operation (what the MCP tests called): ``call`` is the reply, ``tool`` the
-    body of a 2xx reply, ``tool_error`` the ``error`` object of a refusal whose status is its code's SPEC status."""
-
-    def __init__(self, client):
-        self.client = client
-
-    def call(self, name, **arguments):
-        method, path = ROUTES[name]
-        if 'request_id' in arguments:
-            path = path.format(rid=quote(arguments.pop('request_id'), safe=''))
-        if method == 'GET':
-            if 'states' in arguments:
-                arguments['state'] = arguments.pop('states')
-            # Attack paths are sent as they are: '/' stays literal (a path of 2100 directories must fit the request
-            # line) and a lone surrogate becomes its raw (invalid UTF-8) bytes, as the web tests do.
-            parts = []
-            for name, value in arguments.items():
-                for item in value if isinstance(value, list) else [value]:
-                    text = ('true' if item else 'false') if isinstance(item, bool) else str(item)
-                    parts.append(f'{name}={quote(text, safe="/", errors="surrogatepass")}')
-            return self.client.raw('GET', rest.PREFIX + path + ('?' + '&'.join(parts) if parts else ''))
-        return self.client.call(method, path, arguments)
-
-    def tool(self, name, **arguments):
-        reply = self.call(name, **arguments)
-        if not 200 <= reply.status < 300:
-            raise AssertionError(f'{name} failed: {reply.status} {reply.body!r}')
-        return reply.json
-
-    def tool_error(self, name, **arguments):
-        reply = self.call(name, **arguments)
-        if reply.status < 400:
-            raise AssertionError(f'{name} unexpectedly succeeded: {reply.status} {reply.body!r}')
-        error = reply.error
-        if reply.status != ERROR_STATUS[error['code']]:
-            raise AssertionError(f'{name}: {error["code"]} came with HTTP {reply.status}')
-        return error
-
-
 class RestCase(unittest.TestCase):
     def setUp(self):
         self.hub = RestHub(self)
@@ -353,8 +299,7 @@ class RestCase(unittest.TestCase):
 class SummaryDefaultTests(RestCase):
     def test_default_summary_has_no_raw_report_command_or_artifact_content(self):
         (self.hub.root_a / 'out.txt').write_text('ARTIFACT-CONTENT')
-        for arguments in ({}, {'full': False}, {'full': False, 'run_id': RUN}, {'run_id': RUN, 'offset': 0, 'length': 5},
-                          {'artifact_path': 'out.txt'}, {'run_id': COMMAND, 'artifact_path': 'out.txt'}):
+        for arguments in ({}, {'full': False}):
             with self.subTest(arguments=arguments):
                 value = self.result(**arguments)
                 # requester-authored text: the summary may carry the untrusted marking (and nothing else new)
@@ -363,6 +308,14 @@ class SummaryDefaultTests(RestCase):
                 text = json.dumps(value)
                 for secret in (VIEW_LOG, REPORT, 'ARTIFACT-CONTENT', 'epoch 1', 'accuracy'):
                     self.assertNotIn(secret, text)
+        # WBX-B8: a page argument without ``full=true`` is refused (was the summary while /mcp shared the layer)
+        for arguments in ({'full': False, 'run_id': RUN}, {'run_id': RUN, 'offset': 0, 'length': 5},
+                          {'artifact_path': 'out.txt'}, {'run_id': COMMAND, 'artifact_path': 'out.txt'}):
+            with self.subTest(arguments=arguments):
+                call = self.c['r1'].call('inbox_result', request_id=self.rid, **arguments)
+                self.assertEqual((call.status, call.error['code']), (400, 'invalid_input'), call.body)
+                for secret in (VIEW_LOG, REPORT, 'ARTIFACT-CONTENT', 'epoch 1', 'accuracy'):
+                    self.assertNotIn(secret, call.body.decode())
         self.assertEqual(self.backend.calls, [], 'the summary never asks the backend')
 
     def test_only_a_real_true_turns_the_full_view_on(self):
@@ -378,7 +331,7 @@ class SummaryDefaultTests(RestCase):
                 self.assertNotIn('"raw"', text)
                 self.assertNotIn('"full"', text)
         call = self.c['r1'].call('inbox_result', request_id=self.rid, full=False, run_id=RUN)
-        self.assertEqual(call.status, 200, call.body)
+        self.assertEqual((call.status, call.error['code']), (400, 'invalid_input'), call.body)  # WBX-B8: was 200
         text = call.body.decode()
         self.assertNotIn(REPORT, text)
         self.assertNotIn('"raw"', text)

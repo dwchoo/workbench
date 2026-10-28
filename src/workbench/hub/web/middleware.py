@@ -26,7 +26,7 @@ CSP = ("default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' 
 SECURITY_HEADERS = {"Content-Security-Policy": CSP, "X-Content-Type-Options": "nosniff",
                     "Referrer-Policy": "same-origin", "X-Frame-Options": "DENY"}
 STATIC_PREFIX = "/static/"
-BODY_LIMIT = 256 * 1024  # SPEC 입력 한도: HTTP 요청 body (form, ``/mcp``) -> 413
+BODY_LIMIT = 256 * 1024  # SPEC 입력 한도: HTTP 요청 body (form, ``/api/v1/``) -> 413
 STATIC_CACHE = "public, max-age=3600"
 SKILL_PREFIX = "/skill/"  # WBX-B3: the served text differs per Host, so it is always revalidated
 SKILL_CACHE = "no-cache"
@@ -46,7 +46,7 @@ STYLE_NONCE: web.RequestKey = web.RequestKey("wb_style_nonce", str)
 # Route access marks (attribute ``wb_access`` on the handler): unmarked routes need a session.
 ACCESS_PUBLIC = "public"  # no session (login, static)
 ACCESS_API = "api"  # session; refusals are 401 instead of ``303 /login``
-ACCESS_OWN = "own"  # the handler authenticates by itself (``/mcp`` with an API key, TI-05)
+ACCESS_OWN = "own"  # the handler authenticates by itself (``/api/v1/`` with an API key, WBX-B1)
 
 
 def inline_styles(handler):
@@ -225,7 +225,7 @@ def peer_of(request: web.Request) -> str | None:
 @web.middleware
 async def peer_check(request: web.Request, handler):
     """Outermost check (2026-10-27): a peer outside ``allow_from`` gets a bare 403 before Host, session, CSRF,
-    throttle or any handler, on every route (pages, static, ``/mcp``, the ``/ws/board`` upgrade)."""
+    throttle or any handler, on every route (pages, static, ``/api/v1/``, the ``/ws/board`` upgrade)."""
     services = request.app[SERVICES]
     allow_from = services.policy.allow_from
     if allow_from:
@@ -306,7 +306,7 @@ def expected_origin(request: web.Request) -> tuple | None:
 
 @web.middleware
 async def body_limit(request: web.Request, handler):
-    """413 for a declared body over the limit. Own-auth routes (``/mcp``) answer it themselves in their
+    """413 for a declared body over the limit. Own-auth routes (``/api/v1/``) answer it themselves in their
     own error shape; ``client_max_size`` still caps every body that is read."""
     if access_of(request) == ACCESS_OWN:
         return await handler(request)

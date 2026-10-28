@@ -1,17 +1,15 @@
-"""A real loopback Hub web app with ``/api/v1/`` (and, until WBX-B8, ``/mcp``) for REST tests (seam S2 server side).
+"""A real loopback Hub web app with ``/api/v1/`` for REST tests (seam S2 server side).
 
 ``RestHub(case)`` builds, in temp directories: ``auth.json`` + ``hub.sqlite3`` (real ``auth`` stores), two WB
 projects (``alpha``, ``beta``) with real ``.wb/inbox.sqlite3`` through a real ``InboxService``, and serves
-``create_app(services, routes=[rest.routes(api), mcp.routes(api)])`` on ``127.0.0.1:0`` from its own event-loop
-thread, so blocking stdlib clients can call it. Both transports share one processing layer (``hub.api``), so a test
-can send the same input through REST and MCP. The clock (``hub.now``) and the token clock (``hub.mono``) are
+``create_app(services, routes=[rest.routes(api)])`` on ``127.0.0.1:0`` from its own event-loop thread, so blocking
+stdlib clients can call it; ``hub.api`` is its processing layer (:class:`workbench.hub.inbox_api.InboxApi`). The clock (``hub.now``) and the token clock (``hub.mono``) are
 injectable; ``hub.cancels`` records every ``cancel_requested`` commit (the fake cancel port) and ``hub.backend_up``
 is what ``backend_running`` answers. Everything is stopped and removed by ``addCleanup``.
 
     hub = RestHub(self)
     key = hub.key('r1')                         # requester, all projects; grade='editor', scope={...}
     reply = hub.rest(key).get('/projects')      # support.rest_client.RestClient
-    hub.mcp(key).start().tool('inbox_get', ...) # support.mcp_client.McpClient (expand phase only)
 """
 from __future__ import annotations
 
@@ -27,11 +25,11 @@ import uuid
 
 from aiohttp import web
 
-from workbench.hub import auth, mcp, rest
+from workbench.hub import auth, rest
+from workbench.hub.inbox_api import InboxApi
 from workbench.hub.inbox.service import InboxService, Principal, ProjectRef
 from workbench.hub.web.app import OriginPolicy, WebServices, create_app
 
-from .mcp_client import McpClient
 from .rest_client import RestClient
 
 PASSWORD = 'correct horse battery'
@@ -73,8 +71,7 @@ class RestHub:
         self.db = auth.HubDb.open(self.state)
         case.addCleanup(self.db.close)
         self.rows = [self.row(self.a, self.root_a, 'alpha'), self.row(self.b, self.root_b, 'beta')]
-        self.api = self.server = mcp.McpServer(self.inbox, projects=self._projects, monotonic=lambda: self.mono[0],
-                                    token_ttl=token_ttl)
+        self.api = InboxApi(self.inbox, projects=self._projects, monotonic=lambda: self.mono[0], token_ttl=token_ttl)
         self.services = WebServices(self.passwords, self.db, OriginPolicy('127.0.0.1'), clock=lambda: self.now[0],
                                     flush_interval=flush_interval)
         self.keys = self.services.api_keys
@@ -101,7 +98,7 @@ class RestHub:
         failure: list = []
 
         async def start() -> None:
-            app = create_app(self.services, routes=[rest.routes(self.api), mcp.routes(self.api)])
+            app = create_app(self.services, routes=[rest.routes(self.api)])
             self.runner = web.AppRunner(app, access_log=None, handle_signals=False)
             await self.runner.setup()
             site = web.TCPSite(self.runner, '127.0.0.1', 0)
@@ -146,9 +143,6 @@ class RestHub:
 
     def rest(self, key: str | None, **kwargs) -> RestClient:
         return RestClient('127.0.0.1', self.port, key, **kwargs)
-
-    def mcp(self, key: str | None, **kwargs) -> McpClient:
-        return McpClient('127.0.0.1', self.port, key, **kwargs)
 
     def key_row(self, key: str) -> tuple:
         key_id = key[4:14]

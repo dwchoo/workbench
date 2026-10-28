@@ -28,7 +28,7 @@ from .paths import hub_layout
 from .process import hub_environment
 from .status import check_entry
 
-FORBIDDEN = "forbidden"  # not an owner session principal (API keys, MCP, backends, local CLI)
+FORBIDDEN = "forbidden"  # not an owner session principal (API keys, backends, local CLI)
 UNKNOWN_PROJECT = "unknown_project"  # no registry entry has this project id
 CONTROL_IN_PROGRESS = "control_in_progress"  # another control call of this project is still running
 CONTROL_BUSY = "control_busy"  # every control worker is busy (other projects): try again later
@@ -163,7 +163,7 @@ def _driver_main(argv: list[str]) -> int:
 
 
 
-DaemonExecutor = _DaemonExecutor  # the Hub's other bounded pools (MCP, result pages)
+DaemonExecutor = _DaemonExecutor  # the Hub's other bounded pools (the REST API, result pages)
 
 class ProjectControl:
     """Owner-only ``power_on``/``power_off_request``/``power_off_confirm``/``pause``/``resume``/

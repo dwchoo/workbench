@@ -22,7 +22,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from support.rest_hub import RestHub  # noqa: E402
 import test_web_pages_requests as pages  # noqa: E402  (module import: its test classes stay uncollected here)
-from test_inbox_results_independent import RestTools  # noqa: E402  (REST calls named by operation, with the SPEC status check)
+from support.rest_tools import RestTools  # noqa: E402  (REST calls named by operation, with the SPEC status check)
 from workbench.hub.inbox import results  # noqa: E402
 from workbench.hub.inbox.backend_port import BackendPortError  # noqa: E402
 from workbench.hub.inbox.service import Principal  # noqa: E402
@@ -121,12 +121,12 @@ class SummaryTests(RestResultCase):
         self.assertEqual((value['summary'], value['state'], value['outcome']),
                          ('Done: accuracy 0.93', 'CLOSED', 'success'))
 
-    def test_page_arguments_without_full_add_nothing(self):
+    def test_page_arguments_without_full_are_refused(self):  # WBX-B8: was "add nothing" (summary, MCP parity)
         self.linked()
         (self.hub.root_a / 'out.txt').write_text('ARTIFACT-TEXT')
-        value = self.r1.tool('inbox_result', request_id=self.rid, run_id=RUN, artifact_path='out.txt')
-        self.assertEqual(set(value), {'summary', 'state', 'outcome', 'task', 'untrusted_text', 'note'})  # fix 1
-        self.assertNotIn('ARTIFACT-TEXT', json.dumps(value))
+        error = self.r1.tool_error('inbox_result', request_id=self.rid, run_id=RUN, artifact_path='out.txt')
+        self.assertEqual(error['code'], 'invalid_input')
+        self.assertNotIn('ARTIFACT-TEXT', json.dumps(error))
 
 
 class FullTests(RestResultCase):

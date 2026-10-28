@@ -264,7 +264,7 @@ class TransportTests(RestCase):
 
 class ProjectsTests(RestCase):
     """``GET /api/v1/projects``: the key's scope; requester keys see only id and name (task-inbox "Principal과 권한");
-    ``query`` matches the name (editors: also the path); the same answer as MCP ``inbox_projects`` (AC-07)."""
+    ``query`` matches the name (editors: also the path) (AC-07)."""
 
     EDITOR_FIELDS = {'project_id', 'name', 'root', 'power', 'power_label', 'task', 'command', 'waits',
                      'pending_requests', 'review_mode', 'untrusted_text'}
@@ -292,14 +292,6 @@ class ProjectsTests(RestCase):
         requester = self.hub.rest(self.hub.key('r1'))
         self.assertEqual(requester.get('/projects', query=str(self.hub.root_a)).json, {'projects': []})
         self.assertEqual(names(requester.get('/projects', query='alp')), ['alpha'])
-
-    def test_the_answer_is_the_mcp_answer(self):
-        self.hub.rows[1].update(task={'task_id': 't1', 'status': 'running'})
-        for grade in ('requester', 'editor'):
-            with self.subTest(grade=grade):
-                key = self.hub.key(f'k-{grade}', grade)
-                self.assertEqual(self.hub.rest(key).get('/projects').json,
-                                 self.hub.mcp(key).start().tool('inbox_projects'))
 
     def test_unknown_or_repeated_query_parameters_are_400(self):
         client = self.hub.rest(self.hub.key('r1'))
@@ -355,17 +347,6 @@ class SubmitTests(RestCase):
         self.assertNotIn('본문', error['message'])
         self.assertEqual(len(self.rows()), 1)
 
-    def test_rest_and_mcp_make_the_same_record(self):
-        rest = self.client.post('/requests', self.body()).json
-        mcp = self.hub.mcp(self.key).start().tool('inbox_submit', **self.body())
-        self.assertEqual(mcp, {**rest, 'created': False})  # MCP finds the REST request: same origin, key, content
-        editor = self.hub.key('e1', 'editor')
-        via_mcp = self.hub.mcp(editor).start().tool('inbox_submit', **self.body('k2'))
-        via_rest = self.hub.rest(editor).post('/requests', self.body('k2'))
-        self.assertEqual(via_rest.status, 200, via_rest.body)
-        self.assertEqual(via_rest.json, via_mcp | {'created': False})
-        self.assertEqual([row[2:4] for row in self.rows()], [('api_key', 'r1'), ('api_key', 'e1')])
-
     def test_field_limits_are_refused_and_nothing_is_stored(self):
         cases = [(self.body(title=''), 400, 'invalid_input'), (self.body(title='x' * 201), 413, 'too_large'),
                  (self.body(title='a\nb'), 400, 'invalid_input'), (self.body(body=''), 400, 'invalid_input'),
@@ -394,7 +375,7 @@ class SubmitTests(RestCase):
 class ListGetTests(RestCase):
     """``GET /api/v1/requests`` and ``GET /api/v1/requests/{id}``: requester keys see their own requests, editors
     every request in scope; ``state`` repeats, ``include_closed``/``limit``/``cursor`` page; a request out of reach
-    is ``not_found``; the answers are the MCP answers (AC-07)."""
+    is ``not_found`` (AC-07)."""
 
     SUMMARY = {'request_id', 'project_id', 'seq', 'title', 'state', 'outcome', 'origin', 'created_at', 'updated_at',
                'task_id', 'untrusted_text'}
@@ -465,14 +446,6 @@ class ListGetTests(RestCase):
             with self.subTest(rid=rid):
                 self.assert_error(self.hub.rest(key).get(f'/requests/{rid}'), 404, 'not_found')
 
-    def test_list_and_get_are_the_mcp_answers(self):
-        for key in (self.r1, self.ed):
-            mcp = self.hub.mcp(key).start()
-            with self.subTest(key=key[:14]):
-                self.assertEqual(self.hub.rest(key).get('/requests', project_id=self.hub.a).json,
-                                 mcp.tool('inbox_list', project_id=self.hub.a))
-                self.assertEqual(self.hub.rest(key).get(f'/requests/{self.mine[1]}').json,
-                                 mcp.tool('inbox_get', request_id=self.mine[1]))
 
 
 class RequestCase(RestCase):
@@ -677,17 +650,12 @@ class CancelTests(RequestCase):
         self.hub.rest(self.ed).patch(f'/requests/{self.rid}', {'base_version': version, 'body': '바뀐 본문'})
         self.mismatch(self.cancel(confirm_token=token))
 
-    def test_a_token_from_mcp_confirms_over_rest(self):
-        self.running()
-        token = self.hub.mcp(self.r1).start().tool('inbox_cancel', request_id=self.rid)['confirm_token']
-        self.assertEqual(self.cancel(confirm_token=token).status, 202)
-        self.assertEqual(len(self.hub.cancels), 1)
 
 
 class ResultTests(RestCase):
     """``GET /api/v1/requests/{id}/result`` (task-inbox "결과 조회", the ``Results`` shapes): the summary by default,
     ``full=true`` the full view, ``full=true`` with ``run_id``/``artifact_path`` one page (``offset``/``length``,
-    paged by ``next_offset``); the answers are the MCP answers. The backend is ``test_inbox_results.FakeBackend``."""
+    paged by ``next_offset``); page arguments need ``full=true``. The backend is ``test_inbox_results.FakeBackend``."""
 
     def setUp(self):
         super().setUp()
@@ -738,16 +706,19 @@ class ResultTests(RestCase):
         self.assertEqual(value['artifact']['text'], 'TIFACT')
         self.assertIs(value['untrusted_text'], True)
 
-    def test_page_parameters_without_full_add_nothing_as_over_mcp(self):
+    def test_a_run_or_artifact_page_without_full_true_is_400(self):  # WBX-B8: was "adds nothing"
         (self.hub.root_a / 'out.txt').write_text('ARTIFACT-TEXT')
-        value = self.result(run_id=self.fx.RUN, artifact_path='out.txt')
-        self.assertEqual(set(value), {'summary', 'state', 'outcome', 'task', 'untrusted_text', 'note'})
-
-    def test_the_answers_are_the_mcp_answers(self):
-        mcp = self.hub.mcp(self.r1).start()
-        for query in ({}, {'full': True}, {'full': True, 'run_id': self.fx.RUN, 'offset': 5, 'length': 40}):
+        for query in ({'run_id': self.fx.RUN}, {'artifact_path': 'out.txt'},
+                      {'run_id': self.fx.RUN, 'artifact_path': 'out.txt', 'offset': 0, 'length': 5},
+                      {'full': False, 'run_id': self.fx.RUN}, {'full': False, 'artifact_path': 'out.txt'}):
             with self.subTest(query=query):
-                self.assertEqual(self.result(**query), mcp.tool('inbox_result', request_id=self.rid, **query))
+                reply = self.client.get(f'/requests/{self.rid}/result', **query)
+                error = self.assert_error(reply, 400, 'invalid_input')
+                self.assertIn('full=true', error['message'])
+                self.assertNotIn('ARTIFACT-TEXT', reply.body.decode())
+        self.assertEqual(self.backend.calls, [])
+        self.assertEqual(set(self.result(offset=0, length=5)), {'summary', 'state', 'outcome', 'task', 'untrusted_text',
+                                                                'note'})  # offset/length alone still add nothing
 
     def test_page_ranges_and_reach_are_refused(self):
         for query in ({'full': True, 'run_id': self.fx.RUN, 'length': 0},

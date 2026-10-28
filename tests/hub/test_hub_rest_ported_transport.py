@@ -131,7 +131,7 @@ class PoolShutdownPortTests(unittest.TestCase):
         def hold():
             started.release()
             return release.wait(10)
-        running = [api.executor.submit(hold) for _ in range(inbox_api.MCP_WORKERS)]
+        running = [api.executor.submit(hold) for _ in range(inbox_api.API_WORKERS)]
         for _ in running:
             self.assertTrue(started.acquire(timeout=10))
         queued = api.executor.submit(lambda: 'never')

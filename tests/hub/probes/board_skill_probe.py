@@ -46,6 +46,8 @@ sys.path.insert(0, str(REPO / "src"))
 sys.path.insert(0, str(REPO / "tests" / "hub"))
 
 from workbench.backend import launcher, omp_home  # noqa: E402
+from workbench.hub.board.launch import redact_log  # noqa: E402
+from workbench.runtime.process_evidence import LinuxProcessProbe, ProcessRef  # noqa: E402
 
 SKILL = "wb-inbox"
 SKILL_FILES = ("SKILL.md", "wb_inbox.py")
@@ -55,6 +57,80 @@ PROMPT = ("Use the wb-inbox skill to list the requests in the Workbench inbox. "
           "Reply with how many requests there are and their titles.")
 SEEDED = (("alpha", "B4 probe request one"), ("alpha", "B4 probe request two"), ("beta", "B4 probe request three"))
 CLOSED = "http://127.0.0.1:9"
+OUT_DEFAULT = Path("/tmp/wbx-b4-rerun")
+GRACE = launcher.ISOLATION_STOP_GRACE  # WBX-B12: stdin EOF, then this long before SIGTERM/SIGKILL
+STORE_SUFFIXES = ("", "-wal", "-shm")
+
+
+class ProbeStop(Exception):
+    """The logged-in provider list shrank: stop at once and keep everything (WBX-B4 rerun rule)."""
+
+
+def store_stat(store: Path) -> dict[str, Any]:
+    """``stat`` only (never opened): mtime, size and inode of the user's auth store and its -wal/-shm."""
+    out = {}
+    for suffix in STORE_SUFFIXES:
+        try:
+            info = os.stat(str(store) + suffix)
+        except FileNotFoundError:
+            out["agent.db" + suffix] = None
+            continue
+        out["agent.db" + suffix] = {
+            "mtime": datetime.datetime.fromtimestamp(info.st_mtime).astimezone().isoformat(timespec="microseconds"),
+            "size": info.st_size, "inode": info.st_ino}
+    return out
+
+
+class Recorder:
+    """Per OMP start: a stderr-capturing wrapper, a copy of OMP's own logs, the store stat and the provider list.
+
+    Everything lands in ``out`` (outside the probe root) and is never deleted by the probe."""
+
+    def __init__(self, out: Path, omp: str, store: Path):
+        self.out, self.omp, self.store = out, omp, store
+        self.logs = out / "logs"
+        self.bin = out / "bin"
+        for path in (out, self.logs, self.bin):
+            path.mkdir(parents=True, exist_ok=True, mode=0o700)
+        self.baseline: list[str] | None = None
+        self.starts: list[dict[str, Any]] = []
+        self.secrets: list[str] = []
+        self.log_dirs: list[Path] = []
+
+    def wrapper(self, label: str) -> str:
+        path = self.bin / f"omp-{label}.sh"
+        path.write_text(f"#!/bin/sh\nexec {self.omp} \"$@\" 2>>{self.logs / (label + '.stderr')}\n")
+        os.chmod(path, 0o700)
+        return str(path)
+
+    def _keep_logs(self, label: str) -> list[str]:
+        """Redacted copies of every OMP log file (``omp.*.log``) in the watched dirs, under ``logs/omp/<label>/``."""
+        kept = []
+        target = self.logs / "omp" / label
+        for directory in self.log_dirs:
+            if not directory.is_dir():
+                continue
+            for item in sorted(directory.iterdir()):
+                if item.is_file() and not item.is_symlink():
+                    target.mkdir(parents=True, exist_ok=True, mode=0o700)
+                    name = f"{directory.parent.name}-{item.name}"
+                    (target / name).write_bytes(redact_log(item.read_bytes()))
+                    os.chmod(target / name, 0o600)
+                    kept.append(name)
+        stderr = self.logs / f"{label}.stderr"
+        if stderr.is_file():
+            stderr.write_bytes(redact_log(stderr.read_bytes()))
+        return kept
+
+    def after(self, label: str, providers: list[str] | None, cleanup: dict[str, Any] | None) -> None:
+        entry = {"label": label, "providers": providers, "store": store_stat(self.store),
+                 "cleanup": cleanup, "omp_logs": self._keep_logs(label)}
+        self.starts.append(entry)
+        (self.out / "starts.json").write_text(json.dumps(self.starts, indent=2) + "\n")
+        if providers is not None and self.baseline is not None and set(self.baseline) - set(providers):
+            entry["shrank"] = sorted(set(self.baseline) - set(providers))
+            raise ProbeStop(f"after {label}: logged-in providers {providers} lost {entry['shrank']} "
+                            f"(baseline {self.baseline})")
 
 
 # -- fixture -----------------------------------------------------------------------------------------------------------
@@ -140,40 +216,10 @@ def owned_processes(root: Path) -> list[int]:
     return sorted(found)
 
 
-def stop_group(process: subprocess.Popen, start: str | None) -> list[int]:
-    try:
-        process.stdin.close()
-        process.wait(3)
-    except (OSError, subprocess.TimeoutExpired):
-        pass
-    for sig in (signal.SIGTERM, signal.SIGKILL):
-        if process.poll() is not None or ticks(process.pid) != start:
-            break
-        try:
-            os.killpg(process.pid, sig)
-        except OSError:
-            break
-        try:
-            process.wait(5)
-        except subprocess.TimeoutExpired:
-            continue
-    try:  # anything the bash tool left in the group
-        os.killpg(process.pid, signal.SIGKILL)
-    except OSError:
-        pass
-    process.wait()
-    for stream in (process.stdout,):
-        try:
-            stream.close()
-        except OSError:
-            pass
-    return [process.returncode]
-
-
 # -- stage 1 -----------------------------------------------------------------------------------------------------------
-def run_check(argv: list[str], *, cwd: Path, env: dict[str, str], timeout: float) -> dict[str, Any]:
+def run_check(argv: list[str], *, cwd: Path, env: dict[str, str], timeout: float, version: str) -> dict[str, Any]:
     result = launcher.check_isolation(argv, cwd=cwd, environment=env, role="board", allowed_skills=(SKILL,),
-                                      omp_version=launcher.omp_version(argv[0]), timeout=timeout, keep_raw=True)
+                                      omp_version=version, timeout=timeout, keep_raw=True)
     raw = result.pop("raw", None) or {}
     state = raw.get("wb-iso-state") or {}
     prompt = state.get("systemPrompt") or ""
@@ -266,12 +312,53 @@ def summarize_args(name: str, args: Any, key: str) -> dict[str, Any]:
     return keep
 
 
+def _ref(process: subprocess.Popen, name: str) -> ProcessRef | None:
+    try:
+        return ProcessRef(name, process.pid, LinuxProcessProbe.start_ticks(process.pid), 1)
+    except OSError:
+        return None
+
+
+def login_query(argv: list[str], *, cwd: Path, env: dict[str, str], timeout: float) -> dict[str, Any]:
+    """One RPC OMP (the check's mode) asked only ``get_login_providers``; stopped like the check (EOF first)."""
+    command = [*argv, "--mode", "rpc", "--no-session", "--no-title"]
+    process = subprocess.Popen(command, cwd=cwd, env=env, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                               stderr=subprocess.DEVNULL, start_new_session=True)
+    ref = _ref(process, "b4-login")
+    providers = None
+    try:
+        process.stdin.write(b'{"id":"l","type":"get_login_providers"}\n')
+        process.stdin.flush()
+        buffer, deadline = b"", time.monotonic() + timeout
+        while providers is None and time.monotonic() < deadline and process.poll() is None:
+            ready, _, _ = select.select([process.stdout], [], [], 0.2)
+            if not ready:
+                continue
+            chunk = os.read(process.stdout.fileno(), 1 << 16)
+            if not chunk:
+                break
+            buffer += chunk
+            *lines, buffer = buffer.split(b"\n")
+            for line in lines:
+                try:
+                    frame = json.loads(line)
+                except ValueError:
+                    continue
+                if isinstance(frame, dict) and frame.get("type") == "response" and frame.get("id") == "l":
+                    items = (frame.get("data") or {}).get("providers") or []
+                    providers = sorted(str(item.get("id")) for item in items
+                                       if isinstance(item, dict) and item.get("authenticated") is True)
+    finally:
+        cleanup = launcher._stop_group(process, ref, GRACE)  # noqa: SLF001 - the check's own stop (WBX-B12)
+    return {"providers": providers, "cleanup": cleanup}
+
+
 def model_turn(argv: list[str], *, cwd: Path, env: dict[str, str], key: str, timeout: float) -> dict[str, Any]:
     command = [*argv, "--mode", "rpc", "--no-session"]
     started = time.monotonic()
     process = subprocess.Popen(command, cwd=cwd, env=env, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                stderr=subprocess.DEVNULL, start_new_session=True)
-    start = ticks(process.pid)
+    ref = _ref(process, "b4-turn")
     types: dict[str, int] = {}
     tools: list[dict[str, Any]] = []
     tool_ends: list[dict[str, Any]] = []
@@ -344,7 +431,7 @@ def model_turn(argv: list[str], *, cwd: Path, env: dict[str, str], key: str, tim
                 elif kind == "agent_end":
                     ended = True
     finally:
-        stop_group(process, start)
+        cleanup = launcher._stop_group(process, ref, GRACE)  # noqa: SLF001 - EOF first, as the check (WBX-B12)
     answer = "\n".join(texts)
     return {"argv": command, "prompt": PROMPT, "duration": round(time.monotonic() - started, 1),
             "timed_out": not ended and time.monotonic() - started >= timeout, "agent_end": ended,
@@ -355,7 +442,7 @@ def model_turn(argv: list[str], *, cwd: Path, env: dict[str, str], key: str, tim
                        "count_3_stated": any(word in answer.lower() for word in ("3 request", "three request",
                                                                                  "3 open", "three open", "3개",
                                                                                  "**3**", "3 total", ": 3"))},
-            "key_in_rpc_stream": key_in_stream, "returncode": process.returncode}
+            "key_in_rpc_stream": key_in_stream, "returncode": process.returncode, "cleanup": cleanup}
 
 
 # -- probe -------------------------------------------------------------------------------------------------------------
@@ -371,7 +458,7 @@ def tree_size(path: Path) -> int:
 
 
 def run_probe(omp: str, *, timeout: float, turn_timeout: float, model: str | None, stage1_only: bool,
-              keep: bool) -> dict[str, Any]:
+              keep: bool, out: Path) -> dict[str, Any]:
     started = time.monotonic()
     omp_tmp = Path("/tmp") / f"omp-workbench-{os.geteuid()}"
     omp_tmp_before = sorted(os.listdir(omp_tmp)) if omp_tmp.is_dir() else []
@@ -379,14 +466,17 @@ def run_probe(omp: str, *, timeout: float, turn_timeout: float, model: str | Non
     runtime = Path(tempfile.mkdtemp(prefix="r", dir="/tmp"))
     os.chmod(runtime, 0o700)
     secret: list[str] = []
-    report: dict[str, Any] = {"_secret": secret, "omp": omp, "omp_version": launcher.omp_version(omp),
-                              "root": str(root), "runtime": str(runtime), "scenarios": {},
-                              "started_at": datetime.datetime.now().astimezone().isoformat(timespec="seconds")}
+    version = launcher.omp_version(omp)
+    user_store = omp_home.user_auth_store(os.environ)
+    rec = Recorder(out, omp, user_store)
+    report: dict[str, Any] = {"_secret": secret, "omp": omp, "omp_version": version,
+                              "root": str(root), "runtime": str(runtime), "out": str(out), "scenarios": {},
+                              "started_at": datetime.datetime.now().astimezone().isoformat(timespec="seconds"),
+                              "store_before": store_stat(user_store)}
     case = _Case()
     try:
         home = root / "home"
         home.mkdir()
-        user_store = omp_home.user_auth_store(os.environ)
         state = omp_home.auth_store_state(user_store)
         report["user_auth_store"] = {"state": state.detail, "ok": state.ok, "path": str(user_store)}
         base = {"PATH": "/usr/local/bin:/usr/bin:/bin", "HOME": str(home), "LANG": "C.UTF-8",
@@ -400,6 +490,7 @@ def run_probe(omp: str, *, timeout: float, turn_timeout: float, model: str | Non
         skills = copy_skill(board / "skills")
         home_obj = omp_home.prepare_omp_home(board, base, skills_dir=skills,
                                              provider_ids=launcher.ISOLATION_PROVIDER_IDS, agents_dir=empty)
+        rec.log_dirs = [home_obj.root / "logs", home / ".omp" / "logs"]
         report["board_home"] = {"root": str(home_obj.root), "agent_dir": str(home_obj.agent_dir),
                                 "config_dir": home_obj.config_dir, "linked": home_obj.linked,
                                 "notes": list(home_obj.notes), "environment": home_obj.environment()}
@@ -412,20 +503,34 @@ def run_probe(omp: str, *, timeout: float, turn_timeout: float, model: str | Non
         report["skill_dir_listing"] = sorted(p.name for p in (skills / SKILL).iterdir())
         env = omp_home.home_environment(base, home_obj.environment())
         check_env = {**env, **omp_home.withheld_user_values(base)}
-        argv = board_argv(omp, overlay, model=model)
 
-        report["scenarios"]["board_skill"] = run_check(argv, cwd=home, env=check_env, timeout=timeout)
+        def argv_for(label: str, chosen: Path = overlay) -> list[str]:
+            return board_argv(rec.wrapper(label), chosen, model=model)
+
+        def checked(label: str, chosen: Path = overlay) -> dict[str, Any]:
+            result = run_check(argv_for(label, chosen), cwd=home, env=check_env, timeout=timeout, version=version)
+            report["scenarios"][label] = result
+            providers = result["omp_home"].get("authenticated_providers")
+            rec.after(label, providers, result.get("cleanup"))
+            if providers is None:  # optional in the check: ask on its own so every start is compared
+                login = login_query(argv_for(label + "-login"), cwd=home, env=env, timeout=timeout)
+                result["login_query"] = login
+                rec.after(label + "-login", login["providers"], login["cleanup"])
+            return result
+
+        first = login_query(argv_for("login-start"), cwd=home, env=env, timeout=timeout)
+        rec.baseline = first["providers"]
+        report["login_start"] = first
+        rec.after("login-start", first["providers"], first["cleanup"])
+        checked("board_skill")
         # negative control: the same overlay, the skill dir empty (what skill_missing must see)
         empty_overlay = write(board / "omp-board-empty.yml", json.dumps(board_overlay(empty), indent=2) + "\n")
-        report["scenarios"]["control_no_skill"] = run_check(board_argv(omp, empty_overlay, model=model), cwd=home,
-                                                            env=check_env, timeout=timeout)
+        checked("control_no_skill", empty_overlay)
 
-        # get_login_providers is optional in the check and sometimes unanswered in time: unknown -> try the turn.
-        seen = [s["omp_home"].get("authenticated_providers") for s in report["scenarios"].values()]
-        authenticated = sorted({p for item in seen if item for p in item})
         provider = (model or "").split("/", 1)[0]
+        authenticated = rec.baseline or []
         report["login"] = {"model": model, "provider": provider, "authenticated_providers": authenticated,
-                           "usable": bool(provider) and (provider in authenticated or not authenticated)}
+                           "usable": bool(provider) and provider in authenticated}
         if not stage1_only and report["login"]["usable"] and report["scenarios"]["board_skill"]["state"] == "ok":
             records: list[dict[str, Any]] = []
             holder: list[str] = []
@@ -437,7 +542,7 @@ def run_probe(omp: str, *, timeout: float, turn_timeout: float, model: str | Non
             records.clear()  # the seeding requests are not the agent's
             before = hub.key_row(issued.raw)[0]
             turn_env = {**env, "WB_HUB_URL": f"http://127.0.0.1:{hub.port}", "WB_API_KEY": issued.raw}
-            turn = model_turn(argv, cwd=home, env=turn_env, key=issued.raw, timeout=turn_timeout)
+            turn = model_turn(argv_for("model_turn"), cwd=home, env=turn_env, key=issued.raw, timeout=turn_timeout)
             time.sleep(0.6)  # last_used_at flush interval 0.2 s
             after = hub.key_row(issued.raw)[0]
             turn["hub_requests"] = list(records)
@@ -445,14 +550,23 @@ def run_probe(omp: str, *, timeout: float, turn_timeout: float, model: str | Non
             turn["seeded"] = len(ids)
             turn["hub_url"] = "http://127.0.0.1:<port>"
             report["scenarios"]["model_turn"] = turn
+            rec.after("model_turn", None, turn["cleanup"])
+            last = login_query(argv_for("login-end"), cwd=home, env=env, timeout=timeout)
+            report["login_end"] = last
+            rec.after("login-end", last["providers"], last["cleanup"])
         elif not stage1_only:
             report["model_turn_skipped"] = "login not usable or stage 1 not ok"
         report["leftover_processes"] = owned_processes(root)
         natives = home / ".omp" / "natives"
         report["natives"] = {"bytes": tree_size(natives) if natives.is_dir() else 0,
                              "entries": sorted(os.listdir(natives)) if natives.is_dir() else []}
+    except ProbeStop as exc:
+        report["stopped"] = str(exc)
+        keep = True
     finally:
         case.cleanup()
+        report["starts"] = rec.starts
+        report["store_after"] = store_stat(user_store)
         for _ in range(50):
             if not owned_processes(root):
                 break
@@ -462,7 +576,8 @@ def run_probe(omp: str, *, timeout: float, turn_timeout: float, model: str | Non
             report["kept"] = True
         elif not report["leftover_processes_final"]:
             shutil.rmtree(root, ignore_errors=True)
-        shutil.rmtree(runtime, ignore_errors=True)
+        if not keep:
+            shutil.rmtree(runtime, ignore_errors=True)
         report["root_removed"] = not root.exists()
         after_tmp = sorted(os.listdir(omp_tmp)) if omp_tmp.is_dir() else []
         report["omp_tmp"] = {"dir": str(omp_tmp), "before": len(omp_tmp_before), "after": len(after_tmp),
@@ -474,8 +589,20 @@ def run_probe(omp: str, *, timeout: float, turn_timeout: float, model: str | Non
 # -- verdict & report --------------------------------------------------------------------------------------------------
 def judge(report: dict[str, Any], stage1_only: bool) -> dict[str, Any]:
     s = report["scenarios"]
+    if report.get("stopped") or "board_skill" not in s or "control_no_skill" not in s:
+        return {"verdict": "failed" if report.get("stopped") else "inconclusive",
+                "checks": {"logged-in providers never shrank": not report.get("stopped")},
+                "inconclusive": [report.get("stopped") or "stage 1 did not complete"]}
     board, control = s["board_skill"], s["control_no_skill"]
+    starts = report.get("starts") or []
+    baseline = (report.get("login_start") or {}).get("providers")
     checks: dict[str, bool] = {
+        "login at start: providers listed": bool(baseline),
+        "every OMP start: logged-in providers never shrank": all(
+            not (set(baseline or []) - set(item["providers"])) for item in starts if item["providers"] is not None),
+        "auth store: same inode before/after (never replaced)": all(
+            (report["store_before"].get(name) or {}).get("inode") == (report["store_after"].get(name) or {}).get("inode")
+            for name in ("agent.db",)),
         "stage1 board_skill: isolation check ok, 0 leaks": board["state"] == "ok" and not board["leaks"],
         "stage1 board_skill: skills == {wb-inbox}": board["skills"] == [SKILL],
         "stage1 board_skill: no MCP tool": not board["mcp_tools"],
@@ -494,6 +621,8 @@ def judge(report: dict[str, Any], stage1_only: bool) -> dict[str, Any]:
         inconclusive.append(f"login not usable for provider {report['login']['provider']!r}")
     elif "model_turn" not in s:
         inconclusive.append(report.get("model_turn_skipped", "model turn not run"))
+    elif "login_end" in report and set(baseline or []) - set(report["login_end"].get("providers") or []):
+        inconclusive.append("providers shrank after the model turn")
     elif "No API key found" in ((s["model_turn"].get("prompt_response") or {}).get("error") or ""):
         inconclusive.append("login unavailable: OMP refused the prompt (" +
                             s["model_turn"]["prompt_response"]["error"].splitlines()[0] + ")")
@@ -563,6 +692,18 @@ def render(report: dict[str, Any], notes: str) -> str:
                     "skill_dir_listing": report["skill_dir_listing"], "stale_mcp_json": report["stale_mcp_json"],
                     "decoy_mcp": report["decoy_mcp"], "decoy_skills": list(DECOY_SKILLS)}),
             "Overlay(두 번째 `--config`):\n", _fence(report["overlay"]),
+            "## OMP 시작별 기록(로그인 provider, auth store stat, 종료 단계)\n",
+            f"OMP log(stderr 전체·OMP 자체 log, 둘 다 `redact_log`)는 `{report.get('out')}/logs/`에 남겼다(지우지 않음).\n",
+            "| 시작 | authenticated | 종료 단계 | EOF 대기 s | 전체 종료 s | agent.db mtime | size | inode |",
+            "|---|---|---|---|---|---|---|---|"]
+    for item in report.get("starts") or []:
+        c = item.get("cleanup") or {}
+        db = (item.get("store") or {}).get("agent.db") or {}
+        out.append(f"| {item['label']} | {', '.join(item['providers']) if item['providers'] is not None else '(이 시작에서는 묻지 않음)'} "
+                   f"| {c.get('stage')} | {(c.get('stage_seconds') or {}).get('eof')} | {c.get('elapsed')} "
+                   f"| {db.get('mtime')} | {db.get('size')} | {db.get('inode')} |")
+    out += ["", "Auth store(`stat`만, 열지 않음) 실행 전·후:\n",
+            _fence({"before": report.get("store_before"), "after": report.get("store_after")}),
             "## 관측\n"]
     for name, res in s.items():
         out.append(f"### {name}\n")
@@ -585,6 +726,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--turn-timeout", type=float, default=300.0)
     parser.add_argument("--stage1-only", action="store_true")
     parser.add_argument("--keep", action="store_true", help="keep the temp root (debugging)")
+    parser.add_argument("--out", type=Path, default=OUT_DEFAULT, help="kept OMP logs and start records (never deleted)")
     parser.add_argument("--from-json", type=Path, help="re-render a saved --json observation (no OMP, no model)")
     args = parser.parse_args(argv)
     if args.from_json:
@@ -599,7 +741,7 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     model = args.model or launcher.load_model_table()["manager"]["models"]["default"]
     report = scrub(run_probe(args.omp, timeout=args.timeout, turn_timeout=args.turn_timeout, model=model,
-                             stage1_only=args.stage1_only, keep=args.keep))
+                             stage1_only=args.stage1_only, keep=args.keep, out=args.out))
     report["judgement"] = judge(report, args.stage1_only)
     if args.json:
         args.json.write_text(json.dumps(report, indent=2, ensure_ascii=False) + "\n")

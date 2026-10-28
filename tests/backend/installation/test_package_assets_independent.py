@@ -15,7 +15,20 @@ import tempfile
 import unittest
 
 ROOT = Path(__file__).resolve().parents[3]
-RUN = ROOT / '.workflow/WI-02-independent-tests'
+
+
+def _remove_tree(path):
+    """Delete a build tree whose installed files may be read-only (0o444/0o555)."""
+    if os.environ.get('WB_KEEP_PACKAGE_TEST_DIRS') == '1':
+        print(f'kept package test dir (WB_KEEP_PACKAGE_TEST_DIRS=1): {path}', file=sys.stderr)
+        return
+    def onexc(function, target, _exc):
+        parent = os.path.dirname(target)
+        os.chmod(parent, 0o700)
+        if os.path.isdir(target) and not os.path.islink(target):
+            os.chmod(target, 0o700)
+        function(target)
+    shutil.rmtree(path, onexc=onexc)
 
 
 class GitInstalledAssetsTests(unittest.TestCase):
@@ -78,8 +91,9 @@ class GitInstalledAssetsTests(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        RUN.mkdir(parents=True, exist_ok=True)
-        cls.artifact_run = Path(tempfile.mkdtemp(prefix='git-install-', dir=RUN))
+        # Build tree under TMPDIR; removed on success and failure (set WB_KEEP_PACKAGE_TEST_DIRS=1 to keep it).
+        cls.artifact_run = Path(tempfile.mkdtemp(prefix='git-install-'))
+        cls.addClassCleanup(_remove_tree, cls.artifact_run)
         cls.source = cls.artifact_run / 'source'
         cls.source.mkdir()
         for name in ('src', 'omp_bridge', 'build_support'):

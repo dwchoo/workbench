@@ -29,7 +29,8 @@ import test_web_pages_settings as settings  # noqa: E402
 from workbench.hub.web.app import OriginPolicy  # noqa: E402
 
 RAW_KEY = settings.RAW_KEY
-AGENT_LINE = ('Install the wb-inbox skill by following {origin}/skill/README.md, then use it; its settings '
+AGENT_LINE = ('Install the wb-inbox skill by following the install section for your agent type '
+              '(Claude Code, Codex or OMP) in {origin}/skill/README.md, then use it; its settings '
               '(WB_HUB_URL, WB_API_KEY) are in <skill folder>/.env or ~/.config/omp-workbench/client.env.')
 
 

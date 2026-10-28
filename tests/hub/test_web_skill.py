@@ -7,12 +7,14 @@ read straight from disk (never through the product's asset resolver). Run with `
 from __future__ import annotations
 
 import ipaddress
+import re
 from pathlib import Path
 import shutil
 import sys
 import tempfile
 import unittest
 from unittest import mock
+from urllib.parse import urljoin
 
 REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO / 'src'))
@@ -132,6 +134,42 @@ class AllFilesTests(SkillCase):
             self.assertEqual(response.headers.getall('Set-Cookie', []), [])
             self.assertNotIn(issued.raw.encode(), response.body)
             self.assertNotIn(issued.key_id.encode(), response.body)
+
+class InstallLinksTests(SkillCase):
+    """WBX-B11: an agent that is given only ``/skill/README.md`` can reach every file of the skill from it."""
+
+    FILES = sorted(p.name for p in (SKILLS / 'wb-inbox').iterdir() if p.name != '__pycache__')
+
+    async def test_the_served_readme_names_an_absolute_hub_url_for_every_file_and_each_answers_200(self):
+        await self.serve()
+        origin = f'http://{self.host}'
+        text = (await self.get('/skill/README.md')).body.decode()
+        for name in self.FILES:
+            with self.subTest(name=name):
+                url = f'{origin}/skill/wb-inbox/{name}'
+                self.assertIn(f'`{url}`', text)
+                self.assertEqual((await self.get(url[len(origin):])).status, 200)
+
+    async def test_the_github_relative_links_stay_and_resolve_to_the_same_served_files(self):
+        await self.serve()
+        original = (SKILLS / 'README.md').read_text()
+        served = (await self.get('/skill/README.md')).body.decode()
+        for name in self.FILES:
+            with self.subTest(name=name):
+                self.assertIn(f'](wb-inbox/{name})', original)
+                self.assertIn(f'](wb-inbox/{name})', served)
+                target = urljoin(f'http://{self.host}/skill/README.md', f'wb-inbox/{name}')
+                self.assertEqual((await self.get(target[len(f'http://{self.host}'):])).status, 200)
+
+    async def test_every_install_block_downloads_from_the_hub_that_served_it(self):
+        await self.serve()
+        served = (await self.get('/skill/README.md')).body.decode()
+        blocks = re.findall(r'```sh\n(.*?)```', served, flags=re.S)
+        self.assertGreaterEqual(len(blocks), 3)
+        self.assertNotIn('YOUR-HUB-HOST', served)
+        for block in (b for b in blocks if '/skill/wb-inbox/' in b):
+            self.assertIn(f'http://{self.host}/skill/wb-inbox/', block)
+
 
 class UnlistedPathTests(SkillCase):
     PATHS = ('/skill', '/skill/', '/skill/.env', '/skill/wb-inbox/.env', '/skill/wb-inbox/', '/skill/wb-inbox',

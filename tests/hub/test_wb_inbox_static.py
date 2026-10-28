@@ -82,6 +82,55 @@ class SkillFilesTests(unittest.TestCase):
         self.assertEqual(tracked.returncode, 1)
 
 
+AGENTS = {'Claude Code': '.claude/skills/wb-inbox', 'Codex': '.agents/skills/wb-inbox', 'OMP': '.omp/agent/skills/wb-inbox'}
+
+
+def readme_sections() -> dict[str, str]:
+    """Level-3 sections of skills/README.md by heading."""
+    text = (SKILLS / 'README.md').read_text(encoding='utf-8')
+    parts = re.split(r'^### (.+)$', text, flags=re.M)
+    return {parts[i]: parts[i + 1] for i in range(1, len(parts), 2)}
+
+
+def shipped_files() -> list[str]:
+    return sorted(p.name for p in SKILL.iterdir() if p.name != '__pycache__')
+
+
+class InstallGuideTests(unittest.TestCase):
+    """WBX-B11 (seam S5): the README alone lets an agent install every file of the skill, per agent type."""
+
+    def test_there_is_one_install_section_per_agent_with_its_skill_folder(self):
+        sections = readme_sections()
+        for agent, folder in AGENTS.items():
+            self.assertIn(agent, sections)
+            self.assertIn(folder, sections[agent], agent)
+
+    def test_each_agent_block_downloads_every_shipped_file_with_curl_and_a_stdlib_fallback(self):
+        for agent, text in ((agent, readme_sections()[agent]) for agent in AGENTS):
+            block = re.search(r'```sh\n(.*?)```', text, flags=re.S)
+            self.assertIsNotNone(block, agent)
+            block = block.group(1)
+            for name in shipped_files():
+                self.assertIn(name, block, (agent, name))
+            for needle in (PLACEHOLDER + '/skill/wb-inbox/', 'curl', 'python3 -I -c', 'urllib', 'mkdir -p',
+                           'cp ', '.env.example', 'chmod 600', 'wb_inbox.py" config'):
+                self.assertIn(needle, block, (agent, needle))
+
+    def test_the_file_table_links_every_shipped_file_on_github_and_on_the_hub(self):
+        text = (SKILLS / 'README.md').read_text(encoding='utf-8')
+        for name in shipped_files():
+            self.assertIn(f'](wb-inbox/{name})', text, name)
+            self.assertIn(f'`{PLACEHOLDER}/skill/wb-inbox/{name}`', text, name)
+
+    def test_a_github_alternative_exists_and_the_readme_stays_key_free(self):
+        text = (SKILLS / 'README.md').read_text(encoding='utf-8')
+        self.assertIn('git clone', text)
+        self.assertIn('/raw/', text)
+        for value in re.findall(r'WB_API_KEY=(\S*)', text):
+            self.assertIn(value, ('', 'wbk_...'), value)
+        self.assertNotIn('wbk_replace_me', text)
+
+
 class StdlibOnlyTests(unittest.TestCase):
     def test_every_import_is_standard_library(self):
         tree = ast.parse((SKILL / 'wb_inbox.py').read_text(encoding='utf-8'))

@@ -54,7 +54,8 @@ def hub_origin(request: web.Request) -> str:
 
 ENV_GUIDE = ("agent 머신의 <skill 폴더>/.env 또는 ~/.config/omp-workbench/client.env에 붙여 넣고 "
              "chmod 600 하세요.")
-AGENT_LINE = ("Install the wb-inbox skill by following {readme}, then use it; its settings (WB_HUB_URL, WB_API_KEY) "
+AGENT_LINE = ("Install the wb-inbox skill by following the install section for your agent type "
+              "(Claude Code, Codex or OMP) in {readme}, then use it; its settings (WB_HUB_URL, WB_API_KEY) "
               "are in <skill folder>/.env or ~/.config/omp-workbench/client.env.")
 
 

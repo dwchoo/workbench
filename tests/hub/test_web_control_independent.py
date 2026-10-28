@@ -831,7 +831,7 @@ class Browser:
             'Content-Type': 'application/x-www-form-urlencoded'})
         case.assertEqual(status, 303)
         self.session = self.cookie(headers, 'wb_hub_session')
-        _s, _h, text = self.request('GET', '/', headers={'Cookie': f'wb_hub_session={self.session}'})
+        _s, _h, text = self.request('GET', '/dashboard', headers={'Cookie': f'wb_hub_session={self.session}'})
         self.csrf = re.search(r'name="csrf" value="([^"]+)"', text).group(1)
 
     def request(self, method: str, path: str, body: str = '', headers: dict | None = None):

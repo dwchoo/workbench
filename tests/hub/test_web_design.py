@@ -89,7 +89,7 @@ class DesignCase(requests_tests.RequestsCase):
         self.services.audit.record('login_success', 'owner', '10.0.0.5', {'delay_seconds': 0}, now=self.now[0])
         await self.submit_key()
         out = {'/login': Dom((await self.get('/login')).body_text)}
-        for path in ('/', '/requests', '/requests/new', f'/requests/{request_id}', '/settings', '/settings/keys',
+        for path in ('/dashboard', '/requests', '/requests/new', f'/requests/{request_id}', '/settings', '/settings/keys',
                      '/settings/audit', '/board'):
             response = await self.get(path, cookies=self.cookies)
             self.assertEqual(response.status, 200, f'{path}: {response.body_text[:200]}')

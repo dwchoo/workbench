@@ -130,7 +130,7 @@ class BannerCase(unittest.IsolatedAsyncioTestCase):
 
 
 # A logged-in screen of each kind and the login screen (SPEC: "로그인 화면에도 같은 배너·chip이 있다").
-SCREENS = ('/login', '/', '/requests', '/requests/new', '/settings', '/settings/keys', '/settings/audit')
+SCREENS = ('/login', '/dashboard', '/requests', '/requests/new', '/settings', '/settings/keys', '/settings/audit')
 
 
 class BannerShownTests(BannerCase):

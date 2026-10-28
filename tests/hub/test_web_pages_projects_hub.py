@@ -44,7 +44,7 @@ class RealHubStatusPages(unittest.TestCase):
         status, _, _ = browser.request('POST', '/login', {'login_token': token, 'password': PASSWORD})
         self.assertEqual(status, 303)
 
-        status, _, board = browser.request('GET', '/')
+        status, _, board = browser.request('GET', '/dashboard')
         self.assertEqual(status, 200)
         self.assertNotIn('http-equiv="refresh"', board)  # WBX-C2: the dashboard redraws through /api/dashboard
         self.assertIn('src="/static/dashboard.js"', board)
@@ -76,7 +76,7 @@ class RealHubStatusPages(unittest.TestCase):
         status, _, page = browser.request('GET', headers['Location'])
         self.assertIn('검토 방식을 바꿨습니다', page)
         self.assertRegex(page, r'<option value="manual" selected>')
-        status, _, board = browser.request('GET', '/')
+        status, _, board = browser.request('GET', '/dashboard')
         self.assertIn('수동', board)
 
         status, _, page = browser.request('GET', '/requests/new')

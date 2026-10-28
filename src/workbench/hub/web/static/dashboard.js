@@ -1,4 +1,4 @@
-/* WB Hub dashboard refresh (web-board-ux WBX-C2). The server renders `/` complete; this script asks the session JSON
+/* WB Hub dashboard refresh (web-board-ux WBX-C2). The server renders `/dashboard` complete; this script asks the session JSON
    `/api/dashboard` every 10 s and redraws the numbers, the two tables, the owner-waiting list and the Board agent card
    from it, in place (no reload, no history entry). Everything the JSON says goes in as text, never as markup. 401 means
    the session ended: go to /login (replace, so Back does not return here) and stop. A network error, a bad answer or a

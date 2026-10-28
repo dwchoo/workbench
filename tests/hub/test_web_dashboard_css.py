@@ -32,7 +32,7 @@ class PageClassTests(dashboard_tests.DashboardCase):
     async def test_every_class_of_the_dashboard_markup_has_a_rule(self):
         self.populate()
         self.rows = [dashboard_tests.hub_row('alpha', self.a, waits=[{'code': 'paused'}])]
-        _, page = await self.page('/')
+        _, page = await self.page('/dashboard')
         used = {name for _, attrs in page.elements for name in (attrs.get('class') or '').split()}
         selectors = selector_text()
         missing = sorted(name for name in used - HOOK_ONLY if not re.search(rf'\.{re.escape(name)}(?![\w-])', selectors))

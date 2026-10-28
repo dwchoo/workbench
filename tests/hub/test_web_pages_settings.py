@@ -366,7 +366,7 @@ class NoRawKeyLeakTests(SettingsCase):
         response = await self.issue()
         raw = RAW_KEY.search(response.body_text).group(0)
         secret = raw[15:]
-        for path in ('/settings', '/settings/keys', '/settings/audit', '/'):
+        for path in ('/settings', '/settings/keys', '/settings/audit', '/dashboard'):
             page = await self.get(path, cookies=self.cookies)
             self.assertNotIn(secret, page.body_text, path)
             self.assertNotIn(secret, ''.join(str(item) for item in page.headers.items()), path)

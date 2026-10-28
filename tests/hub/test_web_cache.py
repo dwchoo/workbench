@@ -125,7 +125,7 @@ class SessionPageTests(CacheCase):
         self.assertTrue(any(400 <= status < 500 for status in seen.values()), seen)
 
     async def test_named_screens_200_and_a_404_page(self):
-        for path in ('/', '/requests', '/requests/new', '/settings', '/settings/keys', '/settings/audit'):
+        for path in ('/dashboard', '/requests', '/requests/new', '/settings', '/settings/keys', '/settings/audit'):
             status, headers, _ = await self.get(path)
             self.assertEqual(status, 200, path)
             self.assert_cache(headers, SESSION_PAGE, path)

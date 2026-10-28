@@ -60,7 +60,7 @@ async def find_row(request: web.Request, project_id: str, *, fresh: bool) -> tup
 
 def not_found(request: web.Request) -> web.Response:
     body = render.html_join([render.tag("h1", "프로젝트를 찾을 수 없습니다"),
-                             render.tag("p", render.tag("a", "프로젝트 상태", href="/"))])
+                             render.tag("p", render.tag("a", "프로젝트 상태", href=render.HOME_PATH))])
     return frame(request, "오류", body, status=404)
 
 
@@ -140,7 +140,7 @@ async def get_project(request: web.Request) -> web.Response:
         body.append(render.tag("p", UNCONTROLLABLE_TEXT[row["power"]], class_="notice", role="status"))
     body.append(review_mode_form(request, project_id, mode))
     body.append(render.tag("p", render.tag("a", "이 프로젝트의 요청", href=f"/requests?project={quote(project_id, safe='')}")))
-    body.append(render.tag("p", render.tag("a", "프로젝트 상태", href="/")))
+    body.append(render.tag("p", render.tag("a", "프로젝트 상태", href=render.HOME_PATH)))
     return frame(request, cells["이름"], render.html_join(body))
 
 

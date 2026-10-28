@@ -31,7 +31,7 @@ PASSWORD = 'correct horse battery'
 VOID = frozenset({'meta', 'link', 'input', 'br', 'hr', 'img'})
 
 # SPEC "전역 nav": the one link set every logged-in screen carries (label -> href).
-NAV_LINKS = {'대시보드': '/', '요청': '/requests', '새 요청': '/requests/new', 'Board agent': '/board',
+NAV_LINKS = {'대시보드': '/dashboard', '요청': '/requests', '새 요청': '/requests/new', 'Board agent': '/board',
              '비밀번호': '/settings', 'API key': '/settings/keys', '감사 기록': '/settings/audit'}
 
 
@@ -195,7 +195,7 @@ class NavCase(unittest.IsolatedAsyncioTestCase):
 
 
 # Screens a logged-in owner reaches from the nav and from each other (SPEC "웹 route와 화면").
-SCREENS = ('/', '/requests', '/requests/new', '/board', '/settings', '/settings/keys', '/settings/audit')
+SCREENS = ('/dashboard', '/requests', '/requests/new', '/board', '/settings', '/settings/keys', '/settings/audit')
 
 
 class NavLinkSetTests(NavCase):
@@ -218,7 +218,7 @@ class NavCurrentTests(NavCase):
     async def test_only_the_link_of_the_current_screen_carries_aria_current(self):
         rid, project = str(uuid.uuid4()), str(uuid.uuid4())
         expected = {
-            '/': ['대시보드'],
+            '/dashboard': ['대시보드'],
             f'/projects/{project}': ['대시보드'],  # unknown project: the 404 page is still a logged-in screen
             '/requests': ['요청'],
             f'/requests/{rid}': ['요청'],
@@ -253,7 +253,7 @@ class NavSettingsMenuTests(NavCase):
                 self.assertEqual(inside, {'비밀번호': '/settings', 'API key': '/settings/keys',
                                           '감사 기록': '/settings/audit'}, path)
                 outside = {link['text'].strip(): link['href'] for link in dom.links if not link['in_details']}
-                self.assertEqual(outside, {'대시보드': '/', '요청': '/requests', '새 요청': '/requests/new',
+                self.assertEqual(outside, {'대시보드': '/dashboard', '요청': '/requests', '새 요청': '/requests/new',
                                            'Board agent': '/board'}, path)
 
     async def test_the_settings_summary_is_current_on_settings_screens_only(self):
@@ -310,7 +310,7 @@ class NavEveryPageRouteTests(NavCase):
                 self.assertEqual(dom.nav_hrefs(), set(NAV_LINKS.values()), route)
                 self.assertNotIn('NAVLEAK', dom.header_text, route)
                 self.assertNotIn('NAVLEAK', repr(dom.header_attrs), route)
-        # '/', '/settings*' (3), '/projects/*' (2), '/requests*' (new, list, one, edit, cancel, full), '/board*' (2)
+        # '/' (303) and '/dashboard', '/settings*' (3), '/projects/*' (2), '/requests*' (new, list, one, edit, cancel, full), '/board*' (2)
         self.assertGreaterEqual(len(seen), 14, sorted(seen))
 
     async def test_the_nav_frame_has_the_brand_badge_slot_and_logout(self):
@@ -338,7 +338,7 @@ class NavBoardDotTests(NavCase):
 
     async def test_the_dot_sits_in_the_board_agent_link(self):
         self.services.board_state = lambda: 'on'
-        dom = await self.dom('/')
+        dom = await self.dom('/dashboard')
         board = dom.link_by_href('/board')
         self.assertEqual(len(board), 1)
         self.assertEqual(board[0]['text'].strip(), 'Board agent')
@@ -442,7 +442,7 @@ class NavNarrowScreenTests(NavCase):
     user's browser check (pending); here only the markup and the stylesheet text are pinned."""
 
     async def test_a_checkbox_toggle_and_its_label_come_before_the_nav(self):
-        for path in ('/', '/settings/keys'):
+        for path in ('/dashboard', '/settings/keys'):
             with self.subTest(path=path):
                 dom = await self.dom(path)
                 self.assertEqual([toggle.get('id') for toggle in dom.toggles], ['wb-nav-toggle'])

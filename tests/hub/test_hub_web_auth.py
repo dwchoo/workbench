@@ -227,7 +227,7 @@ class LoginSuccessTests(WebAppCase):
     async def test_login_sets_the_session_cookie_records_the_session_and_audits(self):
         response = await self.login()
         self.assertEqual(response.status, 303, response.body_text)
-        self.assertEqual(response.headers['Location'], '/')
+        self.assertEqual(response.headers['Location'], '/dashboard')
         cookie = set_cookie(response, 'wb_hub_session')
         self.assertIsNotNone(cookie, response.headers.getall('Set-Cookie', []))
         self.assertTrue(cookie['httponly'])
@@ -237,7 +237,7 @@ class LoginSuccessTests(WebAppCase):
         rows = self.rows('SELECT token_hash, created_at, expires_at, password_generation, client_addr FROM sessions')
         self.assertEqual(rows, [(token_hash, self.now[0], self.now[0] + 86400, self.generation, '127.0.0.1')])
         self.assertEqual(self.audit(), [('login_success', 'owner', '127.0.0.1', {'delay_seconds': 0})])
-        home = await self.get('/', cookies={'wb_hub_session': cookie['value']})
+        home = await self.get('/dashboard', cookies={'wb_hub_session': cookie['value']})
         self.assertEqual(home.status, 200)
         self.assertIn('action="/logout"', home.body_text)
 
@@ -308,9 +308,9 @@ class SessionValidityTests(WebAppCase):
     async def test_a_session_ends_24_hours_after_login_without_extension(self):
         token = await self.session_cookie()
         self.now[0] += 86399.0
-        self.assertEqual((await self.get('/', cookies={'wb_hub_session': token})).status, 200)
+        self.assertEqual((await self.get('/dashboard', cookies={'wb_hub_session': token})).status, 200)
         self.now[0] += 1.0
-        expired = await self.get('/', cookies={'wb_hub_session': token})
+        expired = await self.get('/dashboard', cookies={'wb_hub_session': token})
         self.assertEqual((expired.status, expired.headers.get('Location')), (303, '/login'))
         cleared = set_cookie(expired, 'wb_hub_session')
         self.assertIn(cleared['value'], ('', '""'))
@@ -322,13 +322,13 @@ class SessionValidityTests(WebAppCase):
     async def test_a_new_password_generation_ends_the_session(self):
         token = await self.session_cookie()
         self.passwords.set_password('another good password')  # ``wb hub passwd``
-        response = await self.get('/', cookies={'wb_hub_session': token})
+        response = await self.get('/dashboard', cookies={'wb_hub_session': token})
         self.assertEqual((response.status, response.headers.get('Location')), (303, '/login'))
         self.assertEqual((await self.get('/api/badge', cookies={'wb_hub_session': token})).status, 401)
 
     async def test_unknown_or_junk_tokens_are_not_sessions(self):
         for token in ('x' * 43, 'a' * 300, ''):
-            self.assertEqual((await self.get('/', cookies={'wb_hub_session': token})).status, 303, token)
+            self.assertEqual((await self.get('/dashboard', cookies={'wb_hub_session': token})).status, 303, token)
         self.assertEqual((await self.get('/api/badge')).status, 401)
 
 
@@ -336,11 +336,11 @@ class CsrfOriginTests(WebAppCase):
     async def logged_in(self) -> tuple[str, str]:
         """(session token, its CSRF value read from the logout form)."""
         token = await self.session_cookie()
-        home = await self.get('/', cookies={'wb_hub_session': token})
+        home = await self.get('/dashboard', cookies={'wb_hub_session': token})
         return token, re.search(r'name="csrf" value="([^"]+)"', home.body_text).group(1)
 
     async def assert_still_logged_in(self, token: str) -> None:
-        self.assertEqual((await self.get('/', cookies={'wb_hub_session': token})).status, 200)
+        self.assertEqual((await self.get('/dashboard', cookies={'wb_hub_session': token})).status, 200)
         self.assertNotIn('logout', [row[0] for row in self.audit()])
 
     async def test_state_change_without_or_with_a_wrong_csrf_is_refused_and_changes_nothing(self):
@@ -359,7 +359,7 @@ class CsrfOriginTests(WebAppCase):
         token, csrf = await self.logged_in()
         response = await self.post('/logout', {'csrf': csrf}, cookies={'wb_hub_session': token})
         self.assertEqual((response.status, response.headers['Location']), (303, '/login'))
-        self.assertEqual((await self.get('/', cookies={'wb_hub_session': token})).status, 303)
+        self.assertEqual((await self.get('/dashboard', cookies={'wb_hub_session': token})).status, 303)
         self.assertEqual(self.audit()[-1], ('logout', 'owner', '127.0.0.1', {'delay_seconds': 0}))
         token, csrf = await self.logged_in()
         response = await self.post('/logout', {}, cookies={'wb_hub_session': token}, headers={'X-CSRF-Token': csrf})
@@ -407,7 +407,7 @@ class InsecureBannerTests(WebAppCase):
     async def test_plain_http_off_loopback_shows_the_banner_on_pages(self):
         login = await self.get('/login')
         self.assertIn('평문 HTTP로 LAN에 열려 있습니다. VPN 등 네트워크 보호가 필요합니다.', login.body_text)
-        home = await self.get('/', cookies={'wb_hub_session': await self.session_cookie()})
+        home = await self.get('/dashboard', cookies={'wb_hub_session': await self.session_cookie()})
         self.assertIn('평문 HTTP로 LAN에 열려 있습니다.', home.body_text)
 
 

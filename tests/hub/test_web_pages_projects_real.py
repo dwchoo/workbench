@@ -65,7 +65,7 @@ class RealPowerOffFlow(web_control_tests.WebControlCase):
     async def test_cancel_changes_nothing_and_a_changed_work_list_is_asked_again_before_the_backend_stops(self):
         root, project_id, pid, ticks = await self.running()
         session = await self.login()
-        status, board = await self.fetch('/', session)
+        status, board = await self.fetch('/dashboard', session)
         self.assertEqual(status, 200)
         self.assertIn('켜짐', board)
         status, page = await self.fetch(f'/projects/{project_id}/power-off', session)

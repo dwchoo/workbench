@@ -87,8 +87,11 @@ INSECURE_BANNER_SCRIPT = "/static/insecure-banner.js"
 # components in base.css, the page-level layout pieces in app.css (WBX-AC-19). A page's own ``stylesheets`` come after.
 SHARED_STYLESHEETS = ("/static/base.css", "/static/app.css")
 
+# The dashboard's path (WBX-A6, 2026-10-28 사용자 결정): every "home" link and redirect goes here; ``/`` only redirects.
+HOME_PATH = "/dashboard"
+
 BOARD_DOT_TITLES = {"on": "실행 중", "off": "중지", "error": "오류"}
-NAV_LINKS = (("대시보드", "/"), ("요청", "/requests"), ("새 요청", "/requests/new"), ("Board agent", "/board"))
+NAV_LINKS = (("대시보드", HOME_PATH), ("요청", "/requests"), ("새 요청", "/requests/new"), ("Board agent", "/board"))
 SETTINGS_LINKS = (("비밀번호", "/settings"), ("API key", "/settings/keys"), ("감사 기록", "/settings/audit"))
 
 
@@ -108,8 +111,8 @@ def _under(path: str, prefix: str) -> bool:
 
 def current_href(path: str) -> str | None:
     """The nav link of the screen at ``path`` (SPEC "전역 nav": by path prefix), None for any other path."""
-    if path == "/" or _under(path, "/projects"):
-        return "/"
+    if path == HOME_PATH or _under(path, "/projects"):
+        return HOME_PATH
     if path == "/requests/new":
         return "/requests/new"
     if _under(path, "/requests"):
@@ -171,7 +174,7 @@ def layout(title: str, body: object, *, insecure_warning: bool = False, csrf: st
                title=INSECURE_WARNING_TEXT) if insecure_warning else ""
     logout = (tag("form", html_join([csrf_field(csrf), tag("button", "로그아웃", type="submit", class_="btn btn-sm")]),
                   method="post", action="/logout", class_="logout") if csrf else "")
-    header = tag("header", html_join([tag("a", TITLE, href="/", class_="brand"),
+    header = tag("header", html_join([tag("a", TITLE, href=HOME_PATH, class_="brand"),
                                       nav_markup(nav) if nav is not None else "",
                                       chip, tag("span", "", id="wb-badge", class_="badge"), logout]))
     head = html_join([void("meta", charset="utf-8"),

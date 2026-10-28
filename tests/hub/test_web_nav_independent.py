@@ -36,7 +36,7 @@ PASSWORD = 'correct horse battery'
 LEAK = 'NAVLEAK'
 HOSTILE = f'<script>{LEAK}</script>"><b onmouseover=x>'
 VOID = frozenset({'meta', 'link', 'input', 'br', 'hr', 'img', 'base', 'col', 'area', 'source', 'wbr'})
-NAV_LABEL_HREF = {'대시보드': '/', '요청': '/requests', '새 요청': '/requests/new', 'Board agent': '/board',
+NAV_LABEL_HREF = {'대시보드': '/dashboard', '요청': '/requests', '새 요청': '/requests/new', 'Board agent': '/board',
                   '비밀번호': '/settings', 'API key': '/settings/keys', '감사 기록': '/settings/audit'}
 RAW_KEY = re.compile(r'wbk_[a-z2-7]{10}_[A-Za-z0-9_-]{43}')
 CSRF_VALUE = re.compile(r'name="csrf" value="([^"]+)"')
@@ -219,8 +219,10 @@ class EveryPageRouteTests(NavBase):
                          {r for (m, r), a in audit.route_marks(self.app).items()
                           if m == 'GET' and a == audit.SESSION and not r.startswith('/static')}
                          - {route for route, *_ in skipped}, 'every HTML GET route was walked')
-        # raw / artifact downloads are the only routes allowed to be non-HTML.
-        self.assertLessEqual({route for route, *_ in skipped}, {'/requests/{rid}/artifact', '/requests/{rid}/raw'}, skipped)
+        # raw / artifact downloads are the only routes allowed to be non-HTML, besides ``/`` (WBX-A6: 303 /dashboard).
+        self.assertLessEqual({route for route, *_ in skipped}, {'/requests/{rid}/artifact', '/requests/{rid}/raw', '/'},
+                             skipped)
+        self.assertEqual([status for route, status, _ in skipped if route == '/'], [303])
         self.assertGreaterEqual(len(walked), 14, walked)
 
 
@@ -240,7 +242,7 @@ class AriaCurrentTests(NavBase):
         _, key_id = await self.make_key()
         project = self.project
         cases = {
-            '/': ['대시보드'],
+            '/dashboard': ['대시보드'],
             f'/projects/{project}': ['대시보드'],
             f'/projects/{uuid.uuid4()}': ['대시보드'],
             f'/projects/{project}/power-on': ['대시보드'],
@@ -337,7 +339,7 @@ class NoNavTests(NavBase):
                 self.assert_no_nav(body, label)
 
     async def test_session_less_page_gets_are_redirects_without_nav_markup(self):
-        for path in ('/', '/requests', '/requests/new', '/board', '/settings', '/settings/keys', '/settings/audit',
+        for path in ('/', '/dashboard', '/requests', '/requests/new', '/board', '/settings', '/settings/keys', '/settings/audit',
                      f'/requests/{uuid.uuid4()}', f'/projects/{self.project}', '/board/restart?channel=agent'):
             with self.subTest(path=path):
                 status, headers, text = await self.get(path, session=False)
@@ -385,7 +387,7 @@ class NavIsolationTests(NavBase):
     async def test_the_header_markup_is_identical_on_every_screen_up_to_aria_current(self):
         rid = self.make_request(HOSTILE, HOSTILE)
         _, key_id = await self.make_key('plain key')
-        paths = ['/', f'/projects/{self.project}', '/requests', '/requests/new', f'/requests/{rid}',
+        paths = ['/dashboard', f'/projects/{self.project}', '/requests', '/requests/new', f'/requests/{rid}',
                  f'/requests/{rid}/edit', f'/requests/{rid}/cancel', '/board', '/board/restart?channel=agent', '/settings',
                  '/settings/keys', f'/settings/keys/{key_id}/revoke', '/settings/audit']
         shapes = {}
@@ -399,7 +401,7 @@ class NavIsolationTests(NavBase):
 
     async def test_query_cookie_and_header_values_do_not_reach_the_nav(self):
         for path in (f'/requests?q={LEAK}&project={LEAK}&state={LEAK}', f'/board/restart?channel={LEAK}',
-                     f'/settings/audit?page={LEAK}', f'/?x={LEAK}'):
+                     f'/settings/audit?page={LEAK}', f'/dashboard?x={LEAK}'):
             with self.subTest(path=path):
                 status, _, text = await self.get(path, **{'User-Agent': LEAK, 'Referer': f'{self.url}/{LEAK}'})
                 self.assertNotIn(LEAK, header_html(text), path)
@@ -408,7 +410,7 @@ class NavIsolationTests(NavBase):
         self.make_request(HOSTILE, HOSTILE)
         status, _, text = await self.post('/settings/keys', {'csrf': await self.csrf(), 'name': HOSTILE,
                                                              'grade': 'requester', 'scope': 'all', 'expires_days': ''})
-        for path in ('/requests', '/settings/keys', '/settings/audit', '/'):
+        for path in ('/requests', '/settings/keys', '/settings/audit', '/dashboard'):
             _, _, text = await self.get(path)
             self.assertNotIn(LEAK, header_html(text), path)
             tree = Tree(text)
@@ -440,7 +442,7 @@ class DotTests(NavBase):
         titles = {}
         for state in ('on', 'off', 'error'):
             self.services.board_state = lambda state=state: state
-            for path in ('/', '/requests', '/settings/audit', '/board'):
+            for path in ('/dashboard', '/requests', '/settings/audit', '/board'):
                 status, _, text = await self.get(path)
                 nav = self.assert_full_nav(Tree(text), path)
                 dots = [e for e in nav.find('span') if 'dot' in e.classes()]
@@ -468,7 +470,7 @@ class MarkupTests(NavBase):
     async def pages(self) -> dict:
         rid = self.make_request()
         _, key_id = await self.make_key()
-        paths = ['/', f'/projects/{self.project}', '/requests', '/requests/new', f'/requests/{rid}',
+        paths = ['/dashboard', f'/projects/{self.project}', '/requests', '/requests/new', f'/requests/{rid}',
                  f'/requests/{rid}/edit', f'/requests/{rid}/cancel', '/board', '/board/restart?channel=agent', '/settings',
                  '/settings/keys', f'/settings/keys/{key_id}/revoke', '/settings/audit']
         found = {}
@@ -504,7 +506,7 @@ class MarkupTests(NavBase):
                 self.assertLess(kids.index(nav), kids.index(badge), path)
                 self.assertLess(kids.index(nav), kids.index(logout), path)
                 self.assertEqual(kids[0].tag, 'a', 'brand first')
-                self.assertEqual(kids[0].attrs.get('href'), '/')
+                self.assertEqual(kids[0].attrs.get('href'), '/dashboard')
                 self.assertEqual(logout.find('button')[0].attrs.get('type'), 'submit')
 
     async def test_no_inline_script_style_or_event_handler_anywhere_and_csp_is_strict(self):

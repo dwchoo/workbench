@@ -332,7 +332,7 @@ class PageTests(DashboardCase):
         self.assertEqual((response.status, response.headers['Location']), (303, '/login'))
 
     async def test_the_page_has_the_four_sections_and_no_meta_refresh(self):
-        response, page = await self.page('/')
+        response, page = await self.page('/dashboard')
         self.assertEqual(response.status, 200)
         ids = {attrs.get('id') for _, attrs in page.elements}
         self.assertGreaterEqual(ids, {'summary', 'projects', 'recent-requests', 'board-agent', 'attention'})
@@ -346,7 +346,7 @@ class PageTests(DashboardCase):
     async def test_the_page_is_complete_without_javascript(self):
         self.populate()
         self.rows = [hub_row('alpha', self.a)]
-        response, page = await self.page('/')
+        response, page = await self.page('/dashboard')
         hidden = sorted(attrs['id'] for _, attrs in page.elements if 'hidden' in attrs and attrs.get('id'))
         # Only what JavaScript fills in or an absent message stays hidden; every table, card and list is in the HTML.
         self.assertEqual(hidden, sorted(['dash-auto', 'projects-message', 'recent-message', 'attention-message',
@@ -357,7 +357,7 @@ class PageTests(DashboardCase):
     async def test_the_page_has_every_element_the_dashboard_script_updates(self):
         # The contract between the server markup and static/dashboard.js (tests/hub/js/dashboard.test.mjs builds the
         # same skeleton): ids it writes to, one value and one sub line per card.
-        response, page = await self.page('/')
+        response, page = await self.page('/dashboard')
         ids = {attrs.get('id') for _, attrs in page.elements}
         card_ids = ['projects-running', 'projects-closed', 'requests-new', 'requests-reviewing', 'requests-needs-info',
                     'requests-running', 'attention']
@@ -368,7 +368,7 @@ class PageTests(DashboardCase):
         self.assertEqual(sorted(wanted - ids), [])
 
     async def test_the_page_loads_the_dashboard_script_and_no_inline_code(self):
-        response, page = await self.page('/')
+        response, page = await self.page('/dashboard')
         self.assertEqual([attrs.get('src') for attrs in page.tags('script')],
                          ['/static/session-check.js', '/static/badge.js', '/static/dashboard.js'])
         self.assertNotIn('style=', response.body_text)
@@ -379,7 +379,7 @@ class PageTests(DashboardCase):
         self.populate()
         self.rows = [hub_row('a1', self.a, power='on'), hub_row('a2', 'p-2', power='on'), hub_row('b1', self.b, power='off'),
                      hub_row('u1', 'p-4', power='unknown')]
-        response, page = await self.page('/')
+        response, page = await self.page('/dashboard')
         cards = Cards(response.body_text).cards
         self.assertEqual(cards, {
             'projects-running': ['프로젝트 실행 중', '2', '전체 4개 중'],
@@ -391,7 +391,7 @@ class PageTests(DashboardCase):
             'attention': ['내 답이 필요한 요청', '2', '추가 정보 필요 1 · Task 결정 대기 1']})
 
     async def test_each_card_links_to_where_its_requests_are(self):
-        _, page = await self.page('/')
+        _, page = await self.page('/dashboard')
         links = {attrs['data-card']: attrs['href'] for tag, attrs in page.elements if tag == 'a' and attrs.get('data-card')}
         self.assertEqual(links, {
             'projects-running': '#projects', 'projects-closed': '#projects',
@@ -406,7 +406,7 @@ class PageTests(DashboardCase):
                     pending_requests={**COUNTS, 'new': 2, 'needs_info': 1}, review_mode='manual',
                     last_activity=1_000_000.0 - 120),
             hub_row('beta', self.b, power='off')]
-        _, page = await self.page('/')
+        _, page = await self.page('/dashboard')
         header = [row for row, data in zip(page.rows, page.row_is_data) if not data][0]
         self.assertEqual(header, ['이름', '경로', '상태', 'Task·단계', '명령', '대기 사유', '요청', '마지막 활동', '검토 방식',
                                   '바로가기'])
@@ -420,7 +420,7 @@ class PageTests(DashboardCase):
 
     async def test_the_page_and_the_json_say_the_same_things(self):
         self.populate()
-        _, page = await self.page('/')
+        _, page = await self.page('/dashboard')
         _, body = await self.api()
         self.assertEqual([row[0] for row in page.data_rows()][:2], [project['name'] for project in body['projects']])
         recent = page.sections['recent-requests']
@@ -436,14 +436,14 @@ class PageTests(DashboardCase):
         request_id = self.add('please answer')
         self.inbox.set_state(OWNER, request_id, 1, 'NEEDS_INFO')
         self.add('fine')
-        _, page = await self.page('/')
+        _, page = await self.page('/dashboard')
         flags = [attrs for tag, attrs in page.elements if tag == 'span' and 'flag' in attrs.get('class', '').split()]
         self.assertEqual(len(flags), 1)
         self.assertIn('내 답 필요', page.sections['recent-requests'])
 
     async def test_the_board_card_has_the_state_and_an_open_button(self):
         self.services.board_state = lambda: 'on'
-        _, page = await self.page('/')
+        _, page = await self.page('/dashboard')
         self.assertIn('실행 중', page.sections['board-agent'])
         buttons = [attrs for tag, attrs in page.elements if tag == 'a' and attrs.get('href') == '/board'
                    and 'btn' in attrs.get('class', '').split()]
@@ -454,19 +454,19 @@ class PageTests(DashboardCase):
         self.rows = [hub_row('<b>x</b>', self.a)]
         request_id = self.add('<script>alert(1)</script>')
         self.inbox.set_state(OWNER, request_id, 1, 'NEEDS_INFO')
-        response, _ = await self.page('/')
+        response, _ = await self.page('/dashboard')
         self.assertNotIn('<b>x</b>', response.body_text)
         self.assertNotIn('<script>alert', response.body_text)
         self.assertIn('&lt;script&gt;alert(1)&lt;/script&gt;', response.body_text)
 
     async def test_what_is_empty_or_wrong_is_announced_in_text_not_shown_as_zero_rows(self):
         self.rows = []
-        _, page = await self.page('/')
+        _, page = await self.page('/dashboard')
         self.assertIn('등록된 프로젝트가 없습니다', page.sections['projects-message'])
         self.assertIn('요청이 없습니다', page.sections['recent-message'])
         self.assertEqual(page.data_rows(), [])
         self.list_error = RuntimeError('/secret/path exploded')
-        response, page = await self.page('/')
+        response, page = await self.page('/dashboard')
         self.assertIn('프로젝트 상태를 읽지 못했습니다', page.sections['projects-message'])
         self.assertNotIn('등록된 프로젝트가 없습니다', response.body_text)
         self.assertNotIn('/secret', response.body_text)
@@ -475,10 +475,61 @@ class PageTests(DashboardCase):
         def broken(*args, **kwargs):
             raise InboxError('inbox_unavailable', '/secret/db')
         self.inbox.list_requests = broken
-        response, page = await self.page('/')
+        response, page = await self.page('/dashboard')
         self.assertIn('요청 저장소를 읽지 못했습니다', page.sections['requests-message'])
         self.assertEqual(Cards(response.body_text).cards['requests-new'], ['신규', '—', '검토 대기'])
         self.assertNotIn('/secret', response.body_text)
+
+
+class DashboardPathTests(DashboardCase):
+    """WBX-A6 (2026-10-28 사용자 결정): the dashboard lives at ``/dashboard``; ``/`` only redirects there (with a
+    session) or to ``/login`` (without one). Expected values are the ticket words."""
+
+    async def head(self, path: str, cookies: dict | None = None):
+        headers = {'Host': self.host()}
+        if cookies:
+            headers['Cookie'] = '; '.join(f'{name}={value}' for name, value in cookies.items())
+        async with self.http.head(self.base + path, headers=headers, allow_redirects=False) as response:
+            return response
+
+    async def test_root_with_a_session_sends_get_and_head_to_the_dashboard(self):
+        for response in (await self.get('/', cookies=self.cookies), await self.head('/', self.cookies)):
+            self.assertEqual((response.status, response.headers.get('Location')), (303, '/dashboard'))
+            self.assertEqual(response.headers['Cache-Control'], 'no-store')
+
+    async def test_root_and_dashboard_without_a_session_go_to_login(self):
+        for path in ('/', '/dashboard'):
+            response = await self.get(path)
+            self.assertEqual((response.status, response.headers.get('Location')), (303, '/login'), path)
+            self.assertEqual((await self.head(path)).headers.get('Location'), '/login', path)
+
+    async def test_the_dashboard_page_is_a_signed_in_page_kept_for_back_and_forward(self):
+        response, page = await self.page('/dashboard')
+        self.assertEqual(response.status, 200)
+        self.assertEqual(response.headers['Cache-Control'], 'private, no-cache')
+        self.assertIn('summary', {attrs.get('id') for _, attrs in page.elements})
+        self.assertEqual((await self.head('/dashboard', self.cookies)).status, 200)
+
+    async def test_the_nav_and_the_brand_point_to_the_dashboard_and_mark_it_current_there(self):
+        _, page = await self.page('/dashboard')
+        links = page.tags('a')
+        brand = [attrs for attrs in links if 'brand' in attrs.get('class', '').split()]
+        self.assertEqual([attrs['href'] for attrs in brand], ['/dashboard'])
+        current = [attrs['href'] for attrs in links if attrs.get('aria-current') == 'page']
+        self.assertEqual(current, ['/dashboard'])
+        self.assertNotIn('/', [attrs.get('href') for attrs in links])
+        _, project = await self.page(f'/projects/{self.a}')
+        self.assertEqual([attrs['href'] for attrs in project.tags('a') if attrs.get('aria-current') == 'page'],
+                         ['/dashboard'])
+        self.assertNotIn('/', [attrs.get('href') for attrs in project.tags('a')])
+
+    async def test_a_signed_in_login_page_request_goes_to_the_dashboard(self):
+        response = await self.get('/login', cookies=self.cookies)
+        self.assertEqual((response.status, response.headers.get('Location')), (303, '/dashboard'))
+
+    async def test_login_goes_to_the_dashboard(self):
+        response = await self.login()
+        self.assertEqual((response.status, response.headers.get('Location')), (303, '/dashboard'))
 
 
 if __name__ == '__main__':

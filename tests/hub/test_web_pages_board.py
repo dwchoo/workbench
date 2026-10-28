@@ -213,7 +213,7 @@ class PageStructureTests(BoardPageCase):
         self.assertNotIn('style-src-attr', strict)
         responses = []
         for path, cookies in (('/board/restart?channel=agent', self.cookies), ('/board/restart?channel=x', self.cookies),
-                              ('/login', None), ('/', self.cookies), ('/board', None), ('/nope', self.cookies),
+                              ('/login', None), ('/dashboard', self.cookies), ('/board', None), ('/nope', self.cookies),
                               ('/static/board.js', None), ('/static/style-nonce.js', None),
                               ('/ws/board', self.cookies)):
             responses.append((path, await self.get(path, cookies=cookies)))

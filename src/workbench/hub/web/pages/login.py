@@ -86,7 +86,7 @@ def _same(left: object, right: object) -> bool:
 @public
 async def get_login(request: web.Request) -> web.Response:
     if session_of(request) is not None:
-        return see_other("/")
+        return see_other(render.HOME_PATH)
     return login_page(request)
 
 
@@ -173,7 +173,7 @@ async def post_login(request: web.Request) -> web.Response:
     issued = await services.blocking(lambda: services.sessions.create(address, agent, now, generation=generation))
     await services.blocking(lambda: services.audit.record("login_success", "owner", address,
                                                           {"delay_seconds": delay}, now=now))
-    response = see_other("/")
+    response = see_other(render.HOME_PATH)
     set_session_cookie(response, issued.token, secure=services.policy.tls)
     response.del_cookie(LOGIN_COOKIE, path="/login")
     return response
@@ -191,8 +191,13 @@ async def post_logout(request: web.Request) -> web.Response:
     return response
 
 
-# ``GET /`` handler installed by the status board (TI-12); without it the page is the bare placeholder.
+# ``GET /dashboard`` handler installed by the status board (TI-12, WBX-C2); without it the page is the bare placeholder.
 HOME: web.AppKey = web.AppKey("home", object)
+
+
+async def get_root(request: web.Request) -> web.Response:
+    """``/`` (WBX-A6): a signed-in request goes to the dashboard; the session middleware sends the rest to /login."""
+    return see_other(render.HOME_PATH)
 
 
 async def get_home(request: web.Request) -> web.Response:
@@ -306,6 +311,7 @@ def register(app: web.Application) -> None:
     app.router.add_get("/login", get_login)
     app.router.add_post("/login", post_login)
     app.router.add_post("/logout", post_logout)
-    app.router.add_get("/", get_home)
+    app.router.add_get("/", get_root)
+    app.router.add_get(render.HOME_PATH, get_home)
     app.router.add_get("/settings", get_settings)
     app.router.add_post("/settings/password", post_password)

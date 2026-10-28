@@ -259,7 +259,7 @@ class PageStateTests(HubCase):
     async def test_pages_with_a_session_have_no_validators_so_no_304_and_cookieless_replay_is_refused(self):
         session = self.new_session()
         cookie = f'wb_hub_session={session.token}'
-        for path in ('/', '/requests', '/settings/keys', '/requests/new'):
+        for path in ('/dashboard', '/requests', '/settings/keys', '/requests/new'):
             with self.subTest(path):
                 status, headers, _ = await self.fetch('GET', path, cookie=cookie)
                 self.assertEqual((status, headers['Cache-Control']), (200, SESSION_PAGE))

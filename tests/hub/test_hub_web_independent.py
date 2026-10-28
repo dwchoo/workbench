@@ -119,7 +119,7 @@ class Client:
         reply = await self.login(password)
         assert reply.status == 303 and SESSION in reply.cookies, (reply.status, reply.text)
         self.session_cookie = reply.cookies[SESSION][0]
-        self.csrf = (await self.req('GET', '/')).hidden('csrf')
+        self.csrf = (await self.req('GET', '/dashboard')).hidden('csrf')
         assert self.csrf
         return self
 
@@ -341,7 +341,7 @@ class TlsTests(HubCase):
         self.assertNotIn('평문 HTTP', page.text)
         # An http:// Origin is not this origin on an https listener.
         owner.session_cookie = reply.cookies[SESSION][0]
-        csrf = (await owner.req('GET', '/')).hidden('csrf')
+        csrf = (await owner.req('GET', '/dashboard')).hidden('csrf')
         refused = await owner.req('POST', '/logout', data={'csrf': csrf}, origin=f'http://127.0.0.1:{self.port}')
         self.assertEqual(refused.status, 403)
 
@@ -431,7 +431,7 @@ class HostOriginTests(HubCase):
         for host in bad:
             with self.subTest(host=host):
                 try:
-                    reply = await self.owner.req('GET', '/', host=host)
+                    reply = await self.owner.req('GET', '/dashboard', host=host)
                 except aiohttp.ClientError:
                     continue  # a transport-level refusal is also not a 200
                 self.assertIn(reply.status, (400, 421), reply.text[:80])
@@ -439,7 +439,7 @@ class HostOriginTests(HubCase):
                     self.assertEqual(reply.headers.get('Content-Security-Policy'), CSP)
                 self.assertNotIn(self.owner.csrf, reply.text)
         for host in (f'127.0.0.1:{port}', f'localhost:{port}'):
-            self.assertEqual((await self.owner.req('GET', '/', host=host)).status, 200, host)
+            self.assertEqual((await self.owner.req('GET', '/dashboard', host=host)).status, 200, host)
 
     async def test_two_host_headers_or_an_absolute_form_host_are_not_served(self):
         port = self.port
@@ -459,7 +459,7 @@ class HostOriginTests(HubCase):
             with self.subTest(origin=origin):
                 reply = await self.owner.req('POST', '/logout', data={'csrf': csrf}, origin=origin)
                 self.assertEqual(reply.status, 403, origin)
-        again = await self.owner.req('GET', '/')
+        again = await self.owner.req('GET', '/dashboard')
         self.assertEqual(again.status, 200, 'every refusal left the session intact')
         self.assertEqual(self.audit_events().count('logout'), 0)
         # The exact origin passes the checks and reaches the handler (a wrong current password is audited).
@@ -477,12 +477,12 @@ class HostOriginTests(HubCase):
                    f'Cookie: {SESSION}={self.owner.session_cookie}\r\nContent-Type: application/x-www-form-urlencoded\r\n'
                    f'Content-Length: {len(payload)}\r\nConnection: close\r\n\r\n').encode() + payload
         self.assertEqual(raw_exchange(port, request)[0], 403)
-        self.assertEqual((await self.owner.req('GET', '/')).status, 200)
+        self.assertEqual((await self.owner.req('GET', '/dashboard')).status, 200)
         for referer in ('http://evil.example/page', f'http://evil.example:{port}/', 'null', f'http://127.0.0.1:{port + 1}/'):
             with self.subTest(referer=referer):
                 reply = await self.owner.req('POST', '/logout', data={'csrf': csrf}, origin=NONE, referer=referer)
                 self.assertEqual(reply.status, 403)
-        self.assertEqual((await self.owner.req('GET', '/')).status, 200)
+        self.assertEqual((await self.owner.req('GET', '/dashboard')).status, 200)
         # A same-origin Referer without Origin (some clients) is accepted.
         fine = await self.owner.req('POST', '/logout', data={'csrf': csrf}, origin=NONE, referer=f'{own}/settings')
         self.assertEqual((fine.status, fine.headers['Location']), (303, '/login'))
@@ -530,7 +530,7 @@ class SessionTests(HubCase):
         self.assertIn('SameSite=Strict', login_attrs)
         self.assertNotIn('Secure', login_attrs)
         reply = await guest.req('POST', '/login', data={'login_token': token, 'password': PASSWORD}, cookies={LOGIN: token})
-        self.assertEqual((reply.status, reply.headers['Location']), (303, '/'))
+        self.assertEqual((reply.status, reply.headers['Location']), (303, '/dashboard'))
         value, attributes = reply.cookies[SESSION]
         self.assertGreaterEqual(len(value), 40)
         self.assertEqual(set(attributes) & {'HttpOnly', 'SameSite=Strict', 'Path=/', 'Max-Age=86400'},
@@ -557,7 +557,7 @@ class SessionTests(HubCase):
             connection.commit()
         reply = await owner.req('GET', '/settings')
         self.assertEqual((reply.status, reply.headers['Location']), (303, '/login'))
-        self.assertEqual((await owner.req('GET', '/')).status, 303)
+        self.assertEqual((await owner.req('GET', '/dashboard')).status, 303)
         refused = await owner.req('POST', '/logout', data={'csrf': owner.csrf})
         self.assertIn(refused.status, (303, 401, 403), 'an expired session cannot act, even with its CSRF token')
         self.assertNotIn('logout', self.audit_events())
@@ -672,13 +672,13 @@ class SessionTests(HubCase):
         port = self.port
         replies = {
             'login page': await owner.req('GET', '/login', cookies={}),
-            'home': await owner.req('GET', '/'),
+            'home': await owner.req('GET', '/dashboard'),
             'settings': await owner.req('GET', '/settings'),
             'redirect': await owner.req('GET', '/settings', cookies={}),
             'login failure': await self.client().login(WRONG),
             '404': await owner.req('GET', '/nope'),
             '404 anonymous': await owner.req('GET', '/nope', cookies={}),
-            '421': await owner.req('GET', '/', host='evil.example'),
+            '421': await owner.req('GET', '/dashboard', host='evil.example'),
             '403 origin': await owner.req('POST', '/logout', data={'csrf': owner.csrf}, origin='null'),
             '403 csrf': await owner.req('POST', '/logout', data={}),
             '413': await owner.req('POST', '/login', raw_body=b'a=' + b'x' * (300 * 1024)),
@@ -719,7 +719,7 @@ class SessionTests(HubCase):
         for path in ('/login', '/settings', '/nope', '/static/base.css'):
             with self.subTest(path):
                 self.assertEqual((await owner.req('GET', path)).headers.get('Referrer-Policy'), 'same-origin')
-        self.assertEqual((await owner.req('GET', '/', host='evil.example')).headers.get('Referrer-Policy'), 'same-origin')
+        self.assertEqual((await owner.req('GET', '/dashboard', host='evil.example')).headers.get('Referrer-Policy'), 'same-origin')
 
     async def test_body_limit_applies_to_declared_and_chunked_bodies(self):
         port = self.port

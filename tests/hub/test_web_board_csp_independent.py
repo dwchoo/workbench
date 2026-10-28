@@ -227,7 +227,7 @@ class Board200PolicyTests(CspCase):
 
     async def test_a_nonce_never_shows_up_in_a_later_response_of_any_route(self):
         issued = header_nonce((await self.board_get()).headers['Content-Security-Policy'])
-        probes = ['/board', '/board/restart?channel=agent', '/', '/requests', '/settings', '/login',
+        probes = ['/board', '/board/restart?channel=agent', '/dashboard', '/requests', '/settings', '/login',
                   '/static/board.js', '/static/style-nonce.js', '/static/base.css', '/static/board.css']
         for path in probes:
             response = await self.get(path, cookies=self.cookies)
@@ -267,7 +267,7 @@ class StrictElsewhereTests(CspCase):
     async def test_every_other_page_keeps_the_strict_policy_and_has_no_style_nonce_meta(self):
         pages = {
             'login': ('/login', None),
-            'status board': ('/', self.cookies),
+            'status board': ('/dashboard', self.cookies),
             'requests': ('/requests', self.cookies),
             'new request': ('/requests/new', self.cookies),
             'settings': ('/settings', self.cookies),

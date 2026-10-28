@@ -94,7 +94,7 @@ class StableLoginTokenTests(BrowserLoginCase):
         self.assertEqual(second, first)
         response = await self.post_login(first, PASSWORD)
         self.assertEqual(response.status, 303, response.body_text)
-        self.assertEqual(response.headers['Location'], '/')
+        self.assertEqual(response.headers['Location'], '/dashboard')
         cookies = response.headers.getall('Set-Cookie', [])
         self.assertTrue(any(value.startswith('wb_hub_session=') for value in cookies), cookies)
 

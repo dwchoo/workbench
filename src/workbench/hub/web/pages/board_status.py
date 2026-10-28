@@ -1,4 +1,4 @@
-"""The pieces the dashboard (``/``) and the project pages share (TI-12; SPEC "웹 route와 화면").
+"""The pieces the dashboard (``/dashboard``) and the project pages share (TI-12; SPEC "웹 route와 화면").
 
 Rows are the Hub's own list with its own labels (:mod:`workbench.hub.presentation`). A row whose observation failed
 reads ``연결 없음/불명``, never ``꺼짐``. The home page itself is :mod:`.dashboard` (WBX-C2).

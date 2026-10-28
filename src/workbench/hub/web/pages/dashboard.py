@@ -1,4 +1,4 @@
-"""The dashboard ``/`` and its session JSON ``GET /api/dashboard`` (WBX-C2; web-board-ux BRIEF WBX-D13/D18).
+"""The dashboard ``/dashboard`` (WBX-A6; ``/`` redirects there) and its session JSON ``GET /api/dashboard`` (WBX-C2; web-board-ux BRIEF WBX-D13/D18).
 
 One model (:func:`build`) feeds both: the page renders it server-side (complete without JavaScript) and
 ``/api/dashboard`` serves it as JSON for ``static/dashboard.js``, which redraws the numbers and tables from the same

@@ -38,7 +38,8 @@ EXPECTED = {
     ('GET', '/login'): PUBLIC,
     ('POST', '/login'): PUBLIC,
     ('POST', '/logout'): SESSION,
-    ('GET', '/'): SESSION,
+    ('GET', '/'): SESSION,  # WBX-A6: 303 /dashboard with a session
+    ('GET', '/dashboard'): SESSION,  # WBX-A6: the dashboard (2026-10-28 사용자 결정)
     ('GET', '/settings'): SESSION,
     ('POST', '/settings/password'): SESSION,
     ('GET', '/settings/keys'): SESSION,

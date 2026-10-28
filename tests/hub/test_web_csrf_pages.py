@@ -81,7 +81,7 @@ class StaleLoginFormTests(CsrfCase):
 class StaleSessionFormTests(CsrfCase):
     async def logged_in(self) -> tuple[str, str]:
         token = await self.session_cookie()
-        home = await self.get('/', cookies={'wb_hub_session': token})
+        home = await self.get('/dashboard', cookies={'wb_hub_session': token})
         return token, re.search(r'name="csrf" value="([^"]+)"', home.body_text).group(1)
 
     async def test_a_page_post_with_a_stale_csrf_gets_a_korean_page_with_a_link_back(self):
@@ -106,7 +106,7 @@ class StaleSessionFormTests(CsrfCase):
                 response = await self.post('/logout', {'csrf': 'nope'}, cookies={'wb_hub_session': token},
                                            headers=headers)  # Origin is ours: only the link differs
                 self.assertEqual(response.status, 403)
-                self.assertIn('href="/"', response.body_text)
+                self.assertIn('href="/dashboard"', response.body_text)
                 self.assertNotIn('evil.example', response.body_text)
 
     async def test_an_api_post_keeps_the_json_csrf_failed(self):

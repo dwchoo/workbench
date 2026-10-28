@@ -131,7 +131,7 @@ class Base(unittest.IsolatedAsyncioTestCase):
 
 
 # every HTML screen a signed-in owner or the login form can get that carries the layout
-GET_SCREENS = ('/login', '/', '/requests', '/requests/new', '/settings', '/settings/keys', '/settings/audit',
+GET_SCREENS = ('/login', '/dashboard', '/requests', '/requests/new', '/settings', '/settings/keys', '/settings/audit',
                '/board', '/projects')
 
 
@@ -226,7 +226,7 @@ class WarningConditionMatrixTests(Base):
             with self.subTest(binds=binds, tls=tls):
                 self.assertIs(config.insecure_warning(binds, tls=tls), warns)
                 self.services.insecure_warning = config.insecure_warning(binds, tls=tls)
-                for path in ('/login', '/', '/settings'):
+                for path in ('/login', '/dashboard', '/settings'):
                     status, _, body = await self.request('GET', path, session=path != '/login')
                     self.assertEqual(status, 200, path)
                     page = Page(body)
@@ -262,7 +262,7 @@ class WarningTextTests(Base):
         self.assertLess(body.index('class="banner insecure"'), body.index('<header'))  # banner stays above the header
 
     async def test_the_chip_is_focusable_without_being_a_link_or_form_control(self):
-        status, _, body = await self.request('GET', '/')
+        status, _, body = await self.request('GET', '/dashboard')
         chip = Page(body).chips[0]
         self.assertEqual(chip['attrs'].get('tabindex'), '0')    # reachable by Tab; hover and focus show the popover
         self.assertNotIn('hidden', chip['attrs'])               # the CSS, not the markup, hides it when expanded
@@ -271,7 +271,7 @@ class WarningTextTests(Base):
 
 class NoJavaScriptTests(Base):
     async def test_the_markup_alone_is_the_expanded_state(self):
-        for path in ('/login', '/', '/requests'):
+        for path in ('/login', '/dashboard', '/requests'):
             status, _, body = await self.request('GET', path, session=path != '/login')
             page = Page(body)
             with self.subTest(path=path):

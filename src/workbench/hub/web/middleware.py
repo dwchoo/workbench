@@ -443,13 +443,14 @@ STALE_FORM_TEXT = "화면이 오래되었습니다. 새로 고친 뒤 다시 시
 
 
 def back_link(request: web.Request) -> str:
-    """The same-origin ``Referer`` path (with its query) to go back to, else ``/``."""
+    """The same-origin ``Referer`` path (with its query) to go back to, else the dashboard (``render.HOME_PATH``)."""
+    from .render import HOME_PATH
     referers = request.headers.getall("Referer", [])
     if len(referers) != 1 or origin_of_referer(referers[0]) != expected_origin(request):
-        return "/"
+        return HOME_PATH
     parts = urlsplit(referers[0])
     target = parts.path + (f"?{parts.query}" if parts.query else "")
-    return target if target.startswith("/") and not target.startswith("//") else "/"
+    return target if target.startswith("/") and not target.startswith("//") else HOME_PATH
 
 
 def stale_form_page(request: web.Request) -> web.Response:

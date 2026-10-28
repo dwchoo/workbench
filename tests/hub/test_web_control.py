@@ -574,7 +574,7 @@ class HubLifetimeTests(unittest.TestCase):
             'Content-Type': 'application/x-www-form-urlencoded'})
         self.assertEqual(status, 303)
         session = cookie(headers, 'wb_hub_session')
-        _status, _headers, text = request('GET', '/', headers={'Cookie': f'wb_hub_session={session}'})
+        _status, _headers, text = request('GET', '/dashboard', headers={'Cookie': f'wb_hub_session={session}'})
         csrf = re.search(r'name="csrf" value="([^"]+)"', text).group(1)
         try:
             status, _headers, text = request('POST', f'/api/projects/{project_id}/{action}', '', {

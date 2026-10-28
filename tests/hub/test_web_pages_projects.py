@@ -123,7 +123,7 @@ class BoardObservationTests(ProjectsCase):
         self.rows = [hub_row('alpha', self.a, power='unknown', power_detail='timeout', pending_requests=None,
                              review_mode=None),
                      hub_row('beta', self.b, power='mismatch', power_detail='root_missing')]
-        response, page = await self.page('/')
+        response, page = await self.page('/dashboard')
         rows = page.data_rows()
         self.assertEqual(rows[0][2], '연결 없음/불명')
         self.assertEqual(rows[0][6:9], ['—', '—', '—'])  # requests, last activity, review mode: unknown, not 0
@@ -132,12 +132,12 @@ class BoardObservationTests(ProjectsCase):
 
     async def test_a_row_without_a_known_power_value_is_unknown_not_off(self):
         self.rows = [{'root': '/srv/work/alpha', 'name': 'alpha', 'project_id': self.a}]
-        _, page = await self.page('/')
+        _, page = await self.page('/dashboard')
         self.assertEqual(page.data_rows()[0][2], '연결 없음/불명')
 
     async def test_a_list_that_cannot_be_read_shows_a_fixed_message_and_no_rows(self):
         self.list_error = RuntimeError('/secret/path/to/hub.sock exploded')
-        response, page = await self.page('/')
+        response, page = await self.page('/dashboard')
         self.assertEqual(response.status, 200)
         self.assertEqual(page.data_rows(), [])
         self.assertIn('프로젝트 상태를 읽지 못했습니다', response.body_text)
@@ -147,21 +147,21 @@ class BoardObservationTests(ProjectsCase):
     async def test_an_unreadable_registry_is_not_an_empty_list(self):
         self.registry_state = 'invalid'
         self.rows = []
-        response, _ = await self.page('/')
+        response, _ = await self.page('/dashboard')
         self.assertIn('등록된 프로젝트 목록을 읽지 못했습니다', response.body_text)
         self.assertNotIn('등록된 프로젝트가 없습니다', response.body_text)
         self.assertNotIn('/x/registry.json', response.body_text)
 
     async def test_project_text_is_escaped(self):
         self.rows = [hub_row('<b>x</b>', self.a, task={'summary': '<script>alert(1)</script>', 'status': 's'})]
-        response, _ = await self.page('/')
+        response, _ = await self.page('/dashboard')
         self.assertNotIn('<b>x</b>', response.body_text)
         self.assertNotIn('<script>alert', response.body_text)
         self.assertIn('&lt;b&gt;x&lt;/b&gt;', response.body_text)
 
     async def test_the_insecure_warning_banner_is_on_the_board(self):
         self.services.insecure_warning = True
-        response, _ = await self.page('/')
+        response, _ = await self.page('/dashboard')
         self.assertIn('class="banner insecure"', response.body_text)
 
 
@@ -174,7 +174,7 @@ class BoardTests(ProjectsCase):
                     pending_requests={**COUNTS, 'new': 2, 'needs_info': 1}, review_mode='manual',
                     last_activity=1_000_000.0 - 120),
             hub_row('beta', self.b, power='off', pending_requests=dict(COUNTS), review_mode='auto')]
-        response, page = await self.page('/')
+        response, page = await self.page('/dashboard')
         self.assertEqual(response.status, 200)
         header = [row for row, data in zip(page.rows, page.row_is_data) if not data][0]
         # the Hub list columns (HB-D09) plus the review mode, then the shortcuts column of the dashboard (WBX-C2)
@@ -189,7 +189,7 @@ class BoardTests(ProjectsCase):
 
     async def test_board_has_no_meta_refresh_and_loads_the_badge_and_dashboard_scripts_and_no_inline_code(self):
         # WBX-C2 (AC-20): the 10 s <meta http-equiv=refresh> is gone; static/dashboard.js redraws the numbers instead.
-        response, page = await self.page('/')
+        response, page = await self.page('/dashboard')
         metas = [attrs for attrs in page.tags('meta') if attrs.get('http-equiv') == 'refresh']
         self.assertEqual(metas, [])
         self.assertEqual([attrs.get('src') for attrs in page.tags('script')],
@@ -369,7 +369,7 @@ class NoPaneInputTests(ProjectsCase):
                   ([{'code': 'boot_confirmation_required'}], ['confirm-boot'])]
         for waits, actions in states:
             self.rows = [hub_row('alpha', self.a, power='on', waits=waits), hub_row('beta', self.b, power='off')]
-            paths = ['/', f'/projects/{self.a}', f'/projects/{self.b}', f'/projects/{self.b}/power-on'] + [
+            paths = ['/dashboard', f'/projects/{self.a}', f'/projects/{self.b}', f'/projects/{self.b}/power-on'] + [
                 f'/projects/{self.a}/{action}' for action in actions]
             for path in paths:
                 with self.subTest(path=path, waits=waits):
@@ -379,7 +379,7 @@ class NoPaneInputTests(ProjectsCase):
                     for marker in self.PANE_MARKERS:
                         self.assertNotIn(marker, lowered, path)
                     scripts = ['/static/session-check.js', '/static/badge.js']  # WBX-A2
-                    if path == '/':
+                    if path == '/dashboard':
                         scripts.append('/static/dashboard.js')  # WBX-C2: the dashboard's refresh
                     self.assertEqual([a.get('src') for a in page.tags('script')], scripts, path)
                     # The global nav's narrow-screen toggle (WBX-A1) is the one non-hidden input allowed.

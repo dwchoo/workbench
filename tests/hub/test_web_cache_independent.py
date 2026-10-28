@@ -400,8 +400,10 @@ class PageScriptTests(HubCase):
                         if check != 1 or restore:
                             problems.append(f'{label}: session-check x{check}, login-restore x{restore}')
                         for script in doc.scripts:
-                            if script.get('src') == SESSION_CHECK and 'defer' not in script:
-                                problems.append(f'{label}: session-check is not deferred')
+                            # WBX-A7 (2026-10-28 사용자 결정): synchronous, so a Back/Forward page hides before
+                            # first paint.
+                            if script.get('src') == SESSION_CHECK and {'defer', 'async', 'type'} & set(script):
+                                problems.append(f'{label}: session-check is not synchronous')
                     else:
                         if check:
                             problems.append(f'{label}: a session-less or login page loads session-check')

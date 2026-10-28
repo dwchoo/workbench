@@ -244,6 +244,12 @@ table.data a:hover { text-decoration: underline; }
 .wb-insecure-collapsed .banner.insecure { display: none; }
 .insecure-chip:hover::after, .insecure-chip:focus-visible::after { content: attr(title); position: absolute; top: 100%; right: 0; z-index: 40; width: max-content; max-width: min(20rem, calc(100vw - 2rem)); margin-top: 0.4rem; padding: 0.6rem 0.8rem; border: 1px solid var(--warn-bd); border-radius: var(--radius); background: var(--warn-bg); color: var(--warn-fg); box-shadow: var(--shadow); font-size: 0.9rem; font-weight: 400; text-align: left; white-space: normal; }
 
+/* -- Back/Forward session check (WBX-A7). static/session-check.js puts class wb-checking on <html> while a page shown
+   again by Back/Forward asks whether its session still lives; the page stays hidden until the answer (or a safety
+   timer) removes it, or /login replaces it. A normal load and a browser without JavaScript never get the class.
+   !important and the descendants too: an element with its own visibility (board.css .panel.active) stays hidden. */
+html.wb-checking body, html.wb-checking body * { visibility: hidden !important; }
+
 /* -- header and global nav (WBX-A1). Narrow screens fold the nav behind a checkbox, no JavaScript. */
 header { position: sticky; top: 0; z-index: 30; display: flex; flex-wrap: wrap; align-items: center; gap: 0.4rem 1rem; padding: 0.55rem var(--gutter); background: var(--hdr-bg); color: var(--hdr-fg); border-bottom: 1px solid var(--hdr-bd); }
 header .brand { order: 1; display: inline-flex; align-items: center; gap: 0.5rem; color: var(--hdr-fg); font-weight: 700; text-decoration: none; }

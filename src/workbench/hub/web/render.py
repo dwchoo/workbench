@@ -77,7 +77,9 @@ class NavContext:
 
 
 # A logged-in screen restored from the back/forward cache asks ``/api/badge`` whether its session still lives
-# (web-board-ux SPEC "Cache 정책과 bfcache"); every page frame with the nav loads it.
+# (web-board-ux SPEC "Cache 정책과 bfcache"); every page frame with the nav loads it. Synchronous in <head>, before
+# the stylesheets (WBX-A7): a page shown again by Back/Forward gets class ``wb-checking`` on <html> before first paint
+# and base.css keeps <body> hidden until the check answers.
 SESSION_CHECK_SCRIPT = "/static/session-check.js"
 
 # The plain-HTTP banner remembers "collapsed" in localStorage and tells base.css via a class on <html> (SPEC "평문 HTTP 배너 접기").
@@ -164,9 +166,9 @@ def layout(title: str, body: object, *, insecure_warning: bool = False, csrf: st
     are ``<script type="module" src>`` (run after the plain deferred ones, in order); ``metas`` is ``{name: content}``
     for data a script reads (the Board page's CSRF token); ``body_class`` is a page-kind class on ``<body>`` (the login
     screen's ``page-login``). A frame with ``nav`` (a logged-in screen) also loads
-    :data:`SESSION_CHECK_SCRIPT`."""
-    if nav is not None and SESSION_CHECK_SCRIPT not in scripts:
-        scripts = (SESSION_CHECK_SCRIPT, *scripts)
+    :data:`SESSION_CHECK_SCRIPT` (as a synchronous head script, wherever it is asked for)."""
+    session_check = nav is not None or SESSION_CHECK_SCRIPT in scripts
+    scripts = tuple(src for src in scripts if src != SESSION_CHECK_SCRIPT)
     banner = tag("div", html_join([INSECURE_WARNING_TEXT, " ", tag("button", "닫기", type="button", class_="banner-close",
                                                                     hidden=True)]),
                  class_="banner insecure", role="alert") if insecure_warning else ""
@@ -184,6 +186,8 @@ def layout(title: str, body: object, *, insecure_warning: bool = False, csrf: st
                       tag("title", f"{title} - {TITLE}" if title else TITLE),
                       # Synchronous (not deferred): the stored collapsed state reaches <html> before first paint.
                       *([tag("script", "", src=INSECURE_BANNER_SCRIPT)] if insecure_warning else []),
+                      # Synchronous too (WBX-A7): a Back/Forward page is hidden before first paint until checked.
+                      *([tag("script", "", src=SESSION_CHECK_SCRIPT)] if session_check else []),
                       *(void("link", rel="stylesheet", href=href)
                         for href in (*SHARED_STYLESHEETS, *(h for h in stylesheets if h not in SHARED_STYLESHEETS))),
                       *(tag("script", "", src=src, defer=True) for src in scripts),

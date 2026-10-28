@@ -312,8 +312,9 @@ LOGIN_RESTORE = '/static/login-restore.js'
 
 
 class RestoreScriptTests(CacheCase):
-    """Behavior 6: every logged-in screen loads ``session-check.js`` (defer); the login screen loads
-    ``login-restore.js`` instead. Both are served as JavaScript."""
+    """Behavior 6: every logged-in screen loads ``session-check.js`` (synchronous in ``<head>`` since WBX-A7, see
+    :class:`HiddenUntilCheckedTests`); the login screen loads ``login-restore.js`` (defer) instead. Both are served as
+    JavaScript."""
 
     async def test_every_logged_in_html_screen_loads_session_check_and_not_login_restore(self):
         params = {**audit.PARAMS, 'rid': str(uuid.uuid4())}
@@ -329,7 +330,7 @@ class RestoreScriptTests(CacheCase):
                 scripts = Scripts(text)
                 found = [attrs for src, attrs in scripts.found if src == SESSION_CHECK]
                 self.assertEqual(len(found), 1, scripts.sources())
-                self.assertIn('defer', found[0])
+                self.assertNotIn('defer', found[0])  # WBX-A7: synchronous, so it can hide before first paint
                 self.assertNotIn(LOGIN_RESTORE, scripts.sources())
         self.assertGreaterEqual(seen, 14)
 
@@ -360,6 +361,92 @@ class RestoreScriptTests(CacheCase):
             self.assertIn('javascript', headers['Content-Type'], path)
             self.assertIn('pageshow', text, path)
 
+
+
+class HeadOrder(HTMLParser):
+    """The start tags in document order with the section (``head``/``body``) each sits in, and ``<html>``'s attrs."""
+
+    def __init__(self, text: str):
+        super().__init__(convert_charrefs=True)
+        self.tags: list[tuple[str, str, dict]] = []
+        self.html: dict = {}
+        self.section = 'none'
+        self.feed(text)
+
+    def handle_starttag(self, tag, attrs):
+        attrs = dict(attrs)
+        if tag == 'html':
+            self.html = attrs
+        if tag in ('head', 'body'):
+            self.section = tag
+        self.tags.append((tag, self.section, attrs))
+
+    def index(self, predicate) -> int | None:
+        return next((i for i, (tag, _, attrs) in enumerate(self.tags) if predicate(tag, attrs)), None)
+
+
+class HiddenUntilCheckedTests(CacheCase):
+    """WBX-A7 (2026-10-28 사용자 결정, Q39 a): a logged-in screen shown again by Back/Forward is hidden until the
+    session check answers. ``session-check.js`` is a synchronous script in ``<head>`` before the stylesheets (so its
+    ``<html>`` class is set before first paint); base.css hides ``<body>`` under ``html.wb-checking``. The server never
+    sends the class (a normal load and a browser without JavaScript show the page); the login screen does not load it."""
+
+    def assert_head_script(self, text: str, where):
+        doc = HeadOrder(text)
+        found = [(i, section, attrs) for i, (tag, section, attrs) in enumerate(doc.tags)
+                 if tag == 'script' and attrs.get('src') == SESSION_CHECK]
+        self.assertEqual(len(found), 1, where)
+        index, section, attrs = found[0]
+        self.assertEqual(section, 'head', where)
+        self.assertTrue({'defer', 'async', 'type'}.isdisjoint(attrs), (where, attrs))
+        first_css = doc.index(lambda tag, a: tag == 'link' and a.get('rel') == 'stylesheet')
+        self.assertIsNotNone(first_css, where)
+        self.assertLess(index, first_css, f'{where}: session-check before the stylesheets')
+        self.assertNotIn('wb-checking', doc.html.get('class', ''), where)
+
+    async def test_every_logged_in_html_screen_loads_session_check_synchronously_in_head(self):
+        params = {**audit.PARAMS, 'rid': str(uuid.uuid4())}
+        seen = 0
+        for (method, route), access in sorted(audit.route_marks(self.app).items()):
+            if method != 'GET' or access != audit.SESSION or route.startswith('/static'):
+                continue
+            status, headers, text = await self.get(route.format(**params) + '?channel=agent')
+            if not headers.get('Content-Type', '').startswith('text/html'):
+                continue
+            with self.subTest(route=route, status=status):
+                seen += 1
+                self.assert_head_script(text, route)
+        self.assertGreaterEqual(seen, 14)
+
+    async def test_post_result_pages_and_the_stale_form_page_load_it_synchronously_in_head(self):
+        pages = {'key issued': await self.post('/settings/keys', KEY_FORM),
+                 'password 400': await self.post('/settings/password', {'new': 'a', 'confirm': 'b'}),
+                 'stale form': await self.post('/requests', {'csrf': 'old'}, csrf=False)}
+        for what, (status, headers, text) in pages.items():
+            self.assert_head_script(text, (what, status))
+
+    async def test_base_css_hides_the_body_while_checking(self):
+        status, _, text = await self.get('/static/base.css', session=False)
+        self.assertEqual(status, 200)
+        rules = {}
+        for selectors, block in re.findall(r'([^{}]+)\{([^}]*)\}', re.sub(r'/\*.*?\*/', '', text, flags=re.S)):
+            for selector in selectors.split(','):
+                rules.setdefault(' '.join(selector.split()), []).append(block)
+        # The body and everything in it: a descendant with its own ``visibility: visible`` (board.css
+        # ``.panel.active``) must not show through, hence ``!important`` on the descendants too.
+        for selector in ('html.wb-checking body', 'html.wb-checking body *'):
+            self.assertIn(selector, rules, selector)
+            self.assertTrue(any(re.search(r'visibility\s*:\s*hidden\s*!important', block) for block in rules[selector]),
+                            (selector, rules[selector]))
+
+    async def test_the_login_screen_is_untouched(self):
+        for status_wanted, (status, _, text) in ((200, await self.get('/login', session=False)),
+                                                 (403, await self.post('/login', {'login_token': 'x' * 43,
+                                                                                  'password': 'p'}, session=False))):
+            self.assertEqual(status, status_wanted)
+            doc = HeadOrder(text)
+            self.assertNotIn(SESSION_CHECK, [a.get('src') for tag, _, a in doc.tags if tag == 'script'])
+            self.assertNotIn('wb-checking', text)
 
 
 class RestoredFormTests(CacheCase):

@@ -52,10 +52,12 @@ const answer = (status) => () => Promise.resolve({ status, ok: status >= 200 && 
 // --- both scripts: shape ------------------------------------------------------------------------------------------
 
 for (const [label, source, name] of [["session-check", CHECK, "session-check.js"], ["login-restore", RESTORE, "login-restore.js"]]) {
-  test(`${label}: listens to pageshow only and leaks no global`, () => {
+  // WBX-A7 (2026-10-28 사용자 결정): session-check also listens to pagehide, to hide a page going into the bfcache.
+  const events = label === "session-check" ? ["pagehide", "pageshow"] : ["pageshow"];
+  test(`${label}: listens to ${events.join(" and ")} only and leaks no global`, () => {
     const page = boot(source, name, answer(200));
-    assert.deepEqual(Object.keys(page.listeners), ["pageshow"]);
-    assert.equal(page.listeners.pageshow.length, 1);
+    assert.deepEqual(Object.keys(page.listeners).sort(), events);
+    for (const type of events) assert.equal(page.listeners[type].length, 1, type);
     assert.deepEqual(page.leaked, [], "no global added by the script");
     assert.deepEqual(page.nav, []);
     assert.deepEqual(page.fetches, [], "nothing at load time");

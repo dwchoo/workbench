@@ -204,25 +204,39 @@ def card_markup(card: dict) -> render.Markup:
         data_kind=card["kind"], href=card["href"])
 
 
+def labelled_cell(content: object, label: str | None, class_: str | None = None) -> render.Markup:
+    """A table cell; ``data-label`` is its column's name, which the narrow-screen card layout shows in front of it
+    (``td[data-label]::before`` in app.css). The first cell is the card's title and has none."""
+    return render.tag("td", content, class_=class_, data_label=label)
+
+
 def project_row(item: dict) -> render.Markup:
+    """Seven cells (2026-10-28, so the table fits without sideways scrolling): the path under the name, the command
+    under the Task, the review mode under the wait reason. ``static/dashboard.js`` draws the same cells."""
+    labels = PROJECT_COLUMNS
     name = render.tag("a", item["name"], href=item["url"], class_="proj-link") if item["url"] else item["name"]
     links = render.html_join([render.tag("a", "상태", href=item["url"]), " ",
                               render.tag("a", "요청", href=item["requests_url"])]) if item["url"] else ""
-    cells = [name, item["path"], render.tag("span", item["power"], class_=f"chip p-{item['power_kind']}"),
-             plain(item["task"]), plain(item["command"]),
-             render.tag("span", item["wait"], class_="wait") if item["wait"] != presentation.EMPTY else plain(item["wait"]),
-             plain(item["requests"]), plain(item["last_activity"]), item["review_mode"]]
-    tds = [render.tag("td", cell, class_="path" if index == 1 else None) for index, cell in enumerate(cells)]
-    return render.tag("tr", render.html_join([*tds, render.tag("td", links, class_="links")]))
+    wait = render.tag("span", item["wait"], class_="wait") if item["wait"] != presentation.EMPTY else plain(item["wait"])
+    return render.tag("tr", render.html_join([
+        labelled_cell(render.html_join([name, render.tag("span", item["path"], class_="path")]), None),
+        labelled_cell(render.tag("span", item["power"], class_=f"chip p-{item['power_kind']}"), labels[1]),
+        labelled_cell(render.html_join([plain(item["task"]), render.tag("span", plain(item["command"]), class_="sub")]),
+                      labels[2]),
+        labelled_cell(render.html_join([wait, render.tag("span", item["review_mode"], class_="sub")]), labels[3]),
+        labelled_cell(plain(item["requests"]), labels[4]),
+        labelled_cell(plain(item["last_activity"]), labels[5]),
+        labelled_cell(links, labels[6], "links")]))
 
 
 def request_row(item: dict) -> render.Markup:
+    labels = REQUEST_COLUMNS
     title = render.html_join([render.tag("a", render.tag("bdi", item["title"]), href=item["url"]),
                               render.tag("span", "내 답 필요", class_="flag") if item["attention"] else ""])
     return render.tag("tr", render.html_join([
-        render.tag("td", title, class_="title"), render.tag("td", item["project"], class_="proj"),
-        render.tag("td", render.tag("span", item["state_label"], class_=f"chip s-{item['state_kind']}")),
-        render.tag("td", item["origin"], class_="src"), render.tag("td", item["updated"], class_="when")]))
+        labelled_cell(title, None, "title"), labelled_cell(item["project"], labels[1], "proj"),
+        labelled_cell(render.tag("span", item["state_label"], class_=f"chip s-{item['state_kind']}"), labels[2]),
+        labelled_cell(item["origin"], labels[3], "src"), labelled_cell(item["updated"], labels[4], "when")]))
 
 
 def attention_row(item: dict) -> render.Markup:
@@ -241,7 +255,9 @@ def section_head(heading_id: str, title: str, extra: object = "") -> render.Mark
     return render.tag("div", render.html_join([render.tag("h2", title, id=heading_id), extra]), class_="card-head")
 
 
-PROJECT_COLUMNS = (*presentation.COLUMNS, "검토 방식", "바로가기")
+# Column names: the ``th`` texts and the narrow-screen ``data-label`` of each cell. The project table has seven (the CLI's
+# eight Hub columns plus 검토 방식 and 바로가기, merged in pairs); ``dashboard.js`` carries the same words.
+PROJECT_COLUMNS = ("프로젝트", "상태", "Task·명령", "대기·검토", "요청", "마지막 활동", "바로가기")
 REQUEST_COLUMNS = ("제목", "프로젝트", "상태", "출처", "갱신")
 
 
@@ -270,12 +286,12 @@ def dashboard_body(model: dict) -> render.Markup:
         section_head("projects-h", "프로젝트", render.tag("span", f"{len(projects)}개 · 이름을 누르면 상세",
                                                          id="projects-note", class_="card-note")),
         message_markup("projects", messages["projects"]),
-        table(PROJECT_COLUMNS, [project_row(item) for item in projects], "projects-body", "projects-wrap", "board")]),
+        table(PROJECT_COLUMNS, [project_row(item) for item in projects], "projects-body", "projects-wrap", "board tcards")]),
         id="projects", class_="card dash-card", aria_labelledby="projects-h")
     recent_card = render.tag("section", render.html_join([
         section_head("recent-h", "최근 요청", render.tag("a", "전체 보기", href="/requests", class_="card-link")),
         message_markup("recent", messages["recent"]),
-        table(REQUEST_COLUMNS, [request_row(item) for item in recent], "recent-body", "recent-wrap", "requests")]),
+        table(REQUEST_COLUMNS, [request_row(item) for item in recent], "recent-body", "recent-wrap", "requests tcards")]),
         id="recent-requests", class_="card dash-card", aria_labelledby="recent-h")
     board = model["board"]
     board_card = render.tag("section", render.html_join([

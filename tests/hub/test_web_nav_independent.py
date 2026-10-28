@@ -586,17 +586,25 @@ class LogoutFormTests(NavBase):
         for data in ({}, {'csrf': 'wrong'}):
             status, _, text = await self.post('/logout', data)
             self.assertEqual(status, 403, data)
-            self.assertNotIn('aria-label="주요"', text)
+            self.assertEqual(text.count('aria-label="주요"'), 1)  # 2026-10-28: a live session's stale page has the nav
             status, _, _ = await self.get('/requests')
             self.assertEqual(status, 200)
 
     async def test_stale_form_page_is_wellformed_and_leaks_nothing(self):
         # Observation target: a logged-in session whose form carries an old csrf gets the small stale page.
-        status, _, text = await self.post('/settings/password', {'csrf': 'old'})
+        stale = 'old-stale-form-token-4f9a'
+        status, _, text = await self.post('/settings/password', {'csrf': stale})
         self.assertEqual(status, 403)
         tree = Tree(text)
         self.assertEqual(tree.problems, [])
-        self.assertNotIn(self.session.csrf, text)
+        # 2026-10-28: the page carries exactly one CSRF value, this session's, inside the logout form; the stale
+        # form's submitted token never comes back.
+        self.assertEqual(text.count(self.session.csrf), 1)
+        form = tree.root.find('form', action='/logout')[0]
+        self.assertEqual([i.attrs.get('value') for i in form.find('input') if i.attrs.get('name') == 'csrf'],
+                         [self.session.csrf])
+        self.assertEqual(len(re.findall(r'name="csrf"', text)), 1)
+        self.assertNotIn(stale, text)
         self.assertEqual(len(tree.navs()), len(tree.root.find('form', action='/logout')))  # both or neither
 
 

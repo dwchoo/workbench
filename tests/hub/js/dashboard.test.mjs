@@ -201,24 +201,34 @@ test("the cards take their value and sub line from the JSON, an unknown value is
   assert.equal(text(app.page["dash-time"]), "10:00:10 UTC");
 });
 
-test("the project table is redrawn with the server's cells: name link, chip, muted dashes, wait, shortcuts", async () => {
+test("the project table is redrawn with the server's cells: name and path, chip, Task and command, wait and mode, shortcuts", async () => {
   const app = load({ answers: [ok(model())] });
   app.page["projects-body"].append(app.doc.createElement("tr"));  // the old row the new answer replaces
   await app.tick();
   const body = app.page["projects-body"];
+  // 2026-10-28: seven cells (path under the name, command under the Task, review mode under the wait reason), as on the server.
   assert.deepEqual(rowTexts(body), [
-    ["alpha", "/srv/work/alpha", "켜짐", "로그인 수정 · running", "—", "manager 입력창에 글이 있어 알림 대기", "대기 2 · 질문 1", "2분 전", "수동", "상태 요청"],
-    ["beta", "/srv/work/beta", "꺼짐", "—", "—", "—", "0", "—", "자동", "상태 요청"]]);
+    ["alpha/srv/work/alpha", "켜짐", "로그인 수정 · running—", "manager 입력창에 글이 있어 알림 대기수동", "대기 2 · 질문 1", "2분 전", "상태 요청"],
+    ["beta/srv/work/beta", "꺼짐", "——", "—자동", "0", "—", "상태 요청"]]);
   const first = body.children[0].children;
   assert.equal(first[0].children[0].className, "proj-link");
   assert.equal(first[0].children[0].getAttribute("href"), "/projects/p1");
-  assert.equal(first[2].children[0].className, "chip p-on");
-  assert.equal(body.children[1].children[2].children[0].className, "chip p-off");
-  assert.equal(first[4].children[0].className, "none", "a dash is muted");
-  assert.equal(first[5].children[0].className, "wait");
-  assert.equal(first[9].className, "links");
-  assert.deepEqual(first[9].children.filter((node) => node.tagName === "A").map((node) => node.getAttribute("href")),
+  assert.equal(first[0].children[1].className, "path");
+  assert.equal(text(first[0].children[1]), "/srv/work/alpha");
+  assert.equal(first[1].children[0].className, "chip p-on");
+  assert.equal(body.children[1].children[1].children[0].className, "chip p-off");
+  assert.equal(first[2].children[1].className, "sub");
+  assert.equal(first[2].children[1].children[0].className, "none", "a dash is muted");
+  assert.equal(first[3].children[0].className, "wait");
+  assert.equal(first[3].children[1].className, "sub");
+  assert.equal(text(first[3].children[1]), "수동");
+  assert.equal(body.children[1].children[3].children[0].className, "none");
+  assert.equal(first[6].className, "links");
+  assert.deepEqual(first[6].children.filter((node) => node.tagName === "A").map((node) => node.getAttribute("href")),
                    ["/projects/p1", "/requests?project=p1"]);
+  // The narrow-screen card layout shows each cell's column name from data-label (the first cell is the card title).
+  assert.deepEqual(body.children[0].children.map((cell) => cell.getAttribute("data-label")),
+                   [null, "상태", "Task·명령", "대기·검토", "요청", "마지막 활동", "바로가기"]);
   assert.equal(text(app.page["projects-note"]), "2개 · 이름을 누르면 상세");
   assert.equal(app.page["projects-wrap"].hidden, false, "a table with rows is shown");
 });
@@ -237,6 +247,7 @@ test("the recent request table and the waiting list are redrawn, titles as text 
   assert.equal(rows[0].children[2].children[0].className, "chip s-needs");
   assert.equal(rows[1].children[2].children[0].className, "chip s-closed");
   assert.equal(rows[1].children[0].children.length, 1, "no flag on a request that waits for nobody");
+  assert.deepEqual(rows[0].children.map((cell) => cell.getAttribute("data-label")), [null, "프로젝트", "상태", "출처", "갱신"]);
   assert.equal(app.page["recent-wrap"].hidden, false);
   const items = app.page["attention-list"].children;
   assert.equal(items.length, 1);
@@ -286,7 +297,7 @@ test("text from the JSON never becomes markup or a script URL", async () => {
     board: { state: "on\" onmouseover=\"x", label: "<b>on</b>", url: "javascript:alert(3)" } });
   const app = load({ answers: [ok(evil)] });  // El throws if innerHTML/outerHTML/insertAdjacentHTML is used
   await app.tick();
-  assert.equal(text(app.page["projects-body"].children[0].children[0]), '<img src=x onerror="alert(1)">');
+  assert.equal(text(app.page["projects-body"].children[0].children[0].children[0]), '<img src=x onerror="alert(1)">');  // the name, then the path span
   const hrefs = [];
   for (const id of ["projects-body", "recent-body", "attention-list"]) {
     for (const node of app.page[id].all()) if (node.tagName === "A") hrefs.push(node.getAttribute("href"));

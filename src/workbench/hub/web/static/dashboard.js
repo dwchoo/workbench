@@ -58,6 +58,17 @@
     });
   }
 
+  // The column names (the server's PROJECT_COLUMNS and REQUEST_COLUMNS): the narrow-screen card layout shows a cell's name
+  // from its data-label; the first cell of a row is the card's title and has none.
+  var PROJECT_LABELS = ["프로젝트", "상태", "Task·명령", "대기·검토", "요청", "마지막 활동", "바로가기"];
+  var REQUEST_LABELS = ["제목", "프로젝트", "상태", "출처", "갱신"];
+  function labelled(td, label) {
+    td.setAttribute("data-label", label);
+    return td;
+  }
+  function sub(content) { var span = el("span", "sub"); span.append(content); return span; }
+
+  // Seven cells, as the server draws them: the path under the name, the command under the Task, the review mode under the wait reason.
   function projectRow(item) {
     var row = el("tr");
     var name = item.url ? link(item.name, item.url, "proj-link") : text(item.name);
@@ -67,9 +78,15 @@
     if (item.url) {
       links.append(link("상태", item.url), " ", link("요청", item.requests_url));
     }
-    row.append(cell(name), cell(text(item.path), "path"), cell(el("span", "chip p-" + kind, item.power)), cell(plain(item.task)),
-               cell(plain(item.command)), cell(wait), cell(plain(item.requests)), cell(plain(item.last_activity)),
-               cell(text(item.review_mode)), links);
+    var title = cell(undefined);
+    title.append(name, el("span", "path", item.path));
+    var task = cell(undefined);
+    task.append(plain(item.task), sub(plain(item.command)));
+    var waiting = cell(undefined);
+    waiting.append(wait, sub(text(item.review_mode)));
+    row.append(title, labelled(cell(el("span", "chip p-" + kind, item.power)), PROJECT_LABELS[1]), labelled(task, PROJECT_LABELS[2]),
+               labelled(waiting, PROJECT_LABELS[3]), labelled(cell(plain(item.requests)), PROJECT_LABELS[4]),
+               labelled(cell(plain(item.last_activity)), PROJECT_LABELS[5]), labelled(links, PROJECT_LABELS[6]));
     return row;
   }
 
@@ -81,8 +98,9 @@
     title.append(anchor);
     if (item.attention) { title.append(el("span", "flag", "내 답 필요")); }
     var kind = STATE_KINDS[item.state_kind] ? item.state_kind : "unknown";
-    row.append(title, cell(text(item.project), "proj"), cell(el("span", "chip s-" + kind, item.state_label)),
-               cell(text(item.origin), "src"), cell(text(item.updated), "when"));
+    row.append(title, labelled(cell(text(item.project), "proj"), REQUEST_LABELS[1]),
+               labelled(cell(el("span", "chip s-" + kind, item.state_label)), REQUEST_LABELS[2]),
+               labelled(cell(text(item.origin), "src"), REQUEST_LABELS[3]), labelled(cell(text(item.updated), "when"), REQUEST_LABELS[4]));
     return row;
   }
 

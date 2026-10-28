@@ -462,5 +462,10 @@ def stale_form_page(request: web.Request) -> web.Response:
         render.tag("p", STALE_FORM_TEXT, class_="error", role="alert"),
         render.tag("p", render.tag("a", "돌아가기", href=back_link(request))),
         render.tag("p", render.tag("code", "csrf_failed"))])
+    # With a valid session (always the case on the CSRF path) the page has the global nav and a logout form carrying
+    # this session's CSRF value (2026-10-28); a request without one stays a bare page.
+    session = request.get(SESSION)
     return render.page("화면이 오래되었습니다", body, status=403, scripts=(render.SESSION_CHECK_SCRIPT,),
-                       insecure_warning=request.app[SERVICES].insecure_warning)
+                       insecure_warning=request.app[SERVICES].insecure_warning,
+                       csrf=session.csrf if session is not None else None,
+                       nav=render.nav_for(request) if session is not None else None)

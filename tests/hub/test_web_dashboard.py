@@ -399,7 +399,9 @@ class PageTests(DashboardCase):
             'requests-needs-info': '/requests?state=NEEDS_INFO', 'requests-running': '/requests?state=RUNNING',
             'attention': '/requests?state=NEEDS_INFO'})
 
-    async def test_the_project_table_keeps_every_hub_list_column_and_adds_the_shortcuts(self):
+    async def test_the_project_table_keeps_every_hub_list_field_in_fewer_columns_and_adds_the_shortcuts(self):
+        # 2026-10-28: the ten columns became seven so the table fits without sideways scrolling: the path sits under
+        # the name, the command under the Task, the review mode under the wait reason. No field was dropped.
         self.rows = [
             hub_row('alpha', self.a, power='on', task={'task_id': 't1', 'summary': '로그인 수정', 'status': 'running'},
                     command={'label': 'build', 'state': 'running'}, waits=[{'code': 'manager_editor_not_empty'}],
@@ -408,21 +410,35 @@ class PageTests(DashboardCase):
             hub_row('beta', self.b, power='off')]
         _, page = await self.page('/dashboard')
         header = [row for row, data in zip(page.rows, page.row_is_data) if not data][0]
-        self.assertEqual(header, ['이름', '경로', '상태', 'Task·단계', '명령', '대기 사유', '요청', '마지막 활동', '검토 방식',
-                                  '바로가기'])
+        self.assertEqual(header, ['프로젝트', '상태', 'Task·명령', '대기·검토', '요청', '마지막 활동', '바로가기'])
         rows = page.data_rows()
-        self.assertEqual(rows[0][:9], ['alpha', '/srv/work/alpha', '켜짐', '로그인 수정 · running', 'build (실행 중)',
-                                       'manager 입력창에 글이 있어 알림 대기', '대기 2 · 질문 1', '2분 전', '수동'])
-        self.assertEqual(rows[1][:9], ['beta', '/srv/work/beta', '꺼짐', '—', '—', '—', '0', '—', '자동'])
+        self.assertEqual(rows[0][:6], ['alpha/srv/work/alpha', '켜짐', '로그인 수정 · runningbuild (실행 중)',
+                                       'manager 입력창에 글이 있어 알림 대기수동', '대기 2 · 질문 1', '2분 전'])
+        self.assertEqual(rows[1][:6], ['beta/srv/work/beta', '꺼짐', '——', '—자동', '0', '—'])
         self.assertEqual(page.data_links()[0], [f'/projects/{self.a}', f'/projects/{self.a}',
                                                 f'/requests?project={self.a}'])
-        self.assertEqual([row[9] for row in rows], ['상태 요청', '상태 요청'])
+        self.assertEqual([row[6] for row in rows], ['상태 요청', '상태 요청'])
+
+    async def test_a_narrow_screen_can_label_every_cell_of_both_tables_from_its_header(self):
+        # 2026-10-28: below 45rem the rows stack as cards; each cell but the first (the card's title) names its column
+        # through data-label, which the CSS shows (td::before). The labels are the header texts.
+        self.rows = [hub_row('alpha', self.a)]
+        self.add('one')
+        _, page = await self.page('/dashboard')
+        classes = [attrs.get('class') for tag, attrs in page.elements if tag == 'table']
+        self.assertEqual(len(classes), 2)
+        self.assertTrue(all('tcards' in (value or '').split() for value in classes), classes)
+        labelled = [attrs.get('data-label') for tag, attrs in page.elements if tag == 'td']
+        self.assertEqual(labelled, [None, '상태', 'Task·명령', '대기·검토', '요청', '마지막 활동', '바로가기',
+                                    None, '프로젝트', '상태', '출처', '갱신'])
 
     async def test_the_page_and_the_json_say_the_same_things(self):
         self.populate()
         _, page = await self.page('/dashboard')
         _, body = await self.api()
-        self.assertEqual([row[0] for row in page.data_rows()][:2], [project['name'] for project in body['projects']])
+        # the first cell is the name with the path under it (2026-10-28)
+        self.assertEqual([row[0] for row in page.data_rows()][:2],
+                         [project['name'] + project['path'] for project in body['projects']])
         recent = page.sections['recent-requests']
         for item in body['recent']:
             self.assertIn(item['title'], recent)

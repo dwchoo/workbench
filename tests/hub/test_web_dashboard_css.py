@@ -91,6 +91,30 @@ class LayoutTests(unittest.TestCase):
         self.assertGreaterEqual(wide[0][0], 900, 'two columns only where there is room for the 20 rem side column')
         self.assertRegex(wide[0][1], r'^minmax\(0,\s*1fr\)\s+\d+(\.\d+)?rem$')  # the flexible tables | a fixed side column
 
+    def test_the_dashboard_tables_have_no_minimum_width_so_they_fit_instead_of_scrolling(self):
+        # 2026-10-28: base.css gives table.data min-width 38rem (a table that scrolls inside .table-wrap); the dashboard's
+        # two tables shrink to their card instead, and the cells that hold long text (names, paths, titles) may break.
+        self.assertEqual(self.declared('.dash-card table.data').get('min-width'), '0')
+        for text in self.css.values():
+            for selector, body in design.all_rules(text):
+                if re.search(r'\.dash-card.*(\.proj-link|td\.proj|\.path|td\.title|\.sub)', selector):
+                    with self.subTest(selector=selector):
+                        self.assertNotEqual(design.declarations(body).get('white-space'), 'nowrap')
+
+    def test_below_45rem_the_dashboard_rows_stack_as_labelled_cards(self):
+        narrow = []
+        for text in self.css.values():
+            for head, body in design.blocks(text):
+                match = re.search(r'max-width:\s*(\d+(?:\.\d+)?)rem', head)
+                if head.startswith('@media') and match and 44 <= float(match.group(1)) <= 45:
+                    narrow += design.all_rules(body)
+        by_selector = {selector.strip(): design.declarations(body) for selector, body in narrow}
+        stacked = [decl for selector, decl in by_selector.items() if 'table.data.tcards' in selector and decl.get('display') == 'block']
+        self.assertTrue(stacked, sorted(by_selector))
+        labels = [decl for selector, decl in by_selector.items() if 'td[data-label]::before' in selector]
+        self.assertEqual([decl.get('content') for decl in labels], ['attr(data-label)'])
+        self.assertTrue(any('thead' in selector and 'tcards' in selector for selector in by_selector), 'the header row is hidden')
+
     def test_the_power_chips_carry_a_glyph_so_colour_is_not_the_only_cue(self):
         for kind in ('on', 'off', 'busy', 'unknown'):
             with self.subTest(kind=kind):

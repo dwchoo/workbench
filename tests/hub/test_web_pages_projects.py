@@ -125,15 +125,16 @@ class BoardObservationTests(ProjectsCase):
                      hub_row('beta', self.b, power='mismatch', power_detail='root_missing')]
         response, page = await self.page('/dashboard')
         rows = page.data_rows()
-        self.assertEqual(rows[0][2], '연결 없음/불명')
-        self.assertEqual(rows[0][6:9], ['—', '—', '—'])  # requests, last activity, review mode: unknown, not 0
-        self.assertEqual(rows[1][2], '불일치(root_missing)')
+        self.assertEqual(rows[0][1], '연결 없음/불명')
+        # wait reason + review mode (merged cell), requests, last activity: unknown, not 0
+        self.assertEqual([rows[0][3], rows[0][4], rows[0][5]], ['——', '—', '—'])
+        self.assertEqual(rows[1][1], '불일치(root_missing)')
         self.assertNotIn('꺼짐', ' '.join(cell for row in rows for cell in row))  # the cards' own '프로젝트 꺼짐' label is not a row
 
     async def test_a_row_without_a_known_power_value_is_unknown_not_off(self):
         self.rows = [{'root': '/srv/work/alpha', 'name': 'alpha', 'project_id': self.a}]
         _, page = await self.page('/dashboard')
-        self.assertEqual(page.data_rows()[0][2], '연결 없음/불명')
+        self.assertEqual(page.data_rows()[0][1], '연결 없음/불명')
 
     async def test_a_list_that_cannot_be_read_shows_a_fixed_message_and_no_rows(self):
         self.list_error = RuntimeError('/secret/path/to/hub.sock exploded')
@@ -177,13 +178,13 @@ class BoardTests(ProjectsCase):
         response, page = await self.page('/dashboard')
         self.assertEqual(response.status, 200)
         header = [row for row, data in zip(page.rows, page.row_is_data) if not data][0]
-        # the Hub list columns (HB-D09) plus the review mode, then the shortcuts column of the dashboard (WBX-C2)
-        self.assertEqual(header, ['이름', '경로', '상태', 'Task·단계', '명령', '대기 사유', '요청', '마지막 활동', '검토 방식',
-                                  '바로가기'])
+        # the Hub list fields (HB-D09) plus the review mode and the shortcuts (WBX-C2), in seven columns (2026-10-28):
+        # path under the name, command under the Task, review mode under the wait reason
+        self.assertEqual(header, ['프로젝트', '상태', 'Task·명령', '대기·검토', '요청', '마지막 활동', '바로가기'])
         rows = page.data_rows()
-        self.assertEqual(rows[0], ['alpha', '/srv/work/alpha', '켜짐', '로그인 수정 · running', 'build (실행 중)',
-                                   'manager 입력창에 글이 있어 알림 대기', '대기 2 · 질문 1', '2분 전', '수동', '상태 요청'])
-        self.assertEqual(rows[1], ['beta', '/srv/work/beta', '꺼짐', '—', '—', '—', '0', '—', '자동', '상태 요청'])
+        self.assertEqual(rows[0], ['alpha/srv/work/alpha', '켜짐', '로그인 수정 · runningbuild (실행 중)',
+                                   'manager 입력창에 글이 있어 알림 대기수동', '대기 2 · 질문 1', '2분 전', '상태 요청'])
+        self.assertEqual(rows[1], ['beta/srv/work/beta', '꺼짐', '——', '—자동', '0', '—', '상태 요청'])
         self.assertEqual([links[0] for links in page.data_links()], [f'/projects/{self.a}', f'/projects/{self.b}'])
         self.assertEqual(page.data_links()[0][1:], [f'/projects/{self.a}', f'/requests?project={self.a}'])
 

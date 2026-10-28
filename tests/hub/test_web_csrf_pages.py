@@ -98,6 +98,22 @@ class StaleSessionFormTests(CsrfCase):
         self.assertIn('refused form POST /settings/password from 127.0.0.1', self.lines[0])
         self.assertNotIn(csrf, self.lines[0])
 
+    async def test_the_stale_page_of_a_live_session_shows_the_global_nav_and_a_working_logout(self):
+        """2026-10-28 사용자 결정: with a valid session the stale-form page has the global nav, and its logout form
+        carries this session's CSRF value (so Logout works from here)."""
+        token, csrf = await self.logged_in()
+        response = await self.post('/settings/password', {'csrf': 'stale-' + csrf, 'current': 'x', 'new': 'y'},
+                                   cookies={'wb_hub_session': token})
+        self.assertEqual(response.status, 403)
+        text = response.body_text
+        self.assertEqual(text.count('aria-label="주요"'), 1, text)
+        self.assertIn('href="/dashboard"', text)
+        self.assertRegex(text, r'<form[^>]*action="/logout"[^>]*>\s*<input[^>]*name="csrf" value="%s"' % re.escape(csrf))
+        self.assertIn(STALE_TEXT, text)
+        self.assertEqual(text.count('/static/session-check.js'), 1)
+        logout = await self.post('/logout', {'csrf': csrf}, cookies={'wb_hub_session': token})
+        self.assertEqual(logout.status, 303)
+
     async def test_without_a_same_origin_referer_the_link_goes_home(self):
         token, _csrf = await self.logged_in()
         for referer in (None, 'http://evil.example/settings', 'javascript:alert(1)'):

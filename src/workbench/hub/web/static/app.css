@@ -74,7 +74,7 @@ main section.summary + section, main .summary > h2 { margin-top: 0; }
 .layout { display: grid; gap: var(--gap); grid-template-columns: minmax(0, 1fr); }
 .primary, .side { display: grid; gap: var(--gap); min-width: 0; align-content: start; }
 .primary > .card + .card, .side > .card + .card { margin-top: 0; }
-@media (min-width: 1000px) { .layout { grid-template-columns: minmax(0, 1fr) 20rem; } }
+@media (min-width: 1200px) { .layout { grid-template-columns: minmax(0, 1fr) 20rem; } }
 
 /* a card holding a table: the head sits in the card, the table runs edge to edge under it */
 .card-head { display: flex; align-items: center; justify-content: space-between; gap: 0.75rem; }
@@ -86,14 +86,32 @@ main section.summary + section, main .summary > h2 { margin-top: 0; }
 .dash-card > .error, .dash-card > .empty { margin: 0; padding: 0 var(--pad) var(--pad); }
 .dash-card > .error { margin: 0 var(--pad) var(--pad); padding: 0.6rem 0.8rem; }
 .dash-card > .table-wrap { margin: 0; border: 0; border-top: 1px solid var(--border); border-radius: 0 0 var(--radius-lg) var(--radius-lg); }
-.dash-card .proj-link, .dash-card td.proj, .dash-card td.src { white-space: nowrap; }
-.dash-card td.title { min-width: 14rem; }
-.wait { display: inline-block; min-width: 7rem; }
+/* the two tables fit their card instead of scrolling sideways (2026-10-28): no 38 rem minimum, long text breaks anywhere,
+   and the second pieces of a merged cell (path, command, review mode) sit under the first as a muted line */
+.dash-card table.data { min-width: 0; table-layout: fixed; }
+.dash-card table.data th { white-space: normal; }
+.dash-card table.board th:nth-child(1) { width: 22%; }
+.dash-card table.board th:nth-child(2) { width: 12%; }
+.dash-card table.board th:nth-child(3) { width: 20%; }
+.dash-card table.board th:nth-child(4) { width: 17%; }
+.dash-card table.board th:nth-child(5) { width: 8%; }
+.dash-card table.board th:nth-child(6) { width: 10%; }
+.dash-card table.board th:nth-child(7) { width: 11%; }
+.dash-card table.requests th:nth-child(1) { width: 38%; }
+.dash-card table.requests th:nth-child(2) { width: 20%; }
+.dash-card table.requests th:nth-child(3) { width: 16%; }
+.dash-card table.requests th:nth-child(4) { width: 14%; }
+.dash-card table.requests th:nth-child(5) { width: 12%; }
 .dash-card table.board { --cell-x: 0.6rem; font-size: 0.9rem; }
-.dash-card td.path { min-width: 9rem; color: var(--muted); font-family: var(--mono); font-size: 0.75rem; overflow-wrap: anywhere; }
-.links { white-space: nowrap; }
-.links a + a { margin-left: 0.9rem; }
-.when { color: var(--muted); font-size: 0.85em; white-space: nowrap; }
+.dash-card .proj-link { overflow-wrap: anywhere; }
+.dash-card td.proj, .dash-card td.src { overflow-wrap: anywhere; }
+.dash-card .path { display: block; color: var(--muted); font-family: var(--mono); font-size: 0.75rem; overflow-wrap: anywhere; word-break: break-all; }
+.dash-card .sub { display: block; color: var(--muted); font-size: 0.85em; }
+.dash-card .chip { max-width: 100%; border-radius: 0.9rem; overflow-wrap: anywhere; white-space: normal; }
+.wait { display: block; }
+.links a { display: inline-block; }
+.links a + a { margin-left: 0.5rem; }
+.when { color: var(--muted); font-size: 0.85em; }
 .flag { display: inline-block; margin-left: 0.5rem; padding: 0 0.4rem; border: 1px solid var(--warn-bd); border-radius: 4px; background: var(--warn-bg); color: var(--warn-fg); font-size: 0.72rem; font-weight: 700; white-space: nowrap; }
 
 /* power chips of the project table (the state glyph keeps colour from being the only cue) */
@@ -113,3 +131,15 @@ main section.summary + section, main .summary > h2 { margin-top: 0; }
 .attn-list .meta { font-size: 0.82rem; }
 .attn-card > .empty { margin-top: 0; margin-bottom: 0; }
 .attn-list:empty { display: none; }
+
+/* under 45 rem a row of either dashboard table becomes a card: the header row goes (screen readers still read it), the first
+   cell is the card's title, and every other cell shows its column name (data-label) in front of its value */
+@media (max-width: 44.99rem) {
+  .dash-card table.data.tcards, .dash-card table.data.tcards tbody, .dash-card table.data.tcards tr, .dash-card table.data.tcards td { display: block; }
+  .dash-card table.data.tcards thead { position: absolute; width: 1px; height: 1px; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; }
+  .dash-card table.data.tcards tbody tr { padding: 0.6rem var(--cell-x); }
+  .dash-card table.data.tcards tbody tr + tr { border-top: 1px solid var(--border); }
+  .dash-card table.data.tcards td { position: relative; min-height: 1.5rem; padding: 0.15rem 0 0.15rem 6.5rem; border-top: 0; }
+  .dash-card table.data.tcards td:first-child { padding-left: 0; font-size: 1rem; }
+  .dash-card table.data.tcards td[data-label]::before { content: attr(data-label); position: absolute; top: 0.2rem; left: 0; width: 6rem; color: var(--muted); font-size: 0.8rem; font-weight: 600; }
+}

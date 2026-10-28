@@ -408,13 +408,27 @@ def flush_warnings(settings):
         write_stderr(settings.warnings.pop(0) + '\n')
 
 
+def join_confirm_token(argv):
+    """argparse reads `--confirm -abc` as a missing value and `-abc` as an option. Fold the token into
+    `--confirm=-abc`, which argparse accepts for any value (Hub tokens are URL-safe and may start with '-')."""
+    folded, index = [], 0
+    while index < len(argv):
+        if argv[index] == '--confirm' and index + 1 < len(argv):
+            folded.append('--confirm=' + argv[index + 1])
+            index += 2
+        else:
+            folded.append(argv[index])
+            index += 1
+    return folded
+
+
 def main(argv=None):
     settings = Settings(os.environ, __file__)
     key = settings.find('WB_API_KEY')[0]
     if key and len(key) >= MIN_SCRUBBED_KEY:
         SECRETS.append(key)
     flush_warnings(settings)
-    args = build_parser().parse_args(argv)
+    args = build_parser().parse_args(join_confirm_token(sys.argv[1:] if argv is None else list(argv)))
     handler = {'config': command_config, 'projects': command_projects, 'submit': command_submit,
                'list': command_list, 'get': command_get, 'comment': command_comment,
                'update': command_update, 'set-state': command_set_state,

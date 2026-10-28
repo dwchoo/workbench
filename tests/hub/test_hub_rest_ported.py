@@ -64,6 +64,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 import re
+import secrets
 import sys
 import threading
 import unittest
@@ -409,6 +410,25 @@ class CancelPortTests(PortCase):
         tokens = {self.first()['confirm_token'] for _ in range(10)}
         self.assertEqual(len(tokens), 10)
         self.assertTrue(all(re.fullmatch(r'[A-Za-z0-9_-]{30,}', token) for token in tokens), tokens)
+
+    def test_a_confirm_token_never_starts_with_a_dash(self):
+        """A leading '-' reads as an option on a command line (``--confirm -abc`` fails in argparse), so a generator
+        draw that starts with one is discarded and drawn again."""
+        real, draws = secrets.token_urlsafe, []
+
+        def dash_first(nbytes=None):
+            if nbytes == 24 and not draws:
+                draws.append('-' + 'A' * 31)
+                return draws[0]
+            return real(nbytes)
+
+        self.running()
+        with mock.patch.object(secrets, 'token_urlsafe', dash_first):
+            token = self.first()['confirm_token']
+        self.assertEqual(len(draws), 1, 'the dash draw was made')
+        self.assertFalse(token.startswith('-'), token)
+        self.assertRegex(token, r'[A-Za-z0-9_][A-Za-z0-9_-]{31}')
+        self.assertEqual(self.ok(self.cancel(confirm_token=token), 202)['status'], 'cancel_requested')
 
     def test_tampered_tokens_are_mismatches_and_the_real_token_is_unharmed(self):
         self.running()

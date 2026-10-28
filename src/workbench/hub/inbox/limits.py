@@ -6,7 +6,18 @@ unchanged.
 from __future__ import annotations
 
 import re
+import secrets
 import unicodedata
+
+
+def confirm_token() -> str:
+    """A 24-byte URL-safe token a person (or an agent) types after ``--confirm``. A leading ``-`` would read as an
+    option, so a draw that starts with one is discarded and drawn again (same length, charset and entropy
+    minus the 1/64 of draws that are dropped)."""
+    while True:
+        token = secrets.token_urlsafe(24)
+        if not token.startswith("-"):
+            return token
 
 
 class InboxError(Exception):

@@ -24,6 +24,7 @@ import sys
 import tempfile
 import threading
 import unittest
+from unittest import mock
 
 REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO / 'src'))
@@ -612,6 +613,25 @@ class CancelTests(HubCase):
         self.assertEqual(second.code, 0, second.both)
         self.assertEqual(second.json['status'], 'cancel_requested')
         self.assertEqual([event.request_id for event in self.hub.cancels], [self.rid])
+
+    DASH_TOKEN = '-' + 'Xy_9' * 8
+
+    def confirm_with_a_dash_token(self, confirm_args):
+        """The Hub issues DASH_TOKEN (the server no longer does; the CLI must cope with any token a Hub sends)."""
+        self.hub.link_running(self.rid, view={'command': self.COMMAND})
+        with mock.patch('workbench.hub.inbox.limits.confirm_token', return_value=self.DASH_TOKEN):
+            first = self.cli(self.requester, 'cancel', self.rid)
+        self.assertEqual(first.json['confirm_token'], self.DASH_TOKEN, first.both)
+        second = self.cli(self.requester, 'cancel', self.rid, *confirm_args(self.DASH_TOKEN))
+        self.assertEqual(second.code, 0, second.both)
+        self.assertEqual(second.json['status'], 'cancel_requested')
+        self.assertEqual([event.request_id for event in self.hub.cancels], [self.rid])
+
+    def test_a_token_that_starts_with_a_dash_works_as_a_separate_argument(self):
+        self.confirm_with_a_dash_token(lambda token: ('--confirm', token))
+
+    def test_a_token_that_starts_with_a_dash_works_as_confirm_equals_token(self):
+        self.confirm_with_a_dash_token(lambda token: (f'--confirm={token}',))
 
     def test_a_wrong_token_is_refused_and_stops_nothing(self):
         self.hub.link_running(self.rid, view={'command': self.COMMAND})

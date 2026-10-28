@@ -16,7 +16,6 @@ import functools
 import hashlib
 import json
 import math
-import secrets
 import threading
 import time
 from typing import Awaitable, Callable
@@ -405,7 +404,7 @@ class InboxApi:
 
     # -- two-step cancel (SPEC "취소", D-33, P2-AC-41) --------------------------------------
     def _issue_token(self, principal: Principal, request_id: str, fingerprint: str) -> str:
-        token = secrets.token_urlsafe(24)
+        token = limits.confirm_token()
         now = self.monotonic()
         with self._lock:
             self._prune(now)

@@ -20,7 +20,7 @@ from urllib.parse import quote, urlencode
 
 from aiohttp import web
 
-from ...inbox.limits import InboxError
+from ...inbox.limits import InboxError, confirm_token
 from ...inbox.results import MAX_PAGE as MAX_RESULT_PAGE, Results, page_bounds, summary as result_summary
 from ...inbox.service import PERMISSIONS, STATES, Principal, ProjectRef, cancel_fingerprint
 from .. import render
@@ -589,7 +589,7 @@ def issue_cancel_token(request: web.Request, detail: dict) -> str:
     live = {token: entry for token, entry in port.cancel_tokens.items() if entry[1] > now}
     while len(live) >= MAX_CANCEL_TOKENS:  # dicts keep insertion order: drop the oldest
         del live[next(iter(live))]
-    token = secrets.token_urlsafe(24)
+    token = confirm_token()
     live[token] = (_binding(request, detail), now + CANCEL_TOKEN_TTL)
     port.cancel_tokens = live
     return token

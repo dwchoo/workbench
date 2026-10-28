@@ -27,7 +27,7 @@ comment.
 | `list [--project ID] [--state S]... [--include-closed] [--query Q] [--limit N] [--cursor C]` | Page through requests; pass `next_cursor` as `--cursor` until it is `null`. |
 | `get REQUEST_ID` | Read one request (state, version, title, body, comments). |
 | `comment REQUEST_ID (--body TEXT \| --body-file PATH\|-)` | Add a comment, for example to answer a question. |
-| `cancel REQUEST_ID [--reason R] [--confirm TOKEN]` | Cancel. A request that is running first answers `confirm_required` with a `confirm_token` (valid 60 seconds); repeat the command with `--confirm TOKEN` only if the user really wants it stopped. |
+| `cancel REQUEST_ID [--reason R] [--confirm=TOKEN]` | Cancel. A request that is running first answers `confirm_required` with a `confirm_token` (valid 60 seconds); repeat the command with `--confirm=TOKEN` (with the `=`, so a token that starts with `-` is read as the value) only if the user really wants it stopped. |
 | `result REQUEST_ID [--full] [--run-id R \| --artifact-path P] [--offset N] [--length N]` | Summary by default; `--full` for the full view; a run or artifact page is read in pieces: repeat with `--offset <next_offset>` until `next_offset` is `null` or reaches `size`. |
 | `update REQUEST_ID --base-version V [--title T] [--body TEXT \| --body-file PATH\|-]` | Editor keys only. `V` is the `version` you last read. |
 | `set-state REQUEST_ID --base-version V --to NEW\|NEEDS_INFO [--reason R]` | Editor keys only. |

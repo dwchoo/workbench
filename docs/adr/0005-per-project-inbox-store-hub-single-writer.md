@@ -9,7 +9,7 @@ Hub 하나가 여러 WB 프로젝트의 요청을 받는다. 요청은 WB 프로
 
 [기존 계약] 프로젝트별 작업 이력·DB·로그는 각 `.wb/`에 두고 프로젝트 A와 B의 이력을 합치지 않는다(WI-AC-03). Hub registry는 위치와 project_id만 기억하고 등록 해제는 `.wb/`를 지우지 않는다(HB-D06).
 
-요청에 쓰는 주체는 여럿이다: 웹의 소유자, MCP client, Board agent, 그리고 검토 결과를 기록하는 각 WB 프로젝트의 backend(manager 도구).
+요청에 쓰는 주체는 여럿이다: 웹의 소유자, MCP client, Board agent, 그리고 검토 결과를 기록하는 각 WB 프로젝트의 backend(manager 도구). [2026-10-28 개정: MCP는 없어졌고 "MCP client"는 외부 요청 API(`/api/v1/` REST)를 쓰는 외부 agent(`wb-inbox` skill)로 읽는다. Hub가 유일한 writer라는 결정은 그대로다. [web-board-ux](../features/web-board-ux/BRIEF.md) WBX-D05, [ADR-0006](0006-rest-skill-single-external-contact.md)]
 
 ## 결정
 

@@ -15,7 +15,7 @@
 
 - 요청의 접수는 실행이 아니다. 모든 요청은 먼저 manager가 검토한다. 검토 결과는 manager 전용 검토 결과 도구로만 기록되며, 승인 명세 연결만 요청을 READY로 만든다.
 - 승인 명세가 연결된 요청은 출처(소유자 웹, Board agent, 외부 key)와 무관하게 C-D66 상시 위임으로 소유자의 별도 승인 없이 실행된다.
-- 출처(소유자 / Board agent / key 이름)는 웹 목록·상세와 MCP 응답에 항상 표시한다.
+- 출처(소유자 / Board agent / key 이름)는 웹 목록·상세와 MCP 응답에 항상 표시한다. [2026-10-28 개정: MCP는 없어졌고 "MCP 응답"은 외부 요청 API(`/api/v1/` REST) 응답으로 읽는다. [web-board-ux](../features/web-board-ux/BRIEF.md) WBX-D05, [ADR-0006](0006-rest-skill-single-external-contact.md)]
 - Rate limit은 두지 않는다.
 - 어떤 API key도 승인 명세 연결, terminal 열기, backend 제어를 할 수 없다(P2-AC-13 유지).
 - 사용자는 외부 key 요청에 소유자 승인을 요구하는 안 대신 이 안을 명시적으로 골랐다.

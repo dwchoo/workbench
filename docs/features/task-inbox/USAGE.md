@@ -1,12 +1,12 @@
 # Task Inbox & Web Board 사용 안내
 
-Hub가 제공하는 웹(Web Board)과 MCP endpoint로 요청을 접수·검토·실행·조회하는 방법이다. 합의는 [BRIEF](BRIEF.md), 구현 명세는 [SPEC](SPEC.md), Hub 자체의 명령은 [Hub 사용 안내](../workbench-hub/USAGE.md)를 따른다. 이 문서는 사용자가 쓰는 명령·설정·화면과 보안·한계만 다룬다.
+Hub가 제공하는 웹(Web Board)과 외부 요청 API(`/api/v1/` REST)·`wb-inbox` skill로 요청을 접수·검토·실행·조회하는 방법이다. 합의는 [BRIEF](BRIEF.md)와 [web-board-ux BRIEF](../web-board-ux/BRIEF.md), 구현 명세는 [SPEC](SPEC.md)과 [web-board-ux SPEC](../web-board-ux/SPEC.md), Hub 자체의 명령은 [Hub 사용 안내](../workbench-hub/USAGE.md)를 따른다. 이 문서는 사용자가 쓰는 명령·설정·화면과 보안·한계만 다룬다.
 
-핵심 한 줄: **웹은 기본으로 꺼져 있다.** `hub.toml`(Hub가 처음 시작할 때 자동으로 만든다)에서 `enabled = false`를 `enabled = true`로 바꾸고 비밀번호를 정한 뒤 `wb hub reload`로 반영해야 열리고, 기본 주소는 `127.0.0.1:8780`(자기 컴퓨터만)이다(2026-10-26 사용자 결정: web 기본 비활성, `[web] enabled = true`로 켬). 요청은 접수만으로 실행되지 않고 항상 manager 검토를 거친다.
+핵심 한 줄: **웹은 기본으로 꺼져 있다.** `hub.toml`(Hub가 처음 시작할 때 자동으로 만든다)에서 `enabled = false`를 `enabled = true`로 바꾸고 비밀번호를 정한 뒤 `wb hub reload`로 반영해야 열리고, 기본 주소는 `127.0.0.1:8780`(자기 컴퓨터만)이다(2026-10-26 사용자 결정: web 기본 비활성, `[web] enabled = true`로 켬). 요청은 접수만으로 실행되지 않고 항상 manager 검토를 거친다. 외부 agent는 MCP가 아니라 `wb-inbox` skill과 REST API를 쓴다(2026-10-27 사용자 결정, [ADR-0006](../../adr/0006-rest-skill-single-external-contact.md)). 예전 MCP(`/mcp`)는 없어졌으므로 agent의 MCP 설정은 지우고 skill을 설치한다(4).
 
 ## 1. 처음 설정
 
-웹을 쓰려면 먼저 `hub.toml`(1.2)의 `[web]`에서 `enabled = false`를 아래처럼 `true`로 바꾸고 `wb hub reload`로 실행 중인 Hub에 반영한다(2026-10-27 사용자 결정: bind 여러 주소, allow_from, wb hub reload. Hub가 꺼져 있으면 `wb hub start`). 이 파일은 Hub가 처음 시작할 때(또는 `wb hub passwd`가) 없으면 주석 달린 기본 템플릿으로 자동으로 만든다(2026-10-26 사용자 요청: hub.toml 자동 생성). 직접 만들 필요가 없다. 웹은 가장 많이 노출되는 부분이라 기본으로 꺼져 있다. 꺼져 있는 동안 웹 화면, 외부 `/mcp`, `/ws/board`, Board agent 세트가 모두 열리지 않고, Hub의 나머지(등록·목록·TUI·요청 전달·검토)는 그대로 동작한다.
+웹을 쓰려면 먼저 `hub.toml`(1.2)의 `[web]`에서 `enabled = false`를 아래처럼 `true`로 바꾸고 `wb hub reload`로 실행 중인 Hub에 반영한다(2026-10-27 사용자 결정: bind 여러 주소, allow_from, wb hub reload. Hub가 꺼져 있으면 `wb hub start`). 이 파일은 Hub가 처음 시작할 때(또는 `wb hub passwd`가) 없으면 주석 달린 기본 템플릿으로 자동으로 만든다(2026-10-26 사용자 요청: hub.toml 자동 생성). 직접 만들 필요가 없다. 웹은 가장 많이 노출되는 부분이라 기본으로 꺼져 있다. 꺼져 있는 동안 웹 화면, 외부 요청 API(`/api/v1/`), skill 제공(`/skill/`), `/ws/board`, Board agent 세트가 모두 열리지 않고, Hub의 나머지(등록·목록·TUI·요청 전달·검토)는 그대로 동작한다.
 
 ```toml
 [web]
@@ -39,13 +39,14 @@ printf '%s\n' "$PW" | wb hub passwd --stdin   # 스크립트용. terminal에서�
 
 | 표 | key | 기본값 | 의미 |
 |---|---|---|---|
-| `[web]` | `enabled` | `false` | 웹(화면, 외부 `/mcp`, `/ws/board`)과 Board agent 세트를 켤지. TOML bool만 된다(그 밖의 형식은 `config_invalid:web.enabled`). 바꾸면 `wb hub reload`로 반영한다 |
+| `[web]` | `enabled` | `false` | 웹(화면, 외부 요청 API `/api/v1/`, skill 제공 `/skill/`, `/ws/board`)과 Board agent 세트를 켤지. TOML bool만 된다(그 밖의 형식은 `config_invalid:web.enabled`). 바꾸면 `wb hub reload`로 반영한다 |
 | `[web]` | `bind` | `"127.0.0.1"` | 열 주소. IP literal 하나 또는 IP literal 목록(최대 16개, 중복 불가)이다(호스트 이름 불가). 목록이면 모든 주소를 같은 port로 열고, 하나라도 열지 못하면 아무 주소도 열지 않는다. `"0.0.0.0"`·`"::"`은 직접 쓸 때만 |
 | `[web]` | `port` | `8780` | 0~65535. 0이면 임의 port(실제 값은 `wb hub status`에 보임) |
 | `[web]` | `tls_cert`, `tls_key` | `""` | 인증서·key 절대 경로. 빈 값이면 기본 경로 `~/.config/omp-workbench/tls/hub-cert.pem`, `hub-key.pem` |
 | `[web]` | `allow_insecure_http` | `true` | TLS 파일이 없을 때 평문 HTTP를 허용할지. `false`면 TLS가 없으면 열지 않음 |
 | `[web]` | `server_names` | `[]` | bind IP 외에 `Host`로 받을 DNS 이름 목록(예: `"box.vpn"`). DNS rebinding 방어용이며 인증서 SAN에도 들어감 |
-| `[web]` | `allow_from` | `[]` | 접속을 받을 client IP 주소·대역(CIDR) 목록(최대 256개). 비어 있으면 제한 없음. 목록 밖 주소는 본문 없는 403(화면·`/static`·`/mcp`·`/ws/board` 모두). 대역은 끝자리를 0으로(`"192.168.10.0/24"`; `"192.168.10.5/24"`는 `config_invalid`). loopback도 자동 허용하지 않는다 |
+| `[web]` | `allow_from` | `[]` | 접속을 받을 client IP 주소·대역(CIDR) 목록(최대 256개). 비어 있으면 제한 없음. 목록 밖 주소는 본문 없는 403(화면·`/static`·`/api/v1/`·`/skill/`·`/ws/board` 모두. REST 전용 허용 목록은 없다). Board agent는 Hub 내부 loopback listener를 쓰므로 여기서 loopback을 빼도 끊기지 않는다. 대역은 끝자리를 0으로(`"192.168.10.0/24"`; `"192.168.10.5/24"`는 `config_invalid`). loopback도 자동 허용하지 않는다 |
+| `[web]` | `skill_repo_url` | `""` | 선택. skill이 있는 repository 주소(`https://…` 또는 `http://…`, 2048자 이하, userinfo 없음). 값이 있으면 key 발급 화면에 GitHub 링크로, `/skill/README.md`에 `Source repository: <주소>` 줄로 보인다. 잘못되면 `config_invalid:web.skill_repo_url` |
 | `[board_agent]` | `model` | `""` | Board agent의 OMP model selector. 빈 값이면 `omp-models.yml`의 manager 항목 |
 | `[board_agent]` | `role_prompt_file` | `""` | 추가 role prompt 절대 경로. 기본 prompt 뒤에 붙고 대체하지 않는다 |
 | `[board_agent]` | `shell` | `""` | 웹 shell 프로그램 절대 경로. 빈 값이면 `$SHELL`, 없으면 `/bin/sh` |
@@ -80,6 +81,8 @@ allow_from = ["100.64.0.0/10", "127.0.0.1", "::1"]
 
 **평문 HTTP 경고.** 인증서가 없고 `bind` 주소 중 하나라도 loopback이 아니면(`0.0.0.0` 포함) 평문 HTTP로 열리며, 모든 웹 page 상단과 `wb hub status`에 "평문 HTTP로 LAN에 열려 있습니다. VPN 등 네트워크 보호가 필요합니다."가 보인다. 평문에서는 비밀번호·세션 cookie·API key가 네트워크에 그대로 오간다. VPN처럼 믿을 수 있는 네트워크 안에서만 쓰거나 아래 TLS를 켠다.
 
+웹 화면의 경고 배너는 **닫기** 버튼으로 접을 수 있다. 접으면 header에 작은 "평문 HTTP" 표시가 남고, 마우스를 올리거나 focus하면 전문이 보이며, 누르면 배너가 다시 펼쳐진다. 접은 상태는 브라우저마다(접속 주소별 localStorage) 기억한다. 경고가 완전히 사라지지는 않고, `wb hub status`의 경고 줄도 그대로다.
+
 ### 1.3 자체 서명 TLS
 
 ```sh
@@ -112,7 +115,7 @@ wb hub status            # web: listening https://10.8.0.2:8780 / web: not_liste
 - 켜져 있는 WB 프로젝트(backend·manager·worker)는 건드리지 않는다. 등록 목록·요청 전달·검토도 그대로다.
 - 파일이 잘못되었으면 실행 중인 설정을 그대로 두고 `hub.toml의 '<항목>' 항목이 잘못되어 …`를 보이며 exit 1이다. `wb hub status`에 `config: 마지막 'wb hub reload' 실패 …`가 남는다(다음 성공한 reload가 지운다).
 - 새 주소·port를 열지 못하면(port 사용 중 등) 이전 설정으로 되돌리지 않고 `web: not_listening (bind_failed:EADDRINUSE 127.0.0.1:8780)`처럼 원인과 주소를 보이며 exit 1이다. 30초마다 새 설정으로 다시 시도한다. 되돌리지 않는 이유는 보안 때문에 뺀 주소가 다시 열리지 않게 하고, 파일과 실제 상태가 어긋나지 않게 하기 위해서다.
-- `enabled = false`로 바꾸면 웹(화면·`/mcp`·`/ws/board`)이 닫히지만, 실행 중인 Board agent 세트는 작업 중일 수 있어 멈추지 않는다. `wb hub stop`까지 계속 돌고, 다시 `true`로 바꾸면 같은 세트를 그대로 쓴다.
+- `enabled = false`로 바꾸면 웹(화면·`/api/v1/`·`/skill/`·`/ws/board`)이 닫히지만, 실행 중인 Board agent 세트는 작업 중일 수 있어 멈추지 않는다. `wb hub stop`까지 계속 돌고, 다시 `true`로 바꾸면 같은 세트를 그대로 쓴다.
 - `[board_agent]` 변경은 다음 Board agent 시작(재시작) 때 적용된다.
 - Hub가 실행 중이 아니면 exit 3이다(reload는 Hub를 자동 시작하지 않는다). 부팅 때 자동 시작하려면 `wb hub enable`([Hub 사용 안내](../workbench-hub/USAGE.md#부팅-자동-시작과-linger)). `wb hub status --json`은 hub_v1 `status`를 그대로 보인다.
 
@@ -123,6 +126,21 @@ wb hub status            # web: listening https://10.8.0.2:8780 / web: not_liste
 - 비밀번호 변경: **설정 > 비밀번호**(`/settings`). 현재 비밀번호가 필요하고, 바꾸면 현재 세션만 남고 다른 세션은 모두 끊긴다. 현재 비밀번호를 틀리면 로그인 실패와 같은 지연을 받는다. 잊었으면 `wb hub passwd`.
 - 웹은 CSRF 토큰·`Origin` 확인·`Host` 확인을 한다. 접속 주소(`Host`)는 bind IP(목록이면 그중 아무것), `server_names`, loopback bind의 `localhost`만 받고 그 밖은 421이다. 이름으로 접속하려면 `server_names`에 적어야 한다.
 - 로그인 화면을 오래 열어 두었거나 다른 tab에서 다시 열어 로그인 token이 맞지 않으면 "로그인 화면이 만료되었습니다. 다시 로그인하세요."와 함께 새 로그인 화면이 나온다(비밀번호 실패로 세지 않는다). 로그인한 화면에서 오래된 form을 보내면 "화면이 오래되었습니다. 새로 고친 뒤 다시 시도하세요."와 돌아가기 링크가 나온다.
+
+### 2.1 화면 구성: 메뉴와 대시보드
+
+- 로그인하면 **대시보드**(`/dashboard`)로 간다. `/`로 들어오면 `/dashboard`로 보낸다(로그인 전이면 로그인 화면). 즐겨찾기는 `/dashboard`로 해 둔다.
+- 로그인한 모든 화면 위쪽에 같은 메뉴가 있다: 대시보드 · 요청 · **새 요청** 버튼 · Board agent(상태 점: 켜짐·꺼짐·오류) · 설정(비밀번호 / API key / 감사 기록). 오른쪽에 알림 badge(대기·질문 수)와 로그아웃. 지금 화면의 메뉴가 강조된다. 좁은 화면에서는 메뉴가 한 줄 버튼으로 접힌다(badge·로그아웃은 그대로).
+- 대시보드: 요약 card(실행 중·꺼진 프로젝트 수, 신규·검토 중·추가 정보 필요·실행 중 요청 수, "내 답이 필요한 요청" = 추가 정보 필요 요청과 재시도 한도를 다 써서 소유자의 결정을 기다리는 요청), 프로젝트 표(상태, 대기 사유, 검토 방식, 바로가기), 최근 요청 10개, Board agent 상태 card와 **열기** 버튼. 숫자와 표는 page 전체를 다시 읽지 않고 10초마다 JSON(`/api/dashboard`)으로 갱신된다. 세션이 끝났으면 로그인 화면으로 간다.
+- 프로젝트는 대시보드의 표에서 들어간다(별도 메뉴 없음).
+- 화면은 손으로 쓴 CSS 하나(light·dark 자동)로 그리며 외부 CDN·글꼴을 받지 않는다.
+
+### 2.2 뒤로 가기와 로그아웃
+
+- 로그인한 화면은 `Cache-Control: private, no-cache`로 보내므로 브라우저가 뒤로·앞으로 가기 때 화면을 메모리(bfcache)에서 바로 복원할 수 있다. 다음 화면은 예외로 `no-store`다: 로그인 화면, API key 발급 결과(원문 key), 요청의 전체 보기·raw 로그·산출물. 그 밖의 JSON·redirect도 `no-store`다.
+- 뒤로·앞으로 가기로 다시 보인 화면은 먼저 세션을 확인한다. 확인이 끝날 때까지 화면 내용은 가려져 있고(최대 약 4초), 세션이 있으면 그대로 보이며, 로그아웃·만료됐으면 이전 내용을 보이지 않고 로그인 화면으로 간다. 네트워크 오류(Hub 재시작 중 등)면 화면을 그대로 보인다. 일반 이동·새로 고침에서는 확인하지 않는다. JavaScript가 꺼진 브라우저에서는 이 확인이 없다.
+- 복원된 화면에서 form을 보내도 서버가 세션·CSRF로 막는다(로그인 화면 또는 "화면이 오래되었습니다" 안내). 로그아웃 자체는 서버 세션을 지우는 것이며 브라우저 저장소를 지우지는 않는다.
+- 평문 HTTP에서 뒤로 가기 때 Chrome 경고가 뜨는 문제와 근본 해결(TLS)은 10.5.
 
 ## 3. API key (외부 agent용)
 
@@ -142,67 +160,98 @@ wb hub status            # web: listening https://10.8.0.2:8780 / web: not_liste
 - **폐기**: 확인 page 뒤 즉시 효력이 있고 다음 호출부터 401이다. rate limit은 없다.
 - **key가 유출됐다면**: 즉시 폐기하고 새로 발급한다. 그 key로 낸 요청은 출처가 `key:<이름>`으로 남아 있으니 요청 목록에서 출처로 훑어 의심되는 것을 취소한다. 실행 전에 걸러지지 않은 요청은 manager 검토를 거치지만, **검토를 통과하면 출처와 상관없이 실행된다**([ADR-0004](../../adr/0004-auto-execution-after-manager-review.md)). 평문 HTTP에서 유출됐다면 비밀번호도 바꾼다.
 - 모든 key는 소유자의 것이다. 요청 출처는 항상 `소유자` / `Board agent` / `key:<이름>`으로 보인다.
+- 2026-10-28 이전에 발급한 key도 다시 발급할 필요 없이 REST API에서 같은 등급·scope로 동작한다.
 
-## 4. MCP 연결
+### 3.1 발급 화면의 client 설정 안내
 
-외부 agent는 Hub의 MCP Streamable HTTP endpoint에 붙는다.
+Key를 발급하면 원문 아래에 세 블록이 보이고 각각 **복사** 버튼이 있다(평문 HTTP LAN 주소에서는 브라우저의 clipboard API가 없어 다른 복사 방식으로 바뀌고, 그것도 안 되면 글이 선택된 채 "직접 복사하세요(Ctrl+C)"가 나온다).
 
-| 항목 | 값 |
-|---|---|
-| URL | `https://<host>:<port>/mcp` (평문이면 `http://`) |
-| 인증 | `Authorization: Bearer wbk_…`. `initialize`를 포함해 **모든 요청**에 필요. 웹 cookie는 인정하지 않는다 |
-| 요청 | `POST`, JSON-RPC 2.0 객체 하나(batch 불가), body ≤ 256 KiB |
-| 필수 header | `Accept: application/json`, `Content-Type: application/json`. 없으면 각각 406·415 |
-| 응답 | `application/json` 단일 응답(SSE stream 없음). notification은 `202` |
-| 그 밖 | `GET`은 405, `DELETE`는 세션 종료 204. 지원 version은 `2025-06-18`, `2025-03-26`. `Mcp-Session-Id`는 `initialize`가 돌려준다 |
+1. `.env`: `WB_HUB_URL=<브라우저가 쓰는 Hub 주소>`와 `WB_API_KEY=<원문 key>` 두 줄. agent 머신의 `<skill 폴더>/.env` 또는 `~/.config/omp-workbench/client.env`에 **소유자가 직접** 붙여 넣고 `chmod 600`한다.
+2. Skill README 링크: `<Hub 주소>/skill/README.md`. `[web] skill_repo_url`을 정했으면 GitHub 링크도 보인다.
+3. Agent에게 붙여 넣을 한 줄(영어, key 원문 없음). 예:
+
+   ```text
+   Install the wb-inbox skill by following the install section for your agent type (Claude Code, Codex or OMP) in http://100.101.102.103:8780/skill/README.md, then use it; its settings (WB_HUB_URL, WB_API_KEY) are in <skill folder>/.env or ~/.config/omp-workbench/client.env.
+   ```
+
+- Key는 agent 대화에 붙여 넣지 않는다. 대화 기록에 key가 남지 않게 하려고 한 줄 안내에는 key가 없다.
+- 이 화면은 저장되지 않는다(`no-store`). 새로 고치거나 뒤로 가기로 다시 보내면 같은 이름이 이미 있어 거절되고 원문은 다시 보이지 않는다.
+- Key 목록 화면(`/settings/keys`)에도 같은 세 블록이 `WB_API_KEY=<YOUR_KEY>`로 접힌 채 있다.
+
+## 4. 외부 agent 연결: `wb-inbox` skill과 REST API
+
+외부 agent(Claude Code·Codex·OMP 등)는 `wb-inbox` skill로 Hub의 외부 요청 API(`/api/v1/` REST JSON)를 쓴다. Skill은 `SKILL.md`, Python 3 표준 라이브러리만 쓰는 `wb_inbox.py`, `.env.example` 세 파일이며 pip 설치가 없다. 2026-10-28부터 MCP endpoint(`/mcp`)는 없다. 예전에 agent에 넣은 MCP 서버 설정(예: Codex `[mcp_servers.workbench-hub]`)은 지우고 아래대로 skill을 설치한다. 기존 API key는 그대로 쓴다.
+
+### 4.1 Skill 설치
+
+설치 안내의 정본은 skill README다. 실행 중인 Hub는 `<Hub 주소>/skill/README.md`로 제공하고(로그인 없음, 주소가 그 Hub의 것으로 채워짐), repo에서는 [`skills/README.md`](../../../skills/README.md)다. README에는 agent별 절과 그대로 실행하는 `sh` block이 있다. Block은 skill 폴더를 만들고 세 파일을 Hub에서 내려받아(`curl`, 없으면 `python3`) `.env`가 없을 때만 `.env.example`에서 만들고 `chmod 600` 한 뒤 `wb_inbox.py config`로 설정을 확인한다.
+
+| agent | 사용자 skill 폴더(README 기준) | project 폴더 |
+|---|---|---|
+| Claude Code | `~/.claude/skills/wb-inbox/` | `.claude/skills/wb-inbox/` |
+| Codex CLI | `~/.agents/skills/wb-inbox/` | `.agents/skills/wb-inbox/` |
+| OMP | `~/.omp/agent/skills/wb-inbox/` | `.omp/skills/wb-inbox/` |
+
+가장 쉬운 방법은 key 발급 화면의 "Agent에게 붙여 넣을 한 줄"(3.1)을 agent에게 주는 것이다. Agent가 README를 읽고 자기 절의 block을 실행한다. 설치 뒤 skill이 보이지 않으면 agent의 새 세션을 시작한다. Hub가 제공하는 파일은 `/skill/README.md`, `/skill/wb-inbox/SKILL.md`, `/skill/wb-inbox/wb_inbox.py`, `/skill/wb-inbox/.env.example` 네 개뿐이고 key나 `.env`는 없다. `/skill/`도 웹과 같은 `bind`·`allow_from`·`[web] enabled`를 따른다.
+
+### 4.2 설정(`.env`)
+
+- 변수는 `WB_HUB_URL`(scheme·host·port만, path 없음)과 `WB_API_KEY` 둘이다. 소유자가 key 발급 화면의 `.env` 블록(3.1)을 agent 머신의 `<skill 폴더>/.env` 또는 `~/.config/omp-workbench/client.env`에 붙여 넣는다.
+- `wb_inbox.py`는 변수마다 process 환경 → skill 폴더의 `.env` → `$XDG_CONFIG_HOME/omp-workbench/client.env`(없으면 `~/.config/omp-workbench/client.env`) 순서로 찾는다. 읽은 파일이 다른 사용자에게 열려 있으면(`chmod 600`이 아니면) 경고한다. 없으면 찾은 위치와 변수 이름을 보이고 exit 3이다.
+- 확인: `python3 -I <skill 폴더>/wb_inbox.py config`. 요청을 보내지 않고, 값을 찾은 위치와 URL을 보이며 key는 `set`/`missing`으로만 보인다.
+- Key는 `Authorization` header에만 쓰이고 stdout·stderr·오류 문장에 나오지 않는다. Redirect는 따르지 않는다(exit 4).
+- 자체 서명 TLS Hub: `SSL_CERT_FILE=<Hub 인증서 PEM> python3 -I wb_inbox.py …`처럼 OpenSSL 표준 변수로 신뢰한다(Workbench 전용 변수는 없다).
+- Hub 쪽 환경: Hub는 시작할 때 물려받은 `WB_API_KEY`·`WB_HUB_URL`을 지우므로 Hub가 켜는 backend·manager·worker·Board shell에는 이 값이 없다. 예외(수용, 2026-10-28 orchestrator 결정): 그 변수를 export해 둔 shell에서 Hub를 foreground(`wb _hub --foreground`, 진단용 직접 실행)로 띄우면 Hub 프로세스 자신의 `/proc/<pid>/environ`에는 시작 때 값이 남는다(커널이 보관하는 최초 환경이라 지울 수 없다). 자식에는 전달되지 않는다. `wb hub start`·자동 시작·systemd(`wb hub enable`)로 띄운 Hub에는 남지 않는다. 같은 OS 사용자만 읽을 수 있는 값이지만 신경 쓰이면 그 shell에서 `unset WB_API_KEY` 뒤에 띄운다.
+
+### 4.3 사용
+
+```sh
+python3 -I wb_inbox.py projects                       # 이 key로 쓸 수 있는 프로젝트(id 확인)
+python3 -I wb_inbox.py submit --project <ID> --title "재시도 추가" --body-file note.md
+python3 -I wb_inbox.py list --state NEEDS_INFO
+python3 -I wb_inbox.py get <REQUEST_ID>
+python3 -I wb_inbox.py comment <REQUEST_ID> --body "답변…"
+python3 -I wb_inbox.py result <REQUEST_ID> --full
+```
+
+- 모든 명령은 JSON 하나를 stdout에 낸다. Exit code: 0 성공(`confirm_required` 포함), 1 서버 거절(stderr에 `wb_inbox: error <status> <code>: <message>`), 2 사용법 오류, 3 설정 오류, 4 연결 오류.
+- `submit`은 `--idempotency-key`가 없으면 프로젝트·제목·본문으로 key를 만든다. 같은 내용을 다시 보내도 요청이 둘이 되지 않는다. 새 요청을 강제하려면 `--new`.
+- 명령 전체는 `python3 -I wb_inbox.py --help`와 skill의 `SKILL.md`에 있다.
+
+### 4.4 REST API
+
+Base URL `<Hub 주소>/api/v1/`. 인증은 `Authorization: Bearer wbk_…` 하나뿐이고 웹 로그인 cookie는 보지 않는다(cookie만 있으면 401). Body는 `Content-Type: application/json` 객체 하나, 256 KiB까지. 응답은 JSON이고 `Cache-Control: no-store`다. 다른 origin의 browser 호출(CORS)은 지원하지 않는다.
+
+| method·path | 하는 일 | 등급 |
+|---|---|---|
+| `GET /projects` | 프로젝트 목록·상태(requester는 id·이름만) | 둘 다 |
+| `POST /requests` | 요청 제출(`project_id`, `title`, `body`, `idempotency_key`). 새로 만들면 201, 같은 key·내용이면 200, key가 같고 내용이 다르면 409 `idempotency_conflict` | 둘 다 |
+| `GET /requests` | 목록·검색(requester는 자기 것만). `limit` 1~100, `next_cursor`로 다음 page | 둘 다 |
+| `GET /requests/{id}` | 요청 하나(본문·revision·댓글·연결 Task·결과 요약) | 둘 다 |
+| `POST /requests/{id}/comments` | 댓글. NEEDS_INFO 요청에는 답변이 되어 REVIEWING으로 돌아감 | 둘 다 |
+| `PATCH /requests/{id}` | 제목·본문 편집(`base_version` 필요) | editor |
+| `POST /requests/{id}/state` | NEW↔NEEDS_INFO 지정, 닫힌 요청 다시 열기 | editor |
+| `POST /requests/{id}/cancel` | 취소(5.5) | 둘 다 |
+| `GET /requests/{id}/result` | 결과 요약. `full=true`면 전체 보기, 거기에 `run_id` 또는 `artifact_path`(+`offset`, `length` 1~131072)를 더하면 raw 로그·산출물 page(5.6) | 둘 다 |
 
 수동 확인 예(`curl`, 자체 서명 인증서는 `--cacert`로 신뢰하거나 시험 때만 `-k`):
 
 ```sh
-curl -sS https://box.vpn:8780/mcp \
-  -H "Authorization: Bearer $WB_KEY" \
-  -H "Accept: application/json" -H "Content-Type: application/json" \
-  -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'
+curl -sS -H "Authorization: Bearer $WB_API_KEY" "$WB_HUB_URL/api/v1/projects"
 ```
 
-**Codex CLI 예 (대상 host에서 확인되지 않음).** Codex CLI의 MCP Streamable HTTP 호환성은 개발 host에서 검증하지 못했다. 아래 설정 형식은 Codex 문서의 일반 형식을 따른 예이며 동작을 보장하지 않는다. 개발 중 호환성은 표준 라이브러리 MCP 시험 client로만 확인했다.
-
-```toml
-# ~/.codex/config.toml  (미검증 예)
-[mcp_servers.workbench-hub]
-url = "https://box.vpn:8780/mcp"
-bearer_token_env_var = "WB_HUB_KEY"
-```
-
-자체 서명 인증서를 Codex가 신뢰하는지도 확인되지 않았다. 안 되면 VPN 안에서 평문 HTTP를 쓰거나 인증서를 시스템 신뢰 저장소에 넣는 방법을 대상 host에서 시험한다.
-
-### Tool 목록
-
-`tools/list`는 key 등급에 맞는 tool만 보인다(`requester`에는 `inbox_update`·`inbox_set_state`가 없다).
-
-| tool | 하는 일 | 등급 |
-|---|---|---|
-| `inbox_projects` | 프로젝트 목록·상태(requester는 id·이름만) | 둘 다 |
-| `inbox_submit` | 요청 제출. `idempotency_key`가 같고 내용이 같으면 기존 요청(`created:false`), 다르면 `idempotency_conflict` | 둘 다 |
-| `inbox_list` | 요청 목록·검색(requester는 자기 것만). `limit` 1~100 | 둘 다 |
-| `inbox_get` | 요청 하나(본문·revision·댓글·연결 Task·결과 요약) | 둘 다 |
-| `inbox_comment` | 댓글. NEEDS_INFO 요청에는 답변이 되어 REVIEWING으로 돌아감 | 둘 다 |
-| `inbox_update` | 제목·본문 편집(`base_version` 필요) | editor |
-| `inbox_set_state` | NEW↔NEEDS_INFO 지정, 닫힌 요청 다시 열기 | editor |
-| `inbox_cancel` | 취소(아래 5.5) | 둘 다 |
-| `inbox_result` | 결과 요약 또는 `full:true` 전체 보기 | 둘 다 |
-
-**신뢰할 수 없는 text 표시.** 소유자가 쓴 것이 아닌 text(다른 key·Board agent 아닌 외부 client가 낸 요청 본문·댓글 등)를 담은 결과에는 `untrusted_text: true`와 data 주석(note)이 붙는다. 받는 agent는 그 text를 지시가 아니라 data로 다뤄야 한다.
-
-**동시 호출 한도.** key 하나가 동시에 처리 중인 MCP 호출 수는 제한된다. 넘으면 busy 오류가 돌아오니 앞선 호출이 끝난 뒤 다시 시도한다.
-
-오류는 `isError:true`와 `structuredContent.error.code`로 온다(`not_found`, `forbidden`, `invalid_transition`, `conflict`, `confirm_required`, `token_mismatch`, `backend_not_running` 등). 입력 한도: 제목 1~200자, 본문 ≤ 64 KiB, 댓글 ≤ 16 KiB.
+- 오류는 HTTP status와 `{"error":{"code","message"}}`다: 400 `invalid_input`, 401 `unauthorized`, 403 `forbidden`·`origin_mismatch`, 404 `not_found`, 409 `conflict`·`invalid_transition`·`idempotency_conflict`·`token_mismatch`·`backend_not_running`, 413 `too_large`, 503 `project_unavailable`·`busy` 등. Requester key로 editor 전용 endpoint를 부르면 403이다.
+- `GET …/result`에 `run_id`나 `artifact_path`를 `full=true` 없이 주면 400 `invalid_input`이다(2026-10-28 orchestrator 결정).
+- 입력 한도: 제목 1~200자, 본문 ≤ 64 KiB, 댓글 ≤ 16 KiB. 넘으면 이유와 함께 거절되고 아무것도 저장되지 않는다.
+- **신뢰할 수 없는 text 표시.** 소유자가 쓴 것이 아닌 text(다른 key가 낸 요청 본문·댓글 등)를 담은 결과에는 `untrusted_text: true`와 data 주석(`note`)이 붙는다. 받는 agent는 그 text를 지시가 아니라 data로 다뤄야 한다.
+- **동시 호출 한도.** key 하나가 동시에 처리 중인 호출은 4개까지다. 자리를 30초 기다려도 없으면 503 `busy`가 오니 앞선 호출이 끝난 뒤 다시 시도한다. Rate limit은 없다.
+- API key로는 terminal, 승인 명세 연결, 프로젝트 제어, 검토 시작, 비밀번호·key·감사에 닿을 수 없다.
 
 ## 5. 요청의 흐름
 
 ### 5.1 작성
 
-웹 **요청 > 새 요청**(`/requests/new`)에서 프로젝트·제목·본문을 적어 제출한다. 접수는 완료를 기다리지 않고 바로 NEW로 남는다. 프로젝트가 꺼져 있어도, manager가 없어도 접수된다(Hub가 켜져 있으면). Hub가 꺼져 있으면 웹과 MCP 접수는 실패한다. 요청은 각 프로젝트의 `<root>/.wb/inbox.sqlite3`에만 저장되고 자동 삭제되지 않는다. 파일 첨부는 없고 본문의 경로 참조만 있다.
+웹 **요청 > 새 요청**(`/requests/new`)에서 프로젝트·제목·본문을 적어 제출한다. 접수는 완료를 기다리지 않고 바로 NEW로 남는다. 프로젝트가 꺼져 있어도, manager가 없어도 접수된다(Hub가 켜져 있으면). Hub가 꺼져 있으면 웹과 REST API 접수는 실패한다. 요청은 각 프로젝트의 `<root>/.wb/inbox.sqlite3`에만 저장되고 자동 삭제되지 않는다. 파일 첨부는 없고 본문의 경로 참조만 있다.
 
 ### 5.2 상태
 
@@ -261,11 +310,11 @@ wb hub review-mode /path/to/project manual     # auto | manual
 
 ### 5.5 취소
 
-| 요청 상태 | 웹 | MCP (`inbox_cancel`) |
+| 요청 상태 | 웹 | REST(`POST …/cancel`, `wb_inbox.py cancel`) |
 |---|---|---|
 | NEW·REVIEWING·NEEDS_INFO | 확인 page 없이 즉시 CLOSED(취소) | 즉시 `cancelled` |
 | READY | **확인 page** 뒤 Task 취소 요청 | 토큰 없이 바로 `cancel_requested` |
-| RUNNING | **확인 page**(영향 요약: Task·실행 중 명령)와 토큰 | **2단계**: 첫 호출이 `confirm_required`와 `confirm_token`(60초)·영향을 돌려주고, 같은 token으로 다시 호출하면 실행 |
+| RUNNING | **확인 page**(영향 요약: Task·실행 중 명령)와 토큰 | **2단계**: 첫 호출이 `confirm_required`와 `confirm_token`(60초)·영향을 돌려주고, 같은 token(`--confirm TOKEN`)으로 다시 호출하면 실행 |
 
 - 확인 사이에 Task나 명령이 바뀌었으면 `token_mismatch`로 거절하고 아무것도 멈추지 않는다.
 - 취소 수락은 종료가 아니다. 요청은 Task가 사용자 취소로 닫힌 것이 관측되어야 CLOSED(취소)가 된다. 실행 중 명령의 stop 결과가 불명이면 그 사실이 댓글로 남고 성공처럼 보이지 않는다.
@@ -274,15 +323,15 @@ wb hub review-mode /path/to/project manual     # auto | manual
 
 ### 5.6 결과: 요약과 전체 보기
 
-- **요약**(기본): manager가 닫으면서 남긴 최종 보고 요약. 닫기 전에는 연결 Task의 상태와 run 결과 줄. 요청 상세와 `inbox_result`가 같다.
-- **전체 보기**(상세의 "전체 보기", `/requests/<id>/full`, MCP `inbox_result` `full:true`): run 목록, worker 보고 원문, 명령 목록, 각 run의 raw 로그(offset/length page, 1~131072 B), 산출물 경로. 요청을 볼 수 있으면 requester key도 자기 요청에 대해 쓸 수 있다.
+- **요약**(기본): manager가 닫으면서 남긴 최종 보고 요약. 닫기 전에는 연결 Task의 상태와 run 결과 줄. 요청 상세와 REST `GET …/result`(`wb_inbox.py result`)가 같다.
+- **전체 보기**(상세의 "전체 보기", `/requests/<id>/full`, REST `GET …/result?full=true`, `wb_inbox.py result --full`): run 목록, worker 보고 원문, 명령 목록, 각 run의 raw 로그(offset/length page, 1~131072 B), 산출물 경로. 요청을 볼 수 있으면 requester key도 자기 요청에 대해 쓸 수 있다.
 - **산출물**(`artifact_path`)의 한계: 요청에 **연결된 Task**가 있어야 읽을 수 있다. 프로젝트 root 아래 일반 파일만, symlink로 root 밖으로 나가는 경로는 거절, `.wb/`와 `.git/` 아래는 제외, 한 page ≤ 128 KiB. 비밀로 보이는 파일(`.env`, `*.pem`, `*.key`, `id_rsa*`, `id_ed25519*`, `*.p12`, `*.pfx`, `.netrc`, `.npmrc`, `.pypirc`, `credentials*`, `*.kdbx`)은 거절한다. 그 밖의 host 파일은 이 경로로 열 수 없다.
 - 프로젝트가 꺼져 있으면 마지막으로 본 Task 상태만 "backend 꺼짐"과 함께 보이고 raw 로그는 열 수 없다.
 - 원문은 `text/plain`으로만 보내며 요청 본문·댓글의 HTML·script는 실행되지 않는다. 로그·산출물에 비밀이 섞여 있을 수 있으므로 **requester key에도 전체 보기가 열려 있다는 점**(모든 key가 소유자의 것이라는 전제의 의도적 완화, D-22)을 알고 쓴다.
 
 ## 6. 웹의 프로젝트 제어
 
-상태 board(`/`)는 등록된 프로젝트를 10초마다 새로 고쳐 보여 준다(이름·경로·상태·Task·단계·명령·대기 사유·요청 수·마지막 활동·검토 방식). 상태를 확인하지 못한 프로젝트는 꺼짐이 아니라 "연결 없음/불명"이다. 프로젝트 페이지에서 **상태에 맞는 것만** 버튼이 나온다.
+대시보드(`/dashboard`, 2.1)의 프로젝트 표가 등록된 프로젝트를 보여 주고 10초마다 갱신한다(상태·대기 사유·검토 방식·바로가기 등). 상태를 확인하지 못한 프로젝트는 꺼짐이 아니라 "연결 없음/불명"이다. 프로젝트 페이지에서 **상태에 맞는 것만** 버튼이 나온다.
 
 | 동작 | 비고 |
 |---|---|
@@ -304,8 +353,8 @@ wb hub review-mode /path/to/project manual     # auto | manual
 
 - **웹 로그인이 유일한 장벽이다.** 비밀번호나 세션이 새면 공격자는 당신의 OS 사용자 권한으로 이 컴퓨터에서 무엇이든 할 수 있다(코드·자격 증명·다른 프로젝트 자료 포함).
 - 평문 HTTP는 네트워크 보호(VPN 등)에 전적으로 의존한다.
-- Board agent와 shell은 요청 흐름 밖에서 명령을 실행할 수 있다. "검토 전에는 실행되지 않는다"는 보장은 MCP·요청 경로에 대한 것이다.
-- 완화: 비밀번호를 길게, `bind`를 필요한 주소 하나로, 가능하면 TLS와 VPN을 쓴다. Board agent의 MCP 연결은 Hub 하나로 제한되고 프로젝트·사용자 `~/.omp` 설정은 막히지만 이것은 **설정 노출을 줄일 뿐 OS 권한 경계가 아니다.**
+- Board agent와 shell은 요청 흐름 밖에서 명령을 실행할 수 있다. "검토 전에는 실행되지 않는다"는 보장은 REST API·요청 경로에 대한 것이다.
+- 완화: 비밀번호를 길게, `bind`를 필요한 주소 하나로, 가능하면 TLS와 VPN을 쓴다. Board agent는 MCP가 없고 skill은 `wb-inbox` 하나뿐이며 프로젝트·사용자 `~/.omp` 설정은 막히지만 이것은 **설정 노출을 줄일 뿐 OS 권한 경계가 아니다.**
 
 ### 7.2 연결, 인수, 재연결
 
@@ -329,14 +378,17 @@ channel(agent 또는 shell) 하나만 재시작할 수 있다(`/board`의 재시
 ### 7.4 Board agent의 home과 역할 안내
 
 - Board agent의 home은 `~/.local/state/omp-workbench/hub/board-agent/`(0700)다. 세션과 메모리가 여기에 남는다. OMP 로그인은 사용자 `agent.db`를 따라간다. 이 위치를 지우면 Board agent의 기억이 사라진다.
-- 시작 직후 tool 목록을 확인해 Hub MCP 외의 MCP tool이 보이면 Board agent를 끝내고 `isolation_failed`로 표시한다.
+- Board agent는 MCP를 쓰지 않는다. Hub 내부 loopback listener(`127.0.0.1`의 임의 port, REST `/api/v1/`만)를 `wb-inbox` skill과 bash로 쓴다. Hub는 시작마다 새 시스템 key를 만들어 env `WB_API_KEY`로, 내부 주소를 `WB_HUB_URL`로 준다. 내부 listener는 그 시작의 시스템 key만 받는다(다른 key는 401). `allow_from`과 상관없이 동작한다. Board shell tab에는 이 두 값이 없다.
+- Skill은 시작마다 설치본에서 `<hub state>/board-agent/skills/wb-inbox/`로 새로 복사한다(`.env` 없음). 기본 role prompt(`omp_bridge/board/ROLE.md`)는 skill 사용법을 안내하며 skill 경로를 적지 않는다(OMP가 `skill://wb-inbox`로 찾는다).
+- 격리 확인: 시작 직후 별도 OMP로 tool·skill 목록을 확인해 MCP tool이 하나라도 있거나, `wb-inbox` 밖의 skill이 보이거나, `wb-inbox`가 없으면(`skill_missing:wb-inbox`) Board agent를 띄우지 않고 `isolation_failed`(사유)로 표시한다. 확인용 OMP는 stdin을 닫은 뒤 최대 10초 스스로 끝나기를 기다리고, 남으면 SIGTERM 3초, SIGKILL 3초 순서로 끝낸다(공유 로그인 저장소를 쓰는 도중에 죽이지 않기 위해서다. OMP 18.13.2는 약 0.2초 만에 끝난다).
+- Board OMP log: 시작마다 OMP가 남긴 log를 `<hub state>/board-agent/omp-logs/`에 복사해 둔다(최근 20개 파일, 파일당 1 MiB까지, key 값은 가림). 같은 폴더의 `board-events.log`에는 시작·종료·정지가 한 줄씩 남는다. Hub·Board agent를 다시 시작해도 남는다. Workbench는 OMP 인증 저장소(`agent.db`)를 복사하지 않는다(Board home의 `agent.db`는 사용자 것으로의 symlink).
 - 기본 role prompt에는 두 가지 안내가 있다. (1) GPU를 쓰기 전에 `nvidia-smi`와 실행 중 명령을 확인해 사용 중이면 **"계속할까요?"**라고 묻는다. (2) 진행 중인 Task·명령이 있는 프로젝트 root 아래 파일을 고치기 전에 **"계속할까요?"**라고 묻는다. 잠금이나 중재는 하지 않으며 어디까지나 모델이 묻는 안내다. 직접 만든 prompt는 `board_agent.role_prompt_file`로 뒤에 붙인다.
 - Board agent는 Workbench bridge가 없어서 승인·worker 전달을 할 수 없다. 요청을 찾고 쓰고 정리하는 데까지다.
 - Board agent 안의 `wb`는 Hub의 후손이므로 WB 관리 terminal이 아니다. `wb init`의 확인은 PTY에서 답한다.
 
 ### 7.5 Hub 정지와 업데이트
 
-세트의 channel이 살아 있으면 `wb hub stop`과 `wb update`가 확인 목록에 "Board agent 세트: agent running(pid N) · shell running(pid M) · 연결됨"을 보이고 `계속할까요? [y/N]`을 묻는다. 확인하면 세트를 끝낸 뒤 Hub가 멈춘다. 거절하면 아무것도 멈추지 않는다. 확인하는 사이 channel 상태가 바뀌면 다시 확인한다. `--yes`는 확인 질문만 건너뛰며 terminal이 없으면 `--yes` 없이는 멈추지 않는다. Hub가 `SIGTERM`을 받으면 확인 없이 세트를 끝낸다. Hub가 `SIGKILL`로 죽으면 PTY가 닫혀 SIGHUP을 받지만 그 뒤 남는 프로세스는 보장하지 않는다. Hub 재시작 뒤에는 세트·WebSocket·MCP 세션이 사라지지만, 열려 있던 `/board` tab은 로그인 세션이 아직 유효하면 자동으로 다시 붙는다(세션이 무효면 4401로 "다시 로그인"). 요청·API key·세션·감사 기록은 유지된다.
+세트의 channel이 살아 있으면 `wb hub stop`과 `wb update`가 확인 목록에 "Board agent 세트: agent running(pid N) · shell running(pid M) · 연결됨"을 보이고 `계속할까요? [y/N]`을 묻는다. 확인하면 세트를 끝낸 뒤 Hub가 멈춘다. 거절하면 아무것도 멈추지 않는다. 확인하는 사이 channel 상태가 바뀌면 다시 확인한다. `--yes`는 확인 질문만 건너뛰며 terminal이 없으면 `--yes` 없이는 멈추지 않는다. Hub가 `SIGTERM`을 받으면 확인 없이 세트를 끝낸다. Hub가 `SIGKILL`로 죽으면 PTY가 닫혀 SIGHUP을 받지만 그 뒤 남는 프로세스는 보장하지 않는다. Hub 재시작 뒤에는 세트·WebSocket·REST 취소 token이 사라지지만, 열려 있던 `/board` tab은 로그인 세션이 아직 유효하면 자동으로 다시 붙는다(세션이 무효면 4401로 "다시 로그인"). 요청·API key·세션·감사 기록은 유지된다.
 
 ## 8. 감사 기록
 
@@ -372,7 +424,7 @@ Web Board 이전에 `wb hub enable`을 한 사용자는 **`wb hub enable`을 한
 ### 10.2 브라우저에 `421 misdirected_request`·빈 403이 보일 때
 
 - `421 misdirected_request`: 브라우저 주소창의 host나 port가 `bind` 주소(목록이면 그중 하나)와 `port`, `server_names`, (loopback bind일 때) `localhost` 어느 것과도 맞지 않는다. 예: `bind = "100.116.175.100"`인데 `http://dgx-spark:8780`으로 열면 421이다. `server_names = ["dgx-spark"]`를 넣거나 IP 주소로 연 뒤 `wb hub reload`. 거절은 `hub.log`에 `[workbench] web: refused Host 'dgx-spark:8780' on 100.116.175.100:8780 (421 misdirected_request); allowed: bind IP, server_names, localhost on loopback bind` 한 줄로 남는다.
-- 본문 없는 403: 접속한 기기의 IP가 `allow_from`에 없다. `hub.log`의 `web: refused client <IP>` 줄에서 주소를 확인해 `allow_from`에 넣고 `wb hub reload`.
+- 본문 없는 403: 접속한 기기의 IP가 `allow_from`에 없다(화면·REST API·`/skill/` 모두 같다. agent의 `wb_inbox.py`에는 `error 403`으로 보인다). `hub.log`의 `web: refused client <IP>` 줄에서 주소를 확인해 `allow_from`에 넣고 `wb hub reload`.
 - 같은 거절은 1분에 한 줄, 전체는 1분에 20줄까지만 남는다(넘친 수는 다음 줄에 `(+N more refusals not logged: rate limit)`). Host 값은 출력 가능한 ASCII만, 100자까지 남는다.
 
 ### 10.3 WebSocket close 코드
@@ -398,7 +450,7 @@ Web Board 이전에 `wb hub enable`을 한 사용자는 **`wb hub enable`을 한
 - **421**: 브라우저 URL의 host나 port가 `bind`(목록이면 그중 하나)·`port`·`server_names`·loopback bind의 `localhost`와 맞지 않는다 → `server_names`에 이름을 넣거나 `bind` IP로 연 뒤 `wb hub reload`. 거절은 `hub.log`에 남는다(10.2).
 - **403 csrf_failed / Origin**: 오래 열어 둔 page이거나 프록시가 `Origin`을 바꾸었다. page를 새로 고친다. 로그인한 page form이면 "화면이 오래되었습니다" 안내 page가, 로그인 form이면 새 로그인 화면이 나온다. 거절은 `hub.log`에 `web: refused …` 한 줄로 남는다(token 값은 남기지 않음).
 - **`backend_not_running`**: 그 프로젝트가 꺼져 있다. READY/RUNNING 취소와 raw 로그는 켠 뒤 된다.
-- **`project_unavailable`**(MCP; manager 쪽 도구에서는 `inbox_unavailable:<이유>`): 그 프로젝트의 `.wb/inbox.sqlite3`를 읽지 못한다. 덮어쓰지 않으며 다른 프로젝트는 영향이 없다.
+- **`project_unavailable`**(REST 503; manager 쪽 도구에서는 `inbox_unavailable:<이유>`): 그 프로젝트의 `.wb/inbox.sqlite3`를 읽지 못한다. 덮어쓰지 않으며 다른 프로젝트는 영향이 없다.
 - **옛 backend**: `backend_too_old`가 보이면 `wb update`로 backend를 새 버전으로 다시 시작한다.
 - 웹 로그는 `hub.log`(Hub 사용 안내의 위치 표)에 있다.
 
@@ -408,9 +460,9 @@ Web Board 이전에 `wb hub enable`을 한 사용자는 **`wb hub enable`을 한
 
 - **근본 해결은 TLS다.** `wb hub tls --self-signed`로 인증서를 만들고 `wb hub reload`로 반영한 뒤 `https://`로 연다(1.3). HTTPS로 열면 이 HTTPS 우선 경고는 나오지 않는다(자체 서명 인증서는 처음 열 때 지문을 확인하고 예외를 수락한다).
 - Chrome 설정 "Always use secure connections"(설정 > 개인정보 보호 및 보안 > 보안)가 켜져 있으면 평문 HTTP 주소로 이동할 때마다 경고가 나온다. 경고를 보고할 때 이 설정이 켜져 있었는지도 함께 적는다.
-- Workbench 쪽 완화: 로그인한 화면은 `Cache-Control: private, no-cache`로 보내므로 브라우저가 뒤로 가기 때 그 화면을 메모리(bfcache)에서 바로 복원할 수 있다. 복원된 화면은 세션을 다시 확인하고, 로그아웃·만료됐으면 로그인 화면으로 간다. 복원된 화면에서 보낸 form은 서버가 세션·CSRF로 막는다(로그인 화면 또는 "화면이 오래되었습니다" 안내).
+- Workbench 쪽 완화: 로그인한 화면은 `Cache-Control: private, no-cache`로 보내므로 브라우저가 뒤로 가기 때 그 화면을 메모리(bfcache)에서 바로 복원할 수 있다. 화면 JS는 떠날 때 진행 중인 요청과 timer를 멈춰 복원을 막지 않는다. 다시 보인 화면은 세션을 확인할 때까지 가려지고, 로그아웃·만료됐으면 로그인 화면으로 간다(2.2). 복원된 화면에서 보낸 form은 서버가 세션·CSRF로 막는다(로그인 화면 또는 "화면이 오래되었습니다" 안내).
 - 다음 화면은 계속 `no-store`라 뒤로 가기 때 다시 받아 온다(경고가 남을 수 있다): 로그인 화면, API key 발급 결과(원문 key), 요청의 전체 보기·raw 로그·산출물.
-- 이 완화가 실제 Chrome에서 경고를 줄이는지는 아직 확인 전이다. 대시보드(`/`)는 10초마다 새로 고치므로 확인은 요청 목록·상세처럼 자동 갱신이 없는 화면 사이에서 한다.
+- 대시보드는 `/dashboard`에 있고 `/`는 `/dashboard`로 보낸다. 대시보드를 `/`에 두었을 때는 실제 Chrome에서 대시보드로 뒤로 갈 때마다 경고가 떴고, `/dashboard`로 옮긴 뒤 사라졌다(2026-10-28 사용자 확인). 다른 화면 사이와 Chrome 설정의 영향은 아직 확인 중이다.
 
 ## 11. 알려진 한계: 대상 host에서 확인할 것
 
@@ -419,11 +471,11 @@ Web Board 이전에 `wb hub enable`을 한 사용자는 **`wb hub enable`을 한
 1. 실제 브라우저(Firefox·Chromium·휴대폰)에서 page·확인 page·badge·xterm.js 렌더링, tab 닫기·강제 종료·다른 브라우저 인수의 체감 동작. `/board` 200 응답만 xterm DOM renderer 때문에 `style-src 'self' 'nonce-<N>'; style-src-attr 'unsafe-inline'`을 쓴다(2026-10-26 사용자 결정. `script-src`는 `'self'` 그대로). Nonce가 없는 `<style>`은 막히고, style 속성은 xterm truecolor 색 때문에 허용한다. 다른 page는 inline style을 허용하지 않는다.
 2. LAN/VPN 주소 bind와 다른 기기 접근, 자체 서명 인증서의 브라우저 신뢰 흐름.
 3. GPU 안내: 실제 `nvidia-smi`와 실제 모델의 "계속할까요?" 응답. 개발 host에는 NVIDIA GPU가 없다.
-4. 실제 OMP·실제 모델로 Board agent가 Hub MCP tool을 쓰고 manager가 검토하는 전체 흐름(유료 provider).
-5. Codex CLI의 MCP Streamable HTTP 호환성. 위 예시는 미검증이다.
+4. 실제 OMP·실제 모델로 Board agent가 `wb-inbox` skill로 요청을 쓰고 manager가 검토하는 전체 흐름(유료 provider). Skill 로드와 내부 REST 호출 한 번은 개발 host에서 확인했다(web-board-ux [PROBE-BOARD-SKILL](../web-board-ux/PROBE-BOARD-SKILL.md), 2026-10-28).
+5. Claude Code·Codex·OMP가 `/skill/README.md`만 받아 `wb-inbox` skill을 설치하고 쓰는지(agent별 skill 폴더는 README의 출처 기준).
 6. 실제 `systemd --user`에서 `KillMode=process` unit과 재부팅 뒤 시작, linger.
 7. 온라인 dependency advisory 확인은 **실행하지 않았다**(`not_run`). 고정 버전과 license 기록은 [DEPENDENCY-AUDIT](DEPENDENCY-AUDIT.md)에 있고, 알려진 취약점이 없다는 증명이 아니다.
 
 그 밖의 한계: 다중 사용자·OAuth·외부 identity 없음, 파일 첨부 없음, rate limit 없음, 웹에서의 manager·worker·host pane 조작 없음, 외부 알림 없음, 하나의 Board agent 세트에 한 번에 한 연결.
 
-관련 문서: [BRIEF](BRIEF.md) · [SPEC](SPEC.md) · [OMP MCP probe](PROBE-OMP-MCP.md) · [ADR-0003](../../adr/0003-board-agent-without-sandbox.md) · [ADR-0004](../../adr/0004-auto-execution-after-manager-review.md) · [ADR-0005](../../adr/0005-per-project-inbox-store-hub-single-writer.md) · [Hub 사용 안내](../workbench-hub/USAGE.md) · [README](../../../README.md)
+관련 문서: [BRIEF](BRIEF.md) · [SPEC](SPEC.md) · [web-board-ux BRIEF](../web-board-ux/BRIEF.md) · [web-board-ux SPEC](../web-board-ux/SPEC.md) · [skill README](../../../skills/README.md) · [OMP MCP probe(이력)](PROBE-OMP-MCP.md) · [ADR-0006](../../adr/0006-rest-skill-single-external-contact.md) · [ADR-0003](../../adr/0003-board-agent-without-sandbox.md) · [ADR-0004](../../adr/0004-auto-execution-after-manager-review.md) · [ADR-0005](../../adr/0005-per-project-inbox-store-hub-single-writer.md) · [Hub 사용 안내](../workbench-hub/USAGE.md) · [README](../../../README.md)

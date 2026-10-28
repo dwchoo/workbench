@@ -1,17 +1,17 @@
 {
   "schema_version": 1,
   "feature_id": "web-board-ux",
-  "revision": "p3",
+  "revision": "p4",
   "source_brief": {
     "path": "BRIEF.md",
-    "revision": "r0.3"
+    "revision": "r0.4"
   },
   "spec": {
     "path": "SPEC.md",
     "revision": "s3"
   },
   "status": "draft_requires_bundle_confirmation",
-  "note": "2026-10-27 사용자가 SPEC s1 U1~U10에 답함(BRIEF r0.2 WBX-D14 선택·D20~D28). Seam S1~S8 확정. C0 충족(mockup 방향 A). 2026-10-28(p3): 사용자 Chrome 확인 피드백과 결정 WBX-D29~D35(BRIEF r0.3). 새 ticket WBX-A6(/dashboard·뒤로 가기), WBX-B11(agent별 skill 설치 README), WBX-B12(공유 OMP 로그인 완화). WBX-B4는 B12 뒤 실제 로그인으로 재실행(WBX-D33). Probe WBX-B4가 failed/inconclusive면 B5·B8·B9·I1 보류.",
+  "note": "2026-10-27 사용자가 SPEC s1 U1~U10에 답함(BRIEF r0.2 WBX-D14 선택·D20~D28). Seam S1~S8 확정. C0 충족(mockup 방향 A). 2026-10-28(p3): 사용자 Chrome 확인 피드백과 결정 WBX-D29~D35(BRIEF r0.3). 새 ticket WBX-A6(/dashboard·뒤로 가기), WBX-B11(agent별 skill 설치 README), WBX-B12(공유 OMP 로그인 완화). WBX-B4는 B12 뒤 실제 로그인으로 재실행(WBX-D33). Probe WBX-B4가 failed/inconclusive면 B5·B8·B9·I1 보류. 2026-10-28 오후(p4): BRIEF r0.4 WBX-D36(사용자 결정 Q39 a)으로 WBX-A7(뒤로 가기로 다시 보인 화면을 세션 확인까지 가림, ← A6, 완료 commit 1573ebc) 추가, A5 ← A7, I1 ← A7. WBX-D37~D40은 통합된 구현 기록. WBX-B4 재실행 passed(2026-10-28).",
   "scheduling": {
     "max_open_child_threads": 4,
     "max_parallel_writer_workspaces": 2,
@@ -80,7 +80,7 @@
       },
       "verification_unit": "U-A1",
       "base_requirements": [
-        "승인된 exact BRIEF r0.3 / SPEC s3 / PLAN p3 bundle",
+        "승인된 exact BRIEF r0.4 / SPEC s3 / PLAN p4 bundle",
         "SPEC 테스트 결정의 seam S1~S8 사용자 확정(2026-10-27, WBX-D20·D21) — 충족",
         "현재 source·dirty baseline 대조",
         "선행 ticket의 통합·검증된 artifact"
@@ -137,7 +137,7 @@
       },
       "verification_unit": "U-A2",
       "base_requirements": [
-        "승인된 exact BRIEF r0.3 / SPEC s3 / PLAN p3 bundle",
+        "승인된 exact BRIEF r0.4 / SPEC s3 / PLAN p4 bundle",
         "SPEC 테스트 결정의 seam S1~S8 사용자 확정(2026-10-27, WBX-D20·D21) — 충족",
         "현재 source·dirty baseline 대조",
         "선행 ticket의 통합·검증된 artifact"
@@ -184,7 +184,7 @@
       },
       "verification_unit": "U-A3",
       "base_requirements": [
-        "승인된 exact BRIEF r0.3 / SPEC s3 / PLAN p3 bundle",
+        "승인된 exact BRIEF r0.4 / SPEC s3 / PLAN p4 bundle",
         "SPEC 테스트 결정의 seam S1~S8 사용자 확정(2026-10-27, WBX-D20·D21) — 충족",
         "현재 source·dirty baseline 대조",
         "선행 ticket의 통합·검증된 artifact"
@@ -232,7 +232,7 @@
       },
       "verification_unit": "U-A4",
       "base_requirements": [
-        "승인된 exact BRIEF r0.3 / SPEC s3 / PLAN p3 bundle",
+        "승인된 exact BRIEF r0.4 / SPEC s3 / PLAN p4 bundle",
         "SPEC 테스트 결정의 seam S1~S8 사용자 확정(2026-10-27, WBX-D20·D21) — 충족",
         "현재 source·dirty baseline 대조",
         "선행 ticket의 통합·검증된 artifact"
@@ -251,14 +251,16 @@
         "WBX-A2",
         "WBX-A3",
         "WBX-A6",
-        "WBX-B4"
+        "WBX-B4",
+        "WBX-A7"
       ],
       "dependency_reasons": {
         "WBX-A1": "nav가 있는 실제 화면",
         "WBX-A2": "바뀐 cache 정책이 확인 대상",
         "WBX-A3": "배너 접힘을 같은 기회에 관찰",
         "WBX-A6": "/dashboard·로그아웃 뒤 뒤로 가기 재확인 대상",
-        "WBX-B4": "B12 뒤 재실행된 probe 이후 /board 확인"
+        "WBX-B4": "B12 뒤 재실행된 probe 이후 /board 확인",
+        "WBX-A7": "로그아웃 → 뒤로 가기 가림 재확인 대상"
       },
       "acceptance_ids": [
         "WBX-AC-04"
@@ -278,12 +280,13 @@
           "BRIEF.md WBX-O01",
           "BRIEF.md WBX-D22",
           "BRIEF.md WBX-D29",
-          "BRIEF.md WBX-D34"
+          "BRIEF.md WBX-D34",
+          "BRIEF.md WBX-D36"
         ]
       },
       "verification_unit": "U-A5",
       "base_requirements": [
-        "승인된 exact BRIEF r0.3 / SPEC s3 / PLAN p3 bundle",
+        "승인된 exact BRIEF r0.4 / SPEC s3 / PLAN p4 bundle",
         "SPEC 테스트 결정의 seam S1~S8 사용자 확정(2026-10-27, WBX-D20·D21) — 충족",
         "현재 source·dirty baseline 대조",
         "선행 ticket의 통합·검증된 artifact"
@@ -349,13 +352,63 @@
       },
       "verification_unit": "U-A6",
       "base_requirements": [
-        "승인된 exact BRIEF r0.3 / SPEC s3 / PLAN p3 bundle",
+        "승인된 exact BRIEF r0.4 / SPEC s3 / PLAN p4 bundle",
         "SPEC 테스트 결정의 seam S1~S8 사용자 확정(2026-10-27, WBX-D20·D21) — 충족",
         "현재 source·dirty baseline 대조",
         "선행 ticket의 통합·검증된 artifact"
       ],
       "contract_requirements": [
         "SPEC s3 공개 계약·독립 기대값"
+      ]
+    },
+    {
+      "id": "WBX-A7",
+      "path": "tickets/WBX-A7.md",
+      "title": "뒤로 가기로 다시 보인 화면을 세션 확인까지 가림",
+      "kind": "implementation",
+      "depends_on": [
+        "WBX-A6"
+      ],
+      "dependency_reasons": {
+        "WBX-A6": "back_forward 세션 확인(session-check.js) 위에 가림을 더함"
+      },
+      "acceptance_ids": [
+        "WBX-AC-03"
+      ],
+      "deliverable": "session-check.js를 <head> 동기 script로, back_forward·persisted 복원에서 html.wb-checking 가림, /api/badge 답 또는 4 s timer에 해제, 401이면 보이지 않은 채 /login",
+      "write_scope_hint": [
+        "src/workbench/hub/web/render.py",
+        "src/workbench/hub/web/static/session-check.js",
+        "src/workbench/hub/web/static/base.css",
+        "tests/hub/test_web_cache*.py",
+        "tests/hub/js/*.test.mjs"
+      ],
+      "resource_claims": [
+        {
+          "resource": "file:src/workbench/hub/web/render.py",
+          "mode": "exclusive"
+        }
+      ],
+      "workspace_requirement": "isolated_if_parallel",
+      "worker": "opus",
+      "routing_hint": {
+        "reason_codes": [
+          "coupled_invariants"
+        ],
+        "evidence_refs": [
+          "BRIEF.md WBX-D36",
+          "SPEC.md#dashboard-주소와-뒤로-가기"
+        ]
+      },
+      "verification_unit": "U-A7",
+      "base_requirements": [
+        "승인된 exact BRIEF r0.4 / SPEC s3 / PLAN p4 bundle",
+        "SPEC 테스트 결정의 seam S1~S8 사용자 확정(2026-10-27, WBX-D20·D21) — 충족",
+        "현재 source·dirty baseline 대조",
+        "선행 ticket의 통합·검증된 artifact"
+      ],
+      "contract_requirements": [
+        "SPEC s3 공개 계약·독립 기대값, BRIEF r0.4 WBX-D36"
       ]
     },
     {
@@ -428,7 +481,7 @@
       },
       "verification_unit": "U-B1",
       "base_requirements": [
-        "승인된 exact BRIEF r0.3 / SPEC s3 / PLAN p3 bundle",
+        "승인된 exact BRIEF r0.4 / SPEC s3 / PLAN p4 bundle",
         "SPEC 테스트 결정의 seam S1~S8 사용자 확정(2026-10-27, WBX-D20·D21) — 충족",
         "현재 source·dirty baseline 대조",
         "선행 ticket의 통합·검증된 artifact"
@@ -481,7 +534,7 @@
       },
       "verification_unit": "U-B2",
       "base_requirements": [
-        "승인된 exact BRIEF r0.3 / SPEC s3 / PLAN p3 bundle",
+        "승인된 exact BRIEF r0.4 / SPEC s3 / PLAN p4 bundle",
         "SPEC 테스트 결정의 seam S1~S8 사용자 확정(2026-10-27, WBX-D20·D21) — 충족",
         "현재 source·dirty baseline 대조",
         "선행 ticket의 통합·검증된 artifact"
@@ -548,7 +601,7 @@
       },
       "verification_unit": "U-B3",
       "base_requirements": [
-        "승인된 exact BRIEF r0.3 / SPEC s3 / PLAN p3 bundle",
+        "승인된 exact BRIEF r0.4 / SPEC s3 / PLAN p4 bundle",
         "SPEC 테스트 결정의 seam S1~S8 사용자 확정(2026-10-27, WBX-D20·D21) — 충족",
         "현재 source·dirty baseline 대조",
         "선행 ticket의 통합·검증된 artifact"
@@ -605,7 +658,7 @@
       },
       "verification_unit": "U-B4",
       "base_requirements": [
-        "승인된 exact BRIEF r0.3 / SPEC s3 / PLAN p3 bundle",
+        "승인된 exact BRIEF r0.4 / SPEC s3 / PLAN p4 bundle",
         "SPEC 테스트 결정의 seam S1~S8 사용자 확정(2026-10-27, WBX-D20·D21) — 충족",
         "현재 source·dirty baseline 대조",
         "선행 ticket의 통합·검증된 artifact"
@@ -678,7 +731,7 @@
       },
       "verification_unit": "U-B5",
       "base_requirements": [
-        "승인된 exact BRIEF r0.3 / SPEC s3 / PLAN p3 bundle",
+        "승인된 exact BRIEF r0.4 / SPEC s3 / PLAN p4 bundle",
         "SPEC 테스트 결정의 seam S1~S8 사용자 확정(2026-10-27, WBX-D20·D21) — 충족",
         "현재 source·dirty baseline 대조",
         "선행 ticket의 통합·검증된 artifact"
@@ -732,7 +785,7 @@
       },
       "verification_unit": "U-B6",
       "base_requirements": [
-        "승인된 exact BRIEF r0.3 / SPEC s3 / PLAN p3 bundle",
+        "승인된 exact BRIEF r0.4 / SPEC s3 / PLAN p4 bundle",
         "SPEC 테스트 결정의 seam S1~S8 사용자 확정(2026-10-27, WBX-D20·D21) — 충족",
         "현재 source·dirty baseline 대조",
         "선행 ticket의 통합·검증된 artifact"
@@ -787,7 +840,7 @@
       },
       "verification_unit": "U-B7",
       "base_requirements": [
-        "승인된 exact BRIEF r0.3 / SPEC s3 / PLAN p3 bundle",
+        "승인된 exact BRIEF r0.4 / SPEC s3 / PLAN p4 bundle",
         "SPEC 테스트 결정의 seam S1~S8 사용자 확정(2026-10-27, WBX-D20·D21) — 충족",
         "현재 source·dirty baseline 대조",
         "선행 ticket의 통합·검증된 artifact"
@@ -862,7 +915,7 @@
       },
       "verification_unit": "U-B8",
       "base_requirements": [
-        "승인된 exact BRIEF r0.3 / SPEC s3 / PLAN p3 bundle",
+        "승인된 exact BRIEF r0.4 / SPEC s3 / PLAN p4 bundle",
         "SPEC 테스트 결정의 seam S1~S8 사용자 확정(2026-10-27, WBX-D20·D21) — 충족",
         "현재 source·dirty baseline 대조",
         "선행 ticket의 통합·검증된 artifact"
@@ -915,7 +968,7 @@
       },
       "verification_unit": "U-B9",
       "base_requirements": [
-        "승인된 exact BRIEF r0.3 / SPEC s3 / PLAN p3 bundle",
+        "승인된 exact BRIEF r0.4 / SPEC s3 / PLAN p4 bundle",
         "SPEC 테스트 결정의 seam S1~S8 사용자 확정(2026-10-27, WBX-D20·D21) — 충족",
         "현재 source·dirty baseline 대조",
         "선행 ticket의 통합·검증된 artifact"
@@ -971,7 +1024,7 @@
       },
       "verification_unit": "U-B11",
       "base_requirements": [
-        "승인된 exact BRIEF r0.3 / SPEC s3 / PLAN p3 bundle",
+        "승인된 exact BRIEF r0.4 / SPEC s3 / PLAN p4 bundle",
         "SPEC 테스트 결정의 seam S1~S8 사용자 확정(2026-10-27, WBX-D20·D21) — 충족",
         "현재 source·dirty baseline 대조",
         "선행 ticket의 통합·검증된 artifact"
@@ -1032,7 +1085,7 @@
       },
       "verification_unit": "U-B12",
       "base_requirements": [
-        "승인된 exact BRIEF r0.3 / SPEC s3 / PLAN p3 bundle",
+        "승인된 exact BRIEF r0.4 / SPEC s3 / PLAN p4 bundle",
         "SPEC 테스트 결정의 seam S1~S8 사용자 확정(2026-10-27, WBX-D20·D21) — 충족",
         "현재 source·dirty baseline 대조",
         "선행 ticket의 통합·검증된 artifact"
@@ -1068,7 +1121,7 @@
       },
       "verification_unit": "U-C0",
       "base_requirements": [
-        "승인된 exact BRIEF r0.3 / SPEC s3 / PLAN p3 bundle",
+        "승인된 exact BRIEF r0.4 / SPEC s3 / PLAN p4 bundle",
         "SPEC 테스트 결정의 seam S1~S8 사용자 확정(2026-10-27, WBX-D20·D21) — 충족",
         "현재 source·dirty baseline 대조",
         "선행 ticket의 통합·검증된 artifact"
@@ -1129,7 +1182,7 @@
       },
       "verification_unit": "U-C1",
       "base_requirements": [
-        "승인된 exact BRIEF r0.3 / SPEC s3 / PLAN p3 bundle",
+        "승인된 exact BRIEF r0.4 / SPEC s3 / PLAN p4 bundle",
         "SPEC 테스트 결정의 seam S1~S8 사용자 확정(2026-10-27, WBX-D20·D21) — 충족",
         "현재 source·dirty baseline 대조",
         "선행 ticket의 통합·검증된 artifact"
@@ -1188,7 +1241,7 @@
       },
       "verification_unit": "U-C2",
       "base_requirements": [
-        "승인된 exact BRIEF r0.3 / SPEC s3 / PLAN p3 bundle",
+        "승인된 exact BRIEF r0.4 / SPEC s3 / PLAN p4 bundle",
         "SPEC 테스트 결정의 seam S1~S8 사용자 확정(2026-10-27, WBX-D20·D21) — 충족",
         "현재 source·dirty baseline 대조",
         "선행 ticket의 통합·검증된 artifact"
@@ -1209,7 +1262,8 @@
         "WBX-C2",
         "WBX-A6",
         "WBX-B11",
-        "WBX-B12"
+        "WBX-B12",
+        "WBX-A7"
       ],
       "dependency_reasons": {
         "WBX-A4": "트랙 A 마지막 구현",
@@ -1218,7 +1272,8 @@
         "WBX-C2": "트랙 C 전체",
         "WBX-A6": "/dashboard·뒤로 가기 통합",
         "WBX-B11": "agent별 설치 README 통합",
-        "WBX-B12": "로그인 완화 통합"
+        "WBX-B12": "로그인 완화 통합",
+        "WBX-A7": "뒤로 가기 가림 통합"
       },
       "acceptance_ids": [
         "WBX-AC-01",
@@ -1271,7 +1326,7 @@
       },
       "verification_unit": "U-I1",
       "base_requirements": [
-        "승인된 exact BRIEF r0.3 / SPEC s3 / PLAN p3 bundle",
+        "승인된 exact BRIEF r0.4 / SPEC s3 / PLAN p4 bundle",
         "SPEC 테스트 결정의 seam S1~S8 사용자 확정(2026-10-27, WBX-D20·D21) — 충족",
         "현재 source·dirty baseline 대조",
         "선행 ticket의 통합·검증된 artifact"
@@ -1562,6 +1617,7 @@
         "WBX-A6",
         "WBX-B11",
         "WBX-B12",
+        "WBX-A7",
         "WBX-I1"
       ],
       "required_evidence_level": "runtime",
@@ -1589,9 +1645,10 @@
       "acceptance_id": "WBX-AC-03",
       "tickets": [
         "WBX-A2",
-        "WBX-A6"
+        "WBX-A6",
+        "WBX-A7"
       ],
-      "seam": "S1+S8 (확정, WBX-D20·D21); A6는 back_forward 보충(WBX-D34)",
+      "seam": "S1+S8 (확정, WBX-D20·D21); A6는 back_forward 보충(WBX-D34); A7는 가림 보충(WBX-D36, S1+S8)",
       "final_integration": "WBX-I1"
     },
     {
@@ -1766,7 +1823,7 @@
       "final_integration": "WBX-I1"
     }
   ],
-  "requirements_identity": "38388c379d40196809fe1f10f072dab6ce86a1bf31c84ab790cc2f0ca0c7d32a",
+  "requirements_identity": "f42dabff34652f1cb6174e57740c7ceeff9c9ef4909e884e16878228d985ec31",
   "revision_history": [
     {
       "revision": "p1",
@@ -1779,6 +1836,10 @@
     {
       "revision": "p3",
       "note": "2026-10-28 사용자 Chrome 확인 피드백과 결정(BRIEF r0.3 WBX-D29~D35, AC-21~23) 반영; WBX-A6·B11·B12 추가, B4 ← B12(재실행), A5 ← A6·B4, I1 ← A6·B11·B12"
+    },
+    {
+      "revision": "p4",
+      "note": "2026-10-28 BRIEF r0.4(WBX-D36~D40) 반영; WBX-A7 추가(← A6), A5 ← A7, I1 ← A7, AC-03 trace에 A7; requirements-p4(수락 기준·gate 불변, authority 갱신)"
     }
   ]
 }

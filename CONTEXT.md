@@ -37,20 +37,20 @@
 | Hub 목록 | Hub에 등록된 WB 프로젝트를 상태·진행 중 Task·대기 사유와 함께 보여 주는 화면. WB 프로젝트 밖에서 `wb`를 실행하면 열린다. 상태를 확인하지 못한 WB 프로젝트는 꺼짐이 아니라 "연결 없음/불명"으로 표시한다. |
 | WB 관리 terminal | WB 프로젝트의 backend나 실험 shell 아래에서 실행되는 terminal. 여기서는 Hub를 자동으로 시작하지 않고 외부 terminal에서 시작하도록 안내한다. |
 | 대기 사유 | WB 프로젝트가 자동 진행을 멈추고 기다리는 이유. 예: 자동화 일시정지, 재부팅 확인 전 보류, manager 입력창에 글이 있어 알림 대기. 목록과 Web Board에 표시한다. |
-| Task Inbox & Web Board / Phase 2 | 소유자·Board agent·외부 agent의 요청을 WB 프로젝트별로 접수·보관하고, Hub가 제공하는 웹에서 조회·작성하며, manager 검토, 승인 명세 및 실행 결과에 연결하는 선택적 부속 기능. 세부는 [Task Inbox BRIEF](docs/features/task-inbox/BRIEF.md)를 따르고, 외부 접점은 [web-board-ux BRIEF](docs/features/web-board-ux/BRIEF.md)의 외부 요청 API다 (WBX 트랙 B 완료 전에는 MCP가 현행). |
-| 요청 / request | 소유자·Board agent·외부 agent가 제출한 검토 대상 자료 (WBX 트랙 B 완료 전에는 MCP가 현행). 접수 자체는 실행 승인이 아니다. |
+| Task Inbox & Web Board / Phase 2 | 소유자·Board agent·외부 agent의 요청을 WB 프로젝트별로 접수·보관하고, Hub가 제공하는 웹에서 조회·작성하며, manager 검토, 승인 명세 및 실행 결과에 연결하는 선택적 부속 기능. 세부는 [Task Inbox BRIEF](docs/features/task-inbox/BRIEF.md)를 따르고, 외부 접점은 [web-board-ux BRIEF](docs/features/web-board-ux/BRIEF.md)의 외부 요청 API다. |
+| 요청 / request | 소유자·Board agent·외부 agent가 제출한 검토 대상 자료. 접수 자체는 실행 승인이 아니다. |
 | 요청 출처 | 요청을 작성한 주체: 웹의 소유자, Board agent, 또는 API key 이름으로 식별되는 소유자의 외부 agent. 요청은 외부 agent 외에도 이 출처들에서 올 수 있으며 출처는 항상 표시한다. |
 | 요청 상태 | 요청이 놓인 단계. 접수부터 manager 검토, 질문 대기, 승인 명세 연결, 연결된 Task 진행, 종료까지의 단계를 구분한다. 단계 목록은 [Task Inbox BRIEF](docs/features/task-inbox/BRIEF.md)(D-13)를 따른다. Task 상태와 별개다. |
 | 요청 revision | 실행 준비 이후 요청 내용을 고쳐 남긴 버전. 진행 중 Task를 바꾸지 않으며 새 명세 revision이 필요한지는 manager가 정한다. 명세 revision과 구분한다. |
 | 검토 방식 | WB 프로젝트별 설정. 자동이면 manager가 쉬고 있을 때 Workbench가 새 요청을 manager에게 전달하고, 수동이면 자동으로 전달하지 않는다. 어느 쪽도 실행 중 작업을 선점하지 않는다. |
 | 검토 round | 요청이 manager 검토를 받는 한 번의 차례. 접수, 답변, 검토 중 편집마다 새로 시작하며 자동 검토 방식에서는 Workbench가, 수동에서는 소유자의 "검토 시작"이 전달한다. |
 | 검토 후 자동 실행 | Manager 검토로 승인 명세가 연결된 요청이 출처와 관계없이 소유자의 건별 승인 없이 상시 위임에 따라 실행되는 것. 접수만으로는 실행되지 않는다. |
-| API key | 외부 agent가 외부 요청 API에 접근할 때 쓰는 이름 붙은 비밀 값 (WBX 트랙 B 완료 전에는 MCP가 현행). 소유자가 웹에서 발급하며 원문은 발급할 때 한 번만 보이고, 폐기하면 즉시 거절된다. 요청 출처의 key 이름으로 표시된다. |
+| API key | 외부 agent가 외부 요청 API에 접근할 때 쓰는 이름 붙은 비밀 값. 소유자가 웹에서 발급하며 원문은 발급할 때 한 번만 보이고, 폐기하면 즉시 거절된다. 요청 출처의 key 이름으로 표시된다. |
 | API key 등급 | 외부 agent의 접근 범위. 등급별 권한은 [Task Inbox BRIEF](docs/features/task-inbox/BRIEF.md)(D-12)를 따른다. 어떤 등급도 terminal 사용, 승인 명세 연결, 실행 환경 제어를 할 수 없다. |
-| 외부 요청 API | Hub가 `/api/v1/` 아래에 제공하는 REST JSON API. 외부 agent와 Board agent가 요청을 접수·조회·댓글·편집·취소하고 결과를 받는 유일한 외부 접점이며 `Authorization: Bearer <API key>`로만 인증한다. 웹과 같은 bind·`allow_from`·`[web] enabled`를 따른다. MCP는 쓰지 않는다([ADR-0006](docs/adr/0006-rest-skill-single-external-contact.md)). 웹 화면용 세션 route와 manager의 검토 결과 도구 경로와 구분한다. (WBX 트랙 B 완료 전에는 아직 없고 MCP가 현행) |
-| Workbench 사용자 skill | Workbench가 repo `skills/`에 두고 Hub가 `/skill/`로 제공하는, Workbench 밖의 agent(Claude Code·Codex·OMP 등)와 Board agent가 설치해 쓰는 skill. Manager·worker용 WB 내장 skill과 개발용 `.agents/skills/`와 구분한다. (WBX 트랙 B 완료 전에는 아직 없고 MCP가 현행) |
-| `wb-inbox` skill | 외부 요청 API를 쓰는 Workbench 사용자 skill. `SKILL.md`와 Python 표준 라이브러리 script 하나로 되어 있고, `WB_HUB_URL`·`WB_API_KEY`를 env 또는 `.env`에서 읽는다. API key 등급이 허용하는 동작만 할 수 있다. (WBX 트랙 B 완료 전에는 아직 없고 MCP가 현행) |
-| Board agent | Hub가 실행·소유하는 소유자 전용 OMP agent. 어느 WB 프로젝트의 manager와도 별개이며, 등록된 WB 프로젝트들의 요청을 찾고 작성·정리한다. 사용자의 일반 shell과 같은 권한으로 동작한다. MCP는 쓰지 않고 Hub 내부 listener의 외부 요청 API를 `wb-inbox` skill로만 쓴다(Hub가 시작마다 주는 system key 사용) (WBX 트랙 B 완료 전에는 MCP가 현행). |
+| 외부 요청 API | Hub가 `/api/v1/` 아래에 제공하는 REST JSON API. 외부 agent와 Board agent가 요청을 접수·조회·댓글·편집·취소하고 결과를 받는 유일한 외부 접점이며 `Authorization: Bearer <API key>`로만 인증한다. 웹과 같은 bind·`allow_from`·`[web] enabled`를 따른다. MCP는 쓰지 않는다([ADR-0006](docs/adr/0006-rest-skill-single-external-contact.md)). 웹 화면용 세션 route와 manager의 검토 결과 도구 경로와 구분한다. |
+| Workbench 사용자 skill | Workbench가 repo `skills/`에 두고 Hub가 `/skill/`로 제공하는, Workbench 밖의 agent(Claude Code·Codex·OMP 등)와 Board agent가 설치해 쓰는 skill. Manager·worker용 WB 내장 skill과 개발용 `.agents/skills/`와 구분한다. |
+| `wb-inbox` skill | 외부 요청 API를 쓰는 Workbench 사용자 skill. `SKILL.md`와 Python 표준 라이브러리 script 하나로 되어 있고, `WB_HUB_URL`·`WB_API_KEY`를 env 또는 `.env`에서 읽는다. API key 등급이 허용하는 동작만 할 수 있다. |
+| Board agent | Hub가 실행·소유하는 소유자 전용 OMP agent. 어느 WB 프로젝트의 manager와도 별개이며, 등록된 WB 프로젝트들의 요청을 찾고 작성·정리한다. 사용자의 일반 shell과 같은 권한으로 동작한다. MCP는 쓰지 않고 Hub 내부 listener의 외부 요청 API를 `wb-inbox` skill로만 쓴다(Hub가 시작마다 주는 system key 사용). |
 | Board agent 세트 / 웹 터미널 | Web Board에서 소유자가 쓰는 Board agent 화면과 일반 shell 화면 한 벌. 브라우저를 닫아도 유지되고 한 번에 한 연결(lease)만 쓰며 새로 연결한 곳이 즉시 인수한다. Manager·worker·host terminal 화면은 포함하지 않는다. |
 | 결과 요약 / 결과 전체 보기 | 요약은 manager가 요청을 닫으며 남긴 최종 보고 요약이다. 전체 보기는 사용자가 명시할 때만 여는 run 보고 원문·실행 로그·산출물 조회로, 프로젝트 root 안의 파일로 한정한다. |
 | 승인 명세 / task specification | Manager가 권한 범위 안에서 확정하는 실행 조건과 완료 기준. 원본 요청과 구분하며 task ID와 revision으로 식별한다. |

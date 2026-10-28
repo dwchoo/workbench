@@ -25,7 +25,7 @@ WB 프로젝트마다 backend 하나가 따로 돌지만, 등록된 WB 프로젝
 
 - 포함: Hub 프로세스 수명(spawn, lock, 제어 socket, 로그, 상태 파일, 비정상 종료 뒤 재시작, 단일 instance, update fence와의 관계), registry, 상태 집계, `wb hub start|stop|status|add|remove|list|enable|disable`, `wb init`, `wb --version`, bare `wb`의 프로젝트 안/밖 분기, TUI Hub 목록, `wb update`의 Hub 정지, ui_v1 비attach `pause`/`resume`, WB 관리 process tree 안에서의 자동 시작 보류.
 - 예약만: `wb hub passwd`, `wb hub tls`(이름만 두고 "(A)에서 제공 예정"으로 거절), hub_v1의 `power_on`·`power_off_*`·`pause`·`resume`·`confirm_boot` 요청 이름, `hub.toml`.
-- 비목표(BRIEF와 같음): Hub의 manager·worker, 새 종료 의미, 디렉터리 탐색, 같은 폴더의 두 번째 WB 프로젝트, 여러 폴더 묶기, 다중 host·다중 OS 사용자, 자원 중재. 그리고 (A) 전체(웹 서버, 로그인, MCP, inbox, Board agent).
+- 비목표(BRIEF와 같음): Hub의 manager·worker, 새 종료 의미, 디렉터리 탐색, 같은 폴더의 두 번째 WB 프로젝트, 여러 폴더 묶기, 다중 host·다중 OS 사용자, 자원 중재. 그리고 (A) 전체(웹 서버, 로그인, MCP, inbox, Board agent). [2026-10-28 주석: (A)의 MCP는 [web-board-ux](../web-board-ux/BRIEF.md) WBX-D05·D07로 외부 요청 API(`/api/v1/` REST)와 `wb-inbox` skill로 바뀌었다([ADR-0006](../../adr/0006-rest-skill-single-external-contact.md)).]
 - 등록 대상은 `<root>/.wb` 형태의 WB 프로젝트뿐이다. `--data-dir`·`WORKBENCH_DATA_DIR`로 지정한 legacy 저장소(`.wb`가 아닌 위치)는 자동 등록하지 않고 `wb hub add`도 받지 않는다.
 - 지원 환경은 core와 같은 Linux다. systemd --user는 `wb hub enable`/`disable`에서만 쓴다.
 

@@ -178,7 +178,9 @@ Hub는 `wb`가 없으면 자동으로 띄웁니다. 자동 시작하지 않는 �
 
 ### Web Board (요청함과 웹 화면)
 
-Hub는 브라우저용 Web Board와 외부 agent용 MCP endpoint(`/mcp`)도 제공합니다. 등록된 프로젝트의 상태를 보고, 요청을 쓰고 질문에 답하고, 요청이 manager 검토를 거쳐 실행되고 결과가 같은 요청에 남는 것을 봅니다. Board agent와 shell을 브라우저에서 쓸 수도 있습니다. 웹은 비밀번호를 정해야(`wb hub passwd`) 열리고 기본 주소는 `127.0.0.1:8780`입니다. LAN에 열면 평문 HTTP 경고가 보이며 VPN 등 네트워크 보호를 전제로 합니다. Board agent와 웹 shell은 sandbox 없이 사용자 권한으로 실행되므로 웹 로그인이 유일한 장벽입니다. 설정(`hub.toml`), TLS, API key, MCP 연결, 요청 흐름, 보안 안내와 알려진 한계는 [Task Inbox & Web Board 사용 안내](docs/features/task-inbox/USAGE.md)를 확인하세요.
+Hub는 브라우저용 Web Board와 외부 agent용 요청 API(`/api/v1/` REST, `Authorization: Bearer <API key>`)도 제공합니다. 로그인하면 `/dashboard`에서 프로젝트 상태와 요청 요약을 보고, 모든 화면 위쪽의 메뉴로 요청·Board agent·설정(비밀번호, API key, 감사 기록)에 갑니다. 요청을 쓰고 질문에 답하고, 요청이 manager 검토를 거쳐 실행되고 결과가 같은 요청에 남는 것을 봅니다. Board agent와 shell을 브라우저에서 쓸 수도 있습니다. 웹은 기본으로 꺼져 있어 `hub.toml`의 `[web] enabled = true`와 비밀번호(`wb hub passwd`)가 있어야 열리고, 기본 주소는 `127.0.0.1:8780`입니다. LAN에 열면 평문 HTTP 경고가 보이며(접어 둘 수 있지만 사라지지 않습니다) VPN 등 네트워크 보호를 전제로 합니다. Board agent와 웹 shell은 sandbox 없이 사용자 권한으로 실행되므로 웹 로그인이 유일한 장벽입니다.
+
+Claude Code·Codex·OMP 같은 외부 agent는 `wb-inbox` skill로 요청을 냅니다. Skill과 설치 방법은 [`skills/README.md`](skills/README.md)에 있고, 실행 중인 Hub는 같은 README를 `/skill/README.md`로 제공합니다. API key는 웹의 설정 > API key에서 발급하며, 발급 화면이 agent 머신의 `.env`에 붙여 넣을 두 줄과 agent에게 줄 한 줄 안내(key 없음)를 보여 줍니다. MCP endpoint(`/mcp`)는 없어졌으므로 예전 MCP client 설정은 지우고 skill을 설치하세요([ADR-0006](docs/adr/0006-rest-skill-single-external-contact.md)). 설정(`hub.toml`), TLS, API key, skill 설치, 요청 흐름, 보안 안내와 알려진 한계는 [Task Inbox & Web Board 사용 안내](docs/features/task-inbox/USAGE.md)를 확인하세요.
 
 ## 작업 기록
 
@@ -255,7 +257,7 @@ wb start --omp /absolute/path/to/updated/omp
 
 ## 설치본 skills
 
-설치본이 제공하는 skill source와 역할별 노출 계약은 [Workbench skills 안내](omp_bridge/skills/README.md)를 참고하세요. 이 문서는 연구 프로젝트에 skill을 복사하거나 별도 의존성을 설치하라고 요구하지 않습니다.
+설치본이 제공하는 skill source와 역할별 노출 계약은 [Workbench skills 안내](omp_bridge/skills/README.md)를 참고하세요. 이 문서는 연구 프로젝트에 skill을 복사하거나 별도 의존성을 설치하라고 요구하지 않습니다. Workbench 밖의 agent가 Hub에 요청을 낼 때 쓰는 사용자 skill(`wb-inbox`)은 이와 다르며 [`skills/README.md`](skills/README.md)에 있습니다.
 
 ## 프로그램 제거
 

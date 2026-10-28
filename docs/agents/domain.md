@@ -23,7 +23,8 @@ Single-context repo:
 │   ├── 0002-managed-shell-control-wait.md
 │   ├── 0003-board-agent-without-sandbox.md
 │   ├── 0004-auto-execution-after-manager-review.md
-│   └── 0005-per-project-inbox-store-hub-single-writer.md
+│   ├── 0005-per-project-inbox-store-hub-single-writer.md
+│   └── 0006-rest-skill-single-external-contact.md
 └── src/
 ```
 

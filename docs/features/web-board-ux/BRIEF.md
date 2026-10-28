@@ -1,7 +1,7 @@
 # Web Board 사용성·외부 요청 API — 요구사항 합의
 
-Revision: r0.3; state: 승인(사용자 승인 2026-10-27; r0.2는 같은 날 SPEC s1 확인 항목 U1~U10의 사용자 답을 WBX-D20~D28과 WBX-D14에 더함; r0.3(2026-10-28)은 사용자 실제 Chrome 확인(WBX-A5 일부)의 피드백과 그에 따른 결정 WBX-D29~D35, 수락 기준 WBX-AC-21~23, 2026-10-27 OMP 로그인 유실 기록을 더함). 작성일: 2026-10-27.
-WBX-D01~WBX-D16은 2026-10-27 요구사항 인터뷰(grilling)의 사용자 결정이며 사용자가 같은 날 각 결정을 확인했다. WBX-D17~D19는 같은 날 초안의 남은 확인(구 WBX-O03~O05)에 대한 사용자 답이다. WBX-D20~D28과 WBX-D14의 선택은 같은 날 SPEC s1의 확인 항목(U1~U10)에 대한 사용자 답이다. WBX-D29~D35는 2026-10-28 결정이며 행마다 [사용자 결정] / [orchestrator 결정]을 표시했다. 문서 승인은 구현 권한과 별개다.
+Revision: r0.4; state: 승인(사용자 승인 2026-10-27; r0.2는 같은 날 SPEC s1 확인 항목 U1~U10의 사용자 답을 WBX-D20~D28과 WBX-D14에 더함; r0.3(2026-10-28)은 사용자 실제 Chrome 확인(WBX-A5 일부)의 피드백과 그에 따른 결정 WBX-D29~D35, 수락 기준 WBX-AC-21~23, 2026-10-27 OMP 로그인 유실 기록을 더함; r0.4(2026-10-28 오후)는 WBX-A6·B12·B4 재실행·B5·B8 뒤의 결정 WBX-D36~D40, WBX-AC-03 보충 2, WBX-A5 중간 결과와 B4 재실행 결과를 더함). 작성일: 2026-10-27.
+WBX-D01~WBX-D16은 2026-10-27 요구사항 인터뷰(grilling)의 사용자 결정이며 사용자가 같은 날 각 결정을 확인했다. WBX-D17~D19는 같은 날 초안의 남은 확인(구 WBX-O03~O05)에 대한 사용자 답이다. WBX-D20~D28과 WBX-D14의 선택은 같은 날 SPEC s1의 확인 항목(U1~U10)에 대한 사용자 답이다. WBX-D29~D40은 2026-10-28 결정이며 행마다 [사용자 결정] / [orchestrator 결정]을 표시했다. 문서 승인은 구현 권한과 별개다.
 ID 접두사는 `WBX-`다. `WU-`는 [workbench-update](../workbench-update/BRIEF.md)(WU-AC-01~08, ticket WU-01~03), `UX-`는 dev-validation-log-retention의 cli-ux가 이미 쓴다.
 
 이 문서는 [Task Inbox & Web Board BRIEF](../task-inbox/BRIEF.md)(이하 (A), D-05~D-36)와 [Hub BRIEF](../workbench-hub/BRIEF.md)(이하 (B))가 만든 Web Board 위에서, 사용성 개선과 외부 접점 교체를 다룬다. 여기서 바뀌는 기존 결정은 "개정되는 기존 결정"에 모으고, 기존 문서에는 이 문서를 가리키는 짧은 개정 주석만 단다. 관련 ADR: [ADR-0006](../../adr/0006-rest-skill-single-external-contact.md).
@@ -55,6 +55,7 @@ ID는 WBX-AC-nn이다. "관측"은 웹 화면, HTTP 응답(status·header·본�
 - WBX-AC-06 (WBX-D04): API key를 발급하면 결과 화면에 (1) `WB_HUB_URL`, `WB_API_KEY`가 든 `.env` 내용, (2) skill README 링크(Hub 제공 `/skill/README.md`, 그리고 `hub.toml`에 skill repo 주소가 설정된 경우에만 GitHub 링크, WBX-D19), (3) agent에게 붙여 넣을 한 줄 안내가 각각 복사 버튼과 함께 보인다. 한 줄 안내에는 key 원문이 없고 `wb-inbox` skill 설치(README 링크)와 `.env` 파일 위치만 있다(WBX-D17). `WB_HUB_URL` 기본값은 브라우저가 지금 쓰는 주소다. 새로 고침·뒤로 가기로 key 원문이 다시 보이지 않는다. Key 목록 화면은 같은 안내를 `<YOUR_KEY>` 자리표시로 보일 수 있다.
 - WBX-AC-21 (WBX-D29): Dashboard의 주소는 `/dashboard`다. 로그인한 `GET /`는 `303 /dashboard`이고 세션 없는 `/`는 로그인 화면으로 간다. 로그인 성공, brand 링크, nav의 대시보드 링크, 돌아갈 곳이 없을 때의 기본 이동은 모두 `/dashboard`다. WBX-AC-01·AC-20의 "대시보드(`/`)"·"`/`에"는 `/dashboard`로 읽는다.
 - WBX-AC-03 보충(WBX-D34, 2026-10-28): "뒤로 가기로 복원된 화면"에는 bfcache 복원(`pageshow.persisted`)과 HTTP cache에서 다시 그린 `back_forward` navigation이 모두 들어간다. 사용자 Chrome에서 로그아웃 뒤 뒤로 가기는 로그인 화면으로 끝난다.
+- WBX-AC-03 보충 2(WBX-D36, 2026-10-28): 뒤로·앞으로 가기로 다시 보인 로그인 화면은 세션 확인이 답하기 전까지 내용을 보이지 않는다. 세션이 없으면 이전 내용을 한 번도 보이지 않고 로그인 화면으로 간다. 세션이 있거나 그 밖의 오류·시간 초과면 화면을 보인다. 일반 이동·새로 고침·로그인 화면·JS가 없는 browser는 바뀌지 않는다.
 
 트랙 B
 
@@ -80,7 +81,7 @@ ID는 WBX-AC-nn이다. "관측"은 웹 화면, HTTP 응답(status·header·본�
 
 ## 결정과 근거
 
-WBX-D01~D28은 [사용자 결정 2026-10-27]이다. WBX-D29~D35는 2026-10-28 결정이며 각 행 앞에 출처를 표시했다. "개정"은 이 결정이 바꾸는 기존 결정이다.
+WBX-D01~D28은 [사용자 결정 2026-10-27]이다. WBX-D29~D40은 2026-10-28 결정이며 각 행 앞에 출처를 표시했다(r0.4: D36~D40). "개정"은 이 결정이 바꾸는 기존 결정이다.
 
 | ID | 결정 | 개정 |
 |---|---|---|
@@ -119,10 +120,15 @@ WBX-D01~D28은 [사용자 결정 2026-10-27]이다. WBX-D29~D35는 2026-10-28 �
 | WBX-D33 | [사용자 결정 2026-10-28, 구 Q38] WBX-B12 뒤 WBX-B4 probe를 사용자의 실제 로그인으로 다시 실행하고 OMP log를 남긴다. Passed면 WBX-B5 → B8 → B9를 계속한다. Failed·inconclusive면 기존 규칙대로 멈추고 묻는다. | WBX-D27 보완(재실행 조건), PROBE의 "다시 돌리지 않는다" 주의를 해제하는 조건 |
 | WBX-D34 | [orchestrator 결정 2026-10-28] 로그아웃 뒤 뒤로 가기 수정: 세션 확인을 `pageshow.persisted`뿐 아니라 `back_forward` navigation(HTTP cache에서 다시 그린 화면은 persisted `pageshow`가 없다)에서도 한다. `Clear-Site-Data`에는 기대지 않는다(비보안 origin에서는 무시된다). Dashboard의 bfcache 적격성은 headless Chrome DevTools로 진단하되 진단일 뿐 test seam이 아니다(seam은 S1·S6·S8, 실제 확인은 S7). | WBX-D02 보완(AC-03 보충) |
 | WBX-D35 | [orchestrator 결정 2026-10-28] Skill README는 agent별(Claude Code, Codex, OMP) 설치 절과 내려받기 명령을 둔다. Hub 제공본의 파일 주소는 절대 `/skill/` 주소(기존 `http://YOUR-HUB-HOST:8780` 치환으로 만든다), repo 판은 상대 링크다. Agent별 skill 폴더는 공식 문서나 실행 파일 근거로 정하고 README에 출처를 적는다. | WBX-D30의 구현 방식 |
+| WBX-D36 | [사용자 결정 2026-10-28, 구 Q39 a] 로그아웃 → 뒤로 가기에서 이전 화면이 잠깐 보이던 문제(WBX-A6 뒤 사용자 관찰)는 화면을 세션 확인이 답할 때까지 가리는 방식으로 고친다. `session-check.js`를 `<head>`에서 동기로 싣고, `back_forward` navigation과 bfcache 복원에서 `<html>`에 가림 class를 붙여 `/api/badge` 답(2xx·그 밖 오류) 또는 4 s timer에 푼다. 401이면 보이지 않은 채 `/login`. 새 ticket WBX-A7. | WBX-D34 보완(AC-03 보충 2) |
+| WBX-D37 | [orchestrator 결정 2026-10-28] WBX-B12의 최종 값: 격리 확인 OMP 종료는 stdin EOF 뒤 최대 10 s, SIGTERM 뒤 3 s, SIGKILL 뒤 3 s(SPEC s3의 5 s / 5 s / 3 s 대체). 근거: 실제 OMP 18.13.2가 EOF로 약 0.2 s 만에 끝나므로(WBX-B4 재실행) 긴 EOF 유예가 시작을 늦추지 않고, 저장소에 쓰는 중인 OMP에 signal을 보낼 가능성을 줄인다. Board OMP log는 `<hub state>/board-agent/omp-logs/`에 OMP 자체 log의 최근 20개 파일(파일당 ≤ 1 MiB, key 가림, symlink 따라가지 않음)과 시작·종료·정지 한 줄씩의 `board-events.log`(SPEC s3의 `board-agent/logs/`·"최근 10회 시작분" 대체). | SPEC s3 "공유 OMP 로그인 완화"의 기술 보완 값 |
+| WBX-D38 | [orchestrator 결정 2026-10-28] REST `GET /api/v1/requests/{id}/result`는 `run_id`·`artifact_path`를 `full=true`일 때만 받는다. `full=true` 없이 주면 400 `invalid_input`이다(SPEC s3 B1 메모의 미정 항목을 구현 쪽으로 정함, WBX-B8). `wb_inbox.py result --run-id/--artifact-path`는 `--full`과 함께 쓴다. | SPEC s3 "외부 요청 API" endpoint 표의 result 행 |
+| WBX-D39 | [orchestrator 결정 2026-10-28] `WB_API_KEY`를 export한 shell에서 Hub를 foreground(`wb _hub --foreground`)로 띄우면 Hub 프로세스 자신의 `/proc/<pid>/environ`에는 시작 때 값이 남는다(커널이 보관하는 최초 환경). Hub가 띄우는 자식(backend, Board shell 등)에는 없고, `wb hub start`·자동 시작·systemd로 띄운 Hub에도 없다. 같은 OS 사용자만 읽는 값이므로 수용하고 USAGE에 적는다. | WBX-D28 보완 |
+| WBX-D40 | [orchestrator 결정 2026-10-28] Board agent의 `omp_bridge/board/ROLE.md`에는 skill의 절대 경로를 적지 않는다. WBX-B4 재실행에서 모델이 `skill://wb-inbox`로 skill을 찾아 `wb_inbox.py`를 실행했다. | SPEC s3 "Board agent 전환"의 ROLE.md 내용 |
 
 ## 개정되는 기존 결정
 
-CONTEXT.md에서 MCP 없는 상태로 바꾼 용어에는 "(WBX 트랙 B 완료 전에는 MCP가 현행)" 표시를 달았다. 트랙 B가 끝나면 이 표시를 지운다. 기존 문서에는 원문을 고치지 않고 2026-10-27 개정 주석만 달았다. 주석을 단 곳에는 ✓를 붙였다. 나머지 MCP 문구는 task-inbox BRIEF 머리의 일괄 주석("MCP"는 REST API·`wb-inbox` skill로 읽는다)이 덮는다.
+CONTEXT.md에서 MCP 없는 상태로 바꾼 용어에는 "(WBX 트랙 B 완료 전에는 MCP가 현행)" 표시를 달았다. 트랙 B가 끝나면 이 표시를 지운다(2026-10-28 WBX-B9에서 지움). 기존 문서에는 원문을 고치지 않고 2026-10-27 개정 주석만 달았다. 주석을 단 곳에는 ✓를 붙였다. 나머지 MCP 문구는 task-inbox BRIEF 머리의 일괄 주석("MCP"는 REST API·`wb-inbox` skill로 읽는다)이 덮는다.
 
 | 기존 | 문서 | 개정 내용 | 근거 |
 |---|---|---|---|
@@ -138,10 +144,12 @@ CONTEXT.md에서 MCP 없는 상태로 바꾼 용어에는 "(WBX 트랙 B 완료 
 | P2-AC-05·06·23·25·28·31·37·44 | task-inbox BRIEF | MCP 문구만 REST로(일괄 주석) | WBX-D05 |
 | HB-D02 ✓ | workbench-hub BRIEF | "외부 MCP client" → 외부 agent(REST·skill) | WBX-D05 |
 | 결정 4번째 항목 ✓ | ADR-0003 | Board agent의 Hub MCP 허용 → MCP 없음, `wb-inbox` skill만 | WBX-D11, ADR-0006 |
-| :18, :12 | ADR-0004, ADR-0005 | "MCP 응답", "MCP client" 문구. 주석 미부착(아래 "문서 갱신 대상") | WBX-D05 |
+| :18 ✓, :12 ✓ | ADR-0004, ADR-0005 | "MCP 응답", "MCP client" 문구 → REST 응답, REST를 쓰는 외부 agent(2026-10-28 WBX-B9에서 주석 부착) | WBX-D05 |
 | D-10, P2-AC-16 | task-inbox BRIEF | 충돌 없음: 경고 배너를 접을 수 있게 할 뿐 경고는 항상 보인다 | WBX-D03 |
 
 ### 문서 갱신 대상(트랙 B 중)
+
+2026-10-28: 아래 항목은 WBX-B5(ROLE.md)와 WBX-B9(나머지)에서 고쳤다. task-inbox SPEC은 원문을 두고 개정 주석을 달았고, USAGE는 현재 동작으로 다시 썼다.
 
 - task-inbox SPEC: "API key"(:148~), "MCP Streamable HTTP endpoint"(:256~, REST 절로 교체), "Board agent 세트"(:380~), `allow_from` 설명의 `/mcp`·내부 MCP listener 문구(:120).
 - task-inbox USAGE: §3 API key, §4 MCP 연결(skill 설치로 교체), §1.2 표의 `allow_from` 줄, 머리의 "외부 `/mcp`", §7.4 Board agent 역할 안내, §10.2.
@@ -180,12 +188,22 @@ CONTEXT.md에서 MCP 없는 상태로 바꾼 용어에는 "(WBX 트랙 B 완료 
 | Chrome "Always use secure connections" 설정 상태는 아직 보고되지 않았다 | 사용자 보고 없음 |
 | 2026-10-27 WBX-B4 probe 중 사용자 OMP의 openai-codex 로그인이 사라졌다. 가장 유력한 원인은 `~/wb-demo` backend가 쓰던 인증 사본과 갈라진 refresh token이다. 이전의 "wb-demo도 같은 store를 쓴다"는 서술은 틀렸다(사본이었다) | [INCIDENT-20261027-omp-login.md](INCIDENT-20261027-omp-login.md) |
 
+2026-10-28 오후(r0.4), WBX-A6·B12 통합 뒤:
+
+| 사실 | 출처 |
+|---|---|
+| Dashboard를 `/dashboard`로 옮긴 뒤(WBX-A6) dashboard로 뒤로 가기 할 때의 Chrome 경고가 사라졌다 | 사용자 확인 2026-10-28 |
+| 로그아웃 뒤 뒤로 가기는 로그인 화면으로 가지만 그 전에 이전 화면이 잠깐 보였다 → WBX-D36·WBX-A7(재확인 필요) | 사용자 관찰 2026-10-28 |
+| 배너 접기·nav·디자인은 이전 확인대로 문제없다. Skill 설치(실제 agent), `/board`, Chrome "Always use secure connections" 설정은 아직 확인 전이다 | 사용자 관찰·보고 없음 |
+| WBX-B4 재실행(B12 뒤, 사용자의 실제 로그인)은 passed: OMP 18.13.2가 Board overlay 아래에서 `wb-inbox` skill만 보고 MCP tool이 없었고, 한 turn에서 `skill://wb-inbox`를 읽고 bash로 `wb_inbox.py list`를 내부 REST에 실행했다. 로그인 provider는 전후로 줄지 않았고 OMP는 stdin EOF에서 약 0.2 s에 끝났다 | [PROBE-BOARD-SKILL.md](PROBE-BOARD-SKILL.md) |
+| 재실행 전부터 사용자 OMP의 authenticated provider에 `anthropic`이 없었다(1차 실행 첫 확인에는 있었다). 이번 실행 중 줄어든 것은 아니다. Anthropic provider가 필요하면 사용자가 `omp`에서 다시 로그인한다 | PROBE-BOARD-SKILL.md "결과 해석" |
+
 ## 남은 확인
 
 | ID | 내용 | 시점 |
 |---|---|---|
-| WBX-O01 | WBX-D02의 효과를 사용자의 실제 Chrome에서 확인한다. "Always use secure connections" 설정 상태를 같이 기록한다(WBX-AC-04). 2026-10-28 일부 확인(위 관측 사실), 남은 것: WBX-A6 뒤 재확인, Chrome 설정 상태, WBX-B12·B4 뒤 `/board` | 트랙 A 구현 뒤, 사용자 |
-| WBX-O02 | Board overlay 아래 OMP의 `wb-inbox` skill 로드와 bash REST 호출 probe(WBX-AC-17). 실패 시 대안 결정. 2026-10-27 1차는 inconclusive(로그인 사용 불가), WBX-B12 뒤 재실행(WBX-D33) | 트랙 B 전환 전 |
+| WBX-O01 | WBX-D02의 효과를 사용자의 실제 Chrome에서 확인한다. "Always use secure connections" 설정 상태를 같이 기록한다(WBX-AC-04). 2026-10-28 일부 확인(위 관측 사실). `/dashboard` 뒤로 가기 경고는 해소. 남은 것: WBX-A7 뒤 로그아웃 → 뒤로 가기 재확인, 자동 갱신 없는 화면 사이 뒤로 가기, Chrome 설정 상태, 복사 버튼, `/board`, 실제 agent의 skill 설치 | 트랙 A 구현 뒤, 사용자 |
+| WBX-O02 | Board overlay 아래 OMP의 `wb-inbox` skill 로드와 bash REST 호출 probe(WBX-AC-17). 실패 시 대안 결정. 2026-10-27 1차는 inconclusive(로그인 사용 불가). 해소: WBX-B12 뒤 재실행(WBX-D33) 2026-10-28 passed, WBX-B5 진행 | 트랙 B 전환 전 |
 | WBX-O03 | 해소: WBX-D17 | — |
 | WBX-O04 | 해소: WBX-D19 | — |
 | WBX-O05 | 해소: WBX-D18 | — |
@@ -213,3 +231,5 @@ CONTEXT.md에서 MCP 없는 상태로 바꾼 용어에는 "(WBX 트랙 B 완료 
 사용자가 이 초안을 승인하면 to-tickets 절차로 SPEC과 트랙 A/B/C ticket을 만든다. 남은 확인은 WBX-O01(Chrome)과 WBX-O02(probe)다. 동작 변경은 TDD로 하고 seam은 계획 단계에서 사용자 확인을 받는다.
 
 2026-10-28(r0.3): 새 ticket WBX-A6(`/dashboard`, 뒤로 가기), WBX-B11(agent별 skill 설치 README), WBX-B12(공유 OMP 로그인 완화)는 SPEC s3·PLAN p3에 있다. 새 seam은 없다(S1·S3·S4·S5·S6·S8과 기존 backend 격리 seam을 쓴다).
+
+2026-10-28(r0.4): 새 ticket WBX-A7(뒤로 가기로 다시 보인 화면을 세션 확인까지 가림, WBX-D36)은 PLAN p4에 있다(완료). WBX-D37~D40은 이미 통합된 구현(B12·B8·B5)과 사용 안내(B9)를 기록한 것이다. 새 seam은 없다(A7은 S1·S8).

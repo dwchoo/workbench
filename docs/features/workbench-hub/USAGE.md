@@ -78,7 +78,7 @@ wb hub reload                        # 실행 중인 Hub가 hub.toml을 다시 �
 wb hub review-mode PATH [auto|manual]  # 프로젝트의 요청 검토 방식 보기·바꾸기
 ```
 
-세 명령의 설정·동작은 [Task Inbox & Web Board 사용 안내](../task-inbox/USAGE.md)에 있다. 웹(Web Board·외부 `/mcp`·Board agent)은 기본으로 꺼져 있다. `hub.toml`에서 `enabled = false`를 `enabled = true`로 바꾸고 `wb hub passwd`로 비밀번호를 정한 뒤 `wb hub reload`로 반영해야 켜진다(2026-10-26 사용자 결정: web 기본 비활성, `[web] enabled = true`로 켬).
+세 명령의 설정·동작은 [Task Inbox & Web Board 사용 안내](../task-inbox/USAGE.md)에 있다. 웹(Web Board·외부 요청 API `/api/v1/`·skill 제공 `/skill/`·Board agent)은 기본으로 꺼져 있다(2026-10-28: 외부 `/mcp`는 없어졌다, [web-board-ux](../web-board-ux/BRIEF.md) WBX-D05·D07). `hub.toml`에서 `enabled = false`를 `enabled = true`로 바꾸고 `wb hub passwd`로 비밀번호를 정한 뒤 `wb hub reload`로 반영해야 켜진다(2026-10-26 사용자 결정: web 기본 비활성, `[web] enabled = true`로 켬).
 
 2026-10-27 사용자 결정: bind 여러 주소, allow_from, wb hub reload.
 - `wb hub reload`는 실행 중인 Hub가 `hub.toml`을 엄격하게 다시 읽게 한다. 웹 설정이 바뀌면 웹 listener만 다시 열고(로그인 유지), WB 프로젝트·등록 목록·요청 전달은 건드리지 않는다. 파일이 잘못되었으면 실행 중인 설정을 그대로 두고 항목 이름을 보이며 exit 1, Hub가 없으면 exit 3이다. 웹을 끄는 reload는 실행 중인 Board agent 세트를 멈추지 않는다(`wb hub stop`까지 유지).

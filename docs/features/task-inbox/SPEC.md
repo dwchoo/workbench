@@ -2,6 +2,8 @@
 
 Revision: s1; source brief: [BRIEF.md](BRIEF.md) r0.4 (approved 2026-10-25). state: approved (2026-10-25, 사용자가 SPEC·seam 확정을 orchestrator에 사전 위임했고 orchestrator가 검토해 승인했다). 선행: [Hub SPEC](../workbench-hub/SPEC.md) s1과 그 구현(HEAD `3c36901`: HB-01~06·09·10 통합, **HB-07 `workbench.hub.projects`·HB-08·HB-11·HB-12는 아직 없음**).
 
+2026-10-28 개정 주석(web-board-ux WBX-B9): 외부 접점 MCP(`/mcp`, JSON-RPC)는 없어졌다(web-board-ux BRIEF WBX-D05·D07, WBX-B8). 외부 agent와 Board agent는 `/api/v1/` REST(`Authorization: Bearer <API key>`)와 `wb-inbox` skill을 쓴다. 현행 계약은 [web-board-ux SPEC](../web-board-ux/SPEC.md) s3의 "외부 요청 API `/api/v1/`", "`wb-inbox` skill과 `wb_inbox.py`", "`/skill/` 제공", "Board agent 전환", "공유 OMP 로그인 완화", "Cache 정책과 bfcache", "Dashboard 주소와 뒤로 가기" 절과 [ADR-0006](../../adr/0006-rest-skill-single-external-contact.md)이다. 이 문서의 MCP 절·표는 이력으로 두고 주요 자리에만 `[2026-10-28 개정: …]` 주석을 달았다. 그 밖의 "MCP"(웹·MCP, MCP 응답 등)는 REST로 읽는다. 등급·scope·한도·idempotency·두 단계 취소·결과 범위 규칙은 그대로다.
+
 BRIEF의 사용자 결정(D-05~D-30), orchestrator 결정(D-31~D-36), 수락 예시(P2-AC-01~45)와 이번 orchestrator 지시(다른 editor API key는 Board agent와 같은 요청 권한, Board agent 세트가 돌 때 Hub 정지는 확인 뒤 세트 종료, REVIEWING 중 편집은 바로 반영하고 검토를 다시 시작)는 바꾸지 않는다. "기술 보완"은 코드 조사로 정한 구체 형태다. 사용자 노출 동작을 바꾸거나 BRIEF에 없는 예외를 더하는 항목은 "열린 결정"에 모았다. 실행 주체는 Claude orchestrator가 배정하는 Opus/Sonnet subagent다.
 
 ## 문제와 해결 방향
@@ -10,7 +12,7 @@ Hub(B)는 WB 프로젝트를 등록·관측·켜고 끄지만, 요청을 받아 
 
 1. Hub 프로세스의 asyncio loop에 aiohttp 웹 서버를 붙인다. 비밀번호가 정해지기 전에는 listener를 열지 않는다. 로그인 세션·CSRF·감사 기록·API key는 Hub 상태 디렉터리의 `hub.sqlite3`와 `auth.json`에 둔다.
 2. 요청 저장소는 WB 프로젝트마다 `<root>/.wb/inbox.sqlite3`이고 Hub만 쓴다(ADR-0005). 상태 전이·권한·순서는 Hub의 `InboxService` 한 곳에서 정한다.
-3. 외부 agent와 Board agent는 Hub의 MCP Streamable HTTP endpoint(`POST /mcp`, 직접 구현)로 접근한다. 웹 양식과 MCP는 같은 `InboxService`를 부른다.
+3. 외부 agent와 Board agent는 Hub의 MCP Streamable HTTP endpoint(`POST /mcp`, 직접 구현)로 접근한다. 웹 양식과 MCP는 같은 `InboxService`를 부른다. [2026-10-28 개정: MCP 대신 `/api/v1/` REST. Board agent는 내부 loopback listener의 REST를 `wb-inbox` skill로 쓴다. [web-board-ux SPEC](../web-board-ux/SPEC.md) "외부 요청 API"·"Board agent 전환"]
 4. Hub → backend: 기존 ui_v1 UDS의 attach 없는 연결에 `inbox_notice`·`task_status`·`cancel_task`를 더한다(HB-06의 `workbench-hub` 한정 규칙 확장). Backend → Hub: backend가 hub_v1 socket에 `backend` principal로 접속해 manager 도구의 결과를 기록한다.
 5. Manager에게는 새 bridge 도구 `workbench_inbox`(조회·검토 결과 기록)와 `to_worker`의 `request_id` 필드(승인 명세 연결)를 준다. 연결은 worker 전달 **전에** Hub가 허락해야 한다.
 6. Board agent 세트(Board agent OMP + 일반 shell)의 PTY는 Hub가 소유하고, 웹은 WebSocket으로 붙는다(epoch·heartbeat·즉시 인수).
@@ -71,7 +73,7 @@ shell = ""                  # "" = $SHELL, 없으면 /bin/sh
   - Listener는 모든 주소에서 같은 `port`로 연다. `port = 0`이면 첫 주소가 받은 port를 나머지 주소에도 쓰고, 그 port가 다른 주소에서 이미 쓰이고 있으면 전체를 새 port로 최대 5번 다시 시도한다. 한 주소라도 열지 못하면 이미 연 주소도 모두 닫고 `bind_failed`(`detail` errno 이름, `address` `<주소>:<port>`)다. 일부만 여는 일은 없다.
   - Host 검사·평문 경고·`wb hub tls` SAN은 모든 bind 주소를 쓴다: Host는 어느 bind IP든 받고, loopback bind가 하나라도 있으면 `localhost`를 받고, wildcard가 하나라도 있으면 IP literal 전부를 받는다. 평문 HTTP이고 loopback이 아닌 주소가 하나라도 있으면 경고한다.
   - `allow_from`은 IPv4·IPv6 주소나 network(`ipaddress.ip_network(strict=True)`)의 목록(최대 256개)이다. Host bit가 있는 값(`"192.168.10.5/24"`)은 정규화하지 않고 `config_invalid:web.allow_from`이다(한 주소인지 /24 전체인지 모호하고, 조용히 넓히면 허용 범위가 256배가 되기 때문). IPv4-mapped IPv6 항목(`::ffff:0:0/96` 안)도 거절한다(peer는 IPv4로 비교하므로 맞을 수 없다). 중복은 하나로 합친다. 없거나 `[]`면 지금과 같이 거르지 않는다. Loopback도 자동 허용하지 않는다. 이 컴퓨터에서 쓰려면 `"127.0.0.1"`, `"::1"`을 넣는다.
-- 2026-10-26 사용자 결정: web 기본 비활성, `[web] enabled = true`로 켬. 웹이 가장 많이 노출되는 부분이기 때문이다. `enabled`가 없거나 `false`면 같은 listener가 내는 웹 화면, 외부 `/mcp`, `/ws/board`를 모두 열지 않고, 웹에서만 쓰는 Board agent 세트도 만들지 않는다(그 세트만 쓰는 내부 MCP listener도 시작되지 않는다). registry·목록·hub_v1·inbox writer·검토 전달·ui_v1은 그대로 동작한다. `enabled`가 bool이 아니면 `config_invalid:web.enabled`.
+- 2026-10-26 사용자 결정: web 기본 비활성, `[web] enabled = true`로 켬. 웹이 가장 많이 노출되는 부분이기 때문이다. `enabled`가 없거나 `false`면 같은 listener가 내는 웹 화면, 외부 `/mcp`, `/ws/board`를 모두 열지 않고, 웹에서만 쓰는 Board agent 세트도 만들지 않는다(그 세트만 쓰는 내부 MCP listener도 시작되지 않는다). registry·목록·hub_v1·inbox writer·검토 전달·ui_v1은 그대로 동작한다. `enabled`가 bool이 아니면 `config_invalid:web.enabled`. [2026-10-28 개정: "외부 `/mcp`"는 `/api/v1/`·`/skill/`, "내부 MCP listener"는 Board agent 내부 REST listener로 읽는다(WBX-D06·D11)]
 - 초기 템플릿(2026-10-26 사용자 요청: hub.toml 자동 생성). Hub는 시작할 때마다(autostart·`wb hub start`·systemd·foreground 모두 `wb _hub`의 같은 경로) instance lock을 잡은 뒤, `hub.json`을 내기 전에 `config_path()`에 아무것도 없으면 `config.CONFIG_TEMPLATE`을 쓴다. `wb hub passwd`도 비밀번호를 정한 뒤 같은 함수로 만든다(안내 줄이 가리키는 파일이 실제로 있게). 규칙:
   - 내용: 한국어 주석으로 모든 key와 기본값, 웹 켜는 순서(`enabled = false`를 `true`로 → `wb hub passwd` → `wb hub reload`, 2026-10-27), LAN·평문 HTTP 보안 한 줄, `bind` 목록 예와 `allow_from` 예(loopback 안내, Tailscale `100.64.0.0/10`)를 적는다. 예는 `#   예: ...` 꼴이라 주석을 모두 풀어도 기본값 그대로다. 주석이 아닌 줄은 `[web]`·`enabled = false`·`[board_agent]`뿐이고, 나머지 key는 기본값을 적은 주석이다. 엄격 parser로 읽으면 정확히 `HubConfig()`(모든 기본값)이므로 웹은 사용자가 고치기 전까지 꺼져 있다.
   - 이미 있는 것은 절대 바꾸지 않는다. 빈 파일, `config_invalid`인 파일, 사용자가 고친 파일, symlink(대상이 없는 것 포함)도 그대로 둔다. 같은 디렉터리의 0600 임시 파일(`O_CREAT|O_EXCL|O_NOFOLLOW`)을 쓰고 fsync한 뒤 `link()`로 넣는다(이름이 있으면 `EEXIST`로 실패, symlink를 따라가지 않음). hard link가 안 되는 file system에서는 `O_CREAT|O_EXCL|O_NOFOLLOW`로 직접 쓴다. 동시에 만드는 쪽(다른 `wb hub passwd` 등)에 진 경우는 조용히 넘어간다.
@@ -93,7 +95,7 @@ shell = ""                  # "" = $SHELL, 없으면 /bin/sh
 - 무효: 실행 중인 설정을 그대로 둔다. 답 `ok:false`, `reason:"config_invalid"`, `detail:"config_invalid:<항목>"`, `item`. `status.config.reload_error = {reason, at}`. CLI는 항목을 적은 한국어 줄을 stderr에 내고 exit 1.
 - 유효하고 웹 설정(`enabled`·`bind`·`port`·TLS·`allow_insecure_http`·`server_names`·`allow_from`)이 바뀜: 웹 listener만 다시 만든다. 기존 site를 닫고(열린 HTTP·WebSocket 연결은 끊길 수 있고 Board client는 다시 붙는다) 새 설정으로 연다. `hub.sqlite3`·WebServices(로그인 세션은 `hub.sqlite3`에 있다)·Board terminal은 유지한다. 새 listener를 열지 못하면(port 사용 중 등) 이전 설정으로 되돌리지 않는다: 사용자가 일부러 바꾼 파일과 실제 상태가 어긋나지 않게 하고, 보안 때문에 뺀 주소를 다시 열지 않기 위해서다. `status.web`은 `bind_failed`(원인·주소)이고 30 s마다 새 설정으로 다시 시도한다. CLI는 원인을 보이고 exit 1. Hub는 reload 때문에 죽거나 멈추지 않는다(`RELOAD_TIMEOUT` 20 s, 실패는 `reload_failed`/`reload_timeout`).
 - 바뀐 것이 없으면 listener는 그대로이고 답의 `changed`가 `[]`이다.
-- 꺼짐→켜짐: listener를 열고 Hub 시작 때처럼 Board agent 세트를 만든다(이미 있으면 그것을 쓴다). 켜짐→꺼짐: listener를 닫는다(외부 `/mcp`, `/ws/board`도 닫힘). 실행 중인 Board agent 세트는 죽이지 않는다(작업 중일 수 있다). 그 세트와 내부 MCP listener는 `wb hub stop`까지 계속 돌고 status에 보이며 답의 `board_agent_note`가 그렇게 말한다. 다시 켜면 같은 세트를 쓴다(중복 생성 없음).
+- 꺼짐→켜짐: listener를 열고 Hub 시작 때처럼 Board agent 세트를 만든다(이미 있으면 그것을 쓴다). 켜짐→꺼짐: listener를 닫는다(외부 `/mcp`, `/ws/board`도 닫힘). 실행 중인 Board agent 세트는 죽이지 않는다(작업 중일 수 있다). 그 세트와 내부 MCP listener는 `wb hub stop`까지 계속 돌고 status에 보이며 답의 `board_agent_note`가 그렇게 말한다. 다시 켜면 같은 세트를 쓴다(중복 생성 없음). [2026-10-28 개정: `/mcp` → `/api/v1/`·`/skill/`, 내부 MCP listener → 내부 REST listener]
 - `[board_agent]` 변경은 다음 Board agent 시작 때 적용된다(답의 `board_agent_note`).
 - WB 프로젝트 backend·manager·worker를 시작·정지·재시작하거나 signal하지 않는다. registry, inbox writer, 검토 전달도 건드리지 않는다.
 - 답: `{changed: [<"web.bind"|"web.port"|...|"web.tls_files"|"board_agent.<key>">], web: <status.web>, board_agent: <status.board_agent>, board_agent_note: <text>|null, config: <status.config>}`. 시작 때 `config_invalid`였으면 `changed`는 `["web", "board_agent"]`.
@@ -117,7 +119,7 @@ shell = ""                  # "" = $SHELL, 없으면 /bin/sh
 CSRF·출처:
 - 세션마다 `csrf_token`(32 B). 모든 상태 변경(POST/PUT/PATCH/DELETE)은 form field `csrf` 또는 header `X-CSRF-Token`이 세션 값과 같아야 한다(아니면 403 `csrf_failed`, 아무것도 바꾸지 않음). WebSocket은 hello의 `csrf`로 확인한다.
 - `Origin`이 있으면 기대 origin(`<scheme>://<Host>`)과 같아야 한다. `Origin`이 없고 `Referer`가 있으면 그 origin이 같아야 한다. 아니면 403.
-- Client IP 검사(`allow_from`, 2026-10-27, 모든 route의 가장 바깥 middleware): `allow_from`이 있으면 TCP peer 주소(transport `peername`)만 본다. `X-Forwarded-For`·`Forwarded`·`X-Real-IP` 등 header는 믿지 않는다. IPv4-mapped IPv6 peer(`::ffff:a.b.c.d`)는 IPv4로 바꿔 비교한다. 읽을 수 없는 peer는 거절한다. 거절은 본문 없는 403이고 Host·Origin·세션 조회·CSRF·로그인 throttle·handler보다 먼저 일어나며 page, `/static`, 외부 `/mcp`, `/ws/board` upgrade, 없는 경로 모두 같다(`Set-Cookie` 없음). Board agent의 내부 MCP listener(127.0.0.1)는 이 검사 대상이 아니다.
+- Client IP 검사(`allow_from`, 2026-10-27, 모든 route의 가장 바깥 middleware): `allow_from`이 있으면 TCP peer 주소(transport `peername`)만 본다. `X-Forwarded-For`·`Forwarded`·`X-Real-IP` 등 header는 믿지 않는다. IPv4-mapped IPv6 peer(`::ffff:a.b.c.d`)는 IPv4로 바꿔 비교한다. 읽을 수 없는 peer는 거절한다. 거절은 본문 없는 403이고 Host·Origin·세션 조회·CSRF·로그인 throttle·handler보다 먼저 일어나며 page, `/static`, 외부 `/mcp`, `/ws/board` upgrade, 없는 경로 모두 같다(`Set-Cookie` 없음). Board agent의 내부 MCP listener(127.0.0.1)는 이 검사 대상이 아니다. [2026-10-28 개정: 외부 `/mcp`는 없고 같은 검사가 `/api/v1/`·`/skill/`에 적용된다. Board agent 내부 listener는 REST만 제공하며 이 검사 대상이 아니다(web-board-ux WBX-D06·D11)]
 - Host 검사(DNS rebinding 방어, 모든 route): `Host`는 `<bind IP>:<port>`(bind 주소 중 아무것), `server_names`의 `<name>:<port>`, bind 주소 중 loopback이 있으면 `localhost:<port>`만 받는다. bind 주소 중 `0.0.0.0`/`::`가 있으면 IP literal Host 전부와 `server_names`를 받는다. 아니면 421.
 - 거절 기록(2026-10-27 사용자 요구): Host 거절(421), `allow_from` 거절(403), 로그인 form token 불일치, 세션 CSRF 불일치는 `hub.log`(stderr)에 한 줄을 남긴다. 예: `[workbench] web: refused Host 'dgx-spark:8780' on 100.116.175.100:8780 (421 misdirected_request); allowed: bind IP, server_names, localhost on loopback bind`, `[workbench] web: refused client 10.1.2.3 on 127.0.0.1:8780 (403 allow_from); not in [web] allow_from`. Host 값은 출력 가능한 ASCII만(나머지는 `?`), 100자까지, 따옴표로 감싼다. token·비밀번호 값은 남기지 않는다. 같은 (이유, 값)은 60 s에 한 줄, 전체는 60 s에 20줄까지이고 나머지는 세기만 해서 다음 줄에 `(+N more refusals not logged: rate limit)`로 붙인다. 기억하는 key는 그 window에 쓴 줄 수(최대 20개)를 넘지 않는다(`web/refusals.py`).
 - 오래된 form(2026-10-27 사용자 요구): 로그인 form의 double-submit token이 맞지 않으면(cookie 없음·불일치) 맨 `csrf_failed` 대신 로그인 화면을 새 token·cookie로 다시 보이고 403과 `로그인 화면이 만료되었습니다. 다시 로그인하세요.`를 보인다. 비밀번호는 확인하지 않고 로그인 실패로 세지 않는다(throttle·감사 없음). 로그인한 page form의 세션 CSRF가 맞지 않으면 403 작은 한국어 page(`화면이 오래되었습니다. 새로 고친 뒤 다시 시도하세요.`, 같은 출처 `Referer`의 path로 가는 링크, 없으면 `/`, reason code `csrf_failed` 표시)를 보인다. API route는 지금처럼 JSON `{"ok":false,"reason":"csrf_failed"}`다.
@@ -153,6 +155,7 @@ Terminal 입력·출력, 비밀번호, key secret, 요청 본문은 남기지 �
 - 확인: `revoked_at`·`expires_at`(만료 시각 이후) 확인 → 실패는 401. `last_used_at`은 메모리에서 모아 10 s마다·정지 때 기록한다(표시가 최대 10 s 늦을 수 있다).
 - 폐기: 확인 page 뒤 즉시. 다음 호출부터 401.
 - 시스템 key: Board agent용 editor·전체 scope key(`system=1`, 이름 `board-agent`). Board agent를 시작할 때마다 새로 발급하고 이전 것을 폐기한다. 목록에는 "Board agent(시스템)"로 보이고 폐기 버튼이 없다. 이 key의 요청 출처는 `board_agent`다.
+- [2026-10-28 개정: key는 외부 요청 API(`/api/v1/`, Bearer)에서 쓴다. 기존 key는 재발급 없이 같은 등급·scope로 동작한다. 시스템 key는 Board agent env `WB_API_KEY`로 전달되고 내부 listener는 이번 시작의 시스템 key만 받는다(WBX-D11·D24). 발급 결과 page는 원문과 함께 `.env` 두 줄, skill README 링크, key 없는 agent용 영어 한 줄 안내를 복사 버튼과 함께 보인다(WBX-D04·D17·D26). [web-board-ux SPEC](../web-board-ux/SPEC.md) "Key 발급 결과의 client 설정 안내"]
 - Rate limit 없음.
 
 ### Principal과 권한(D-09, D-12, D-31, D-34, P2-AC-13·20·42, orchestrator 지시)
@@ -248,12 +251,14 @@ events(event_id INTEGER PRIMARY KEY, request_id, at, actor_kind, actor_name, typ
 | `idempotency_key` | 1~128자 `[A-Za-z0-9._:-]` | `invalid_input` |
 | 검색어 | ≤ 200자 | `invalid_input` |
 | API key 이름 | 1~64자 | `invalid_input` |
-| HTTP 요청 body(`/mcp`, form) | ≤ 256 KiB | 413 |
+| HTTP 요청 body(`/mcp`, form) [2026-10-28 개정: `/mcp` → `/api/v1/`] | ≤ 256 KiB | 413 |
 | WebSocket 입력 frame | ≤ 64 KiB | 그 frame 버림 + `error` frame |
 | 목록 `limit` | 1~100(기본 50) | `invalid_input` |
 | 전체 보기 page | `length` 1~131072 B | `invalid_input` |
 
 ### MCP Streamable HTTP endpoint(D-29, D-36, P2-AC-45, 기술 보완)
+
+[2026-10-28 개정: 이 절은 이력이다. `/mcp`와 `mcp.py`는 WBX-B8에서 지웠다. 현행은 [web-board-ux SPEC](../web-board-ux/SPEC.md) "외부 요청 API `/api/v1/`"(endpoint 표, 오류 → HTTP status, 두 단계 취소 token)이다. 아래 tool 표의 결과 field는 REST 응답에 그대로 쓰인다. 다른 점: `GET …/result`의 `run_id`·`artifact_path`는 `full=true`일 때만 받고 없으면 400 `invalid_input`이다(web-board-ux BRIEF WBX-D38).]
 
 Transport(`mcp` SDK 없이 직접 구현, `src/workbench/hub/mcp.py`):
 - `POST /mcp`: body는 JSON-RPC 2.0 객체 하나(배열 batch는 `-32600`). `Accept`에 `application/json`이 있어야 한다. 응답은 `application/json` 단일 응답(SSE stream 없음). Notification(`id` 없음)은 `202` 빈 body. `GET /mcp`는 `405`(server 시작 stream 없음), `DELETE /mcp`는 session 종료 `204`.
@@ -279,7 +284,7 @@ Tool(이름·인자·결과):
 | `inbox_cancel` | `request_id`, `confirm_token?`, `reason?` | 실행 전: `{status:"cancelled", state:"CLOSED"}`. READY: `{status:"cancel_requested"}`(token 없음). 웹은 READY·RUNNING 모두 확인 page와 token을 거친다(2026-10-25 orchestrator 결정: 웹은 사람이 누르는 경로라 확인을 두고, MCP READY는 바로 요청한다). RUNNING 첫 호출: `{status:"confirm_required", confirm_token, expires_in:60, impact:{task_id, task_status, command:{command_id, label, state}\|null}}`. Token 확인: `{status:"cancel_requested", stop:{status:"stopping"}\|null}`. 취소 수락은 종료가 아니다(P2-AC-30) | 둘 다 |
 | `inbox_result` | `request_id`, `full`(기본 false), `run_id?`, `offset?`, `length?`, `artifact_path?` | 기본: `{summary, state, outcome, task:{status, runs:[{run_id, status, exit_code}]}}`. `full`: 아래 "결과 조회" | 둘 다 |
 
-Board agent는 별도 내부 listener(아래)의 같은 `/mcp`를 쓴다. 외부 listener가 없어도(TLS 문제 등) Board agent의 MCP는 동작한다.
+Board agent는 별도 내부 listener(아래)의 같은 `/mcp`를 쓴다. 외부 listener가 없어도(TLS 문제 등) Board agent의 MCP는 동작한다. [2026-10-28 개정: 내부 listener는 `/api/v1/` REST만 제공한다. 외부 listener가 없어도 Board agent의 REST는 동작한다(WBX-D11)]
 
 ### 웹 route와 화면(D-09, D-21, D-23, D-24, 기술 보완)
 
@@ -288,7 +293,7 @@ Board agent는 별도 내부 listener(아래)의 같은 `/mcp`를 쓴다. 외부
 | route | 내용 |
 |---|---|
 | `GET/POST /login`, `POST /logout` | 로그인(비밀번호만) |
-| `GET /` | 상태 board: 등록된 프로젝트 표(이름, 경로, 상태, Task·단계, 명령, 대기 사유, 요청 수, 마지막 활동, 검토 방식). label은 `workbench.hub.presentation` 공용. 10 s meta refresh. 평문 경고 banner |
+| `GET /` | 상태 board: 등록된 프로젝트 표(이름, 경로, 상태, Task·단계, 명령, 대기 사유, 요청 수, 마지막 활동, 검토 방식). label은 `workbench.hub.presentation` 공용. 10 s meta refresh. 평문 경고 banner | [2026-10-28 개정: `GET /`는 세션이 있으면 `303 /dashboard`. Dashboard는 `GET /dashboard`(요약 card·프로젝트 표·최근 요청·Board card, meta refresh 없이 `GET /api/dashboard` JSON으로 10 s 갱신). 전역 nav, 접히는 평문 HTTP 배너. web-board-ux WBX-D01·D03·D13·D29]
 | `GET /projects/<project_id>` | 프로젝트 상태, 제어 버튼(상태에 맞는 것만), 검토 방식 설정 form, 그 프로젝트 요청 목록 link |
 | `GET /projects/<pid>/<action>` → `POST …/<action>` | `power-on`, `power-off`, `pause`, `resume`, `confirm-boot`의 확인 page와 실행. `power-off` 확인 page는 `shutdown_request`의 `active`를 보이고 token을 hidden으로 싣는다. `shutdown_token_mismatch`면 "작업이 바뀌었습니다"와 새 목록의 확인 page를 다시 보인다(HB-AC-09) |
 | `POST /projects/<pid>/review-mode` | `auto`/`manual`(D-32) |
@@ -308,7 +313,7 @@ Board agent는 별도 내부 listener(아래)의 같은 `/mcp`를 쓴다. 외부
 | `GET /settings/audit` | 감사 기록(최근 순, page) |
 | `GET /api/badge` | `{pending:<NEW 수>, needs_info:<NEEDS_INFO 수>}`(scope 전체). `badge.js`가 30 s마다 받아 tab 제목 `(<pending>·<needs_info>) WB Hub`와 header badge를 바꾼다(D-24) |
 | `/static/…` | 인증 없이 제공(비밀 없음). `Cache-Control: public, max-age=3600` |
-| `POST/GET/DELETE /mcp` | 위 MCP |
+| `POST/GET/DELETE /mcp` | 위 MCP. [2026-10-28 개정: 제거(WBX-B8). 대신 `/api/v1/…`(REST, Bearer 전용, 세션 cookie 무시)와 `GET /skill/README.md`, `/skill/wb-inbox/{SKILL.md,wb_inbox.py,.env.example}`(로그인 없음, `allow_from`·bind 적용). Cache 정책은 로그인한 page `private, no-cache`(key 발급 결과·raw/full/artifact는 `no-store`). 정본은 web-board-ux SPEC s3] |
 
 로그인하지 않은 page 요청은 `303 /login`, API·`/ws`는 401. 웹에는 manager·worker·host pane 입력 수단이 없다(D-09).
 
@@ -382,8 +387,8 @@ Board agent에는 bridge extension이 없으므로 `to_worker`·`workbench_inbox
 - Hub의 `BoardSet`이 두 channel을 소유한다: `agent`(OMP), `shell`(`board_agent.shell` / `$SHELL` / `/bin/sh`, cwd `$HOME`). 각각 `pty.fork`로 새 session leader가 되는 Hub의 자식이다(backend `OmpPane`·`_OwnedSession` 방식 재사용, 어느 backend의 후손도 아님). 환경 = `hub_environment()` + `TERM=xterm-256color`. 출력은 channel마다 1 MiB ring buffer에 두고 attach 때 replay한다.
 - 시작: 첫 `/board` 연결 때 시작한다(Hub 시작 때 자동으로 띄우지 않는다. HB-O09: 다음 Hub 시작에서도 복원하지 않고 첫 연결에서 `--continue`로 이전 세션을 잇는다).
 - Board agent OMP: home `<hub state>/board-agent/omp-root`(`PI_CONFIG_DIR`는 HOME 기준 상대, agent dir `…/agent`, `agent.db`는 사용자 것을 symlink, `omp_home`의 규칙 재사용, D-25 "같은 OMP 로그인"). argv = `omp --config <omp-isolation.yml> --config <board overlay> --no-extensions --append-system-prompt <role prompt> [--continue] [--model <selector>]`. Workbench bridge extension(`--extension`)은 싣지 않는다.
-- Board overlay: isolation의 provider·skill·project 설정 차단을 유지하고, **Hub MCP 서버 하나만** 켠다. 접속 대상은 Hub가 Board agent용으로 여는 내부 listener `http://127.0.0.1:<임의 port>/mcp`(MCP route만, Host `127.0.0.1:<port>`만, 시스템 editor key 필요)다. 메모리·세션은 영속(D-25)이므로 isolation의 `memory`/`memories` 끄기를 overlay가 되돌린다. 정확한 OMP 설정 key·key 전달 방식(header 값 또는 환경 변수 참조)은 TI-15 probe 결과로 정한다. Key가 파일에 들어가야 하면 overlay는 0600, Board agent 시작마다 새 key로 다시 쓴다.
-- 격리 확인: 시작 직후 launcher의 isolation 관측(`observe_isolation`)과 같은 방법으로 tool 목록을 보고, `mcp__` tool이 Hub 서버 것뿐이 아니면 Board agent를 끝내고 `board_agent.agent.state=isolation_failed`(사유)로 보인다. Manager·worker의 기존 MCP 누출 검사는 바뀌지 않는다(P2-AC-33).
+- Board overlay: isolation의 provider·skill·project 설정 차단을 유지하고, **Hub MCP 서버 하나만** 켠다. 접속 대상은 Hub가 Board agent용으로 여는 내부 listener `http://127.0.0.1:<임의 port>/mcp`(MCP route만, Host `127.0.0.1:<port>`만, 시스템 editor key 필요)다. 메모리·세션은 영속(D-25)이므로 isolation의 `memory`/`memories` 끄기를 overlay가 되돌린다. 정확한 OMP 설정 key·key 전달 방식(header 값 또는 환경 변수 참조)은 TI-15 probe 결과로 정한다. Key가 파일에 들어가야 하면 overlay는 0600, Board agent 시작마다 새 key로 다시 쓴다. [2026-10-28 개정: Board overlay는 MCP를 켜지 않고 provider·skill 차단 위에 `wb-inbox` skill 하나(시작마다 `<hub state>/board-agent/skills/wb-inbox/`에 새로 복사)만 허용한다. Key는 파일이 아니라 env `WB_API_KEY`, 주소는 `WB_HUB_URL=http://127.0.0.1:<내부 port>`. 이전 `mcp.json`은 시작 때 지운다. {WBX} "Board agent 전환"]
+- 격리 확인: 시작 직후 launcher의 isolation 관측(`observe_isolation`)과 같은 방법으로 tool 목록을 보고, `mcp__` tool이 Hub 서버 것뿐이 아니면 Board agent를 끝내고 `board_agent.agent.state=isolation_failed`(사유)로 보인다. Manager·worker의 기존 MCP 누출 검사는 바뀌지 않는다(P2-AC-33). [2026-10-28 개정: MCP tool이 하나라도, `wb-inbox` 밖의 skill이 보이거나 `wb-inbox`가 없으면(`skill_missing:wb-inbox`) `isolation_failed`. 격리 확인 OMP는 stdin EOF 뒤 최대 10 s, SIGTERM 3 s, SIGKILL 3 s 순서로 끝낸다. Board OMP log는 `<hub state>/board-agent/omp-logs/`(최근 20개, 파일당 ≤1 MiB, key 가림)와 `board-events.log`에 남는다(web-board-ux BRIEF WBX-D32·D37)]
 - 모델·role prompt: `board_agent.model`(빈 값이면 `omp-models.yml`의 manager selector). Role prompt = 기본 `omp_bridge/board/ROLE.md` + `role_prompt_file`(있으면 뒤에 붙임). 기본 prompt 내용(English): Board agent의 역할(요청 찾기·작성·정리, 승인·worker 전달 불가, 모든 요청은 manager 검토를 거침), D-27 안내 두 가지 — (1) GPU를 쓰기 전에 `nvidia-smi --query-gpu=utilization.gpu,memory.used --format=csv,noheader`와 `inbox_projects`의 실행 중 명령을 확인하고 사용 중이면 "계속할까요?"라고 묻기, (2) `inbox_projects`에서 Task·명령이 진행 중인 프로젝트 root 아래 파일을 고치기 전에 "계속할까요?"라고 묻기. Lock·중재는 하지 않는다.
 - 재시작(`POST /board/restart{channel}`, 확인 page): 그 channel의 session을 SIGHUP → SIGTERM → 5 s → SIGKILL로 끝내고 새로 띄운다(agent는 `--continue`). Channel이 스스로 끝나면 `exited`(exit status)로 보이고 다시 시작 버튼을 보인다.
 - 정지 연동(orchestrator 결정, Hub SPEC 정지 2단계): `Hub.active()`가 살아 있는 channel이 있으면 `[{"kind":"board_agent_set","channels":{"agent":{"pid":…,"state":"running"},"shell":{…}},"lease":"connected"|"none"}]`를 돌려준다. `wb hub stop`·`wb update`는 이 목록을 보여 확인을 받고, 확인하면 세트를 끝낸 뒤 Hub가 정지한다. 거절하면 아무것도 멈추지 않는다. Channel 상태가 바뀌면 `active`가 달라져 기존 `stop_token_mismatch`가 된다. `SIGTERM` 경로는 확인 없이 세트를 끝낸다. Hub `SIGKILL` 때는 PTY master가 닫혀 SIGHUP을 받는다(그 뒤 남는 프로세스는 보장하지 않음, 문서화).
@@ -458,10 +463,10 @@ D-05~D-36 전부와 BRIEF 불변식 (1)~(7). ADR-0003(sandbox 없음, 보호는 
 11. 수동 검토의 "TUI에서 시작"(D-31)은 사용자가 TUI에서 manager에게 말하면 manager가 `workbench_inbox begin_review`를 부르는 것이다(TUI 전용 key·화면을 새로 두지 않는다).
 12. REVIEWING 중 편집은 그 자리에서 반영하고 새 review round(orchestrator 지시, Q-10). READY·RUNNING 편집의 `revised` 통지는 검토 방식과 무관하게 보낸다.
 13. 사용자 Task 취소는 backend의 새 `TaskFlow.cancel_by_user`(기존 `_cancel` 절차 재사용, `by: user`)와 기존 사용자 명령 stop의 조합이다.
-14. Board agent의 MCP는 Board agent 전용 loopback 내부 listener로 붙는다(외부 listener의 bind 주소·자체 서명 TLS와 무관).
+14. Board agent의 MCP는 Board agent 전용 loopback 내부 listener로 붙는다(외부 listener의 bind 주소·자체 서명 TLS와 무관). [2026-10-28 개정: MCP → 같은 내부 listener의 REST]
 15. Board agent 세트는 첫 연결 때 시작하고 Hub 재시작 뒤 자동 복원하지 않는다(HB-O09). OMP 세션은 `--continue`로 잇는다.
 16. systemd unit에 `KillMode=process`와 사용자 환경 일부(`Environment=`)를 더한다.
-17. MCP 2단계 취소 token TTL 60 s(Q-03), link token 30 s.
+17. MCP 2단계 취소 token TTL 60 s(Q-03), link token 30 s. [2026-10-28 개정: REST `POST …/cancel`의 같은 token·TTL]
 18. 감사 기록은 최근 50,000건 유지.
 19. Board agent 기본 모델은 manager 모델(Q-07).
 
@@ -475,7 +480,7 @@ D-05~D-36 전부와 BRIEF 불변식 (1)~(7). ADR-0003(sandbox 없음, 보호는 
 | `src/workbench/hub/web/listener.py` | listener 수명(auth 감시, bind, TLS, 재시도, 정지) |
 | `src/workbench/hub/inbox/store.py`, `service.py`, `limits.py` | inbox schema·lock·직렬화 executor, 상태 기계·권한, 한도 |
 | `src/workbench/hub/inbox/dispatch.py` | dispatcher, Task 동기화, backend ui_v1 호출 |
-| `src/workbench/hub/mcp.py` | MCP JSON-RPC transport·tool |
+| `src/workbench/hub/mcp.py` | MCP JSON-RPC transport·tool [2026-10-28 개정: 삭제. 처리 계층은 `inbox_api.py`, REST·내부 listener는 `rest.py`, `/skill/`은 `web/pages/skill.py`] |
 | `src/workbench/hub/board/set.py`, `launch.py`, `ws.py` | BoardSet PTY, Board agent home·overlay·격리 확인, WebSocket lease |
 | `src/workbench/hub/web_control.py` | Hub 쪽 `projects.*` 실행(executor, 웹 token 흐름) |
 | 변경: `hub/server.py`, `hub/status.py`, `hub/presentation.py`, `hub/cli.py`, `hub/service_unit.py`, `contracts/hub_v1.py` | 웹·dispatcher·Board 결합, principal, 새 op, status 필드, CLI, unit |
@@ -550,7 +555,7 @@ BRIEF의 P2-AC-01~45를 그대로 쓰고 기술 보완 기준 TI-T01~T10을 더�
 | T2 | aiohttp `TestServer`/`TestClient`로 in-process `create_app(services)`(가짜 projects·backend port, 실제 auth·inbox store, temp 상태) | route·redirect·cookie flag·CSRF·Host/Origin·보안 header·escape·확인 page 흐름·권한·badge·form 한도 | 실제 bind·TLS·프로세스 수명, browser 렌더링·JS | SPEC route표, HTML에서 읽은 값, header 문자열 |
 | T3 | 실제 Hub(`wb _hub --foreground`) + loopback HTTP(stdlib `http.client`/`ssl`) + CLI subprocess(S1 환경) | listener 개폐·bind 주소·port 0·TLS·평문 경고·passwd 뒤 열림·status 필드·정지 순서·세트 정지 | browser | `ss`/`/proc/net/tcp` bind 주소, 응답 bytes, BRIEF 문구 |
 | T3b | 실제 Hub + 테스트가 직접 hub_v1 socket으로 backend hello(가짜 peer·실제 backend) | backend principal 검증, 새 op framing | manager 도구 경로 | `/proc`의 pid·start_ticks, `backend.json` |
-| T4 | 실제 Hub + **stdlib MCP 테스트 client**(`tests/hub/support/mcp_client.py`, `http.client` + `json`) | JSON-RPC·initialize·tools/list(등급별)·tools/call·401·Origin·session id·각 tool·2단계 cancel token(가짜 cancel port 또는 실제)·한도 | Codex CLI·다른 client 호환 | MCP 문서의 message 형태(이 SPEC에 요약), SPEC tool표 |
+| T4 [2026-10-28 개정: web-board-ux S2(`support/rest_hub.py` + `support/rest_client.py`)로 대체, MCP client 삭제] | 실제 Hub + **stdlib MCP 테스트 client**(`tests/hub/support/mcp_client.py`, `http.client` + `json`) | JSON-RPC·initialize·tools/list(등급별)·tools/call·401·Origin·session id·각 tool·2단계 cancel token(가짜 cancel port 또는 실제)·한도 | Codex CLI·다른 client 호환 | MCP 문서의 message 형태(이 SPEC에 요약), SPEC tool표 |
 | T5 | 실제 Hub(또는 in-process app의 실제 server) + Python WebSocket client(aiohttp `ws_connect`) + 테스트 asyncio TCP proxy(멈춤·끊기·RST) + 가짜 PTY 명령(stdin을 파일에 기록하는 echo) | epoch·인수·이전 epoch 입력 버림·heartbeat 끊김(축소 interval + 한 번은 실제 10 s)·release·RST·resume·taken_elsewhere·두 tab 동시·감사 | browser JS·xterm 렌더링 | D-28 6사례, 가짜 PTY가 기록한 stdin bytes, 감사 행 |
 | T6 | 실제 backend + fake OMP(`tests/recovery_boot/fake_omp.py` 확장: `editor <text>` 입력으로 composer 비지 않음 흉내, notice 기록, `tool workbench_inbox …`·`tool to_worker …`) + 실제 Hub(foreground) | 통지·REVIEWING·대기 사유·수동·답변 재검토·link check/commit·READY/RUNNING·close·cancel(사용자 stop·Task 취소)·재시작 구분 | 실제 OMP·모델 판단 | `$FAKE_NOTICES`·`$FAKE_FRAMES`, `tasks.sqlite3`(stdlib 읽기), inbox 파일, `/proc` |
 | T6b | 가짜 `omp`(PATH 앞 temp bin: argv·env·overlay 파일 내용 기록, `--version`, isolation dump에 테스트가 정한 tool 목록 답) + 실제 BoardSet | Board agent argv(`--no-extensions`, bridge 없음, overlay·prompt·`--continue`·model), home·symlink, 시스템 key 회전, 격리 실패 시 종료, 재시작 | 실제 OMP의 MCP 연결(→ TI-15 probe, 대상 host) | SPEC Board agent 절, 기록된 argv·파일 |
@@ -572,7 +577,7 @@ BRIEF의 P2-AC-01~45를 그대로 쓰고 기술 보완 기준 TI-T01~T10을 더�
 - auth: `$P -m unittest discover -s tests/hub -p 'test_hub_auth*.py'`
 - listener·web: `$P -m unittest discover -s tests/hub -p 'test_hub_web*.py'`
 - inbox store: `$P -m unittest discover -s tests/hub -p 'test_inbox_store*.py'`
-- MCP: `$P -m unittest discover -s tests/hub -p 'test_hub_mcp*.py'`
+- MCP: `$P -m unittest discover -s tests/hub -p 'test_hub_mcp*.py'` [2026-10-28 개정: 삭제. REST는 `-p 'test_hub_rest*.py'`]
 - 웹 page: `$P -m unittest discover -s tests/hub -p 'test_web_pages*.py'`
 - 제어: `$P -m unittest discover -s tests/hub -p 'test_web_control*.py'`
 - ui_v1: `$P -m unittest discover -s tests/backend -p 'test_ui_server_inbox*.py'`, `$P -m unittest tests.contracts.test_ui_v1`
@@ -600,8 +605,8 @@ TDD 예외: `ROLE.md`·manager skill·README·USAGE 등 문서(TI-16 일부, TI-
 1. 실제 browser(Firefox·Chromium·휴대폰)에서 page·확인 page·badge·xterm.js 렌더링, tab 닫기·강제 종료·다른 browser 인수의 체감 동작.
 2. LAN/VPN 주소 bind와 다른 기기 접근, 자체 서명 인증서의 browser 신뢰 흐름.
 3. GPU 안내(D-27 (1)): 실제 `nvidia-smi`와 실제 모델의 "계속할까요?" 응답(D-30).
-4. 실제 OMP·실제 모델로 Board agent가 Hub MCP tool을 쓰고 manager가 `workbench_inbox`로 검토하는 흐름(유료 provider).
-5. Codex CLI의 MCP Streamable HTTP 호환성(D-36).
+4. 실제 OMP·실제 모델로 Board agent가 Hub MCP tool을 쓰고 manager가 `workbench_inbox`로 검토하는 흐름(유료 provider). [2026-10-28 개정: Board agent는 `wb-inbox` skill과 REST. Skill 로드와 REST 호출은 web-board-ux WBX-B4 재실행(2026-10-28, passed)에서 확인]
+5. Codex CLI의 MCP Streamable HTTP 호환성(D-36). [2026-10-28 개정: MCP 없음. 대신 Claude Code·Codex·OMP의 `wb-inbox` skill 설치·사용(web-board-ux WBX-AC-22, `pending`)]
 6. 실제 systemd --user에서 `KillMode=process` unit과 재부팅 뒤 시작.
 7. Dependency audit의 온라인 advisory 확인(열린 결정 2).
 

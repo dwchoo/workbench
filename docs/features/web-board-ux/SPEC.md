@@ -1,6 +1,6 @@
 # Web Board 사용성·외부 요청 API — 구현 명세
 
-Revision: s3; source brief: [BRIEF.md](BRIEF.md) r0.3 (사용자 승인 2026-10-27, r0.3은 2026-10-28 결정 추가). state: 초안(bundle 승인은 digest와 함께 따로 기록). 작성일: 2026-10-27. s2(2026-10-27): s1의 확인 항목 U1~U10에 사용자가 모두 답했다(BRIEF WBX-D14 선택, WBX-D20~D28). 바뀐 곳: seam 확정, JS node seam(S8), A5 범위, 내부 listener key 제한, `submit --new`, 트랙 C 선택. s3(2026-10-28): 사용자 실제 Chrome 확인의 피드백과 결정(BRIEF WBX-D29~D35, AC-21~23). 바뀐 곳: dashboard 주소 `/dashboard`와 `/` 303, `back_forward` navigation의 세션 확인과 pagehide 정리, skill README 설치 계약, 공유 OMP 로그인 완화, B1 검증 관찰 메모. 새 seam은 없다.
+Revision: s3; source brief: [BRIEF.md](BRIEF.md) r0.3 (사용자 승인 2026-10-27, r0.3은 2026-10-28 결정 추가). state: 초안(bundle 승인은 digest와 함께 따로 기록). 작성일: 2026-10-27. s2(2026-10-27): s1의 확인 항목 U1~U10에 사용자가 모두 답했다(BRIEF WBX-D14 선택, WBX-D20~D28). 바뀐 곳: seam 확정, JS node seam(S8), A5 범위, 내부 listener key 제한, `submit --new`, 트랙 C 선택. s3(2026-10-28): 사용자 실제 Chrome 확인의 피드백과 결정(BRIEF WBX-D29~D35, AC-21~23). 바뀐 곳: dashboard 주소 `/dashboard`와 `/` 303, `back_forward` navigation의 세션 확인과 pagehide 정리, skill README 설치 계약, 공유 OMP 로그인 완화, B1 검증 관찰 메모. 새 seam은 없다. 2026-10-28 주석(revision 유지): BRIEF r0.4의 WBX-D36~D40이 이 문서의 몇 값을 정하거나 바꾼다. 해당 자리에 `[BRIEF r0.4 WBX-Dnn: …]` 주석을 달았다(WBX-A7, B12 최종 값, result 400, foreground env, ROLE.md 경로).
 
 BRIEF의 결정 WBX-D01~D35와 수락 기준 WBX-AC-01~23(AC-03 보충 포함)은 바꾸지 않는다. "기술 보완"은 코드 조사(2026-10-27, HEAD `4898f39`, 작업 트리에 미commit 문서 변경 있음)로 정한 구체 형태다. 약속된 동작·호환성을 바꿀 수 있는 항목은 "열린 결정·사용자 확인 항목"에 모았고 정하지 않았다. Test seam S1~S8은 사용자가 확정했다(WBX-D20·D21). 트랙 C는 mockup 방향 A로 정해졌다(WBX-D14, 아래 "트랙 C 선택").
 
@@ -61,7 +61,7 @@ BRIEF의 결정 WBX-D01~D35와 수락 기준 WBX-AC-01~23(AC-03 보충 포함)�
 
 - Route: dashboard handler는 `GET /dashboard`(`render.HOME_PATH = "/dashboard"`)다. `GET /`는 세션이 있으면 `303`, `Location: /dashboard`(상대, 기존 redirect 규칙), 세션이 없으면 기존 session middleware의 `303 /login`. `/`는 page가 아니라 redirect이므로 cache 표의 "모든 redirect" 행(`no-store`)이다. `/dashboard`는 세션 page 행(`private, no-cache`)이다.
 - 로그인 성공 뒤 이동과 그 밖에 s2까지 `/`로 보내던 서버 redirect, 같은 origin `Referer`가 없을 때의 돌아갈 곳(`middleware` fallback), brand·nav·프로젝트 화면의 "프로젝트 상태" 링크는 모두 `/dashboard`. Route audit에 `/dashboard`(page)와 `/`(redirect)를 pin한다. `GET /api/dashboard`(JSON)는 바꾸지 않는다.
-- 세션 확인(`/static/session-check.js`): `pageshow`에서 `event.persisted === true`이거나 이번 문서의 navigation type이 `back_forward`이면 `/api/badge`(`cache: "no-store"`)를 부르고 401이면 `location.replace("/login")`. 같은 문서에서 한 번만 확인한다(첫 `pageshow`와 이후 persisted 복원마다). 네트워크 오류·그 밖의 status는 아무것도 하지 않는다(s2와 같음). Navigation Timing이 없는 browser는 persisted 경로만.
+- 세션 확인(`/static/session-check.js`): `pageshow`에서 `event.persisted === true`이거나 이번 문서의 navigation type이 `back_forward`이면 `/api/badge`(`cache: "no-store"`)를 부르고 401이면 `location.replace("/login")`. 같은 문서에서 한 번만 확인한다(첫 `pageshow`와 이후 persisted 복원마다). 네트워크 오류·그 밖의 status는 아무것도 하지 않는다(s2와 같음). Navigation Timing이 없는 browser는 persisted 경로만. [BRIEF r0.4 WBX-D36: `session-check.js`는 `<head>`에서 동기로 실리고, 확인할 때(`back_forward`·persisted) `<html>`에 가림 class(`wb-checking`)를 붙여 `/api/badge` 답(2xx·그 밖 오류) 또는 4 s timer에 푼다. 401이면 보이지 않은 채 `location.replace("/login")`. WBX-A7]
 - `Clear-Site-Data`는 쓰지 않는다(비보안 origin에서는 browser가 무시한다). 서버 쪽 로그아웃 동작은 바뀌지 않는다.
 - bfcache 적격성: 화면 JS는 `pagehide`에서 진행 중인 `fetch`를 `AbortController`로 끊고 timer(`setTimeout`/`setInterval`)를 멈추며, `pageshow`(persisted)에서 다시 시작한다. 대상: `dashboard.js`, `badge.js`, 그 밖에 timer·fetch가 있는 화면 JS. `unload`·`beforeunload` handler를 두지 않는다. 끊긴 fetch의 `AbortError`는 오류 표시를 하지 않는다.
 - 진단(test seam 아님): A6 worker는 headless Chrome DevTools(`Page.backForwardCacheNotUsed` event 또는 `PerformanceNavigationTiming.notRestoredReasons`)로 `/dashboard`·`/requests` 등이 bfcache에서 복원되지 않는 이유를 수정 전후로 기록한다. 이 결과는 ticket 출력의 관찰이며 RED/GREEN 근거가 아니다. Chrome이 없으면 진단 없이 진행하고 그렇게 적는다.
@@ -122,7 +122,7 @@ Endpoint(결과 필드는 MCP tool 결과와 같다 — task-inbox SPEC "MCP Str
 메모(s3, WBX-B1 독립 검증의 관찰, 계약 변경 아님):
 - 중복 JSON key: 한 객체에 같은 key가 두 번 오면 거절하지 않고 마지막 값을 쓴다(Python `json` 기본). 위 "strict JSON"은 NaN·Infinity·깊이·UTF-8에 대한 것이며 중복 key 거절은 계약에 없다. 바꾸려면 따로 결정한다.
 - 인증 검사(`verify`)가 REST 처리와 같은 전용 `DaemonExecutor(8)`를 쓴다. 처리 자리가 모두 오래 걸리면 인증도 기다린다(기존 MCP부터 있던 starvation 위험). 후속 과제로 남긴다(이번 ticket 범위 밖).
-- `GET …/result`: 구현은 `run_id`/`artifact_path`를 `full=true`일 때만 받는다(위 표는 조건을 적지 않았다). WBX-B8(MCP 제거) 때 표와 구현 중 어느 쪽에 맞출지 다시 본다.
+- `GET …/result`: 구현은 `run_id`/`artifact_path`를 `full=true`일 때만 받는다(위 표는 조건을 적지 않았다). WBX-B8(MCP 제거) 때 표와 구현 중 어느 쪽에 맞출지 다시 본다. [BRIEF r0.4 WBX-D38: 구현 쪽으로 정했다. `full=true` 없이 `run_id`/`artifact_path`를 주면 400 `invalid_input`]
 
 오류 → HTTP status(본문 `{"error":{"code","message","state"?,"version"?}}`; `code`·`message`는 MCP `error_payload`의 정규화를 그대로 쓴다 — 통과 code는 inbox 문장, 나머지는 고정 문장, 모르는 code는 `internal_error`):
 
@@ -184,19 +184,19 @@ CLI(`python3 wb_inbox.py <command> [options]`, argparse, stdlib만):
 
 - 내부 listener: `/mcp` 대신 B1 REST(`/api/v1/…`)만. Host `127.0.0.1:<port>` 고정, 연결 16개, 다른 경로 404, `/skill/` 없음. 받는 key는 이번 Board agent 시작의 system key 하나뿐이다(WBX-D24). 다른 유효 key·이전 system key는 401 `unauthorized`. 외부 listener의 REST는 모든 유효 key를 받는다.
 - Board agent env: `hub_environment(base)` + Board home 값 + `TERM` + UTF-8 locale + `WB_API_KEY=<이번 시작의 system key>` + `WB_HUB_URL=http://127.0.0.1:<내부 port>`. 사용자의 같은 이름 값은 덮어쓴다.
-- Hub env 위생: `process.PROJECT_ENV`에 `WB_API_KEY`, `WB_HUB_URL`을 더한다(`WB_BOARD_MCP_KEY`는 이전 버전 Board 프로세스에서 시작한 Hub를 위해 남긴다). 따라서 Hub, Hub가 켠 backend, Board shell은 사용자 shell의 값을 물려받지 않는다.
+- Hub env 위생: `process.PROJECT_ENV`에 `WB_API_KEY`, `WB_HUB_URL`을 더한다(`WB_BOARD_MCP_KEY`는 이전 버전 Board 프로세스에서 시작한 Hub를 위해 남긴다). 따라서 Hub, Hub가 켠 backend, Board shell은 사용자 shell의 값을 물려받지 않는다. [BRIEF r0.4 WBX-D39: 예외로 foreground(`wb _hub --foreground`) Hub 자신의 `/proc/<pid>/environ`에는 시작 때 값이 남는다(커널 보관). 자식과 `wb hub start`·systemd Hub에는 없다. 수용, USAGE §4.2]
 - Board shell tab: env = `hub_environment(base)` + `TERM` + locale. `WB_API_KEY`·`WB_HUB_URL`이 없다(system key가 보이지 않음).
 - Skill 배치: 시작마다 `<hub state>/board-agent/skills/wb-inbox/`(0700)를 설치본 `skills/wb-inbox/SKILL.md`·`wb_inbox.py`의 복사본으로 다시 만든다(`.env`·`.env.example` 없음). `prepare_board_home(skills_dir=<board skills dir>)`, overlay의 skill·provider 설정은 probe(WBX-B4) 결과로 정한다. 이전 버전의 `<agent dir>/mcp.json`은 시작 때 지운다.
 - 격리 검사: `check_isolation(..., allowed_skills=("wb-inbox",))`, 허용 MCP 없음. 실패 조건: leak 하나라도(MCP tool 포함), 또는 `wb-inbox` skill이 보이지 않음(`skill_missing:wb-inbox`) → 기존처럼 `isolation_failed`(사유). Manager·worker의 누출 검사는 바꾸지 않는다.
-- `omp_bridge/board/ROLE.md`(영어): MCP tool 목록 대신 `wb-inbox` skill 사용 안내(`python3 <skill>/wb_inbox.py projects|list|…`), D-27 두 안내는 `projects` 출력 기준으로 유지, 요청 텍스트는 data.
+- `omp_bridge/board/ROLE.md`(영어): MCP tool 목록 대신 `wb-inbox` skill 사용 안내(`python3 <skill>/wb_inbox.py projects|list|…`), D-27 두 안내는 `projects` 출력 기준으로 유지, 요청 텍스트는 data. [BRIEF r0.4 WBX-D40: skill의 절대 경로는 적지 않는다. 모델은 `skill://wb-inbox`로 찾는다(B4 재실행)]
 - `allow_from`에서 loopback을 빼도 내부 listener는 영향이 없다(내부 app에 peer 검사 없음).
 
 ### 공유 OMP 로그인 완화(WBX-D32·D33, AC-23, s3)
 
 배경: [INCIDENT-20261027-omp-login.md](INCIDENT-20261027-omp-login.md). Workbench는 인증 저장소 내용을 읽지 않는다(C-D64). 이 절은 그 원칙 아래에서 저장소를 망가뜨릴 수 있는 Workbench 쪽 동작을 줄인다.
 
-- 격리 확인 OMP 종료(`backend/launcher.py:check_isolation`의 `_stop_group`, manager·worker·Board 공통): 확인이 끝나면 (1) stdin을 닫고(RPC EOF) 최대 5 s 동안 leader와 group이 스스로 끝나기를 기다린다, (2) 남으면 SIGTERM 후 최대 5 s, (3) 남으면 SIGKILL 후 3 s. 전체 상한은 13 s + reap이며 확인 결과(`cleanup`)에 어느 단계에서 끝났는지(`eof`/`sigterm`/`sigkill`)와 걸린 시간을 남긴다. Timeout·cancel로 끝나는 경로도 같은 순서를 쓴다. 실제 OMP 18.12.6이 RPC stdin EOF로 끝나는지와 걸리는 시간은 B12가 관측해 기록한다. EOF로 끝나지 않으면 (1)은 확인마다 5 s를 더하므로 B12는 멈추고 관측값과 함께 보고한다(유예 값 조정은 orchestrator 판정). 값(5 s / 5 s / 3 s)은 기술 보완이며 상수로 둔다.
-- Board OMP log 보존: `<hub state>/board-agent/logs/`(0700, 파일 0600)에 Board agent 시작마다 (a) 격리 확인 OMP의 stderr 전체(지금은 임시 파일에서 64 KiB만 읽고 버린다)와 확인 판정 요약, (b) OMP가 Board home의 agent dir에 쓰는 자체 log(위치는 B12가 OMP 18.12.6에서 확인, 없으면 (a)만)와 Board agent OMP의 종료 상태를 시작 시각 이름의 파일로 남긴다. 상한(기술 보완): 파일당 1 MiB(넘으면 앞부분을 버리고 끝을 남긴다), 최근 10회 시작분. Hub 재시작·Board 재시작 뒤에도 남는다. Log에 system key 값·`WB_API_KEY`가 들어가지 않는다(쓰기 전 이번 key 문자열을 가린다). 인증 저장소 내용은 복사하지 않는다. `wb hub status`·웹 화면은 바꾸지 않는다.
+- 격리 확인 OMP 종료(`backend/launcher.py:check_isolation`의 `_stop_group`, manager·worker·Board 공통): 확인이 끝나면 (1) stdin을 닫고(RPC EOF) 최대 5 s 동안 leader와 group이 스스로 끝나기를 기다린다, (2) 남으면 SIGTERM 후 최대 5 s, (3) 남으면 SIGKILL 후 3 s. 전체 상한은 13 s + reap이며 확인 결과(`cleanup`)에 어느 단계에서 끝났는지(`eof`/`sigterm`/`sigkill`)와 걸린 시간을 남긴다. Timeout·cancel로 끝나는 경로도 같은 순서를 쓴다. 실제 OMP 18.12.6이 RPC stdin EOF로 끝나는지와 걸리는 시간은 B12가 관측해 기록한다. EOF로 끝나지 않으면 (1)은 확인마다 5 s를 더하므로 B12는 멈추고 관측값과 함께 보고한다(유예 값 조정은 orchestrator 판정). 값(5 s / 5 s / 3 s)은 기술 보완이며 상수로 둔다. [BRIEF r0.4 WBX-D37: 최종 값 10 s / 3 s / 3 s(`ISOLATION_STOP_GRACE`·`ISOLATION_TERM_WAIT`·`ISOLATION_KILL_WAIT`). 실제 OMP 18.13.2는 EOF로 약 0.2 s에 끝난다]
+- Board OMP log 보존: `<hub state>/board-agent/logs/`(0700, 파일 0600)에 Board agent 시작마다 (a) 격리 확인 OMP의 stderr 전체(지금은 임시 파일에서 64 KiB만 읽고 버린다)와 확인 판정 요약, (b) OMP가 Board home의 agent dir에 쓰는 자체 log(위치는 B12가 OMP 18.12.6에서 확인, 없으면 (a)만)와 Board agent OMP의 종료 상태를 시작 시각 이름의 파일로 남긴다. 상한(기술 보완): 파일당 1 MiB(넘으면 앞부분을 버리고 끝을 남긴다), 최근 10회 시작분. Hub 재시작·Board 재시작 뒤에도 남는다. Log에 system key 값·`WB_API_KEY`가 들어가지 않는다(쓰기 전 이번 key 문자열을 가린다). 인증 저장소 내용은 복사하지 않는다. `wb hub status`·웹 화면은 바꾸지 않는다. [BRIEF r0.4 WBX-D37: 구현된 형태는 `<hub state>/board-agent/omp-logs/`에 OMP 자체 log의 최근 20개 파일(파일당 ≤ 1 MiB, key 가림, symlink 따라가지 않음)과 `board-events.log`(시작·종료·정지 한 줄씩). 위 `logs/`·"최근 10회 시작분"을 대체한다]
 - Test helper: `tests/**`, `tools/**`의 어떤 코드도 실제 사용자 `agent.db`(또는 그 `-wal`·`-shm`)를 복사하지 않는다. 실제 로그인이 필요한 live helper는 C-D64대로 symlink를 쓰거나 실제 로그인을 쓰지 않는다. 빈 가짜 store(`write_bytes(b"")` 등 temp HOME의 placeholder)는 해당하지 않는다. 지금 해당하는 코드: `tests/integration/live_real_summary.py`의 `_copy_auth`(`--auth-source`)와 그 독립 테스트. S5 정적 검사가 다시 생기는 것을 막는다.
 - Probe 재실행(WBX-D33): B12 통합 뒤 WBX-B4를 사용자의 실제 로그인으로 다시 실행한다. 실행 전 사용자가 `omp`에서 로그인 상태를 확인한다. 이번 실행의 Board·격리 확인 OMP log(위 위치와 같은 형식, probe root 밖 `/tmp/wbx-b4-out-<날짜>/logs/`)를 지우지 않고 남긴다.
 
@@ -361,9 +361,9 @@ s3(2026-10-28)의 결정은 BRIEF r0.3 WBX-D29~D35에 있다. 사용자에게 �
 
 PLAN.json이 정본이다(의존·자원·gate·acceptance trace). 요약:
 
-- 트랙 A: A1 nav, A2 cache·bfcache, A3 배너, A4 key 안내(← B3), A6 `/dashboard`·뒤로 가기(s3, 선행 없음), A5 사용자 Chrome(← A1·A2·A3·A6·B4; 2026-10-28 일부 확인).
+- 트랙 A: A1 nav, A2 cache·bfcache, A3 배너, A4 key 안내(← B3), A6 `/dashboard`·뒤로 가기(s3, 선행 없음), A7 뒤로 가기 화면 가림(PLAN p4, ← A6, WBX-D36), A5 사용자 Chrome(← A1·A2·A3·A6·A7·B4; 2026-10-28 일부 확인).
 - 트랙 B: B1 REST(expand) → B2 skill·client → B3 `/skill/`·packaging·config → B4 probe(← B1·B2·B12, s3: B12 뒤 재실행) → B5 Board 전환(← B3·B4) ; B6·B7 테스트 이전(← B1) → B8 MCP 제거(← B5·B6·B7) → B9 문서. s3: B11 skill 설치 README(← B3), B12 로그인 완화(선행 없음).
 - 트랙 C: C0 mockup 선택 gate(충족: 방향 A) → C1 design system(← A1·A2·A3) → C2 dashboard.
-- I1 최종 통합(← A4·A5·A6·B9·B11·B12·C2).
+- I1 최종 통합(← A4·A5·A6·A7·B9·B11·B12·C2).
 - 처음 시작 가능: A1, A2, A3, A6, B1, B12(C0은 충족). `render.py`를 쓰는 A1·A2·A3·A6·C1·C2는 자원 `file:src/workbench/hub/web/render.py`로 직렬화한다. `backend/launcher.py`를 쓰는 B12는 B4 재실행·B5보다 먼저 끝난다.
-- 요구사항 정본: [requirements-p3.json](requirements-p3.json)(p1·p2 판은 이력으로 보존)(WBX-AC-01~23, gate WBX-G-*). PLAN p3 기준 `validate_plan.py` valid.
+- 요구사항 정본: [requirements-p4.json](requirements-p4.json)(p1~p3 판은 이력으로 보존)(WBX-AC-01~23, gate WBX-G-*; p4는 수락 기준·gate 변화 없이 authority만 BRIEF r0.4로 갱신). PLAN p4 기준 `validate_plan.py` valid.

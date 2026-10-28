@@ -1,8 +1,9 @@
 """TI-16: Board agent home, system key, internal listener, overlay/argv and the start-up isolation check (seam T6b).
 
-The Board agent's OMP is a fake ``omp`` (``fixtures/fake_omp_board.py``) that records its argv, environment and the
-overlay/``mcp.json`` it was given, and answers the isolation check's RPC dump with a tool list the test chooses.
-Expected values come from the SPEC "Board agent 세트" section and PROBE-OMP-MCP "TI-16이 쓸 구성", never from the
+The Board agent's OMP is a fake ``omp`` (``fixtures/fake_omp_board.py``) that records its argv, environment, the
+overlay it was given and the skills it shows, and answers the isolation check's RPC dump with a tool list the test
+chooses. Expected values come from the SPEC "Board agent 세트" section, the web-board-ux SPEC "Board agent 전환" and
+PROBE-BOARD-SKILL "WBX-B5가 쓸 구성" (WBX-B5: REST and the ``wb-inbox`` skill instead of MCP), never from the
 product's own helpers.
 """
 from __future__ import annotations
@@ -17,16 +18,17 @@ import sys
 import tempfile
 import unittest
 
-from workbench.hub import auth, mcp
+from workbench.hub import auth, rest
 from workbench.hub.board import launch
 from workbench.hub.config import BoardAgentConfig
 from workbench.hub.inbox.service import InboxService
+from workbench.hub.inbox_api import InboxApi
 
 REPO = Path(__file__).resolve().parents[2]
 FAKE_OMP = Path(__file__).resolve().parent / 'fixtures' / 'fake_omp_board.py'
 ISOLATION = REPO / 'omp_bridge' / 'omp-isolation.yml'
-# PROBE-OMP-MCP "TI-16이 쓸 구성": the isolation list without ``native``.
-BOARD_DISABLED = ['omp-managed', 'skillshare', 'agents-md', 'agents', 'claude-md', 'claude-plugins', 'claude',
+# PROBE-BOARD-SKILL "WBX-B5가 쓸 구성": the whole isolation list, ``native`` included (no MCP file to read).
+BOARD_DISABLED = ['native', 'omp-managed', 'skillshare', 'agents-md', 'agents', 'claude-md', 'claude-plugins', 'claude',
                   'cline', 'codex', 'cursor', 'gemini', 'github', 'mcp-json', 'omp-plugins', 'opencode', 'ssh-json',
                   'vscode', 'windsurf', 'agent-plugins', 'builtin-defaults']
 
@@ -83,7 +85,7 @@ class BoardHomeTests(unittest.TestCase):
 
 
 class LauncherCase(unittest.TestCase):
-    """A ``BoardLauncher`` over a real ``hub.sqlite3`` key store and a real internal MCP listener."""
+    """A ``BoardLauncher`` over a real ``hub.sqlite3`` key store and a real internal REST listener."""
 
     config = BoardAgentConfig()
 
@@ -96,7 +98,9 @@ class LauncherCase(unittest.TestCase):
         self.keys = auth.ApiKeyStore(self.db)
         self.inbox = InboxService()
         self.addCleanup(self.inbox.close)
-        self.listener = mcp.InternalListener(self.keys, mcp.McpServer(self.inbox))
+        self.api = InboxApi(self.inbox)
+        self.addCleanup(self.api.close)
+        self.listener = rest.InternalListener(self.keys, self.api)
         self.addCleanup(lambda: self.arun(self.listener.stop()))
         self.launcher = self.make_launcher(self.config)
 
@@ -134,19 +138,19 @@ class OmpSelectionDetailTests(LauncherCase):
 class SystemKeyTests(LauncherCase):
     def test_each_start_issues_a_new_system_editor_key_and_the_previous_one_stops_verifying(self):
         first = self.prepare()
-        principal = self.keys.verify(first.env['WB_BOARD_MCP_KEY'], 1.0)
+        principal = self.keys.verify(first.env['WB_API_KEY'], 1.0)
         self.assertEqual((principal.name, principal.grade, principal.scope, principal.system),
                          ('board-agent', 'editor', {'all': True}, True))
         second = self.prepare()
-        self.assertNotEqual(first.env['WB_BOARD_MCP_KEY'], second.env['WB_BOARD_MCP_KEY'])
+        self.assertNotEqual(first.env['WB_API_KEY'], second.env['WB_API_KEY'])
         with self.assertRaises(auth.ApiKeyRefused):
-            self.keys.verify(first.env['WB_BOARD_MCP_KEY'], 2.0)
-        self.assertTrue(self.keys.verify(second.env['WB_BOARD_MCP_KEY'], 2.0).system)
+            self.keys.verify(first.env['WB_API_KEY'], 2.0)
+        self.assertTrue(self.keys.verify(second.env['WB_API_KEY'], 2.0).system)
 
     def test_the_internal_listener_is_open_on_loopback_after_prepare(self):
         self.prepare()
         url = self.listener.url
-        self.assertRegex(url, r'^http://127\.0\.0\.1:\d+/mcp$')
+        self.assertRegex(url, r'^http://127\.0\.0\.1:\d+$')  # WBX-B5: the bare origin (REST), no /mcp
         import socket
         with socket.create_connection(('127.0.0.1', self.listener.port), timeout=2):
             pass
@@ -154,13 +158,15 @@ class SystemKeyTests(LauncherCase):
 
 
 class InheritedBoardKeyTests(LauncherCase):
-    """Security review fix 4: a ``WB_BOARD_MCP_KEY`` in the Hub's own environment (a Board shell starting ``wb``)
-    never reaches a spawned Hub or a Board shell; only the Board agent gets the key issued for it."""
+    """Security review fix 4: a Board key in the Hub's own environment (a Board shell starting ``wb``: the older
+    ``WB_BOARD_MCP_KEY`` or, since WBX-B5, ``WB_API_KEY``) never reaches a spawned Hub or a Board shell; only the
+    Board agent gets the key issued for it."""
 
     def setUp(self):
         self.box_env_key = 'wbk_AAAAAAAAAA_' + 'x' * 43
         super().setUp()
         self.box.env['WB_BOARD_MCP_KEY'] = self.box_env_key
+        self.box.env['WB_API_KEY'] = self.box_env_key
         self.launcher = self.make_launcher(self.config)
 
     def test_hub_environment_drops_the_board_key(self):
@@ -171,11 +177,13 @@ class InheritedBoardKeyTests(LauncherCase):
     def test_board_shell_does_not_inherit_the_board_key(self):
         shell = self.launcher.prepare_shell()
         self.assertNotIn('WB_BOARD_MCP_KEY', shell.env)
+        self.assertNotIn('WB_API_KEY', shell.env)
 
     def test_board_agent_gets_its_own_new_key_not_the_inherited_one(self):
         started = self.prepare()
-        self.assertNotEqual(started.env['WB_BOARD_MCP_KEY'], self.box_env_key)
-        self.assertTrue(self.keys.verify(started.env['WB_BOARD_MCP_KEY'], 1.0).system)
+        self.assertNotEqual(started.env['WB_API_KEY'], self.box_env_key)
+        self.assertTrue(self.keys.verify(started.env['WB_API_KEY'], 1.0).system)
+        self.assertNotIn('WB_BOARD_MCP_KEY', started.env)
 
 
 def manager_default_selector() -> str:
@@ -206,24 +214,20 @@ class OverlayArgvTests(LauncherCase):
         self.assertNotIn('--continue', started.argv)
         self.assertEqual(started.cwd, str(self.box.home))
 
-    def test_overlay_turns_on_only_the_native_provider_and_keeps_memory(self):
+    def test_overlay_keeps_every_provider_off_loads_only_the_wb_inbox_copy_and_keeps_memory(self):
         started = self.prepare()
         overlay = self.overlay_path()
         self.assertEqual(stat.S_IMODE(overlay.stat().st_mode), 0o600)
         self.assertEqual(json.loads(overlay.read_text()), {
             'disabledProviders': BOARD_DISABLED, 'mcp': {'enableProjectConfig': False},
-            'skills': {'customDirectories': [], 'includeSkills': [], 'ignoredSkills': []},
+            'skills': {'customDirectories': [str(self.box.state / 'board-agent' / 'skills')],
+                       'includeSkills': ['wb-inbox'], 'ignoredSkills': []},
             'task': {'disabledAgents': ['seance']}, 'memory': {'backend': 'local'}, 'memories': {'enabled': True}})
-        self.assertNotIn(started.env['WB_BOARD_MCP_KEY'], overlay.read_text())
+        self.assertNotIn(started.env['WB_API_KEY'], overlay.read_text())
 
-    def test_mcp_json_names_exactly_the_hub_server_on_the_internal_listener_with_an_env_key_reference(self):
-        started = self.prepare()
-        path = self.mcp_path()
-        self.assertEqual(stat.S_IMODE(path.stat().st_mode), 0o600)
-        self.assertEqual(json.loads(path.read_text()), {'mcpServers': {'workbench-hub': {
-            'type': 'http', 'url': self.listener.url,
-            'headers': {'Authorization': 'Bearer ${WB_BOARD_MCP_KEY}'}}}})
-        self.assertNotIn(started.env['WB_BOARD_MCP_KEY'], path.read_text())
+    def test_no_mcp_json_is_written(self):  # WBX-B5: was the Hub MCP server entry
+        self.prepare()
+        self.assertFalse(os.path.lexists(self.mcp_path()))
 
     def test_environment_points_omp_at_the_board_home_and_keeps_the_user_home(self):
         started = self.prepare()
@@ -268,16 +272,23 @@ class RolePromptTests(unittest.TestCase):
         return found[0]
 
     def test_gpu_use_is_preceded_by_the_nvidia_smi_check_and_the_question(self):
-        self.line_with('nvidia-smi --query-gpu=utilization.gpu,memory.used --format=csv,noheader', 'inbox_projects',
-                       '계속할까요?')
+        self.line_with('nvidia-smi --query-gpu=utilization.gpu,memory.used --format=csv,noheader',
+                       'wb_inbox.py projects', '계속할까요?')
 
     def test_editing_an_active_projects_code_is_preceded_by_the_question(self):
-        self.line_with('inbox_projects', 'root', '계속할까요?')
+        self.line_with('wb_inbox.py projects', 'root', '계속할까요?')
         self.assertGreaterEqual(self.text.count('계속할까요?'), 2)
 
     def test_no_lock_or_arbitration(self):
         line = self.line_with('lock')
         self.assertRegex(line.lower(), r'\b(no|never|do not|don\'t)\b')
+
+    def test_the_wb_inbox_skill_replaces_the_mcp_tools(self):  # WBX-B5, SPEC "Board agent 전환"
+        line = self.line_with('skill://wb-inbox', 'wb_inbox.py')
+        for command in ('projects', 'list', 'get', 'submit', 'update', 'comment', 'set-state', 'cancel', 'result'):
+            self.assertIn(f'`{command}`', line)
+        self.assertNotIn('mcp', self.text.lower())
+        self.assertNotIn('inbox_projects', self.text)
 
     def test_role_limits_are_stated(self):
         self.line_with('approve')
@@ -292,20 +303,19 @@ class IsolationCheckTests(LauncherCase):
         started = self.prepare()
         return self.arun(self.launcher.check_agent(started))
 
-    def test_only_hub_mcp_tools_pass(self):
-        self.assertIsNone(self.check(FAKE_BOARD_TOOLS=json.dumps(['mcp__workbench_hub_inbox_list',
-                                                                 'mcp__workbench_hub_inbox_get'])))
+    def test_only_the_wb_inbox_skill_passes(self):  # WBX-B5: was "only Hub MCP tools pass"
+        self.assertIsNone(self.check())
         checked, = self.box.records('rpc')
         # The check is the same command in RPC mode without a session (never --continue).
         self.assertEqual(checked['argv'][-4:], ['--mode', 'rpc', '--no-session', '--no-title'])
         self.assertNotIn('--continue', checked['argv'])
         self.assertIn('--no-extensions', checked['argv'])
 
-    def test_another_mcp_tool_fails_the_check_and_names_it(self):
+    def test_any_mcp_tool_fails_the_check_and_names_it(self):  # WBX-B5: Hub MCP tools are leaks too
         verdict = self.check(FAKE_BOARD_TOOLS=json.dumps(['mcp__workbench_hub_inbox_list', 'mcp__decoy_user_x']))
         self.assertIsNotNone(verdict)
         self.assertIn('mcp__decoy_user_x', verdict)
-        self.assertNotIn('mcp__workbench_hub_inbox_list', verdict)
+        self.assertIn('mcp__workbench_hub_inbox_list', verdict)
 
     def test_any_other_isolation_leak_fails_the_check(self):
         verdict = self.check(FAKE_BOARD_PROMPT_EXTRA='<file path="/somewhere/AGENTS.md">\nx\n</file>\n')
@@ -338,7 +348,7 @@ class BoardOmpLogTests(LauncherCase):
 
     def test_omp_logs_survive_board_restarts_without_keys(self):
         first = self.prepare()
-        key = first.env['WB_BOARD_MCP_KEY']
+        key = first.env['WB_API_KEY']
         old = self.plant('omp.2026-10-27.111.log',
                          f'oauth refresh failed: invalid_grant\nAuthorization: Bearer {key}\nmcp key {key}\n'
                          '{"refresh_token": "rt-SECRET-VALUE", "access": "at-SECRET-VALUE"}\n')

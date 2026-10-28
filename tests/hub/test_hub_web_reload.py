@@ -328,7 +328,7 @@ class BoardReloadTests(ReloadCase):
         self.assertEqual(result.returncode, 0, result)
         self.assertIn("'wb hub stop'", result.stdout)
         self.assertIn('web: disabled', result.stdout)
-        # The Board agent's own internal MCP listener (127.0.0.1, ephemeral) stays with the running set.
+        # The Board agent's own internal REST listener (127.0.0.1, ephemeral) stays with the running set.
         self.assertTrue(wait_until(lambda: ('127.0.0.1', self.port) not in self.listening(), 5), self.listening())
         self.assertTrue(refused('127.0.0.1', self.port))
         internal = self.listening()

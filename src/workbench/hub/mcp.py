@@ -7,8 +7,8 @@ never accepted here. One JSON-RPC 2.0 object per ``POST`` (a batch is ``-32600``
 session (``204``).
 
 Wiring: the external listener serves it with ``create_app(services, routes=[routes(server)])``;
-the Board agent's loopback listener is :class:`InternalListener` (``/mcp`` only, ``Host`` fixed to
-``127.0.0.1:<port>``). Tool errors carry SPEC codes with a fixed detail for every store, lock or
+the Board agent's loopback listener serves REST, not ``/mcp`` (:class:`workbench.hub.rest.InternalListener`,
+WBX-B5). Tool errors carry SPEC codes with a fixed detail for every store, lock or
 backend failure, so no path or exception text reaches a client.
 
 Only the JSON-RPC transport and its sessions live here (WBX-B1 expand): the tools' processing (keys, argument
@@ -17,9 +17,7 @@ checks, error normalisation, untrusted marks, cancel tokens, executor and per-ke
 """
 from __future__ import annotations
 
-import asyncio
 from collections import OrderedDict
-from dataclasses import dataclass, field
 import json
 import secrets
 import sys
@@ -28,7 +26,6 @@ from typing import Awaitable, Callable
 
 from aiohttp import web
 
-from . import auth
 from .inbox.limits import InboxError
 from .inbox.service import Principal
 # The processing layer lives in ``inbox_api`` (WBX-B1 expand); its names stay importable from here until /mcp goes.
@@ -36,9 +33,7 @@ from .inbox_api import (ALIASES, BUSY_WAIT, CALLS_PER_KEY, CANCEL_TOKEN_TTL, DET
                         GENERIC_DETAILS, MCP_WORKERS, PASSTHROUGH, PROJECT_FIELDS, STATES, TOOLS, UNTRUSTED_NOTE,
                         WWW_AUTHENTICATE, InboxApi, ParseError as _ParseError, Tool, bearer_key, check_arguments,
                         error_payload, marked, parse_json as _parse, principal_for, visible_tools)
-from .web.app import OriginPolicy, flush_last_used
-from .web.middleware import (BODY_LIMIT, SERVICES, _listening_port as listening_port, body_limit, expected_origin,
-                             origin_of_header, own_auth, security_headers)
+from .web.middleware import BODY_LIMIT, expected_origin, origin_of_header, own_auth
 
 SERVER_NAME = "workbench-hub"
 PROTOCOL_VERSIONS = ("2025-06-18", "2025-03-26")
@@ -230,87 +225,6 @@ def routes(server: McpServer) -> Callable[[web.Application], None]:
     return register
 
 
-# --- Board agent internal listener (SPEC "Board agent 세트", 기술 보완 14) ---------------------------
-
-INTERNAL_HOST = "127.0.0.1"
-FLUSH_INTERVAL = 10.0  # SPEC API key: last use written every 10 s
-INTERNAL_MAX_CONNECTIONS = 16  # the Board agent is one client; more is closed at once (security review fix 5)
-
-
-@dataclass(slots=True)
-class _InternalServices:
-    """What ``/mcp`` reads from ``app[SERVICES]``: the origin policy, the key store and the clock."""
-
-    api_keys: auth.ApiKeyStore
-    clock: Callable[[], float]
-    flush_interval: float = FLUSH_INTERVAL
-    policy: OriginPolicy = field(default_factory=lambda: OriginPolicy(INTERNAL_HOST))
-
-    async def blocking(self, function, *args):
-        return await asyncio.get_running_loop().run_in_executor(None, function, *args)
-
-
-@web.middleware
-async def _internal_host(request: web.Request, handler):
-    """Only ``Host: 127.0.0.1:<this port>`` (no ``localhost``, no other name): 421 otherwise."""
-    hosts = request.headers.getall("Host", [])
-    port = listening_port(request)
-    if port is None or hosts != [f"{INTERNAL_HOST}:{port}"]:
-        return web.Response(status=421, text="misdirected_request")
-    try:
-        return await handler(request)
-    except ConnectionResetError:  # the Board agent ended mid-request (restart, stop): one line, no traceback
-        print("[workbench] board mcp: connection reset by the client during a request", file=sys.stderr, flush=True)
-        return web.Response(status=400, text="connection_reset")
-
-
-def create_internal_app(api_keys: auth.ApiKeyStore, server: McpServer, *, clock: Callable[[], float] = time.time,
-                        flush_interval: float = FLUSH_INTERVAL) -> web.Application:
-    """``/mcp`` only (every other path 404), Host fixed, same body limit, headers and key auth."""
-    app = web.Application(middlewares=[_internal_host, body_limit], client_max_size=BODY_LIMIT)
-    app[SERVICES] = _InternalServices(api_keys, clock, flush_interval)
-    app.on_response_prepare.append(security_headers)
-    app.cleanup_ctx.append(flush_last_used)
-    routes(server)(app)
-    return app
-
-
-class InternalListener:
-    """The Board agent's loopback MCP listener on ``127.0.0.1:0`` (TI-16 starts and stops it), at most
-    ``max_connections`` connections at once (the web listener's :class:`~workbench.hub.web.listener.GuardedSite`)."""
-
-    def __init__(self, api_keys: auth.ApiKeyStore, server: McpServer, *, clock: Callable[[], float] = time.time,
-                 flush_interval: float = FLUSH_INTERVAL, max_connections: int = INTERNAL_MAX_CONNECTIONS):
-        self.api_keys, self.server, self.clock, self.flush_interval = api_keys, server, clock, flush_interval
-        self.max_connections = max_connections
-        self.runner: web.AppRunner | None = None
-        self.port: int | None = None
-        self._lock = asyncio.Lock()  # one start/stop at a time: a second start never opens a second port
-
-    @property
-    def url(self) -> str | None:
-        return None if self.port is None else f"http://{INTERNAL_HOST}:{self.port}/mcp"
-
-    async def start(self) -> str:
-        async with self._lock:
-            if self.runner is not None:
-                return self.url
-            app = create_internal_app(self.api_keys, self.server, clock=self.clock,
-                                      flush_interval=self.flush_interval)
-            runner = web.AppRunner(app, access_log=None, handle_signals=False)
-            await runner.setup()
-            from .web.listener import GuardedSite
-            try:
-                await GuardedSite(runner, INTERNAL_HOST, 0, max_connections=self.max_connections).start()
-            except BaseException:
-                await runner.cleanup()
-                raise
-            self.runner, self.port = runner, runner.addresses[0][1]
-            return self.url
-
-    async def stop(self) -> None:
-        async with self._lock:
-            runner, self.runner, self.port = self.runner, None, None
-            if runner is not None:
-                await runner.cleanup()
-                await asyncio.get_running_loop().run_in_executor(None, self.api_keys.flush)  # last uses
+# The Board agent's internal listener moved to :mod:`workbench.hub.rest` (WBX-B5); importable from here until /mcp goes.
+from .rest import (FLUSH_INTERVAL, INTERNAL_HOST, INTERNAL_MAX_CONNECTIONS, InternalListener,  # noqa: E402,F401
+                   create_internal_app)

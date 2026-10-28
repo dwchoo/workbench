@@ -10,9 +10,7 @@ from __future__ import annotations
 import asyncio
 import http.client
 import json
-import os
 from pathlib import Path
-import socket
 import sys
 import unittest
 from unittest import mock
@@ -20,8 +18,6 @@ from unittest import mock
 REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO / 'src'))
 
-from fixtures.web_sandbox import tcp_listening  # noqa: E402
-from support.mcp_client import McpClient  # noqa: E402
 from support.mcp_hub import PASSWORD, McpHub  # noqa: E402
 from aiohttp import web  # noqa: E402
 from workbench.hub import mcp  # noqa: E402
@@ -432,96 +428,8 @@ class PoolShutdownTests(unittest.TestCase):
             reads.submit(lambda: None)
 
 
-class InternalListenerTests(TransportCase):
-    """SPEC Board agent 세트: the internal listener serves ``/mcp`` only, on ``127.0.0.1``, Host fixed."""
-
-    def setUp(self):
-        super().setUp()
-        self.listener = mcp.InternalListener(self.hub.keys, self.hub.server, clock=lambda: self.hub.now[0])
-        self.url = self.hub.run(self.listener.start())
-        self.addCleanup(lambda: self.hub.run(self.listener.stop()))
-        self.port = self.listener.port
-        self.board_key = self.hub.keys.rotate_system_key(now=self.hub.now[0]).raw
-
-    def board(self, key=None, **kwargs):
-        return McpClient('127.0.0.1', self.port, key or self.board_key, **kwargs)
-
-    def test_url_and_bind(self):
-        self.assertEqual(self.url, f'http://127.0.0.1:{self.port}/mcp')
-        self.assertNotEqual(self.port, self.hub.port)
-        found = [(address, port) for address, port in tcp_listening(os.getpid()) if port == self.port]
-        self.assertEqual(found, [('127.0.0.1', self.port)])
-
-    def test_system_key_uses_the_tools(self):
-        client = self.board().start()
-        self.assertEqual(len(client.list_tools()), 9)
-        value = client.tool('inbox_submit', project_id=self.hub.a, title='From board', body='B', idempotency_key='b1')
-        self.assertEqual(value['origin']['kind'], 'board_agent')
-
-    def test_key_still_required(self):
-        reply = McpClient('127.0.0.1', self.port, None).request('initialize', {'protocolVersion': '2025-06-18'})
-        self.assertEqual(reply.status, 401)
-
-    def test_host_is_fixed(self):
-        client = self.board()
-        for host in (f'localhost:{self.port}', f'127.0.0.1:{self.port + 1}', '127.0.0.1', f'[::1]:{self.port}'):
-            with self.subTest(host=host):
-                self.assertEqual(client.request('ping', headers={'Host': host}).status, 421)
-        self.assertEqual(client.request('ping').status, 200)
-
-    def test_other_routes_are_404(self):
-        client = self.board()
-        for path in ('/', '/login', '/static/base.css', '/api/badge', '/mcp/x'):
-            with self.subTest(path=path):
-                self.assertEqual(client.raw('GET', path=path).status, 404)
-
-    def test_foreign_origin_is_403(self):
-        self.assertEqual(self.board().request('ping', headers={'Origin': 'http://evil.example'}).status, 403)
-
-    def test_concurrent_starts_open_one_listener_and_stop_forgets_the_port(self):
-        listener = mcp.InternalListener(self.hub.keys, self.hub.server)
-
-        async def both():
-            return await asyncio.gather(listener.start(), listener.start())
-        before = set(tcp_listening(os.getpid()))
-        first, second = self.hub.run(both())
-        self.addCleanup(lambda: self.hub.run(listener.stop()))
-        self.assertEqual(first, second)
-        self.assertEqual(len(set(tcp_listening(os.getpid())) - before), 1)
-        self.hub.run(listener.stop())
-        self.assertIsNone(listener.port)
-        self.assertIsNone(listener.url)
-
-    def test_connections_over_sixteen_are_closed_at_once(self):
-        """Security review fix 5: the loopback listener holds at most 16 connections; the 17th is closed unread."""
-        import time
-        held = [socket.create_connection(('127.0.0.1', self.port), timeout=5) for _ in range(16)]
-        try:
-            time.sleep(0.3)
-            extra = socket.create_connection(('127.0.0.1', self.port), timeout=5)
-            try:
-                extra.sendall(b'GET /mcp HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n')
-                try:
-                    closed = extra.recv(65536) == b''
-                except ConnectionResetError:
-                    closed = True
-                self.assertTrue(closed, 'the 17th connection was served')
-            finally:
-                extra.close()
-            held[0].settimeout(0.3)
-            with self.assertRaises(socket.timeout):
-                held[0].recv(1)  # a held connection stays open
-        finally:
-            for connection in held:
-                connection.close()
-        time.sleep(0.3)
-        self.assertEqual(self.board().request('ping').status, 200)
-
-    def test_stop_closes_the_port(self):
-        self.hub.run(self.listener.stop())
-        with self.assertRaises(OSError):
-            socket.create_connection(('127.0.0.1', self.port), timeout=2).close()
-
+# InternalListenerTests (9): the Board agent's internal listener serves REST since WBX-B5; the cases moved, each under
+# its original name or a REST equivalent, to ``test_hub_rest_internal.py`` ``InternalListenerTests``.
 
 if __name__ == '__main__':
     unittest.main()

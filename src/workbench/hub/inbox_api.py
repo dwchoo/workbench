@@ -331,13 +331,14 @@ class InboxApi:
         # key_id -> [slots semaphore, calls holding or waiting for a slot] (loop thread only; dropped at zero)
         self._slots: dict[str, list] = {}
 
-    async def authenticate(self, request: web.Request) -> Principal | None:
+    async def authenticate(self, request: web.Request, *, system_only: bool = False) -> Principal | None:
+        """The request's verified API key principal, or None; ``system_only`` takes the system key alone."""
         services = request.app[SERVICES]
         raw = bearer_key(request)
         if raw is None:
             return None
         try:
-            key = await self._blocking(services.api_keys.verify, raw, float(services.clock()))
+            key = await self._blocking(services.api_keys.verify, raw, float(services.clock()), system_only=system_only)
         except auth.ApiKeyRefused:
             return None
         return principal_for(key)

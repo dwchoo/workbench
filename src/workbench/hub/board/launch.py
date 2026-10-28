@@ -1,6 +1,8 @@
-"""Board agent OMP launch: home, system key, internal MCP listener, overlay, argv and isolation check.
+"""Board agent OMP launch: home and ``wb-inbox`` skill copy, system key, internal REST listener, overlay, argv and
+isolation check.
 
-Task Inbox SPEC "Board agent 세트", ADR-0003 and the TI-15 probe (PROBE-OMP-MCP "TI-16이 쓸 구성").
+Task Inbox SPEC "Board agent 세트", ADR-0003, web-board-ux SPEC "Board agent 전환" (WBX-B5: REST and the ``wb-inbox``
+skill instead of MCP) and the WBX-B4 probe (PROBE-BOARD-SKILL "WBX-B5가 쓸 구성").
 """
 from __future__ import annotations
 
@@ -11,6 +13,7 @@ import json
 import os
 from pathlib import Path
 import re
+import shutil
 import stat
 import subprocess
 import sys
@@ -22,16 +25,20 @@ from workbench.assets import canonical_path
 from workbench.backend import launcher, omp_home
 from workbench.backend.launcher import (DISPLAY_TERM, ISOLATION_PROVIDER_IDS, ModelTableError,
                                         default_isolation_overlay, load_model_table)
-from workbench.backend.paths import ensure_private_dir, write_private_bytes
+from workbench.backend.paths import DataDirError, ensure_private_dir, write_private_bytes
 
-from .. import auth, mcp
+from .. import auth, rest
 from ..config import BoardAgentConfig
 from ..process import hub_environment
 
 BOARD_DIR_NAME = "board-agent"
 EMPTY_DIR_NAME = "empty"
 OVERLAY_NAME = "omp-board.yml"
-MCP_FILE_NAME = "mcp.json"
+LEGACY_MCP_FILE = "mcp.json"  # ``<agent dir>/mcp.json`` of the MCP Board (before WBX-B5): removed at every start
+# WBX-B5: the Board agent's only skill, copied from the installed ``skills/wb-inbox`` at every start (never ``.env``).
+SKILLS_DIR_NAME = "skills"
+SKILL_NAME = "wb-inbox"
+SKILL_FILES = ("SKILL.md", "wb_inbox.py")
 SESSIONS_DIR_NAME = "sessions"
 # WBX-B12: OMP writes ``<config root>/logs/omp.<date>.<pid>.log`` and prunes that directory itself; each Board agent
 # start keeps a redacted copy in ``board-agent/omp-logs`` (newest OMP_LOG_KEEP files, each at most OMP_LOG_FILE_LIMIT
@@ -60,10 +67,11 @@ _COOKIE = re.compile(rb"(?im)^([ \t]*+(?:set-)?cookie[ \t]*+:)[^\n]*+")
 _QUOTED_FIELD = re.compile(rb"([\"'])(" + _KEY + rb")\1(\s*+[:=]\s*+)(" + _QUOTED + rb"|[^\s,;{}\[\]\"']++)")
 _PLAIN_FIELD = re.compile(rb"(?<![A-Za-z0-9_.\"'-])(" + _KEY + rb")([ \t]*+[:=][ \t]*+)(" + _QUOTED
                           + rb"|(?:" + _SCHEME + rb")?[^\s,;&{}\[\]\"']++)")
-SERVER_NAME = "workbench-hub"
-# OMP names an MCP tool ``mcp__<server, '-' -> '_'>_<tool>`` (TI-15).
-HUB_TOOL_PREFIX = "mcp__" + SERVER_NAME.replace("-", "_") + "_"
-KEY_ENV = "WB_BOARD_MCP_KEY"
+# The Board agent's ``wb-inbox`` skill reads its Hub from these (WBX-D11): this start's system key and the internal
+# listener's origin (no path; ``wb_inbox.py`` adds ``/api/v1/…``).
+KEY_ENV = "WB_API_KEY"
+URL_ENV = "WB_HUB_URL"
+NO_PROXY_ENV = ("NO_PROXY", "no_proxy")  # urllib follows ``*_PROXY``: the loopback listener is always direct
 CHECK_ROLE = "board"
 DEFAULT_SHELL = "/bin/sh"
 REASON_LIMIT = 256  # the audit ``reason`` limit
@@ -71,8 +79,6 @@ MESSAGE_LIMIT = 1024  # the human ``message`` next to a failed channel
 FALLBACK_LOCALE = "C.UTF-8"
 LOCALE_KEYS = ("LC_ALL", "LC_CTYPE", "LANG")  # the C library's precedence for the character type
 _UTF8_LOCALE = re.compile(r"\.utf-?8(@|$)", re.IGNORECASE)
-# The isolation list without ``native``: the only provider that reads ``<agent dir>/mcp.json`` (TI-15).
-BOARD_PROVIDER_IDS = tuple(item for item in ISOLATION_PROVIDER_IDS if item != "native")
 
 
 def _log(text: str) -> None:
@@ -112,14 +118,39 @@ def board_dir(state_dir: Path | str) -> Path:
     return Path(state_dir) / BOARD_DIR_NAME
 
 
+def _remove(path: Path) -> None:
+    """``path`` gone, whatever it is; a symlink is removed itself, never followed."""
+    try:
+        info = os.lstat(path)
+    except FileNotFoundError:
+        return
+    if stat.S_ISDIR(info.st_mode):
+        shutil.rmtree(path)
+    else:
+        os.unlink(path)
+
+
+def install_board_skill(state_dir: Path | str) -> Path:
+    """Rebuild ``<hub state>/board-agent/skills/wb-inbox/`` (0700) from the installed skill's
+    :data:`SKILL_FILES` (0600, nothing else); returns the skills directory."""
+    skills = ensure_private_dir(board_dir(state_dir)) / SKILLS_DIR_NAME
+    _remove(skills)
+    folder = ensure_private_dir(ensure_private_dir(skills) / SKILL_NAME)
+    for name in SKILL_FILES:
+        write_private_bytes(folder / name, canonical_path(f"skills/{SKILL_NAME}/{name}").read_bytes())
+    return skills
+
+
 def prepare_board_home(state_dir: Path | str, environment: Mapping[str, str]) -> omp_home.OmpHome:
     """``<hub state>/board-agent/omp-root`` with ``agent.db`` linked to the user's store (``omp_home`` rules).
 
-    No Workbench skills or subagent definitions: both point at an empty private directory.
+    Every isolation provider stays off (``native`` included: no MCP file is read); the only skill directory is the fresh
+    ``wb-inbox`` copy (:func:`install_board_skill`); no Workbench subagent definitions (an empty private directory).
     """
     root = ensure_private_dir(board_dir(state_dir))
     empty = ensure_private_dir(root / EMPTY_DIR_NAME)
-    return omp_home.prepare_omp_home(root, environment, skills_dir=empty, provider_ids=BOARD_PROVIDER_IDS,
+    skills = install_board_skill(state_dir)
+    return omp_home.prepare_omp_home(root, environment, skills_dir=skills, provider_ids=ISOLATION_PROVIDER_IDS,
                                      agents_dir=empty)
 
 
@@ -260,33 +291,25 @@ def record_board_event(state_dir: Path | str, event: Mapping[str, Any]) -> None:
     write_private_bytes(path, kept + line)
 
 
-def board_overlay() -> dict[str, Any]:
-    """The second ``--config`` after ``omp-isolation.yml`` (PROBE-OMP-MCP: a later array replaces the earlier one).
-
-    Only ``native`` comes back (it reads ``<agent dir>/mcp.json``); its project-level MCP files stay off, no
-    Workbench skills, OMP's ``seance`` agent off as for the manager/worker, memory back on (D-25).
-    """
-    return {"disabledProviders": list(BOARD_PROVIDER_IDS), "mcp": {"enableProjectConfig": False},
-            "skills": {"customDirectories": [], "includeSkills": [], "ignoredSkills": []},
+def board_overlay(skills_dir: Path | str) -> dict[str, Any]:
+    """The second ``--config`` after ``omp-isolation.yml`` (a later array replaces the earlier one), as the WBX-B4
+    probe ran it: every isolation provider off, the ``wb-inbox`` copy as the only skill, no project MCP files,
+    OMP's ``seance`` agent off as for the manager/worker, memory back on (D-25)."""
+    return {"disabledProviders": list(ISOLATION_PROVIDER_IDS), "mcp": {"enableProjectConfig": False},
+            "skills": {"customDirectories": [str(skills_dir)], "includeSkills": [SKILL_NAME], "ignoredSkills": []},
             "task": {"disabledAgents": ["seance"]},
             "memory": {"backend": "local"}, "memories": {"enabled": True}}
-
-
-def mcp_config(url: str) -> dict[str, Any]:
-    """``<agent dir>/mcp.json``: the Hub server only; the key is an environment reference, never the value."""
-    return {"mcpServers": {SERVER_NAME: {"type": "http", "url": url,
-                                         "headers": {"Authorization": f"Bearer ${{{KEY_ENV}}}"}}}}
 
 
 def _json_bytes(value: Mapping[str, Any]) -> bytes:
     return (json.dumps(value, indent=2) + "\n").encode()
 
 
-def write_board_files(state_dir: Path | str, home: omp_home.OmpHome, url: str) -> Path:
-    """Rewrite the overlay and ``mcp.json`` (0600) at every start; returns the overlay path."""
+def write_board_files(state_dir: Path | str, home: omp_home.OmpHome) -> Path:
+    """Rewrite the overlay (0600) and remove an older version's ``mcp.json`` at every start; returns the overlay."""
     overlay = board_dir(state_dir) / OVERLAY_NAME
-    write_private_bytes(overlay, _json_bytes(board_overlay()))
-    write_private_bytes(home.agent_dir / MCP_FILE_NAME, _json_bytes(mcp_config(url)))
+    write_private_bytes(overlay, _json_bytes(board_overlay(board_dir(state_dir) / SKILLS_DIR_NAME)))
+    _remove(home.agent_dir / LEGACY_MCP_FILE)
     return overlay
 
 
@@ -356,14 +379,16 @@ def resolve_omp(environment: Mapping[str, str]) -> str:
 
 
 def isolation_failure(result: Mapping[str, Any]) -> str | None:
-    """None when the checked OMP showed nothing but Hub MCP tools (``mcp:mcp__workbench_hub_*``) beyond the
-    isolation baseline; otherwise the reason (other leaks named, or why the check itself failed)."""
+    """None when the checked OMP showed no leak (any MCP tool is one) and the ``wb-inbox`` skill; otherwise the
+    reason: the leaks named, ``skill_missing:wb-inbox``, or why the check itself failed (SPEC "격리 검사")."""
     if result.get("error") or result.get("observed") is None:
         return f"check_failed:{result.get('error') or result.get('state')}"[:REASON_LIMIT]
-    leaks = [leak for leak in result.get("leaks") or [] if not leak.startswith("mcp:" + HUB_TOOL_PREFIX)]
-    if not leaks:
-        return None
-    return ("leak:" + ",".join(leaks))[:REASON_LIMIT]
+    leaks = list(result.get("leaks") or [])
+    if leaks:
+        return ("leak:" + ",".join(leaks))[:REASON_LIMIT]
+    if SKILL_NAME not in (result["observed"].get("skills") or []):
+        return f"skill_missing:{SKILL_NAME}"
+    return None
 
 
 @functools.lru_cache(maxsize=1)
@@ -415,12 +440,22 @@ def utf8_locale(env: dict[str, str]) -> dict[str, str]:
     return env
 
 
-def board_environment(base: Mapping[str, str], home: omp_home.OmpHome, key: str) -> dict[str, str]:
-    """``hub_environment()`` with the Board home values, ``TERM``, a UTF-8 locale and the system key (HOME stays
-    the user's)."""
+def _with_loopback(value: str | None) -> str:
+    """A ``NO_PROXY`` list with ``127.0.0.1`` in it (the user's entries kept, in their order)."""
+    hosts = [item.strip() for item in (value or "").split(",") if item.strip()]
+    return ",".join(hosts if rest.INTERNAL_HOST in hosts else [*hosts, rest.INTERNAL_HOST])
+
+
+def board_environment(base: Mapping[str, str], home: omp_home.OmpHome, key: str, url: str) -> dict[str, str]:
+    """``hub_environment()`` with the Board home values, ``TERM``, a UTF-8 locale, the system key as ``WB_API_KEY``,
+    the internal listener's origin as ``WB_HUB_URL`` and loopback in ``NO_PROXY``/``no_proxy`` (HOME stays the
+    user's)."""
     env = utf8_locale(omp_home.home_environment(hub_environment(base), home.environment()))
     env["TERM"] = DISPLAY_TERM
     env[KEY_ENV] = key
+    env[URL_ENV] = url
+    for name in NO_PROXY_ENV:
+        env[name] = _with_loopback(env.get(name))
     return env
 
 
@@ -428,13 +463,13 @@ class BoardLauncher:
     """Prepares each Board agent start; owned by the Hub's ``BoardSet``.
 
     ``api_keys`` returns the Hub's key store (``hub.sqlite3``); ``listener`` is the Board agent's
-    internal MCP listener (TI-05), or a callable that makes it on the first start (the key store
+    internal REST listener (WBX-B5), or a callable that makes it on the first start (the key store
     may open only then); it is started on the first start and stopped by :meth:`close`.
     """
 
     def __init__(self, state_dir: Path | str, config: BoardAgentConfig, *,
                  api_keys: Callable[[], auth.ApiKeyStore],
-                 listener: mcp.InternalListener | Callable[[], mcp.InternalListener],
+                 listener: rest.InternalListener | Callable[[], rest.InternalListener],
                  environment: Mapping[str, str] | None = None, clock: Callable[[], float] = time.time,
                  check_timeout: float = launcher.ISOLATION_CHECK_TIMEOUT):
         self.state_dir = Path(state_dir)
@@ -442,7 +477,7 @@ class BoardLauncher:
         self.config = config
         self.api_keys = api_keys
         self._listener_source = listener
-        self.listener: mcp.InternalListener | None = listener if isinstance(listener, mcp.InternalListener) else None
+        self.listener: rest.InternalListener | None = listener if isinstance(listener, rest.InternalListener) else None
         self.environment = dict(os.environ if environment is None else environment)
         self.clock = clock
 
@@ -452,7 +487,7 @@ class BoardLauncher:
     def _home(self) -> omp_home.OmpHome:
         try:
             return prepare_board_home(self.state_dir, self.environment)
-        except (omp_home.OmpHomeError, OSError) as exc:
+        except (omp_home.OmpHomeError, DataDirError, OSError) as exc:
             raise BoardLaunchError("home_unavailable", str(exc)) from exc
 
     def _keep_logs(self, home: omp_home.OmpHome) -> None:
@@ -468,7 +503,7 @@ class BoardLauncher:
             raise BoardLaunchError("hub_db_unavailable", type(exc).__name__) from exc
 
     async def prepare_agent(self) -> AgentLaunch:
-        """Home, new system key, internal listener, overlay/``mcp.json`` and argv for one start."""
+        """Home and skill copy, new system key, internal listener, overlay and argv for one start."""
         omp = resolve_omp(self.environment)
         prompt = role_prompt(self.config)
         model = board_model(self.config)
@@ -485,10 +520,10 @@ class BoardLauncher:
         except OSError as exc:
             raise BoardLaunchError("internal_listener_failed", str(exc)) from exc
         try:
-            overlay = await self._blocking(write_board_files, self.state_dir, home, url)
+            overlay = await self._blocking(write_board_files, self.state_dir, home)
         except OSError as exc:
             raise BoardLaunchError("home_unavailable", str(exc)) from exc
-        env = board_environment(self.environment, home, issued.raw)
+        env = board_environment(self.environment, home, issued.raw, url)
         cwd = str(omp_home.environment_home(self.environment))
         return AgentLaunch(board_argv(omp, overlay, prompt, resume=resume, model=model), env, cwd, issued.key_id,
                            float(self.clock()))
@@ -515,7 +550,8 @@ class BoardLauncher:
         environment = {**started.env, **omp_home.withheld_user_values(hub_environment(self.environment))}
         result = launcher.check_isolation([item for item in started.argv if item != "--continue"],
                                           cwd=started.cwd, environment=environment, role=CHECK_ROLE,
-                                          allowed_skills=(), omp_version=version, timeout=self.check_timeout,
+                                          allowed_skills=(SKILL_NAME,), omp_version=version,
+                                          timeout=self.check_timeout,
                                           cancel=cancel)
         verdict = isolation_failure(result)
         cleanup = result.get("cleanup") or {}
@@ -533,8 +569,9 @@ class BoardLauncher:
             _log(f"Board event not recorded: {type(exc).__name__}: {exc}")
 
     async def check_agent(self, started: AgentLaunch, cancel: threading.Event | None = None) -> str | None:
-        """The start-up isolation check (``launcher.check_isolation``): None when only Hub MCP tools are visible,
-        else why the Board agent must end (``isolation_failed`` detail). Fails closed when the check cannot run."""
+        """The start-up isolation check (``launcher.check_isolation``): None when nothing leaks and ``wb-inbox`` is
+        visible, else why the Board agent must end (``isolation_failed`` detail). Fails closed when the check cannot
+        run."""
         return await self._blocking(self._check, started, cancel)
 
     async def close(self) -> None:

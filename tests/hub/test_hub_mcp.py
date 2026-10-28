@@ -20,7 +20,6 @@ import uuid
 REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO / 'src'))
 
-from support.mcp_client import McpClient  # noqa: E402
 from support.mcp_hub import McpHub  # noqa: E402
 from workbench.hub import auth, mcp  # noqa: E402
 from workbench.hub.inbox.service import Principal  # noqa: E402
@@ -112,16 +111,8 @@ class LastUsedTests(McpCase):
         self.hub.client(key).initialize()
         self.assertTrue(wait_until(lambda: self.hub.key_row(key)[0] == self.hub.now[0]), self.hub.key_row(key))
 
-    def test_internal_listener_writes_last_use(self):
-        own = auth.ApiKeyStore(self.hub.db)  # its own pending last-use map: only its loop can write it
-        listener = mcp.InternalListener(own, self.hub.server, clock=lambda: self.hub.now[0],
-                                        flush_interval=0.2)
-        self.hub.run(listener.start())
-        self.addCleanup(lambda: self.hub.run(listener.stop()))
-        key = self.hub.keys.rotate_system_key(now=self.hub.now[0]).raw
-        self.hub.now[0] += 5.0
-        McpClient('127.0.0.1', listener.port, key).initialize()
-        self.assertTrue(wait_until(lambda: self.hub.key_row(key)[0] == self.hub.now[0]), self.hub.key_row(key))
+    # test_internal_listener_writes_last_use: the internal listener serves REST since WBX-B5; moved to
+    # ``test_hub_rest_internal.py`` ``InternalLastUsedTests``.
 
 
 class _SlowFlush:

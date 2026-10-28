@@ -151,15 +151,16 @@ class Hub:
         self.inbox = InboxService(on_committed=lambda event: self.dispatcher.committed(event),
                                   backend_running=self._backend_running, cancel_port=backend_port.cancel_port)
         self.dispatcher = Dispatcher(self.inbox, self._dispatch_targets)
-        # TI-05: ``/mcp`` on the web listener (the Board agent's internal listener reuses it, TI-16)
+        # TI-05: ``/mcp`` on the web listener; its processing layer also serves ``/api/v1/`` there and on the Board
+        # agent's internal listener (WBX-B5)
         self.mcp = mcp.McpServer(self.inbox, projects=self._mcp_projects)
         # Verified backend connections by project id (one each): outside ``tasks`` and its limit (hub_v1).
         self.backend_tasks: dict[str, asyncio.Task] = {}
         self.web: WebListener | None = None
         # TI-16: the Board agent set (None while ``hub.toml`` is invalid or web is disabled) and its internal
-        # MCP listener (started lazily by the set, so it never starts without one).
+        # REST listener (WBX-B5; started lazily by the set, so it never starts without one; renamed in WBX-B8).
         self.board = None
-        self.internal_mcp: mcp.InternalListener | None = None
+        self.internal_mcp: rest.InternalListener | None = None
         # 2026-10-27 ``wb hub reload``: what the running config came from, and the last refused reload.
         self.config_environment = None
         self.config_info: dict = {}
@@ -201,9 +202,9 @@ class Hub:
             raise RuntimeError("web services are not open")
         return services
 
-    def _internal_listener(self) -> mcp.InternalListener:
+    def _internal_listener(self) -> rest.InternalListener:
         if self.internal_mcp is None:
-            self.internal_mcp = mcp.InternalListener(self._web_services().api_keys, self.mcp)
+            self.internal_mcp = rest.InternalListener(self._web_services().api_keys, self.mcp)
         return self.internal_mcp
 
     def _board_audit(self, event: str, actor: str, address: str | None, detail: dict) -> None:

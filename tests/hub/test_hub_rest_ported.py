@@ -18,7 +18,7 @@ from __future__ import annotations
 # test_hub_mcp.py (84: 40 C, 41 P, 3 N)
 #   AuthTests (7) C: R AuthTests (all 7 incl. GET/DELETE), I MixedAuth/AuthOracle.
 #   LastUsedTests: external listener P: P2 LastUsedPortTests.test_a_rest_call_writes_the_last_use;
-#                  internal listener N: the loopback /mcp listener (REST internal listener is WBX-B5).
+#                  internal listener: WBX-B5 test_hub_rest_internal.py InternalLastUsedTests.
 #   FlushShutdownTests P: P2 ShutdownPortTests. ToolListTests: requester_sees_no_edit_tool C: R EditorOnlyTests;
 #                  schema_closed C: R TransportTests unknown fields; no_tool_reaches_links C: I RealHubRoutesTests
 #                  + R CatchAllTests; editor_and_board_agent_see_all_nine N: tools/list; unknown_tool_name N: tools/call.
@@ -57,7 +57,8 @@ from __future__ import annotations
 #   Framing (16): content_type, body_over_256, chunked, body_at_limit, foreign_origin, foreign_host, errors_do_not_name_paths C: R TransportTests/
 #                  OriginHostTests, I LimitTests; the other 9 N: JSON-RPC codes, batch, notifications, Accept (REST has no Accept rule).
 #   Executor (3): login_answers_while_saturated, eight_parallel P: P2 ExecutorPortTests; busy C: R BusyTests, I BusyFairnessTests.
-#   PoolShutdown (2) P: P2 PoolShutdownPortTests.  InternalListener (9) N: the /mcp loopback listener; WBX-B5 carries them as REST internal listener tests.
+#   PoolShutdown (2) P: P2 PoolShutdownPortTests.  InternalListener (9): carried over by WBX-B5 to test_hub_rest_internal.py
+#                  InternalListenerTests (REST on the Board agent's internal listener; plus SystemKeyOnlyTests, WBX-D24).
 
 import json
 from pathlib import Path

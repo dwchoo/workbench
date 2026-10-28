@@ -9,20 +9,26 @@ Order per request: Origin (403) -> API key (401) -> method (405 + ``Allow``) -> 
 
 Wiring: the external listener serves it with ``create_app(services, routes=[routes(api)])``; every route is
 ``own_auth``, so the web middleware's allow_from, Host and (state-change) Origin checks run first and the session
-check is skipped.
+check is skipped. The Board agent's loopback listener is :class:`InternalListener` (``/api/v1/`` only, ``Host`` fixed
+to ``127.0.0.1:<port>``, the system key only; WBX-B5).
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+import asyncio
+from dataclasses import dataclass, field
 import json
 import sys
+import time
 from typing import Callable
 
 from aiohttp import web
 
+from . import auth
 from .inbox.limits import InboxError
 from .inbox_api import TOOLS, WWW_AUTHENTICATE, InboxApi, ParseError, error_payload, parse_json
-from .web.middleware import BODY_LIMIT, expected_origin, origin_of_header, own_auth
+from .web.app import OriginPolicy, flush_last_used
+from .web.middleware import (BODY_LIMIT, SERVICES, _listening_port as listening_port, body_limit, expected_origin,
+                             origin_of_header, own_auth, security_headers)
 
 PREFIX = "/api/v1"
 
@@ -153,16 +159,19 @@ def _read_query(request: web.Request, tool: str, names: tuple) -> dict:
 
 
 class RestApi:
-    """The ``/api/v1/`` handlers over one :class:`InboxApi` (shared with ``/mcp`` during WBX expand)."""
+    """The ``/api/v1/`` handlers over one :class:`InboxApi` (shared with ``/mcp`` during WBX expand).
+    ``system_only``: only the system key authenticates (the Board agent's internal listener, WBX-D24)."""
 
-    def __init__(self, api: InboxApi):
+    def __init__(self, api: InboxApi, *, system_only: bool = False):
         self.api = api
+        self.system_only = system_only
 
     async def _principal(self, request: web.Request):
         """Origin (403) then the API key (401): the principal, or the refusal to answer with."""
         if not origin_ok(request):
             return error_response("origin_mismatch", ORIGIN_MESSAGE, status=403)
-        principal = await self.api.authenticate(request)
+        principal = await (self.api.authenticate(request, system_only=True) if self.system_only
+                           else self.api.authenticate(request))
         return unauthorized() if principal is None else principal
 
     def unknown(self):
@@ -232,9 +241,9 @@ RESOURCES: dict[str, dict[str, Endpoint]] = {
 }
 
 
-def routes(api: InboxApi) -> Callable[[web.Application], None]:
+def routes(api: InboxApi, *, system_only: bool = False) -> Callable[[web.Application], None]:
     """``create_app(services, routes=[routes(api)])``: the ``/api/v1/`` resources (own API key auth)."""
-    rest = RestApi(api)
+    rest = RestApi(api, system_only=system_only)
     handlers = {path: rest.resource(methods) for path, methods in RESOURCES.items()}
     unknown = rest.unknown()
 
@@ -244,3 +253,92 @@ def routes(api: InboxApi) -> Callable[[web.Application], None]:
         app.router.add_route("*", PREFIX, unknown)  # ``/api/v1`` itself is an unknown REST path too
         app.router.add_route("*", PREFIX + "/{tail:.*}", unknown)  # after the resources: they match first
     return register
+
+
+# --- Board agent internal listener (web-board-ux SPEC "Board agent 전환", WBX-D11/D24; moved from ``mcp``) -------
+
+INTERNAL_HOST = "127.0.0.1"
+FLUSH_INTERVAL = 10.0  # SPEC API key: last use written every 10 s
+INTERNAL_MAX_CONNECTIONS = 16  # the Board agent is one client; more is closed at once (security review fix 5)
+
+
+@dataclass(slots=True)
+class _InternalServices:
+    """What the REST handlers read from ``app[SERVICES]``: the origin policy, the key store and the clock."""
+
+    api_keys: auth.ApiKeyStore
+    clock: Callable[[], float]
+    flush_interval: float = FLUSH_INTERVAL
+    policy: OriginPolicy = field(default_factory=lambda: OriginPolicy(INTERNAL_HOST))
+
+    async def blocking(self, function, *args):
+        return await asyncio.get_running_loop().run_in_executor(None, function, *args)
+
+
+@web.middleware
+async def _internal_host(request: web.Request, handler):
+    """Only ``Host: 127.0.0.1:<this port>`` (no ``localhost``, no other name): 421 otherwise."""
+    hosts = request.headers.getall("Host", [])
+    port = listening_port(request)
+    if port is None or hosts != [f"{INTERNAL_HOST}:{port}"]:
+        return web.Response(status=421, text="misdirected_request")
+    try:
+        return await handler(request)
+    except ConnectionResetError:  # the Board agent ended mid-request (restart, stop): one line, no traceback
+        print("[workbench] board rest: connection reset by the client during a request", file=sys.stderr, flush=True)
+        return web.Response(status=400, text="connection_reset")
+
+
+def create_internal_app(api_keys: auth.ApiKeyStore, api: InboxApi, *, clock: Callable[[], float] = time.time,
+                        flush_interval: float = FLUSH_INTERVAL) -> web.Application:
+    """``/api/v1/`` only (every other path 404: no ``/mcp``, ``/skill/`` or pages), Host fixed, the web listener's
+    body limit and headers, and only the system key (another valid key or a previous system key is 401)."""
+    app = web.Application(middlewares=[_internal_host, body_limit], client_max_size=BODY_LIMIT)
+    app[SERVICES] = _InternalServices(api_keys, clock, flush_interval)
+    app.on_response_prepare.append(security_headers)
+    app.cleanup_ctx.append(flush_last_used)
+    routes(api, system_only=True)(app)
+    return app
+
+
+class InternalListener:
+    """The Board agent's loopback REST listener on ``127.0.0.1:0`` (the Board set starts and stops it), at most
+    ``max_connections`` connections at once (the web listener's :class:`~workbench.hub.web.listener.GuardedSite`).
+    ``allow_from`` never applies here: the internal app has no peer check (SPEC "Board agent 전환")."""
+
+    def __init__(self, api_keys: auth.ApiKeyStore, api: InboxApi, *, clock: Callable[[], float] = time.time,
+                 flush_interval: float = FLUSH_INTERVAL, max_connections: int = INTERNAL_MAX_CONNECTIONS):
+        self.api_keys, self.api, self.clock, self.flush_interval = api_keys, api, clock, flush_interval
+        self.max_connections = max_connections
+        self.runner: web.AppRunner | None = None
+        self.port: int | None = None
+        self._lock = asyncio.Lock()  # one start/stop at a time: a second start never opens a second port
+
+    @property
+    def url(self) -> str | None:
+        """The bare origin ``http://127.0.0.1:<port>`` (the Board agent's ``WB_HUB_URL``), None while stopped."""
+        return None if self.port is None else f"http://{INTERNAL_HOST}:{self.port}"
+
+    async def start(self) -> str:
+        async with self._lock:
+            if self.runner is not None:
+                return self.url
+            app = create_internal_app(self.api_keys, self.api, clock=self.clock,
+                                      flush_interval=self.flush_interval)
+            runner = web.AppRunner(app, access_log=None, handle_signals=False)
+            await runner.setup()
+            from .web.listener import GuardedSite
+            try:
+                await GuardedSite(runner, INTERNAL_HOST, 0, max_connections=self.max_connections).start()
+            except BaseException:
+                await runner.cleanup()
+                raise
+            self.runner, self.port = runner, runner.addresses[0][1]
+            return self.url
+
+    async def stop(self) -> None:
+        async with self._lock:
+            runner, self.runner, self.port = self.runner, None, None
+            if runner is not None:
+                await runner.cleanup()
+                await asyncio.get_running_loop().run_in_executor(None, self.api_keys.flush)  # last uses

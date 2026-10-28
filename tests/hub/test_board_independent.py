@@ -5,7 +5,9 @@ BRIEF decisions (D-17/D-18/D-24..D-26/D-33/D-34), never from the product helpers
 
 Seams: a fake ``omp`` (``fixtures/fake_omp_board.py``) behind a small sh wrapper of this file (fd listing, a
 SIGHUP/SIGTERM-ignoring background child), a real ``wb _hub --foreground`` in a temp HOME/XDG sandbox, real PTYs,
-``/proc`` for pid/ppid/session/fd/environ, and the real internal MCP listener over HTTP.
+``/proc`` for pid/ppid/session/fd/environ, and the real internal listener over HTTP (REST since WBX-B5: the system
+key is ``WB_API_KEY``, the listener's origin ``WB_HUB_URL``, no ``mcp.json``; expected values from the web-board-ux
+SPEC "Board agent 전환").
 
 Hygiene: every process of a test carries ``WB_TI16_MARK=<token>`` in its environment, so a leftover is found by
 scanning ``/proc/*/environ`` and ended by (pid, start ticks) through a pidfd; a leftover on a normal path fails
@@ -50,10 +52,9 @@ import test_update_hub as maintenance_hub  # noqa: E402
 from test_update_hub import Tty  # noqa: E402
 FAKE_OMP = Path(__file__).resolve().parent / 'fixtures' / 'fake_omp_board.py'
 MARK = 'WB_TI16_MARK'
-KEY_ENV = 'WB_BOARD_MCP_KEY'
+KEY_ENV = 'WB_API_KEY'
+URL_ENV = 'WB_HUB_URL'
 CANARY = ('WB_TI16_USER_CANARY', 'user-owned-value')
-INIT_BODY = json.dumps({'jsonrpc': '2.0', 'id': 1, 'method': 'initialize', 'params': {
-    'protocolVersion': '2025-06-18', 'capabilities': {}, 'clientInfo': {'name': 'ti16', 'version': '1'}}})
 
 
 # --- /proc helpers (expected values come from the kernel) ---------------------------------------------
@@ -144,14 +145,13 @@ def read_pids(*paths: Path) -> list[int]:
 
 # --- HTTP to the internal listener ----------------------------------------------------------------------
 
-def mcp_status(port: int, key: str | None, *, host: str | None = None, path: str = '/mcp') -> int:
-    headers = {'Content-Type': 'application/json', 'Accept': 'application/json, text/event-stream',
-               'Host': host or f'127.0.0.1:{port}'}
+def rest_status(port: int, key: str | None, *, host: str | None = None, path: str = '/api/v1/requests') -> int:
+    headers = {'Host': host or f'127.0.0.1:{port}'}
     if key is not None:
         headers['Authorization'] = f'Bearer {key}'
     connection = http.client.HTTPConnection('127.0.0.1', port, timeout=10)
     try:
-        connection.request('POST', path, body=INIT_BODY, headers=headers)
+        connection.request('GET', path, headers=headers)
         response = connection.getresponse()
         response.read()
         return response.status
@@ -160,7 +160,7 @@ def mcp_status(port: int, key: str | None, *, host: str | None = None, path: str
 
 
 def port_of(url: str) -> int:
-    match = re.fullmatch(r'http://127\.0\.0\.1:(\d+)/mcp', url)
+    match = re.fullmatch(r'http://127\.0\.0\.1:(\d+)', url)
     assert match, url
     return int(match.group(1))
 
@@ -233,27 +233,23 @@ class OverlayIndependentTests(LauncherCase):
     def mcp_file(self) -> Path:
         return self.box.state / 'board-agent' / 'omp-root' / 'agent' / 'mcp.json'
 
-    def test_overlay_re_enables_only_native_and_leaves_every_other_provider_and_project_mcp_off(self):
+    def test_overlay_keeps_every_provider_and_project_mcp_off_and_names_only_the_skill_copy(self):  # WBX-B5
         self.prepare()
         isolation = isolation_disabled()
         self.assertIn('native', isolation)  # the premise: isolation turns everything off, native included
         overlay = json.loads(self.overlay().read_text())
-        self.assertEqual(sorted(overlay['disabledProviders']), sorted(set(isolation) - {'native'}))
+        self.assertEqual(sorted(overlay['disabledProviders']), sorted(isolation))  # native stays off now
         self.assertEqual(len(overlay['disabledProviders']), len(set(overlay['disabledProviders'])))
         self.assertIs(overlay['mcp']['enableProjectConfig'], False)
         self.assertEqual(set(overlay['mcp']), {'enableProjectConfig'})  # no servers declared in the overlay
         self.assertTrue(set(overlay) <= {'disabledProviders', 'mcp', 'skills', 'task', 'memory', 'memories'})
-        self.assertEqual(overlay['skills'], {'customDirectories': [], 'includeSkills': [], 'ignoredSkills': []})
+        self.assertEqual(overlay['skills'], {'customDirectories': [str(self.box.state / 'board-agent' / 'skills')],
+                                             'includeSkills': ['wb-inbox'], 'ignoredSkills': []})
 
-    def test_mcp_json_declares_exactly_the_hub_server_on_the_internal_listener(self):
+    def test_no_mcp_json_and_the_agent_learns_the_internal_origin_from_its_environment(self):  # WBX-B5
         started = self.prepare()
-        config = json.loads(self.mcp_file().read_text())
-        self.assertEqual(list(config), ['mcpServers'])
-        self.assertEqual(list(config['mcpServers']), ['workbench-hub'])
-        self.assertEqual(config['mcpServers']['workbench-hub'], {
-            'type': 'http', 'url': f'http://127.0.0.1:{self.listener.port}/mcp',
-            'headers': {'Authorization': 'Bearer ${WB_BOARD_MCP_KEY}'}})
-        self.assertNotIn(started.env[KEY_ENV], self.mcp_file().read_text())
+        self.assertFalse(os.path.lexists(self.mcp_file()))
+        self.assertEqual(started.env[URL_ENV], f'http://127.0.0.1:{self.listener.port}')
 
     def test_the_users_own_mcp_config_and_omp_files_never_reach_the_board_home(self):
         user_agent = self.box.home / '.omp' / 'agent'
@@ -281,26 +277,24 @@ class OverlayIndependentTests(LauncherCase):
             if path.is_file() and not path.is_symlink():
                 self.assertNotIn(key.encode(), path.read_bytes(), f'raw key written to {path}')
         self.assertEqual(stat.S_IMODE(self.overlay().stat().st_mode), 0o600)
-        self.assertEqual(stat.S_IMODE(self.mcp_file().stat().st_mode), 0o600)
+        self.assertFalse(os.path.lexists(self.mcp_file()))
 
     def test_stale_or_hostile_files_are_replaced_at_every_start_never_written_through(self):
         self.prepare()
         victim = self.box.root / 'victim.txt'
         victim.write_text('untouched\n')
-        self.mcp_file().unlink()
-        self.mcp_file().symlink_to(victim)
+        self.mcp_file().symlink_to(victim)  # an older version's file, or a planted link
         self.overlay().write_text('{"disabledProviders": []}\n')
         self.overlay().chmod(0o644)
         self.prepare()
         self.assertEqual(victim.read_text(), 'untouched\n')
-        self.assertFalse(self.mcp_file().is_symlink())
-        self.assertEqual(stat.S_IMODE(self.mcp_file().stat().st_mode), 0o600)
+        self.assertFalse(os.path.lexists(self.mcp_file()))  # WBX-B5: removed, never rewritten
         self.assertEqual(stat.S_IMODE(self.overlay().stat().st_mode), 0o600)
-        self.assertEqual(json.loads(self.overlay().read_text())['disabledProviders'][0], 'omp-managed')
+        self.assertEqual(json.loads(self.overlay().read_text())['disabledProviders'], isolation_disabled())
 
     def probe(self, port, key, **kw):
         async def call():
-            return await asyncio.get_running_loop().run_in_executor(None, lambda: mcp_status(port, key, **kw))
+            return await asyncio.get_running_loop().run_in_executor(None, lambda: rest_status(port, key, **kw))
         return self.arun(call())
 
     def test_every_start_rotates_the_key_and_the_listener_refuses_the_old_one_over_http(self):
@@ -316,7 +310,7 @@ class OverlayIndependentTests(LauncherCase):
         self.assertEqual(self.probe(port, None), 401)
         self.assertEqual(self.probe(port, 'wbk_' + 'x' * 40), 401)
 
-    def test_the_internal_listener_is_loopback_only_fixed_host_and_serves_only_mcp(self):
+    def test_the_internal_listener_is_loopback_only_fixed_host_and_serves_only_rest(self):  # WBX-B5: was MCP
         started = self.prepare()
         port, key = self.listener.port, started.env[KEY_ENV]
         self.assertEqual([item for item in tcp_listening(os.getpid()) if item[1] == port], [('127.0.0.1', port)])
@@ -324,7 +318,7 @@ class OverlayIndependentTests(LauncherCase):
         self.assertEqual(self.probe(port, key, host=f'localhost:{port}'), 421)
         self.assertEqual(self.probe(port, key, host='127.0.0.1:1'), 421)
         self.assertEqual(self.probe(port, key, host=f'evil.example:{port}'), 421)
-        for path in ('/', '/board', '/login', '/static/x.js', '/mcp/x'):
+        for path in ('/', '/board', '/login', '/static/x.js', '/mcp', '/mcp/x', '/skill/'):
             self.assertEqual(self.probe(port, key, path=path), 404, path)
 
 
@@ -766,11 +760,9 @@ class LiveBoardTests(unittest.TestCase):
         self.assertEqual(argv[argv.index('--append-system-prompt') + 1],
                          (REPO / 'omp_bridge' / 'board' / 'ROLE.md').read_text())
         overlay = json.loads(record['overlay'])
-        self.assertEqual(sorted(overlay['disabledProviders']), sorted(set(isolation_disabled()) - {'native'}))
-        mcp_json = json.loads(record['mcp_json'])
-        self.assertEqual(list(mcp_json['mcpServers']), ['workbench-hub'])
-        server = mcp_json['mcpServers']['workbench-hub']
-        self.assertEqual(server['headers'], {'Authorization': 'Bearer ${WB_BOARD_MCP_KEY}'})
+        self.assertEqual(sorted(overlay['disabledProviders']), sorted(isolation_disabled()))
+        self.assertIsNone(record['mcp_json'])  # WBX-B5: no MCP server file
+        self.assertEqual(record['skills'], ['wb-inbox'])
         env = record['env']
         self.assertEqual(env['HOME'], str(home))
         self.assertEqual(env['PI_CODING_AGENT_DIR'], str(board_root / 'agent'))
@@ -779,7 +771,7 @@ class LiveBoardTests(unittest.TestCase):
         self.assertEqual(os.readlink(board_root / 'agent' / 'agent.db'), str(rig.user_store))
         for directory in (rig.state / 'board-agent', board_root):
             self.assertEqual(stat.S_IMODE(directory.stat().st_mode), 0o700)
-        port = port_of(server['url'])
+        port = port_of(env[URL_ENV])
         hub_listeners = tcp_listening(rig.hub.pid)
         self.assertIn(('127.0.0.1', port), hub_listeners)
         self.assertTrue(all(host.startswith('127.') for host, _ in hub_listeners), hub_listeners)
@@ -791,8 +783,8 @@ class LiveBoardTests(unittest.TestCase):
         first = rig.records('tty')[0]
         first_key = first['env'][KEY_ENV]
         self.assertTrue(first_key.startswith('wbk_'))
-        port = port_of(json.loads(first['mcp_json'])['mcpServers']['workbench-hub']['url'])
-        self.assertEqual(mcp_status(port, first_key), 200)
+        port = port_of(first['env'][URL_ENV])
+        self.assertEqual(rest_status(port, first_key), 200)
         for path, data in rig.every_file(exclude=(rig.record,)):
             self.assertNotIn(first_key.encode(), data, f'raw key found in {path}')
         for pid in (rig.hub.pid, pids['agent'], pids['shell']):
@@ -807,10 +799,10 @@ class LiveBoardTests(unittest.TestCase):
         second = rig.records('tty')[-1]
         second_key = second['env'][KEY_ENV]
         self.assertNotEqual(first_key, second_key)
-        self.assertEqual((mcp_status(port, first_key), mcp_status(port, second_key)), (401, 200))
+        self.assertEqual((rest_status(port, first_key), rest_status(port, second_key)), (401, 200))
         for path, data in rig.every_file(exclude=(rig.record,)):
             self.assertNotIn(second_key.encode(), data, f'raw key found in {path}')
-        self.assertNotIn(second_key, second['mcp_json'])
+        self.assertIsNone(second['mcp_json'])
         # a new Hub: another key again; every earlier key is refused by the new listener
         self.assertEqual(rig.cli('hub', 'stop', '--yes').returncode, 0)
         self.assertEqual(rig.hub.wait(timeout=30), 0)
@@ -821,9 +813,9 @@ class LiveBoardTests(unittest.TestCase):
         rig.wait_state('agent', 'running')
         third = rig.records('tty')[-1]
         third_key = third['env'][KEY_ENV]
-        new_port = port_of(json.loads(third['mcp_json'])['mcpServers']['workbench-hub']['url'])
+        new_port = port_of(third['env'][URL_ENV])
         self.assertEqual(len({first_key, second_key, third_key}), 3)
-        self.assertEqual([mcp_status(new_port, key) for key in (first_key, second_key, third_key)], [401, 401, 200])
+        self.assertEqual([rest_status(new_port, key) for key in (first_key, second_key, third_key)], [401, 401, 200])
         logs = [path.read_text(errors='replace') for path in rig.box.base.glob('hub-*.log')]
         hub_log = rig.state / 'hub.log'
         logs.append(hub_log.read_text(errors='replace') if hub_log.exists() else '')
@@ -840,7 +832,8 @@ class LiveBoardTests(unittest.TestCase):
         self.assertEqual(env['XDG_STATE_HOME'], str(rig.box.state_home))  # the user's real XDG, not a board one
         self.assertEqual(env[CANARY[0]], CANARY[1])
         self.assertEqual(env['TERM'], 'xterm-256color')
-        for name in (KEY_ENV, 'PI_CONFIG_DIR', 'PI_CODING_AGENT_DIR', 'WORKBENCH_DATA_DIR'):
+        for name in (KEY_ENV, URL_ENV, 'WB_BOARD_MCP_KEY', 'PI_CONFIG_DIR', 'PI_CODING_AGENT_DIR',
+                     'WORKBENCH_DATA_DIR'):
             self.assertNotIn(name, env)
         flat = '\n'.join(env.values())
         self.assertNotIn(PASSWORD, flat)
@@ -895,7 +888,7 @@ class LiveBoardTests(unittest.TestCase):
         self.assertEqual(rig.restart('agent'), 303)
         agent = rig.wait_state('agent', 'isolation_failed')
         self.assertIn('mcp__user_private_tool', agent['detail'])
-        self.assertNotIn('mcp__workbench_hub_inbox_list', agent['detail'])
+        self.assertIn('mcp__workbench_hub_inbox_list', agent['detail'])  # WBX-B5: every MCP tool is a leak
         self.assertFalse(alive(agent['pid']))
         self.assertEqual(rig.board()['shell']['pid'], shell['pid'])
         self.assertTrue(alive(shell['pid']))

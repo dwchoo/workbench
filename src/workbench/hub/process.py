@@ -264,10 +264,12 @@ def stop_hub(ask: Callable[[list], bool], layout: HubLayout | None = None) -> St
 READY_TIMEOUT = 5.0
 REPARENT_TIMEOUT = 2.0
 READY_STARTED, READY_LOST, READY_MANAGED = b"R", b"L", b"M"
-# Project/session-only variables the per-user Hub must not inherit (HB-T04). ``WB_BOARD_MCP_KEY`` is the Board
-# agent's system key (``board.launch.KEY_ENV``): a Hub or a Board shell started from a Board terminal never gets it.
+# Project/session-only variables the per-user Hub must not inherit (HB-T04). ``WB_API_KEY``/``WB_HUB_URL`` are the
+# Board agent's system key and internal URL (``board.launch.KEY_ENV``/``URL_ENV``, WBX-D28): a user shell's own values
+# never reach a spawned Hub, a Board shell or a Hub-launched backend. ``WB_BOARD_MCP_KEY`` is the previous version's
+# Board key, kept for a Hub started from an older Board terminal.
 PROJECT_ENV = frozenset({"WORKBENCH_DATA_DIR", "WORKBENCH_AGENT_ROLES", "WORKBENCH_OMP_RUNTIME_ROOT",
-                         "WB_BOARD_MCP_KEY"})
+                         "WB_API_KEY", "WB_HUB_URL", "WB_BOARD_MCP_KEY"})
 PROJECT_ENV_PREFIXES = ("WORKBENCH_G3_",)
 
 # spawn_hub outcomes (also HubStart failure reasons)

@@ -136,9 +136,9 @@ class FailurePathTests(SetCase):
 
     def test_the_launch_repr_never_shows_the_key(self):
         started = self.prepare()
-        self.assertNotIn(started.env['WB_BOARD_MCP_KEY'], repr(started))
+        self.assertNotIn(started.env['WB_API_KEY'], repr(started))
 
-    def test_a_reset_mcp_connection_is_one_log_line_not_a_traceback(self):
+    def test_a_reset_rest_connection_is_at_most_one_log_line_not_a_traceback(self):  # WBX-B5: was /mcp
         import contextlib
         import io
         import socket
@@ -148,17 +148,18 @@ class FailurePathTests(SetCase):
         err = io.StringIO()
         with contextlib.redirect_stderr(err), self.assertNoLogs('aiohttp.server', level='ERROR'):
             sock = socket.create_connection(('127.0.0.1', port))
-            sock.sendall((f'POST /mcp HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nContent-Type: application/json\r\n'
-                          f'Accept: application/json, text/event-stream\r\n'
-                          f'Authorization: Bearer {started.env["WB_BOARD_MCP_KEY"]}\r\n'
-                          'Content-Length: 1000\r\n\r\n{"jsonrpc"').encode())
+            sock.sendall((f'POST /api/v1/requests HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\n'
+                          f'Content-Type: application/json\r\n'
+                          f'Authorization: Bearer {started.env["WB_API_KEY"]}\r\n'
+                          'Content-Length: 1000\r\n\r\n{"project_id"').encode())
             self.spin(0.3)
             sock.setsockopt(socket.SOL_SOCKET, socket.SO_LINGER, struct.pack('ii', 1, 0))
             sock.close()  # RST while the body is being read
             self.spin(0.5)
         self.assertNotIn('Traceback', err.getvalue())
-        self.assertEqual(len([line for line in err.getvalue().splitlines() if 'reset' in line.lower()]), 1,
-                         err.getvalue())
+        # REST reads the body itself and answers a reset body as 400 without a line; the listener's own catch logs one
+        self.assertLessEqual(len([line for line in err.getvalue().splitlines() if 'reset' in line.lower()]), 1,
+                             err.getvalue())
 
 
 class ShellChannelTests(SetCase):
@@ -173,7 +174,7 @@ class ShellChannelTests(SetCase):
         self.assertEqual(os.readlink(f'/proc/{pid}/cwd'), str(self.box.home))
         env = environ(pid)
         self.assertEqual((env['HOME'], env['TERM']), (str(self.box.home), 'xterm-256color'))
-        for name in ('WB_BOARD_MCP_KEY', 'PI_CONFIG_DIR', 'PI_CODING_AGENT_DIR'):
+        for name in ('WB_API_KEY', 'WB_HUB_URL', 'WB_BOARD_MCP_KEY', 'PI_CONFIG_DIR', 'PI_CODING_AGENT_DIR'):
             self.assertNotIn(name, env)
         self.assertIn(('board_start', 'owner', {'channel': 'shell', 'pid': pid, 'reason': 'first_open'}),
                       self.audits)

@@ -3,7 +3,7 @@
 Derived from the contract only (not from the implementation):
 
 * ``enabled`` must be a TOML bool, default false (also with no ``hub.toml``);
-* while disabled the Hub owns no TCP/UDP socket, no child process (no Board agent set, no internal MCP
+* while disabled the Hub owns no TCP/UDP socket, no child process (no Board agent set, no internal REST
   listener), whatever else happens (password set after the start, ``wb hub tls``, an edited ``hub.toml``);
 * the rest of the Hub (status, list) keeps working; ``hub.toml`` is read once at start;
 * ``wb hub status`` says ``web: disabled`` with a hint, ``--json`` gives ``{state, config}``;
@@ -178,7 +178,7 @@ class InProcessDisabledListenerTests(unittest.IsolatedAsyncioTestCase):
 class InProcessHubDisabledTests(unittest.TestCase):
     """``Hub.load_web`` with a real ``hub.toml`` (a scratch ``XDG_CONFIG_HOME``): what the Hub builds at start.
 
-    The Board agent set and its internal MCP listener are not visible through ``hub_v1`` while nothing ever
+    The Board agent set and its internal REST listener are not visible through ``hub_v1`` while nothing ever
     started them, so their absence is pinned here at the Hub object."""
 
     def hub(self, toml: str | None):

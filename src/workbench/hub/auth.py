@@ -755,8 +755,9 @@ class ApiKeyStore:
         """
         return self._insert(SYSTEM_KEY_NAME, "editor", {"all": True}, None, now, True, replace_system=True)
 
-    def verify(self, raw: str, now: float) -> ApiKeyPrincipal:
-        """The key's principal, or :class:`ApiKeyRefused`. No rate limit."""
+    def verify(self, raw: str, now: float, *, system_only: bool = False) -> ApiKeyPrincipal:
+        """The key's principal, or :class:`ApiKeyRefused`. No rate limit. ``system_only`` (the Board agent's internal
+        listener, WBX-D24) refuses every key but the system key as ``not_system``, before its last use is marked."""
         parts = _split_key(raw)
         if parts is None:
             raise ApiKeyRefused("malformed")
@@ -772,6 +773,8 @@ class ApiKeyStore:
             raise ApiKeyRefused("revoked")
         if expires_at is not None and not now < expires_at:
             raise ApiKeyRefused("expired")
+        if system_only and not system:
+            raise ApiKeyRefused("not_system")
         with self._pending_lock:
             self._last_used[key_id] = max(now, self._last_used.get(key_id, now))
         return ApiKeyPrincipal(key_id, name, grade, json.loads(scope_json), bool(system))

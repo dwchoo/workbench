@@ -178,14 +178,14 @@ class SafetyTests(ArchiveCase):
         self.dst.symlink_to(outside)
         self.plant('omp.2026-10-01.5.log', 'x\n')
         launched = self.prepare()  # diagnostics must never stop the Board
-        self.assertIn('WB_BOARD_MCP_KEY', launched.env)
+        self.assertIn('WB_API_KEY', launched.env)
         self.assertEqual(list(outside.iterdir()), [])
 
     def test_an_archive_path_that_is_a_file_does_not_block_a_start(self):
         self.dst.write_text('not a directory\n')
         self.plant('omp.2026-10-01.5.log', 'x\n')
         launched = self.prepare()
-        self.assertIn('WB_BOARD_MCP_KEY', launched.env)
+        self.assertIn('WB_API_KEY', launched.env)
 
     def test_a_failing_write_does_not_block_a_start(self):
         self.plant('omp.2026-10-01.5.log', 'x\n')
@@ -198,13 +198,13 @@ class SafetyTests(ArchiveCase):
 
         with mock.patch.object(launch, 'write_private_bytes', full_disk):
             launched = self.prepare()
-        self.assertIn('WB_BOARD_MCP_KEY', launched.env)
+        self.assertIn('WB_API_KEY', launched.env)
 
     def test_an_unreadable_log_does_not_block_a_start_and_others_are_kept(self):
         path = self.plant('omp.2026-10-01.5.log', 'secret\n', mode=0)
         self.plant('omp.2026-10-01.6.log', 'fine\n')
         launched = self.prepare()
-        self.assertIn('WB_BOARD_MCP_KEY', launched.env)
+        self.assertIn('WB_API_KEY', launched.env)
         self.assertEqual(self.kept(), ['omp.2026-10-01.6.log'])
         os.chmod(path, 0o600)
 
@@ -231,11 +231,11 @@ class RedactionTests(ArchiveCase):
         return self.read('omp.2026-10-01.5.log').decode()
 
     def test_current_and_previous_system_keys_never_reach_the_archive(self):
-        first = self.prepare().env['WB_BOARD_MCP_KEY']
-        second = self.prepare().env['WB_BOARD_MCP_KEY']
+        first = self.prepare().env['WB_API_KEY']
+        second = self.prepare().env['WB_API_KEY']
         self.assertNotEqual(first, second)
         self.src.mkdir(parents=True, exist_ok=True)
-        text = ''.join(f'env WB_BOARD_MCP_KEY={key}\nheaders {{"x-api-key":"{key}"}}\nurl http://h/?k={key}&z=1\n'
+        text = ''.join(f'env WB_API_KEY={key}\nheaders {{"x-api-key":"{key}"}}\nurl http://h/?k={key}&z=1\n'
                        f'prefix:{key}:suffix\n' for key in (first, second))
         out = self.redacted(text)
         for key in (first, second):
@@ -330,7 +330,7 @@ class HardeningTests(ArchiveCase):
 WRAPPER = '''#!/bin/sh
 if [ "$1" != --version ]; then
   head -c 200000 /dev/zero | tr '\\0' E >&2
-  echo "TAIL-MARK-STDERR key=$WB_BOARD_MCP_KEY" >&2
+  echo "TAIL-MARK-STDERR key=$WB_API_KEY" >&2
 fi
 exec {python} {fake} "$@"
 '''
@@ -365,7 +365,7 @@ class ContractTests(LauncherCase):
         self.assertEqual((row['event'], row['isolation']), ('start', 'ok'))
         self.assertIn('at', row)
         text = events.read_text()
-        key = started.env['WB_BOARD_MCP_KEY']
+        key = started.env['WB_API_KEY']
         self.assertNotIn(key, text)
         self.assertNotIn(key.split('_', 2)[2], text)
 

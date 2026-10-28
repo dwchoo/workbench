@@ -33,6 +33,7 @@ Inconclusive 사유: login unavailable: OMP refused the prompt (No API key found
 - 첫 full 실행(15:40:55)은 probe 결함으로 거절 응답 뒤에도 agent_end를 300 s 기다렸다. 결함을 고치고(get_state 응답 뒤 prompt, 거절 시 즉시 종료) 15:49:13에 다시 실행했고 같은 거절이 나왔다. 아래 관측은 두 번째 실행이다.
 - **주의(사용자 확인 필요)**: 첫 1단계 실행(15:40:33 시작, 2.7 s)에서 `board_skill` 확인은 `get_login_providers`의 authenticated에 `anthropic`, `openai-codex`, `openai-codex-device`를 보였다. 몇 초 뒤 같은 실행의 `control_no_skill` 확인과 이후 모든 실행은 authenticated가 비어 있었다. 사용자 auth store `~/.omp/agent/agent.db`의 mtime이 15:40:35.347로, 그 첫 확인 OMP가 실행 중인 시각이다. 즉 probe가 띄운 OMP(제품 설계대로 `agent.db`가 사용자 store로의 symlink)가 사용자 store에 무언가를 썼고, 그 뒤 openai-codex 자격 증명이 보이지 않는다. 원인은 확인하지 않았다(store를 열지 않았다: `omp_home` 원칙과 자격 증명 비노출 규칙). 가능성: OAuth refresh 실패 뒤 차단/삭제(`auth_credential_blocks`·`DELETE FROM auth_credentials` 경로가 바이너리에 있음), 또는 다른 HOME(temp, 새 `install-id`)에 묶인 동작. `get_login_providers`는 check에서 optional이라 응답이 늦으면 비는 경우도 있으나, prompt 거절은 그것과 무관하다.
 - 사용자 영향: 같은 store를 쓰는 사용자 자신의 `omp`와 실행 중인 Workbench(manager/worker)의 openai-codex 로그인도 영향을 받았을 수 있다. 사용자가 `omp`에서 로그인 상태를 확인하고 필요하면 다시 로그인해야 한다. 그 전에는 이 probe의 2단계를 다시 돌리지 않는다.
+- 정정(2026-10-28): 위 "실행 중인 Workbench(manager/worker)"가 같은 store를 쓴다는 서술은 틀렸다. 그 Workbench(`~/wb-demo`)는 `agent.db` 사본을 썼다. 원인 추정·완화·재실행 조건은 [INCIDENT-20261027-omp-login.md](INCIDENT-20261027-omp-login.md)와 BRIEF WBX-D31~D33.
 
 ### WBX-B5가 쓸 구성(1단계로 확인된 부분)
 

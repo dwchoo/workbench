@@ -1,17 +1,17 @@
 {
   "schema_version": 1,
   "feature_id": "web-board-ux",
-  "revision": "p2",
+  "revision": "p3",
   "source_brief": {
     "path": "BRIEF.md",
-    "revision": "r0.2"
+    "revision": "r0.3"
   },
   "spec": {
     "path": "SPEC.md",
-    "revision": "s2"
+    "revision": "s3"
   },
   "status": "draft_requires_bundle_confirmation",
-  "note": "2026-10-27 사용자가 SPEC s1 U1~U10에 답함(BRIEF r0.2 WBX-D14 선택·D20~D28). Seam S1~S8 확정. C0 충족(mockup 방향 A). Probe WBX-B4가 failed/inconclusive면 B5·B8·B9·I1 보류.",
+  "note": "2026-10-27 사용자가 SPEC s1 U1~U10에 답함(BRIEF r0.2 WBX-D14 선택·D20~D28). Seam S1~S8 확정. C0 충족(mockup 방향 A). 2026-10-28(p3): 사용자 Chrome 확인 피드백과 결정 WBX-D29~D35(BRIEF r0.3). 새 ticket WBX-A6(/dashboard·뒤로 가기), WBX-B11(agent별 skill 설치 README), WBX-B12(공유 OMP 로그인 완화). WBX-B4는 B12 뒤 실제 로그인으로 재실행(WBX-D33). Probe WBX-B4가 failed/inconclusive면 B5·B8·B9·I1 보류.",
   "scheduling": {
     "max_open_child_threads": 4,
     "max_parallel_writer_workspaces": 2,
@@ -27,7 +27,9 @@
     "WBX-A1",
     "WBX-A2",
     "WBX-A3",
-    "WBX-B1"
+    "WBX-A6",
+    "WBX-B1",
+    "WBX-B12"
   ],
   "tickets": [
     {
@@ -78,13 +80,13 @@
       },
       "verification_unit": "U-A1",
       "base_requirements": [
-        "승인된 exact BRIEF r0.2 / SPEC s2 / PLAN p2 bundle",
+        "승인된 exact BRIEF r0.3 / SPEC s3 / PLAN p3 bundle",
         "SPEC 테스트 결정의 seam S1~S8 사용자 확정(2026-10-27, WBX-D20·D21) — 충족",
         "현재 source·dirty baseline 대조",
         "선행 ticket의 통합·검증된 artifact"
       ],
       "contract_requirements": [
-        "SPEC s2 공개 계약·독립 기대값"
+        "SPEC s3 공개 계약·독립 기대값"
       ]
     },
     {
@@ -135,13 +137,13 @@
       },
       "verification_unit": "U-A2",
       "base_requirements": [
-        "승인된 exact BRIEF r0.2 / SPEC s2 / PLAN p2 bundle",
+        "승인된 exact BRIEF r0.3 / SPEC s3 / PLAN p3 bundle",
         "SPEC 테스트 결정의 seam S1~S8 사용자 확정(2026-10-27, WBX-D20·D21) — 충족",
         "현재 source·dirty baseline 대조",
         "선행 ticket의 통합·검증된 artifact"
       ],
       "contract_requirements": [
-        "SPEC s2 공개 계약·독립 기대값"
+        "SPEC s3 공개 계약·독립 기대값"
       ]
     },
     {
@@ -182,13 +184,13 @@
       },
       "verification_unit": "U-A3",
       "base_requirements": [
-        "승인된 exact BRIEF r0.2 / SPEC s2 / PLAN p2 bundle",
+        "승인된 exact BRIEF r0.3 / SPEC s3 / PLAN p3 bundle",
         "SPEC 테스트 결정의 seam S1~S8 사용자 확정(2026-10-27, WBX-D20·D21) — 충족",
         "현재 source·dirty baseline 대조",
         "선행 ticket의 통합·검증된 artifact"
       ],
       "contract_requirements": [
-        "SPEC s2 공개 계약·독립 기대값"
+        "SPEC s3 공개 계약·독립 기대값"
       ]
     },
     {
@@ -230,13 +232,13 @@
       },
       "verification_unit": "U-A4",
       "base_requirements": [
-        "승인된 exact BRIEF r0.2 / SPEC s2 / PLAN p2 bundle",
+        "승인된 exact BRIEF r0.3 / SPEC s3 / PLAN p3 bundle",
         "SPEC 테스트 결정의 seam S1~S8 사용자 확정(2026-10-27, WBX-D20·D21) — 충족",
         "현재 source·dirty baseline 대조",
         "선행 ticket의 통합·검증된 artifact"
       ],
       "contract_requirements": [
-        "SPEC s2 공개 계약·독립 기대값"
+        "SPEC s3 공개 계약·독립 기대값"
       ]
     },
     {
@@ -247,17 +249,21 @@
       "depends_on": [
         "WBX-A1",
         "WBX-A2",
-        "WBX-A3"
+        "WBX-A3",
+        "WBX-A6",
+        "WBX-B4"
       ],
       "dependency_reasons": {
         "WBX-A1": "nav가 있는 실제 화면",
         "WBX-A2": "바뀐 cache 정책이 확인 대상",
-        "WBX-A3": "배너 접힘을 같은 기회에 관찰"
+        "WBX-A3": "배너 접힘을 같은 기회에 관찰",
+        "WBX-A6": "/dashboard·로그아웃 뒤 뒤로 가기 재확인 대상",
+        "WBX-B4": "B12 뒤 재실행된 probe 이후 /board 확인"
       },
       "acceptance_ids": [
         "WBX-AC-04"
       ],
-      "deliverable": "CHECK-CHROME.md에 사용자 Chrome 관찰 기록(설정 상태 포함)",
+      "deliverable": "CHECK-CHROME.md에 사용자 Chrome 관찰 기록(설정 상태 포함). 2026-10-28 부분 결과는 ticket에 기록",
       "write_scope_hint": [
         "docs/features/web-board-ux/CHECK-CHROME.md"
       ],
@@ -270,20 +276,87 @@
         ],
         "evidence_refs": [
           "BRIEF.md WBX-O01",
-          "BRIEF.md WBX-D22"
+          "BRIEF.md WBX-D22",
+          "BRIEF.md WBX-D29",
+          "BRIEF.md WBX-D34"
         ]
       },
       "verification_unit": "U-A5",
       "base_requirements": [
-        "승인된 exact BRIEF r0.2 / SPEC s2 / PLAN p2 bundle",
+        "승인된 exact BRIEF r0.3 / SPEC s3 / PLAN p3 bundle",
         "SPEC 테스트 결정의 seam S1~S8 사용자 확정(2026-10-27, WBX-D20·D21) — 충족",
         "현재 source·dirty baseline 대조",
         "선행 ticket의 통합·검증된 artifact"
       ],
       "contract_requirements": [
-        "SPEC s2 공개 계약·독립 기대값"
+        "SPEC s3 공개 계약·독립 기대값"
       ],
       "owner": "user"
+    },
+    {
+      "id": "WBX-A6",
+      "path": "tickets/WBX-A6.md",
+      "title": "/dashboard 이동과 로그아웃 뒤 뒤로 가기",
+      "kind": "implementation",
+      "depends_on": [],
+      "dependency_reasons": {},
+      "acceptance_ids": [
+        "WBX-AC-03",
+        "WBX-AC-21"
+      ],
+      "deliverable": "GET /dashboard와 / 303, 로그인·fallback·nav·brand 링크, route audit pin, session-check의 back_forward 확인, pagehide fetch abort·timer 정지, DevTools bfcache 진단 기록",
+      "write_scope_hint": [
+        "src/workbench/hub/web/render.py",
+        "src/workbench/hub/web/pages/login.py",
+        "src/workbench/hub/web/middleware.py",
+        "src/workbench/hub/web/pages/dashboard.py",
+        "src/workbench/hub/web/pages/projects.py",
+        "src/workbench/hub/web/pages/board_status.py",
+        "src/workbench/hub/web/static/session-check.js",
+        "src/workbench/hub/web/static/dashboard.js",
+        "src/workbench/hub/web/static/badge.js",
+        "tests/hub/test_web_dashboard*.py",
+        "tests/hub/test_web_nav*.py",
+        "tests/hub/test_web_cache*.py",
+        "tests/hub/test_web_route_audit.py",
+        "tests/hub/js/*.test.mjs"
+      ],
+      "resource_claims": [
+        {
+          "resource": "file:src/workbench/hub/web/render.py",
+          "mode": "exclusive"
+        },
+        {
+          "resource": "file:src/workbench/hub/web/middleware.py",
+          "mode": "exclusive"
+        },
+        {
+          "resource": "file:tests/hub/test_web_route_audit.py",
+          "mode": "exclusive"
+        }
+      ],
+      "workspace_requirement": "isolated_if_parallel",
+      "worker": "opus",
+      "routing_hint": {
+        "reason_codes": [
+          "coupled_invariants"
+        ],
+        "evidence_refs": [
+          "SPEC.md#dashboard-주소와-뒤로-가기",
+          "BRIEF.md WBX-D29",
+          "BRIEF.md WBX-D34"
+        ]
+      },
+      "verification_unit": "U-A6",
+      "base_requirements": [
+        "승인된 exact BRIEF r0.3 / SPEC s3 / PLAN p3 bundle",
+        "SPEC 테스트 결정의 seam S1~S8 사용자 확정(2026-10-27, WBX-D20·D21) — 충족",
+        "현재 source·dirty baseline 대조",
+        "선행 ticket의 통합·검증된 artifact"
+      ],
+      "contract_requirements": [
+        "SPEC s3 공개 계약·독립 기대값"
+      ]
     },
     {
       "id": "WBX-B1",
@@ -355,13 +428,13 @@
       },
       "verification_unit": "U-B1",
       "base_requirements": [
-        "승인된 exact BRIEF r0.2 / SPEC s2 / PLAN p2 bundle",
+        "승인된 exact BRIEF r0.3 / SPEC s3 / PLAN p3 bundle",
         "SPEC 테스트 결정의 seam S1~S8 사용자 확정(2026-10-27, WBX-D20·D21) — 충족",
         "현재 source·dirty baseline 대조",
         "선행 ticket의 통합·검증된 artifact"
       ],
       "contract_requirements": [
-        "SPEC s2 공개 계약·독립 기대값"
+        "SPEC s3 공개 계약·독립 기대값"
       ],
       "isolated_run_note": "CLAUDE.md sandbox 규칙; checkpoint·hash manifest exclude graphify-out/, .workflow/, .worktrees/, .venv/, 격리 home·캐시; 전후 du -sh 보고"
     },
@@ -408,13 +481,13 @@
       },
       "verification_unit": "U-B2",
       "base_requirements": [
-        "승인된 exact BRIEF r0.2 / SPEC s2 / PLAN p2 bundle",
+        "승인된 exact BRIEF r0.3 / SPEC s3 / PLAN p3 bundle",
         "SPEC 테스트 결정의 seam S1~S8 사용자 확정(2026-10-27, WBX-D20·D21) — 충족",
         "현재 source·dirty baseline 대조",
         "선행 ticket의 통합·검증된 artifact"
       ],
       "contract_requirements": [
-        "SPEC s2 공개 계약·독립 기대값"
+        "SPEC s3 공개 계약·독립 기대값"
       ],
       "isolated_run_note": "CLAUDE.md sandbox 규칙; checkpoint·hash manifest exclude graphify-out/, .workflow/, .worktrees/, .venv/, 격리 home·캐시; 전후 du -sh 보고"
     },
@@ -475,13 +548,13 @@
       },
       "verification_unit": "U-B3",
       "base_requirements": [
-        "승인된 exact BRIEF r0.2 / SPEC s2 / PLAN p2 bundle",
+        "승인된 exact BRIEF r0.3 / SPEC s3 / PLAN p3 bundle",
         "SPEC 테스트 결정의 seam S1~S8 사용자 확정(2026-10-27, WBX-D20·D21) — 충족",
         "현재 source·dirty baseline 대조",
         "선행 ticket의 통합·검증된 artifact"
       ],
       "contract_requirements": [
-        "SPEC s2 공개 계약·독립 기대값"
+        "SPEC s3 공개 계약·독립 기대값"
       ],
       "isolated_run_note": "CLAUDE.md sandbox 규칙; checkpoint·hash manifest exclude graphify-out/, .workflow/, .worktrees/, .venv/, 격리 home·캐시; 전후 du -sh 보고"
     },
@@ -492,16 +565,18 @@
       "kind": "feasibility",
       "depends_on": [
         "WBX-B1",
-        "WBX-B2"
+        "WBX-B2",
+        "WBX-B12"
       ],
       "dependency_reasons": {
         "WBX-B1": "probe가 호출할 REST",
-        "WBX-B2": "probe가 OMP에 줄 wb-inbox skill"
+        "WBX-B2": "probe가 OMP에 줄 wb-inbox skill",
+        "WBX-B12": "재실행 전 공유 OMP 로그인 완화(graceful 종료·log 보존·복사 없음)"
       },
       "acceptance_ids": [
         "WBX-AC-17"
       ],
-      "deliverable": "PROBE-BOARD-SKILL.md 판정(passed/failed/inconclusive)과 WBX-B5 구성",
+      "deliverable": "PROBE-BOARD-SKILL.md 판정(passed/failed/inconclusive)과 WBX-B5 구성; 재실행의 OMP log 보존과 실행 전후 authenticated provider 비교",
       "write_scope_hint": [
         "tests/hub/probes/board_skill_probe.py",
         "docs/features/web-board-ux/PROBE-BOARD-SKILL.md"
@@ -524,22 +599,24 @@
         ],
         "evidence_refs": [
           "BRIEF.md WBX-D11",
-          "BRIEF.md WBX-D27"
+          "BRIEF.md WBX-D27",
+          "BRIEF.md WBX-D33"
         ]
       },
       "verification_unit": "U-B4",
       "base_requirements": [
-        "승인된 exact BRIEF r0.2 / SPEC s2 / PLAN p2 bundle",
+        "승인된 exact BRIEF r0.3 / SPEC s3 / PLAN p3 bundle",
         "SPEC 테스트 결정의 seam S1~S8 사용자 확정(2026-10-27, WBX-D20·D21) — 충족",
         "현재 source·dirty baseline 대조",
         "선행 ticket의 통합·검증된 artifact"
       ],
       "contract_requirements": [
-        "SPEC s2 공개 계약·독립 기대값"
+        "SPEC s3 공개 계약·독립 기대값"
       ],
       "isolated_run_note": "CLAUDE.md sandbox 규칙; checkpoint·hash manifest exclude graphify-out/, .workflow/, .worktrees/, .venv/, 격리 home·캐시; 전후 du -sh 보고",
       "critical_assumption": "Board overlay 아래 OMP가 wb-inbox 하나만 보고 bash로 REST를 호출한다",
-      "on_failed_or_inconclusive": "WBX-B5·B8·B9 보류, 사용자 결정"
+      "on_failed_or_inconclusive": "WBX-B5·B8·B9 보류, 사용자 결정",
+      "rerun_note": "2026-10-27 1차 inconclusive(로그인 사용 불가, INCIDENT-20261027-omp-login.md). WBX-B12 뒤 사용자 실제 로그인으로 재실행, OMP log 보존(WBX-D33)."
     },
     {
       "id": "WBX-B5",
@@ -601,13 +678,13 @@
       },
       "verification_unit": "U-B5",
       "base_requirements": [
-        "승인된 exact BRIEF r0.2 / SPEC s2 / PLAN p2 bundle",
+        "승인된 exact BRIEF r0.3 / SPEC s3 / PLAN p3 bundle",
         "SPEC 테스트 결정의 seam S1~S8 사용자 확정(2026-10-27, WBX-D20·D21) — 충족",
         "현재 source·dirty baseline 대조",
         "선행 ticket의 통합·검증된 artifact"
       ],
       "contract_requirements": [
-        "SPEC s2 공개 계약·독립 기대값"
+        "SPEC s3 공개 계약·독립 기대값"
       ],
       "isolated_run_note": "CLAUDE.md sandbox 규칙; checkpoint·hash manifest exclude graphify-out/, .workflow/, .worktrees/, .venv/, 격리 home·캐시; 전후 du -sh 보고"
     },
@@ -655,13 +732,13 @@
       },
       "verification_unit": "U-B6",
       "base_requirements": [
-        "승인된 exact BRIEF r0.2 / SPEC s2 / PLAN p2 bundle",
+        "승인된 exact BRIEF r0.3 / SPEC s3 / PLAN p3 bundle",
         "SPEC 테스트 결정의 seam S1~S8 사용자 확정(2026-10-27, WBX-D20·D21) — 충족",
         "현재 source·dirty baseline 대조",
         "선행 ticket의 통합·검증된 artifact"
       ],
       "contract_requirements": [
-        "SPEC s2 공개 계약·독립 기대값"
+        "SPEC s3 공개 계약·독립 기대값"
       ]
     },
     {
@@ -710,13 +787,13 @@
       },
       "verification_unit": "U-B7",
       "base_requirements": [
-        "승인된 exact BRIEF r0.2 / SPEC s2 / PLAN p2 bundle",
+        "승인된 exact BRIEF r0.3 / SPEC s3 / PLAN p3 bundle",
         "SPEC 테스트 결정의 seam S1~S8 사용자 확정(2026-10-27, WBX-D20·D21) — 충족",
         "현재 source·dirty baseline 대조",
         "선행 ticket의 통합·검증된 artifact"
       ],
       "contract_requirements": [
-        "SPEC s2 공개 계약·독립 기대값"
+        "SPEC s3 공개 계약·독립 기대값"
       ],
       "isolated_run_note": "CLAUDE.md sandbox 규칙; checkpoint·hash manifest exclude graphify-out/, .workflow/, .worktrees/, .venv/, 격리 home·캐시; 전후 du -sh 보고"
     },
@@ -785,13 +862,13 @@
       },
       "verification_unit": "U-B8",
       "base_requirements": [
-        "승인된 exact BRIEF r0.2 / SPEC s2 / PLAN p2 bundle",
+        "승인된 exact BRIEF r0.3 / SPEC s3 / PLAN p3 bundle",
         "SPEC 테스트 결정의 seam S1~S8 사용자 확정(2026-10-27, WBX-D20·D21) — 충족",
         "현재 source·dirty baseline 대조",
         "선행 ticket의 통합·검증된 artifact"
       ],
       "contract_requirements": [
-        "SPEC s2 공개 계약·독립 기대값"
+        "SPEC s3 공개 계약·독립 기대값"
       ],
       "isolated_run_note": "CLAUDE.md sandbox 규칙; checkpoint·hash manifest exclude graphify-out/, .workflow/, .worktrees/, .venv/, 격리 home·캐시; 전후 du -sh 보고"
     },
@@ -838,14 +915,132 @@
       },
       "verification_unit": "U-B9",
       "base_requirements": [
-        "승인된 exact BRIEF r0.2 / SPEC s2 / PLAN p2 bundle",
+        "승인된 exact BRIEF r0.3 / SPEC s3 / PLAN p3 bundle",
         "SPEC 테스트 결정의 seam S1~S8 사용자 확정(2026-10-27, WBX-D20·D21) — 충족",
         "현재 source·dirty baseline 대조",
         "선행 ticket의 통합·검증된 artifact"
       ],
       "contract_requirements": [
-        "SPEC s2 공개 계약·독립 기대값"
+        "SPEC s3 공개 계약·독립 기대값"
       ]
+    },
+    {
+      "id": "WBX-B11",
+      "path": "tickets/WBX-B11.md",
+      "title": "Agent별 skill 설치 README",
+      "kind": "implementation",
+      "depends_on": [
+        "WBX-B3"
+      ],
+      "dependency_reasons": {
+        "WBX-B3": "README를 제공하는 /skill/ route와 치환"
+      },
+      "acceptance_ids": [
+        "WBX-AC-22"
+      ],
+      "deliverable": "skills/README.md의 파일 표(상대 링크+Hub 주소)와 Claude Code·Codex·OMP 설치 절(출처, sh block), key 발급 화면 한 줄 안내, USAGE §3 예문, 설치 block e2e 테스트",
+      "write_scope_hint": [
+        "skills/README.md",
+        "src/workbench/hub/web/pages/settings.py",
+        "docs/features/task-inbox/USAGE.md",
+        "tests/hub/test_web_skill*.py",
+        "tests/hub/test_wb_inbox_static.py",
+        "tests/hub/test_web_pages_settings*.py"
+      ],
+      "resource_claims": [
+        {
+          "resource": "file:docs/features/task-inbox/USAGE.md",
+          "mode": "exclusive"
+        },
+        {
+          "resource": "runtime:/tmp/omp-workbench-<uid>",
+          "mode": "shared"
+        }
+      ],
+      "workspace_requirement": "isolated_if_parallel",
+      "worker": "sonnet",
+      "routing_hint": {
+        "reason_codes": [
+          "bounded_pattern"
+        ],
+        "evidence_refs": [
+          "SPEC.md#wb-inbox-skill과-wb_inboxpy",
+          "BRIEF.md WBX-D30",
+          "BRIEF.md WBX-D35"
+        ]
+      },
+      "verification_unit": "U-B11",
+      "base_requirements": [
+        "승인된 exact BRIEF r0.3 / SPEC s3 / PLAN p3 bundle",
+        "SPEC 테스트 결정의 seam S1~S8 사용자 확정(2026-10-27, WBX-D20·D21) — 충족",
+        "현재 source·dirty baseline 대조",
+        "선행 ticket의 통합·검증된 artifact"
+      ],
+      "contract_requirements": [
+        "SPEC s3 공개 계약·독립 기대값"
+      ],
+      "isolated_run_note": "CLAUDE.md sandbox 규칙; checkpoint·hash manifest exclude graphify-out/, .workflow/, .worktrees/, .venv/, 격리 home·캐시; 전후 du -sh 보고"
+    },
+    {
+      "id": "WBX-B12",
+      "path": "tickets/WBX-B12.md",
+      "title": "공유 OMP 로그인 완화",
+      "kind": "implementation",
+      "depends_on": [],
+      "dependency_reasons": {},
+      "acceptance_ids": [
+        "WBX-AC-23"
+      ],
+      "deliverable": "격리 확인 OMP의 EOF→SIGTERM→SIGKILL 상한 종료, Board OMP log 보존(크기·개수 상한, key 가림), test helper agent.db 복사 제거와 정적 검사, 실제 OMP EOF 종료 관측",
+      "write_scope_hint": [
+        "src/workbench/backend/launcher.py",
+        "src/workbench/hub/board/launch.py",
+        "src/workbench/hub/board/set.py",
+        "tests/integration/live_real_summary.py",
+        "tests/integration/test_real_summary_independent.py",
+        "tests/backend/test_omp_isolation*.py",
+        "tests/backend/test_paths_launcher.py",
+        "tests/backend/test_no_auth_copy*.py",
+        "tests/hub/test_board_*.py",
+        "tests/hub/fixtures/fake_omp_board.py"
+      ],
+      "resource_claims": [
+        {
+          "resource": "file:src/workbench/backend/launcher.py",
+          "mode": "exclusive"
+        },
+        {
+          "resource": "file:src/workbench/hub/board/launch.py",
+          "mode": "exclusive"
+        },
+        {
+          "resource": "runtime:/tmp/omp-workbench-<uid>",
+          "mode": "shared"
+        }
+      ],
+      "workspace_requirement": "isolated_if_parallel",
+      "worker": "opus",
+      "routing_hint": {
+        "reason_codes": [
+          "coupled_invariants"
+        ],
+        "evidence_refs": [
+          "SPEC.md#공유-omp-로그인-완화",
+          "BRIEF.md WBX-D32",
+          "INCIDENT-20261027-omp-login.md"
+        ]
+      },
+      "verification_unit": "U-B12",
+      "base_requirements": [
+        "승인된 exact BRIEF r0.3 / SPEC s3 / PLAN p3 bundle",
+        "SPEC 테스트 결정의 seam S1~S8 사용자 확정(2026-10-27, WBX-D20·D21) — 충족",
+        "현재 source·dirty baseline 대조",
+        "선행 ticket의 통합·검증된 artifact"
+      ],
+      "contract_requirements": [
+        "SPEC s3 공개 계약·독립 기대값"
+      ],
+      "isolated_run_note": "CLAUDE.md sandbox 규칙; checkpoint·hash manifest exclude graphify-out/, .workflow/, .worktrees/, .venv/, 격리 home·캐시; 전후 du -sh 보고"
     },
     {
       "id": "WBX-C0",
@@ -873,13 +1068,13 @@
       },
       "verification_unit": "U-C0",
       "base_requirements": [
-        "승인된 exact BRIEF r0.2 / SPEC s2 / PLAN p2 bundle",
+        "승인된 exact BRIEF r0.3 / SPEC s3 / PLAN p3 bundle",
         "SPEC 테스트 결정의 seam S1~S8 사용자 확정(2026-10-27, WBX-D20·D21) — 충족",
         "현재 source·dirty baseline 대조",
         "선행 ticket의 통합·검증된 artifact"
       ],
       "contract_requirements": [
-        "SPEC s2 공개 계약·독립 기대값"
+        "SPEC s3 공개 계약·독립 기대값"
       ],
       "owner": "user",
       "note": "mockups/ 폴더는 다른 agent 소유, 이 ticket은 쓰지 않는다",
@@ -934,13 +1129,13 @@
       },
       "verification_unit": "U-C1",
       "base_requirements": [
-        "승인된 exact BRIEF r0.2 / SPEC s2 / PLAN p2 bundle",
+        "승인된 exact BRIEF r0.3 / SPEC s3 / PLAN p3 bundle",
         "SPEC 테스트 결정의 seam S1~S8 사용자 확정(2026-10-27, WBX-D20·D21) — 충족",
         "현재 source·dirty baseline 대조",
         "선행 ticket의 통합·검증된 artifact"
       ],
       "contract_requirements": [
-        "SPEC s2 공개 계약·독립 기대값"
+        "SPEC s3 공개 계약·독립 기대값"
       ]
     },
     {
@@ -993,13 +1188,13 @@
       },
       "verification_unit": "U-C2",
       "base_requirements": [
-        "승인된 exact BRIEF r0.2 / SPEC s2 / PLAN p2 bundle",
+        "승인된 exact BRIEF r0.3 / SPEC s3 / PLAN p3 bundle",
         "SPEC 테스트 결정의 seam S1~S8 사용자 확정(2026-10-27, WBX-D20·D21) — 충족",
         "현재 source·dirty baseline 대조",
         "선행 ticket의 통합·검증된 artifact"
       ],
       "contract_requirements": [
-        "SPEC s2 공개 계약·독립 기대값"
+        "SPEC s3 공개 계약·독립 기대값"
       ]
     },
     {
@@ -1011,13 +1206,19 @@
         "WBX-A4",
         "WBX-A5",
         "WBX-B9",
-        "WBX-C2"
+        "WBX-C2",
+        "WBX-A6",
+        "WBX-B11",
+        "WBX-B12"
       ],
       "dependency_reasons": {
         "WBX-A4": "트랙 A 마지막 구현",
         "WBX-A5": "AC-04 사용자 기록",
         "WBX-B9": "트랙 B 전체(B8 contract 포함)",
-        "WBX-C2": "트랙 C 전체"
+        "WBX-C2": "트랙 C 전체",
+        "WBX-A6": "/dashboard·뒤로 가기 통합",
+        "WBX-B11": "agent별 설치 README 통합",
+        "WBX-B12": "로그인 완화 통합"
       },
       "acceptance_ids": [
         "WBX-AC-01",
@@ -1039,7 +1240,10 @@
         "WBX-AC-17",
         "WBX-AC-18",
         "WBX-AC-19",
-        "WBX-AC-20"
+        "WBX-AC-20",
+        "WBX-AC-21",
+        "WBX-AC-22",
+        "WBX-AC-23"
       ],
       "deliverable": "수락 기준별 증거 표, 디렉터리별 회귀, live 1회, wheel, graphify update",
       "write_scope_hint": [
@@ -1067,13 +1271,13 @@
       },
       "verification_unit": "U-I1",
       "base_requirements": [
-        "승인된 exact BRIEF r0.2 / SPEC s2 / PLAN p2 bundle",
+        "승인된 exact BRIEF r0.3 / SPEC s3 / PLAN p3 bundle",
         "SPEC 테스트 결정의 seam S1~S8 사용자 확정(2026-10-27, WBX-D20·D21) — 충족",
         "현재 source·dirty baseline 대조",
         "선행 ticket의 통합·검증된 artifact"
       ],
       "contract_requirements": [
-        "SPEC s2 공개 계약·독립 기대값"
+        "SPEC s3 공개 계약·독립 기대값"
       ],
       "isolated_run_note": "CLAUDE.md sandbox 규칙; checkpoint·hash manifest exclude graphify-out/, .workflow/, .worktrees/, .venv/, 격리 home·캐시; 전후 du -sh 보고",
       "owner": "root"
@@ -1141,7 +1345,7 @@
         "WBX-A5"
       ],
       "required_evidence_level": "runtime",
-      "check": "사용자 Chrome 관찰 기록(트랙 A 뒤, 자동 갱신 없는 화면 사이 뒤로 가기)과 USAGE TLS 안내"
+      "check": "사용자 Chrome 관찰 기록(트랙 A 뒤, A6 뒤 /dashboard와 자동 갱신 없는 화면 사이 뒤로 가기)과 USAGE TLS 안내"
     },
     {
       "id": "WBX-G-B1",
@@ -1197,10 +1401,11 @@
       "requires_tickets": [
         "WBX-B1",
         "WBX-B2",
+        "WBX-B12",
         "WBX-B4"
       ],
       "required_evidence_level": "runtime",
-      "check": "실제 OMP 설정 관측과 한 turn 실험 판정 기록"
+      "check": "실제 OMP 설정 관측과 한 turn 실험 판정 기록; B12 뒤 재실행의 OMP log 보존·authenticated provider 전후 비교"
     },
     {
       "id": "WBX-G-B5",
@@ -1271,6 +1476,44 @@
       "check": "dashboard 네 구역, meta refresh 없음, JSON 값 독립 계산 일치, 세션 없음 거절"
     },
     {
+      "id": "WBX-G-A6",
+      "owner_ticket": "WBX-A6",
+      "acceptance_ids": [
+        "WBX-AC-03",
+        "WBX-AC-21"
+      ],
+      "requires_tickets": [
+        "WBX-A6"
+      ],
+      "required_evidence_level": "fixture",
+      "check": "/ 303 /dashboard·세션 없는 / → /login·로그인 → /dashboard·nav·brand·fallback(S1+S6), cache·route audit, session-check back_forward·pagehide 정리(S8)"
+    },
+    {
+      "id": "WBX-G-B11",
+      "owner_ticket": "WBX-B11",
+      "acceptance_ids": [
+        "WBX-AC-22"
+      ],
+      "requires_tickets": [
+        "WBX-B3",
+        "WBX-B11"
+      ],
+      "required_evidence_level": "runtime",
+      "check": "repo 상대 링크·제공본 절대 주소 200, agent별 절·출처, 제공 README block을 temp HOME에서 실행해 세 파일 설치·.env 0600·config(curl 없음 포함), key 발급 문장"
+    },
+    {
+      "id": "WBX-G-B12",
+      "owner_ticket": "WBX-B12",
+      "acceptance_ids": [
+        "WBX-AC-23"
+      ],
+      "requires_tickets": [
+        "WBX-B12"
+      ],
+      "required_evidence_level": "runtime",
+      "check": "fake OMP로 EOF·SIGTERM·SIGKILL 단계와 상한, 실제 Hub+fake OMP Board log 보존·상한·key 없음, agent.db 복사 정적 검사"
+    },
+    {
       "id": "WBX-G-I1",
       "owner_ticket": "WBX-I1",
       "acceptance_ids": [
@@ -1293,7 +1536,10 @@
         "WBX-AC-17",
         "WBX-AC-18",
         "WBX-AC-19",
-        "WBX-AC-20"
+        "WBX-AC-20",
+        "WBX-AC-21",
+        "WBX-AC-22",
+        "WBX-AC-23"
       ],
       "requires_tickets": [
         "WBX-A1",
@@ -1313,6 +1559,9 @@
         "WBX-C0",
         "WBX-C1",
         "WBX-C2",
+        "WBX-A6",
+        "WBX-B11",
+        "WBX-B12",
         "WBX-I1"
       ],
       "required_evidence_level": "runtime",
@@ -1339,9 +1588,10 @@
     {
       "acceptance_id": "WBX-AC-03",
       "tickets": [
-        "WBX-A2"
+        "WBX-A2",
+        "WBX-A6"
       ],
-      "seam": "S1+S8 (확정, WBX-D20·D21)",
+      "seam": "S1+S8 (확정, WBX-D20·D21); A6는 back_forward 보충(WBX-D34)",
       "final_integration": "WBX-I1"
     },
     {
@@ -1464,7 +1714,7 @@
       "tickets": [
         "WBX-B4"
       ],
-      "seam": "실제 OMP probe (확정, WBX-D20·D21)",
+      "seam": "실제 OMP probe (확정, WBX-D20·D21); WBX-B12 뒤 재실행(WBX-D33)",
       "final_integration": "WBX-I1"
     },
     {
@@ -1490,9 +1740,33 @@
       ],
       "seam": "S1+S6+S8 (확정, WBX-D20·D21)",
       "final_integration": "WBX-I1"
+    },
+    {
+      "acceptance_id": "WBX-AC-21",
+      "tickets": [
+        "WBX-A6"
+      ],
+      "seam": "S1+S6 (확정, WBX-D20·D21)",
+      "final_integration": "WBX-I1"
+    },
+    {
+      "acceptance_id": "WBX-AC-22",
+      "tickets": [
+        "WBX-B11"
+      ],
+      "seam": "S5+S1+S4 (확정, WBX-D20·D21)",
+      "final_integration": "WBX-I1"
+    },
+    {
+      "acceptance_id": "WBX-AC-23",
+      "tickets": [
+        "WBX-B12"
+      ],
+      "seam": "기존 backend 격리 seam(test_omp_isolation*, fake OMP)+S3+S5",
+      "final_integration": "WBX-I1"
     }
   ],
-  "requirements_identity": "5aac0eb95de1fabdceee87fedc936f3d0c64265c3dc788ad0094fd70ed03a309",
+  "requirements_identity": "38388c379d40196809fe1f10f072dab6ce86a1bf31c84ab790cc2f0ca0c7d32a",
   "revision_history": [
     {
       "revision": "p1",
@@ -1501,6 +1775,10 @@
     {
       "revision": "p2",
       "note": "U1~U10 사용자 결정 반영(2026-10-27); seam 확정, C0 충족, B5 내부 key 제한, B2 --new, S8 node seam"
+    },
+    {
+      "revision": "p3",
+      "note": "2026-10-28 사용자 Chrome 확인 피드백과 결정(BRIEF r0.3 WBX-D29~D35, AC-21~23) 반영; WBX-A6·B11·B12 추가, B4 ← B12(재실행), A5 ← A6·B4, I1 ← A6·B11·B12"
     }
   ]
 }

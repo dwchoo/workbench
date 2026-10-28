@@ -2,6 +2,8 @@
 
 판정: **passed**. OMP `omp/18.12.6`, 실행 2026-10-25T07:26:10+09:00, 12.7 s. 이 파일은 `tests/hub/probes/omp_mcp_probe.py --report …`가 생성한다.
 
+> 참고: `tests/hub/probes/omp_mcp_probe.py`는 WBX-B8(2026-10-28)에서 제거됐다. git history를 본다.
+
 모델·provider 호출 없음(RPC `get_state`·`get_available_commands`·`get_login_providers`·`set_session_name`·`bash echo`만. HTTP(S)/ALL_PROXY는 닫힌 port, loopback만 NO_PROXY). temp HOME과 placeholder `agent.db`(빈 파일, symlink만 만들고 열지 않음)를 썼다. 사용자 `~/.omp`는 읽지도 쓰지도 않았다.
 
 ## 판정 기준과 결과

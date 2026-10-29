@@ -322,6 +322,9 @@ class InboxApi:
         self.busy_wait = busy_wait
         # key_id -> [slots semaphore, calls holding or waiting for a slot] (loop thread only; dropped at zero)
         self._slots: dict[str, list] = {}
+        # WBX-D58: ``(key_id, key name) -> (agent id, agent name) | None`` -- a system key authenticates only as the
+        # current start's key of a running Board agent (the Hub sets it; loop thread). None: no Board check.
+        self.board_agents: Callable[[str, str], tuple[str, str] | None] | None = None
 
     async def authenticate(self, request: web.Request, *, system_only: bool = False) -> Principal | None:
         """The request's verified API key principal, or None; ``system_only`` takes the system key alone."""
@@ -333,6 +336,11 @@ class InboxApi:
             key = await self._blocking(services.api_keys.verify, raw, float(services.clock()), system_only=system_only)
         except auth.ApiKeyRefused:
             return None
+        if key.system and self.board_agents is not None:
+            agent = self.board_agents(key.key_id, key.name)
+            if agent is None:
+                return None
+            return Principal.board_agent(key.key_id, *agent)
         return principal_for(key)
 
     async def in_slot(self, principal: Principal, work: Callable[[], Awaitable], busy: Callable[[], object]):

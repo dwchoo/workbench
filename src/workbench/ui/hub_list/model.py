@@ -129,16 +129,26 @@ def config_text(config: object) -> str:
 
 
 def board_text(status: dict) -> str:
-    """``Board agent: <agent state>`` (+ ``shell <state>`` when it differs); ``없음`` is only the
-    status's own ``board_agent: null`` (no set ever started), a missing key is ``불명``."""
+    """``Board agent: agent 2/4 실행 중 · shell 3`` (+ ``· 실패 N`` for failed agents) from ``status.board_agent``
+    (web-board-ux SPEC s4); ``없음`` is only the status's own ``board_agent: null`` (no Board), ``registry_invalid``
+    names itself, a missing key or another shape is ``불명``."""
     if "board_agent" not in status:
         return f"Board agent: {UNKNOWN}"
     board = status["board_agent"]
     if board is None:
         return "Board agent: 없음"
-    agent = _text(_dict(_dict(board).get("agent")).get("state")) or UNKNOWN
-    shell = _text(_dict(_dict(board).get("shell")).get("state")) or UNKNOWN
-    return f"Board agent: {agent}" + ("" if shell == agent else f" (shell {shell})")
+    board = _dict(board)
+    if board.get("state") == "registry_invalid":
+        return "Board agent: registry_invalid"
+    agents, shells = board.get("agents"), board.get("shells")
+    if not isinstance(agents, list) or not isinstance(shells, list):
+        return f"Board agent: {UNKNOWN}"
+    states = [_text(_dict(item).get("state")) for item in agents]
+    limit = _dict(board.get("options")).get("agent_limit")
+    limit = limit if isinstance(limit, int) and not isinstance(limit, bool) else UNKNOWN
+    running = sum(state in ("starting", "running") for state in states)
+    failed = sum(state in ("failed", "isolation_failed") for state in states)
+    return f"Board agent: agent {running}/{limit} 실행 중 · shell {len(shells)}" + (f" · 실패 {failed}" if failed else "")
 
 
 class HubListModel:

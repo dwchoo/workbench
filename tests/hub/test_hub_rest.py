@@ -285,7 +285,7 @@ class ProjectsTests(RestCase):
                          ('on', 'manual', str(self.hub.root_a)))
 
     def test_query_matches_the_name_and_for_editors_the_path(self):
-        board = self.hub.keys.rotate_system_key(now=self.hub.now[0]).raw
+        board = self.hub.keys.rotate_system_key('a-000000000001', now=self.hub.now[0]).raw
         names = lambda reply: [item['name'] for item in reply.json['projects']]  # noqa: E731
         self.assertEqual(names(self.hub.rest(board).get('/projects', query='BET')), ['beta'])
         self.assertEqual(names(self.hub.rest(board).get('/projects', query=str(self.hub.root_a))), ['alpha'])
@@ -526,7 +526,7 @@ class EditorOnlyTests(RequestCase):
         self.assertEqual((error['state'], error['version']), ('NEW', 2))
 
     def test_the_board_agent_moves_states_and_reopens(self):
-        board = self.hub.rest(self.hub.keys.rotate_system_key(now=self.hub.now[0]).raw)
+        board = self.hub.rest(self.hub.keys.rotate_system_key('a-000000000001', now=self.hub.now[0]).raw)
         reply = board.post(f'/requests/{self.rid}/state', {'base_version': 1, 'to': 'NEEDS_INFO', 'reason': '질문'})
         self.assertEqual((reply.status, reply.json), (200, {'state': 'NEEDS_INFO', 'version': 2}))
         self.assert_error(board.post(f'/requests/{self.rid}/state', {'base_version': 2, 'to': 'READY'}), 400,

@@ -22,7 +22,7 @@ from aiohttp import web
 
 from ...inbox.limits import InboxError, confirm_token
 from ...inbox.results import MAX_PAGE as MAX_RESULT_PAGE, Results, page_bounds, summary as result_summary
-from ...inbox.service import PERMISSIONS, STATES, Principal, ProjectRef, cancel_fingerprint
+from ...inbox.service import PERMISSIONS, STATES, Principal, ProjectRef, board_agent_label, cancel_fingerprint
 from .. import render
 from ..middleware import SERVICES, api, principal_of, see_other, session_of
 from ...web_control import DaemonExecutor
@@ -292,6 +292,8 @@ async def post_create(request: web.Request) -> web.Response:
 
 # -- detail -----------------------------------------------------------------------------------------
 def author_label(kind: object, name: object) -> str:
+    if kind == "board_agent":
+        return board_agent_label(name)
     if kind in AUTHOR_LABELS:
         return AUTHOR_LABELS[kind]
     return f"key:{name}" if name else str(kind)

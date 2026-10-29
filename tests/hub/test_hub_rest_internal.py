@@ -43,7 +43,7 @@ class InternalCase(unittest.TestCase):
         self.url = self.hub.run(self.listener.start())
         self.addCleanup(lambda: self.hub.run(self.listener.stop()))
         self.port = self.listener.port
-        self.board_key = self.hub.keys.rotate_system_key(now=self.hub.now[0]).raw
+        self.board_key = self.hub.keys.rotate_system_key('a-000000000001', now=self.hub.now[0]).raw
 
     def board(self, key=None, **kwargs) -> RestClient:
         return RestClient('127.0.0.1', self.port, key or self.board_key, **kwargs)
@@ -153,7 +153,7 @@ class SystemKeyOnlyTests(InternalCase):
     def test_the_previous_system_key_is_401_after_a_rotation(self):
         old = self.board_key
         self.assertEqual(self.board(old).get('/requests').status, 200)
-        new = self.hub.keys.rotate_system_key(now=self.hub.now[0]).raw
+        new = self.hub.keys.rotate_system_key('a-000000000001', now=self.hub.now[0]).raw
         self.assertEqual(self.board(old).get('/requests').status, 401)
         self.assertEqual(self.board(new).get('/requests').status, 200)
 
@@ -178,7 +178,7 @@ class InternalLastUsedTests(unittest.TestCase):
         listener = rest.InternalListener(own, hub.api, clock=lambda: hub.now[0], flush_interval=0.2)
         hub.run(listener.start())
         self.addCleanup(lambda: hub.run(listener.stop()))
-        key = hub.keys.rotate_system_key(now=hub.now[0]).raw
+        key = hub.keys.rotate_system_key('a-000000000001', now=hub.now[0]).raw
         hub.now[0] += 5.0
         self.assertEqual(RestClient('127.0.0.1', listener.port, key).get('/projects').status, 200)
         self.assertTrue(wait_until(lambda: hub.key_row(key)[0] == hub.now[0]), hub.key_row(key))

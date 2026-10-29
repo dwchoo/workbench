@@ -41,6 +41,7 @@ from unittest import mock
 from fixtures.web_sandbox import PASSWORD, WebSandbox, tcp_listening, wait_until
 from test_board_launch import LauncherCase
 from test_web_requests_hub import Browser
+from support.board_stub import board_api, first_open, terminal_of
 
 from workbench.hub.board.set import BoardSet
 from workbench.hub.config import BoardAgentConfig
@@ -347,10 +348,21 @@ class MarkedSetCase(LauncherCase):
         reap_marked(self, self.mark)
 
     def status(self):
-        return self.board.status()
+        """WBX-D1: the first agent and the first shell by kind (v1: the two fixed channels)."""
+        first: dict = {}
+        for view in self.board.views():
+            first.setdefault(view['kind'], view)
+        return first
+
+    def tid(self, kind: str) -> str:
+        return self.status()[kind]['id']
+
+    def open(self):
+        """The page's first open (v1: the first Board connection): agent-1 starts, shell-1 is made."""
+        return self.board.open([next(iter(self.board.agents))])
 
     def start(self):
-        self.arun(self.board.ensure_started())
+        self.arun(self.open())
         self.arun(self.board.settled())
 
     def script(self, name: str, text: str) -> str:
@@ -363,22 +375,23 @@ class MarkedSetCase(LauncherCase):
 class BoardSetIndependentTests(MarkedSetCase):
     def test_simultaneous_first_opens_start_exactly_one_set(self):
         async def three():
-            await asyncio.gather(*(self.board.ensure_started() for _ in range(3)))
+            await asyncio.gather(*(self.open() for _ in range(3)))
             await self.board.settled()
         self.arun(three())
         self.assertEqual(len(self.box.records('tty')), 1)
+        self.assertEqual(len(self.board.shells), 1, 'one shell-1')
         starts = [row for row in self.audits if row[0] == 'board_start']
-        self.assertEqual(sorted(row[3]['channel'] for row in starts), ['agent', 'shell'])
+        self.assertEqual(sorted(row[3]['kind'] for row in starts), ['agent', 'shell'])
         self.assertEqual({row[3]['reason'] for row in starts}, {'first_open'})
 
     def test_a_restart_during_the_start_up_check_leaves_one_agent_and_no_check_process_behind(self):
         self.rebuild(self.config, FAKE_BOARD_RPC_SLEEP='4')
-        self.arun(self.board.ensure_started())
+        self.arun(self.open())
         first = self.status()['agent']
         self.assertEqual(first['state'], 'starting')  # the check is in flight
         self.assertTrue(wait_until(lambda: self.box.records('rpc'), 10))
         started = time.monotonic()
-        self.arun(self.board.restart('agent'))
+        self.arun(self.board.restart(self.tid('agent')))
         self.assertLess(time.monotonic() - started, 3.0, 'the restart waited for the whole in-flight check')
         self.assertFalse(alive(first['pid']))
         self.arun(self.board.settled())
@@ -414,10 +427,13 @@ class BoardSetIndependentTests(MarkedSetCase):
         self.assertLess(time.monotonic() - started, self.grace * 2 + 6)
         self.assertEqual({p: alive(p) for p in members}, {p: False for p in members})
         self.assertEqual(marked(self.mark), {})
-        self.assertEqual((self.status()['agent']['state'], self.status()['shell']['state']), ('stopped', 'stopped'))
+        # WBX-D1: a shell ended by the Hub stop reads exited (shells have no stopped state)
+        self.assertEqual((self.status()['agent']['state'], self.status()['shell']['state']), ('stopped', 'exited'))
         self.assertEqual(self.board.active(), [])
-        self.assertFalse(self.board.write('shell', b'x\n'))
-        self.arun(self.board.ensure_started())  # the stopped set never starts again
+        self.assertFalse(self.board.write(self.tid('shell'), b'x\n'))
+        from workbench.hub.board.set import BoardError
+        with self.assertRaises(BoardError):  # the stopped set never starts again (v2: refused board_unavailable)
+            self.arun(self.open())
         self.assertEqual(len(self.box.records('tty')), 1)
 
     def test_restart_of_one_channel_leaves_the_other_process_and_its_jobs_alone(self):
@@ -431,14 +447,14 @@ class BoardSetIndependentTests(MarkedSetCase):
         job = read_pids(out / 'job')[0]
         shell_ticks, job_ticks = ticks(shell_pid), ticks(job)
         agent = self.status()['agent']['pid']
-        self.arun(self.board.restart('agent'))
+        self.arun(self.board.restart(self.tid('agent')))
         self.arun(self.board.settled())
         self.assertEqual((self.status()['shell']['pid'], ticks(shell_pid), ticks(job)), (shell_pid, shell_ticks, job_ticks))
         self.assertTrue(alive(job))
         self.assertFalse(alive(agent))
         agent2 = self.status()['agent']['pid']
         agent2_ticks = ticks(agent2)
-        self.arun(self.board.restart('shell'))
+        self.arun(self.board.restart(self.tid('shell')))
         self.assertEqual((self.status()['agent']['pid'], ticks(agent2)), (agent2, agent2_ticks))
         self.assertFalse(alive(shell_pid))
         self.assertFalse(alive(job), 'the old shell session member survived the shell restart')
@@ -452,7 +468,7 @@ class BoardSetIndependentTests(MarkedSetCase):
             held = [os.readlink(f'/proc/{pid}/fd/{fd}') for fd in os.listdir(f'/proc/{pid}/fd')
                     if os.path.exists(f'/proc/{pid}/fd/{fd}')]
             self.assertNotIn('/dev/ptmx', held, f'the {name} channel holds a PTY master: {held}')
-        self.arun(self.board.restart('agent'))
+        self.arun(self.board.restart(self.tid('agent')))
         self.arun(self.board.settled())
         pid = self.status()['agent']['pid']
         held = [os.readlink(f'/proc/{pid}/fd/{fd}') for fd in os.listdir(f'/proc/{pid}/fd')]
@@ -463,15 +479,16 @@ class BoardSetIndependentTests(MarkedSetCase):
         first = self.board.active()
         self.assertEqual(len(first), 1)
         self.assertEqual(first[0]['kind'], 'board_agent_set')
-        self.assertEqual({name: item['state'] for name, item in first[0]['channels'].items()},
+        self.assertEqual({item['kind']: item['state'] for item in first[0]['terminals']},
                          {'agent': 'running', 'shell': 'running'})
-        self.board.write('shell', b'exit 0\n')
+        self.board.write(self.tid('shell'), b'exit 0\n')
         self.assertTrue(wait_until(lambda: (self.arun(asyncio.sleep(0.05)), self.status()['shell']['state'])[1]
                                    == 'exited', 10))
         second = self.board.active()
         self.assertNotEqual(first, second)  # a confirm against the older offer cannot match
-        self.assertEqual(second[0]['channels']['shell']['state'], 'exited')
-        self.board.write('agent', b'exit 0\n')
+        # WBX-D1: only live terminals are listed (v1 kept the exited channel with its state)
+        self.assertEqual([item['kind'] for item in second[0]['terminals']], ['agent'])
+        self.board.write(self.tid('agent'), b'exit 0\n')
         self.assertTrue(wait_until(lambda: (self.arun(asyncio.sleep(0.05)), self.status()['agent']['state'])[1]
                                    == 'exited', 10))
         self.assertEqual(self.board.active(), [])  # nothing left to end: the stop asks nothing
@@ -578,25 +595,40 @@ class Rig:
         self.case.assertEqual(result.returncode, 0, result)
         return json.loads(result.stdout)
 
-    def board(self) -> dict | None:
+    def board_status(self) -> dict | None:
         return self.status()['board_agent']
+
+    def board(self) -> dict:
+        """WBX-D1: agent-1 and shell-1 by kind from ``status.board_agent`` (a missing shell reads not_started)."""
+        board = self.board_status() or {}
+        return {'agent': terminal_of(board, 'agent'),
+                'shell': terminal_of(board, 'shell') or {'state': 'not_started', 'pid': None}}
 
     def csrf(self) -> str:
         _, _, page = self.browser.request('GET', '/settings')
         return re.search(r'name="csrf" value="([^"]+)"', page).group(1)
 
-    def restart(self, channel: str) -> int:
-        status, _, _ = self.browser.request('POST', '/board/restart', {'csrf': self.csrf(), 'channel': channel})
+    def restart(self, kind: str) -> int:
+        """v1 ``POST /board/restart`` per channel; v2 (session API): a shell that does not exist yet is made
+        (``POST /api/board/shells``), a never started agent is started, anything else is restarted. 200 on success."""
+        view = self.board()[kind]
+        if kind == 'shell' and 'id' not in view:
+            status, _ = board_api(self.browser, 'POST', '/api/board/shells', {})
+            return 200 if status == 201 else status
+        if view['state'] == 'not_started':
+            status, _ = board_api(self.browser, 'POST', f"/api/board/terminals/{view['id']}/start", {})
+            return status
+        status, _ = board_api(self.browser, 'POST', f"/api/board/terminals/{view['id']}/restart", {'confirm': True})
         return status
 
     def wait_state(self, channel: str, state: str, timeout: float = 20) -> dict:
-        self.case.assertTrue(wait_until(lambda: ((self.board() or {}).get(channel) or {}).get('state') == state,
+        self.case.assertTrue(wait_until(lambda: (self.board().get(channel) or {}).get('state') == state,
                                         timeout), self.board())
         return self.board()[channel]
 
     def start_set(self) -> dict[str, int]:
-        self.case.assertEqual(self.restart('agent'), 303)
-        self.case.assertEqual(self.restart('shell'), 303)
+        status, reply = first_open(self.browser)  # the page's first open: agent-1 starts, shell-1 is made
+        self.case.assertEqual(status, 200, reply)
         self.wait_state('agent', 'running')
         self.wait_state('shell', 'running')
         self.case.assertTrue(wait_until((self.out / 'shell.ready').exists, 10))
@@ -698,44 +730,52 @@ class LiveBoardTests(unittest.TestCase):
 
     def test_nothing_starts_with_the_hub(self):
         rig = Rig(self)
-        self.assertIsNone(rig.board())
+        # WBX-D1: the Board lists the migrated agent-1, not started, and no shell (v1: status was null)
+        self.assertEqual(([v['state'] for v in rig.board_status()['agents']], rig.board_status()['shells']),
+                         (['not_started'], []))
         self.assertFalse((rig.state / 'board-agent').exists(), 'the Board home exists before the first open')
         self.assertEqual(rig.records(), [])
         self.assertEqual(family([rig.hub.pid], rig.mark) - {rig.hub.pid}, set())
         stopped = rig.cli('hub', 'stop')  # nothing owned: no question
         self.assertEqual(stopped.returncode, 0, stopped)
-        self.assertNotIn('Board agent', stopped.stdout)
+        self.assertNotIn('Board terminal', stopped.stdout)
         self.assertEqual(rig.hub.wait(timeout=20), 0)
 
     def test_restart_agent_does_not_touch_shell_and_restart_shell_does_not_touch_agent(self):
         rig = Rig(self)
-        self.assertEqual(rig.restart('agent'), 303)
+        self.assertEqual(rig.restart('agent'), 200)
         agent = rig.wait_state('agent', 'running')
         self.assertEqual(rig.board()['shell']['state'], 'not_started')
         self.assertIsNone(rig.board()['shell']['pid'])
-        self.assertEqual(rig.restart('shell'), 303)
+        self.assertEqual(rig.restart('shell'), 200)
         shell = rig.wait_state('shell', 'running')
         self.assertTrue(wait_until((rig.out / 'shell.ready').exists, 10))
         shell_ticks = ticks(shell['pid'])
         jobs = read_pids(rig.out / 'shell.bg1', rig.out / 'shell.bg2')
-        self.assertEqual(rig.restart('agent'), 303)
+        self.assertEqual(rig.restart('agent'), 200)
         new_agent = rig.wait_state('agent', 'running')
         self.assertNotEqual(new_agent['pid'], agent['pid'])
         self.assertFalse(alive(agent['pid']))
         self.assertEqual((rig.board()['shell']['pid'], ticks(shell['pid'])), (shell['pid'], shell_ticks))
         self.assertTrue(all(alive(job) for job in jobs))  # the shell's own jobs are not the agent's business
         agent_ticks = ticks(new_agent['pid'])
-        self.assertEqual(rig.restart('shell'), 303)
+        self.assertEqual(rig.restart('shell'), 200)
         new_shell = rig.wait_state('shell', 'running')
         self.assertNotEqual(new_shell['pid'], shell['pid'])
         self.assertEqual((rig.board()['agent']['pid'], ticks(new_agent['pid'])), (new_agent['pid'], agent_ticks))
         self.assertFalse(alive(shell['pid']))
         self.assertTrue(wait_until(lambda: not any(alive(job) for job in jobs), 6), 'old shell jobs survived')
-        # unknown channel and a forged CSRF change nothing
-        status, _, _ = rig.browser.request('POST', '/board/restart', {'csrf': rig.csrf(), 'channel': 'both'})
-        self.assertIn(status, (400, 404, 422))
-        status, _, _ = rig.browser.request('POST', '/board/restart', {'csrf': 'forged', 'channel': 'agent'})
-        self.assertIn(status, (400, 403))
+        # an unknown terminal and a forged CSRF change nothing (v1: an unknown channel)
+        status, _ = board_api(rig.browser, 'POST', '/api/board/terminals/a-ffffffffffff/restart', {'confirm': True})
+        self.assertEqual(status, 404)
+        headers = {'Cookie': '; '.join(f'{k}={v}' for k, v in rig.browser.cookies.items()),
+                   'Origin': f'http://{rig.browser.host}:{rig.browser.port}', 'X-CSRF-Token': 'forged',
+                   'Content-Type': 'application/json'}
+        connection = http.client.HTTPConnection(rig.browser.host, rig.browser.port, timeout=15)
+        connection.request('POST', f"/api/board/terminals/{new_agent['id']}/restart", body='{"confirm": true}',
+                           headers=headers)
+        self.assertEqual(connection.getresponse().status, 403)
+        connection.close()
         self.assertEqual(rig.board()['agent']['pid'], new_agent['pid'])
 
     def test_agent_process_facts_overlay_and_environment(self):
@@ -794,7 +834,7 @@ class LiveBoardTests(unittest.TestCase):
         for event in ('login', 'board_start', 'board_restart'):
             self.assertNotIn(first_key, json.dumps(rig.audit(event)))
         # a restart: a new key; the old one is refused over the real listener
-        self.assertEqual(rig.restart('agent'), 303)
+        self.assertEqual(rig.restart('agent'), 200)
         rig.wait_state('agent', 'running')
         second = rig.records('tty')[-1]
         second_key = second['env'][KEY_ENV]
@@ -809,7 +849,7 @@ class LiveBoardTests(unittest.TestCase):
         with self.assertRaises(OSError):  # the old internal listener is gone with the Hub
             socket.create_connection(('127.0.0.1', port), timeout=2).close()
         rig.start_hub()
-        self.assertEqual(rig.restart('agent'), 303)
+        self.assertEqual(rig.restart('agent'), 200)
         rig.wait_state('agent', 'running')
         third = rig.records('tty')[-1]
         third_key = third['env'][KEY_ENV]
@@ -858,7 +898,7 @@ class LiveBoardTests(unittest.TestCase):
         sessions.mkdir(parents=True)
         (sessions / 'previous.jsonl').write_text('{"turn": 1}\n')
         (agent_dir / 'memory-canary').write_text('persist\n')
-        self.assertEqual(rig.restart('agent'), 303)  # same Hub: continue
+        self.assertEqual(rig.restart('agent'), 200)  # same Hub: continue
         rig.wait_state('agent', 'running')
         self.assertIn('--continue', rig.records('tty')[-1]['argv'])
         code, text = rig.tty_stop('y')
@@ -869,10 +909,10 @@ class LiveBoardTests(unittest.TestCase):
         key_before = rig.records('tty')[-1]['env'][KEY_ENV]
         count_before = len(rig.records('tty'))
         rig.start_hub()  # a new Hub restores nothing (HB-O09)
-        self.assertIsNone(rig.board())
+        self.assertEqual((rig.board()['agent']['state'], rig.board_status()['shells']), ('not_started', []))
         self.assertEqual(family([rig.hub.pid], rig.mark) - {rig.hub.pid}, set())
         self.assertEqual(len(rig.records('tty')), count_before)
-        self.assertEqual(rig.restart('agent'), 303)  # the first open of this Hub
+        self.assertEqual(rig.restart('agent'), 200)  # the first open of this Hub
         rig.wait_state('agent', 'running')
         again = rig.records('tty')[-1]
         self.assertIn('--continue', again['argv'])
@@ -883,9 +923,9 @@ class LiveBoardTests(unittest.TestCase):
     def test_a_leaking_agent_ends_alone_as_isolation_failed_and_the_shell_keeps_running(self):
         tools = json.dumps(['mcp__workbench_hub_inbox_list', 'mcp__user_private_tool'])
         rig = Rig(self, extra_env={'FAKE_BOARD_TOOLS': tools})
-        self.assertEqual(rig.restart('shell'), 303)
+        self.assertEqual(rig.restart('shell'), 200)
         shell = rig.wait_state('shell', 'running')
-        self.assertEqual(rig.restart('agent'), 303)
+        self.assertEqual(rig.restart('agent'), 200)
         agent = rig.wait_state('agent', 'isolation_failed')
         self.assertIn('mcp__user_private_tool', agent['detail'])
         self.assertIn('mcp__workbench_hub_inbox_list', agent['detail'])  # WBX-B5: every MCP tool is a leak
@@ -893,14 +933,14 @@ class LiveBoardTests(unittest.TestCase):
         self.assertEqual(rig.board()['shell']['pid'], shell['pid'])
         self.assertTrue(alive(shell['pid']))
         self.assertIn(('agent', agent['pid'], 'isolation_failed'),
-                      [(row['channel'], row['pid'], row['reason']) for row in rig.audit('board_stop')])
+                      [(row['kind'], row['pid'], row['reason']) for row in rig.audit('board_stop')])
         text = rig.cli('hub', 'status').stdout
-        self.assertIn('agent isolation_failed', text)
-        self.assertIn(f'shell running(pid {shell["pid"]})', text)
+        self.assertIn('board_agent: agent 0/4 실행 중 · shell 1 · 연결 0', text)  # WBX-D1 status lines
+        self.assertIn('    agent-1: leak:', text)
         refused = rig.cli('hub', 'stop')  # the live shell still makes it a set the stop must ask about
         self.assertEqual(refused.returncode, 1, refused)
-        self.assertIn('Board agent 세트', refused.stdout)
-        self.assertIn(f'pid {shell["pid"]}', refused.stdout)
+        self.assertIn('Board terminal', refused.stdout)
+        self.assertIn(f'shell shell-1 running(pid {shell["pid"]})', refused.stdout)
 
 
 class LiveStopTests(unittest.TestCase):
@@ -918,9 +958,9 @@ class LiveStopTests(unittest.TestCase):
         ticks_before = {pid: ticks(pid) for pid in members}
         result = rig.cli('hub', 'stop')
         self.assertEqual(result.returncode, 1, result)
-        self.assertIn('Board agent 세트', result.stdout)
-        self.assertIn(f'agent running(pid {pids["agent"]})', result.stdout)
-        self.assertIn(f'shell running(pid {pids["shell"]})', result.stdout)
+        self.assertIn('Board terminal', result.stdout)
+        self.assertIn(f'agent agent-1 running(pid {pids["agent"]})', result.stdout)
+        self.assertIn(f'shell shell-1 running(pid {pids["shell"]})', result.stdout)
         self.assertIn('--yes', result.stderr)
         self.assertIsNone(rig.hub.poll())
         self.assertEqual({pid: ticks(pid) for pid in members}, ticks_before)
@@ -934,8 +974,8 @@ class LiveStopTests(unittest.TestCase):
         for answer in ('n', ''):
             code, text = rig.tty_stop(answer)
             self.assertEqual(code, 1, text)
-            self.assertIn('Board agent 세트', text)
-            self.assertIn(f'shell running(pid {pids["shell"]})', text)
+            self.assertIn('Board terminal', text)
+            self.assertIn(f'shell shell-1 running(pid {pids["shell"]})', text)
             self.assertIsNone(rig.hub.poll())
             self.assertEqual({pid for pid in members if alive(pid)}, members)
             self.assertEqual(rig.board()['shell']['pid'], pids['shell'])
@@ -951,7 +991,7 @@ class LiveStopTests(unittest.TestCase):
         self.assertEqual(code, 0, text)
         self.assertEqual(rig.hub.wait(timeout=30), 0)
         self.assert_everything_ended(rig, members, pids)
-        self.assertEqual(sorted((row['channel'], row['pid'], row['reason']) for row in rig.audit('board_stop')),
+        self.assertEqual(sorted((row['kind'], row['pid'], row['reason']) for row in rig.audit('board_stop')),
                          sorted((name, pid, 'hub_stop') for name, pid in pids.items()))
         self.assertLess(time.monotonic() - started, 30)
 
@@ -981,7 +1021,7 @@ class LiveStopTests(unittest.TestCase):
                                    and rig.board()['shell']['state'] == 'exited', 15), rig.board())
         result = rig.cli('hub', 'stop')
         self.assertEqual(result.returncode, 0, result)
-        self.assertNotIn('Board agent', result.stdout)
+        self.assertNotIn('Board terminal', result.stdout)
         self.assertEqual(rig.hub.wait(timeout=20), 0)
         self.assertEqual({pid for pid in members if alive(pid)}, set(), 'jobs of ended channels outlive the Hub')
 
@@ -996,11 +1036,11 @@ class LiveStopTests(unittest.TestCase):
                                                    for pid in pids.values()), 10),
                         'the PTY master closed with the Hub but a channel leader kept running')
         rig.start_hub()
-        self.assertIsNone(rig.board())
-        self.assertEqual(rig.restart('agent'), 303)
+        self.assertEqual((rig.board()['agent']['state'], rig.board_status()['shells']), ('not_started', []))
+        self.assertEqual(rig.restart('agent'), 200)
         agent = rig.wait_state('agent', 'running')
         self.assertNotIn(agent['pid'], members)
-        self.assertEqual(rig.restart('shell'), 303)
+        self.assertEqual(rig.restart('shell'), 200)
         rig.wait_state('shell', 'running')
         self.assertEqual(rig.stop_via_sigterm(), 0)
 
@@ -1020,7 +1060,7 @@ class UpdateQuestionTests(maintenance_hub.UpdateHubFixture):
         self.assertEqual(status, 1, output + error)
         self.assertEqual(output.count('[y/N]'), 1)
         question = output[:output.index('[y/N]')]
-        for needle in ('task-a', 'Board agent 세트', f'shell running(pid {shell})', f'Hub(pid {hub.pid}'):
+        for needle in ('task-a', 'Board terminal', f'shell shell-1 running(pid {shell})', f'Hub(pid {hub.pid}'):
             self.assertIn(needle, question)
         self.assertEqual(self.events, [])  # no backend shutdown, no install
         self.assertIsNone(hub.poll())

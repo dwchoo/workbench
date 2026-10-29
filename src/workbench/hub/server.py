@@ -177,15 +177,15 @@ class Hub:
             return []
 
     def board_state(self) -> str:
-        """The nav's Board agent dot (WBX-A1): ``on`` while the agent channel is starting/running, ``off`` with no
-        set, never started, stopped or exited, ``error`` for any other state or an invalid ``hub.toml``. Non-blocking."""
+        """The nav's Board dot (web-board-ux SPEC s4): ``error`` when an agent is ``failed``/``isolation_failed``, the
+        registry is invalid or ``hub.toml`` is; ``on`` while an agent is starting/running; else ``off``. Non-blocking."""
         if self.board is None:
             return "error" if self.config_info.get("state") == "config_invalid" else "off"
-        agent = (self.board.status() or {}).get("agent")
-        state = agent.get("state") if isinstance(agent, dict) else None
-        if state in ("starting", "running"):
-            return "on"
-        return "off" if state in (None, "not_started", "stopped", "exited") else "error"
+        return self.board.dot()
+
+    def board_counts(self) -> dict | None:
+        """The dashboard's Board card numbers (running agents, shells), None without a Board."""
+        return self.board.counts() if self.board is not None else None
 
     def web_routes(self) -> list:
         """Route registrations the web app adds to its defaults: the status board and project pages over this
@@ -208,7 +208,8 @@ class Hub:
         return self.internal_rest
 
     def _board_audit(self, event: str, actor: str, address: str | None, detail: dict) -> None:
-        """``board_start``/``board_stop``/``board_restart`` rows; executor only (SQLite)."""
+        """The Board's audit rows (``board_start``/``stop``/``restart``, ``board_terminal_open``/``close``,
+        ``board_rename``, ``board_options``); executor only (SQLite)."""
         services = self.web.services if self.web is not None else None
         if services is None:
             return
@@ -220,6 +221,11 @@ class Hub:
         launcher = BoardLauncher(self.layout.state_dir, config, api_keys=lambda: self._web_services().api_keys,
                                  listener=self._internal_listener, environment=environment)
         self.board = BoardSet(launcher, audit=self._board_audit)
+        # WBX-D58: a system key passes (on both listeners) only as the current start's key of a running agent.
+        self.api.board_agents = self._board_agent_for_key
+
+    def _board_agent_for_key(self, key_id: str, name: str):
+        return self.board.agent_for_key(key_id, name) if self.board is not None else None
 
     async def stop_board(self) -> None:
         """Stop order (A): after the WebSockets close, before the API key flush; idempotent."""
@@ -262,12 +268,14 @@ class Hub:
                                    routes=self.web_routes(), config_file=path)
             self.web.projects = self.project_pairs
             self.web.board_state = self.board_state
+            self.web.board_counts = self.board_counts
             return
         self.config_info = {"path": str(path), "loaded_at": time.time(), "state": "ok"}
         self.web = WebListener(self.layout.state_dir, config=loaded, config_error=None, tls=tls,
                                routes=self.web_routes(), config_file=path)
         self.web.projects = self.project_pairs
         self.web.board_state = self.board_state
+        self.web.board_counts = self.board_counts
         if not loaded.web.enabled:  # the Board agent set is used only from the web: none while web is off
             return
         self.ensure_board(loaded.board_agent)
@@ -545,7 +553,7 @@ class Hub:
                 "config": self.config_status()}
 
     def active(self) -> list:
-        """Live things this Hub owns that a stop would end: the Board agent set while a channel lives."""
+        """Live things this Hub owns that a stop would end: the Board terminals while one lives."""
         return self.board.active() if self.board is not None else []
 
     def offer_stop(self) -> dict:
@@ -607,6 +615,11 @@ class Hub:
                 await self.web.start()
             except Exception as exc:  # a web problem never stops the Hub's other functions
                 print(f"[workbench] web listener start failed: {exc!r}", file=sys.stderr, flush=True)
+            if self.board is not None:  # WBX-D58: system key rows of an earlier run go (again before a first start)
+                try:
+                    await self.board.purge_system_keys()
+                except Exception as exc:
+                    print(f"[workbench] Board system key purge failed: {exc!r}", file=sys.stderr, flush=True)
         watchdog = asyncio.create_task(self.watchdog())
         self.dispatcher.start()  # TI-10: request notices to each running project's manager
         await self.stop_event.wait()

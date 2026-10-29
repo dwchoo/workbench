@@ -68,10 +68,21 @@ EXPECTED = {
     ('GET', '/requests/{rid}/full'): SESSION,
     ('GET', '/requests/{rid}/raw'): SESSION,
     ('GET', '/requests/{rid}/artifact'): SESSION,
-    ('POST', '/board/restart'): SESSION,
-    ('GET', '/ws/board'): API,
+    # WBX-D1 (web-board-ux SPEC s4): the Board page, its session API and one WebSocket per terminal (protocol v2);
+    # ``GET``/``POST /board/restart`` and ``GET /ws/board`` are gone.
     ('GET', '/board'): SESSION,
-    ('GET', '/board/restart'): SESSION,
+    ('GET', '/ws/board/{terminal_id}'): API,
+    ('GET', '/api/board'): API,
+    ('POST', '/api/board/open'): API,
+    ('POST', '/api/board/agents'): API,
+    ('POST', '/api/board/shells'): API,
+    ('POST', '/api/board/terminals/{terminal_id}/start'): API,
+    ('POST', '/api/board/terminals/{terminal_id}/stop'): API,
+    ('POST', '/api/board/terminals/{terminal_id}/restart'): API,
+    ('POST', '/api/board/terminals/{terminal_id}/close'): API,
+    ('POST', '/api/board/terminals/{terminal_id}/delete'): API,
+    ('POST', '/api/board/terminals/{terminal_id}/rename'): API,
+    ('POST', '/api/board/options'): API,
     # WBX-B1 REST ``/api/v1/`` (Bearer API key in the handler; method rules in the handler: 405 + Allow)
     ('*', '/api/v1/projects'): OWN,
     ('*', '/api/v1/requests'): OWN,
@@ -95,7 +106,8 @@ REST_ROUTES = frozenset(key for key in EXPECTED if key[1] == '/api/v1' or key[1]
 # Unsafe routes that do not use the session CSRF token, and why (each is checked by behaviour below).
 CSRF_EXEMPT = {('POST', '/login'): 'pre-session login token',
                **{route: 'Bearer API key; cookies ignored (WBX-B1 REST)' for route in REST_ROUTES}}
-PARAMS = {'key_id': 'abcdefghij', 'project_id': str(uuid.uuid4()), 'action': 'power-on', 'rid': str(uuid.uuid4())}
+PARAMS = {'key_id': 'abcdefghij', 'project_id': str(uuid.uuid4()), 'action': 'power-on', 'rid': str(uuid.uuid4()),
+          'terminal_id': 'a-0123456789ab'}
 
 
 def route_marks(app: web.Application) -> dict:
@@ -213,7 +225,7 @@ class BehaviourAuditTests(RouteAuditCase):
                 status, _text = await self.send(method, concrete, cookie=False)
                 self.assertEqual(status, 401 if access == API else 303)
                 checked += 1
-        self.assertEqual(checked, 14)  # every unsafe route of EXPECTED but the two exemptions
+        self.assertEqual(checked, 23)  # every unsafe route of EXPECTED but the two exemptions (WBX-D1: 14 - 1 + 10)
 
     async def test_mcp_is_gone_and_answers_like_any_unknown_path(self):  # WBX-B8 (SPEC "MCP 제거 순서" contract)
         self.assertEqual([key for key in route_marks(self.app) if 'mcp' in key[1].lower()], [])

@@ -200,7 +200,7 @@ class EveryPageRouteTests(NavBase):
         for (method, route), access in sorted(audit.route_marks(self.app).items()):
             if method != 'GET' or access != audit.SESSION or route.startswith('/static'):
                 continue
-            path = route.format(**params) + ('?channel=agent' if route == '/board/restart' else '')
+            path = route.format(**params)
             status, headers, text = await self.get(path)
             if not headers.get('Content-Type', '').startswith('text/html'):
                 skipped.append((route, status, headers.get('Content-Type')))
@@ -255,9 +255,8 @@ class AriaCurrentTests(NavBase):
             '/requests/newest': ['요청'],          # prefix pitfall: not the "새 요청" button
             '/requests/new': ['새 요청'],
             '/requests/new?next=/requests': ['새 요청'],
-            '/board': ['Board agent'],
-            '/board/restart?channel=agent': ['Board agent'],
-            '/board/restart?channel=shell': ['Board agent'],
+            '/board': ['Board agent'],  # WBX-D1: the restart confirm pages are gone
+            '/board?tab=shell': ['Board agent'],
             '/settings': ['비밀번호', '설정'],
             '/settings/keys': ['API key', '설정'],
             f'/settings/keys/{key_id}/revoke': ['API key', '설정'],
@@ -340,7 +339,7 @@ class NoNavTests(NavBase):
 
     async def test_session_less_page_gets_are_redirects_without_nav_markup(self):
         for path in ('/', '/dashboard', '/requests', '/requests/new', '/board', '/settings', '/settings/keys', '/settings/audit',
-                     f'/requests/{uuid.uuid4()}', f'/projects/{self.project}', '/board/restart?channel=agent'):
+                     f'/requests/{uuid.uuid4()}', f'/projects/{self.project}', '/board?tab=shell'):
             with self.subTest(path=path):
                 status, headers, text = await self.get(path, session=False)
                 self.assertEqual((status, headers.get('Location')), (303, '/login'))
@@ -388,8 +387,8 @@ class NavIsolationTests(NavBase):
         rid = self.make_request(HOSTILE, HOSTILE)
         _, key_id = await self.make_key('plain key')
         paths = ['/dashboard', f'/projects/{self.project}', '/requests', '/requests/new', f'/requests/{rid}',
-                 f'/requests/{rid}/edit', f'/requests/{rid}/cancel', '/board', '/board/restart?channel=agent', '/settings',
-                 '/settings/keys', f'/settings/keys/{key_id}/revoke', '/settings/audit']
+                 f'/requests/{rid}/edit', f'/requests/{rid}/cancel', '/board', '/settings',
+                 '/settings/keys', f'/settings/keys/{key_id}/revoke', '/settings/audit']  # WBX-D1: no restart page
         shapes = {}
         for path in paths:
             status, _, text = await self.get(path)
@@ -400,7 +399,7 @@ class NavIsolationTests(NavBase):
         self.assertEqual(len(set(shapes.values())), 1, {p: s[:120] for p, s in shapes.items()})
 
     async def test_query_cookie_and_header_values_do_not_reach_the_nav(self):
-        for path in (f'/requests?q={LEAK}&project={LEAK}&state={LEAK}', f'/board/restart?channel={LEAK}',
+        for path in (f'/requests?q={LEAK}&project={LEAK}&state={LEAK}', f'/board?channel={LEAK}',
                      f'/settings/audit?page={LEAK}', f'/dashboard?x={LEAK}'):
             with self.subTest(path=path):
                 status, _, text = await self.get(path, **{'User-Agent': LEAK, 'Referer': f'{self.url}/{LEAK}'})
@@ -471,8 +470,8 @@ class MarkupTests(NavBase):
         rid = self.make_request()
         _, key_id = await self.make_key()
         paths = ['/dashboard', f'/projects/{self.project}', '/requests', '/requests/new', f'/requests/{rid}',
-                 f'/requests/{rid}/edit', f'/requests/{rid}/cancel', '/board', '/board/restart?channel=agent', '/settings',
-                 '/settings/keys', f'/settings/keys/{key_id}/revoke', '/settings/audit']
+                 f'/requests/{rid}/edit', f'/requests/{rid}/cancel', '/board', '/settings',
+                 '/settings/keys', f'/settings/keys/{key_id}/revoke', '/settings/audit']  # WBX-D1: no restart page
         found = {}
         for path in paths:
             status, headers, text = await self.get(path)

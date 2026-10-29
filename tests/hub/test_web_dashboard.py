@@ -264,7 +264,16 @@ class BoardCardTests(DashboardCase):
         for state, label in (('on', '실행 중'), ('off', '중지'), ('error', '오류')):
             self.services.board_state = lambda state=state: state
             _, body = await self.api()
-            self.assertEqual(body['board'], {'state': state, 'label': label, 'url': '/board'})
+            self.assertEqual(body['board'], {'state': state, 'label': label, 'url': '/board', 'counts': None,
+                                             'summary': None})
+
+    async def test_the_card_counts_running_agents_and_shells(self):  # WBX-D1: SPEC s4 "Hub 상태·정지·nav"
+        self.services.board_counts = lambda: {'agents': 3, 'agents_running': 2, 'shells': 4, 'clients': 5}
+        _, body = await self.api()
+        self.assertEqual((body['board']['counts'], body['board']['summary']),
+                         ({'agents_running': 2, 'shells': 4}, 'agent 2 실행 중 · shell 4'))
+        response, page = await self.page('/dashboard')
+        self.assertIn('agent 2 실행 중 · shell 4', page.sections['board-agent'])
 
     async def test_a_broken_board_state_reads_as_error(self):
         def broken() -> str:

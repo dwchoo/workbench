@@ -223,8 +223,7 @@ class NavCurrentTests(NavCase):
             '/requests': ['요청'],
             f'/requests/{rid}': ['요청'],
             '/requests/new': ['새 요청'],
-            '/board': ['Board agent'],
-            '/board/restart?channel=agent': ['Board agent'],
+            '/board': ['Board agent'],  # WBX-D1: the restart confirm page is gone
             '/settings': ['비밀번호'],
             '/settings/keys': ['API key'],
             '/settings/audit': ['감사 기록'],
@@ -359,21 +358,41 @@ class NavBoardDotTests(NavCase):
 
 
 class FakeBoard:
-    """What ``Hub.board`` offers the nav: ``BoardSet.status()`` (None until a channel ever started)."""
+    """What ``Hub.board`` offers the nav (WBX-D1): ``BoardSet.dot()``, here over real ``BoardSet`` views."""
 
-    def __init__(self, value):
-        self.value = value
+    def __init__(self, dot):
+        self.value = dot
 
-    def status(self):
+    def dot(self):
         return self.value
 
 
-def channel(state: str, detail: str | None = None) -> dict:
-    return {'state': state, 'pid': None, 'started_at': None, 'detail': detail, 'exit_status': None}
+def board_with(base: Path, agents: list[str], shells: list[str] = (), invalid: bool = False):
+    """A real ``BoardSet`` (no process) whose agents and shells are in the given states."""
+    from support.board_stub import RecorderLauncher
+    from workbench.hub.board import registry
+    from workbench.hub.board.set import BoardSet, Terminal
+    launcher = RecorderLauncher(base / f'board-{len(list(base.iterdir()))}')
+    if invalid:
+        (Path(launcher.state_dir) / 'board-agents').mkdir(mode=0o700)
+        (Path(launcher.state_dir) / 'board-agents' / 'registry.json').write_text('[]')
+    board = BoardSet(launcher)
+    if not invalid:
+        board.agents.clear()
+        for index, state in enumerate(agents):
+            agent_id = registry.new_id('agent')
+            board.agents[agent_id] = Terminal(agent_id, 'agent', f'agent-{index + 1}', home=registry.agent_home(agent_id),
+                                              state=state)
+        for index, state in enumerate(shells):
+            shell_id = registry.new_id('shell')
+            board.shells[shell_id] = Terminal(shell_id, 'shell', f'shell-{index + 1}', state=state)
+    return board
 
 
 class HubBoardStateTests(unittest.TestCase):
-    """SPEC: on = agent starting/running; off = no set, not_started, stopped, exited; error = any other failure."""
+    """web-board-ux SPEC s4 "Hub 상태·정지·nav": error when an agent is failed/isolation_failed or the registry is
+    invalid; on while an agent is starting/running; else off. Shells never change the dot. (v1: the one agent
+    channel decided; an unknown state was error, now only the two failure states are.)"""
 
     def setUp(self):
         self.base_dir = Path(tempfile.mkdtemp(prefix='wb-navhub-')).resolve()
@@ -381,34 +400,36 @@ class HubBoardStateTests(unittest.TestCase):
         self.hub = server.Hub(HubLayout(self.base_dir / 'hub'), 'detached')
         self.addCleanup(self.hub.inbox.close)
 
-    def state_with(self, agent: str, shell: str = 'not_started', detail: str | None = None) -> str:
-        self.hub.board = FakeBoard({'agent': channel(agent, detail), 'shell': channel(shell),
-                                    'lease': {'state': 'none', 'epoch': 0, 'since': None}})
+    def state_with(self, *agents: str, shells: tuple = ('not_started',), invalid: bool = False) -> str:
+        self.hub.board = board_with(self.base_dir, list(agents), list(shells), invalid)
         return self.hub.board_state()
 
     def test_no_set_and_a_never_started_set_are_off(self):
         self.assertIsNone(self.hub.board)
         self.assertEqual(self.hub.board_state(), 'off')
-        self.hub.board = FakeBoard(None)
-        self.assertEqual(self.hub.board_state(), 'off')
+        self.assertEqual(self.state_with('not_started'), 'off')
+        self.assertEqual(self.state_with(), 'off', 'no agent at all')
 
     def test_starting_and_running_agent_are_on(self):
         self.assertEqual(self.state_with('starting'), 'on')
         self.assertEqual(self.state_with('running'), 'on')
+        self.assertEqual(self.state_with('stopped', 'running'), 'on', 'any live agent')
 
     def test_stopped_exited_and_not_started_agent_are_off(self):
         for state in ('not_started', 'stopped', 'exited'):
             with self.subTest(state=state):
-                self.assertEqual(self.state_with(state, shell='running'), 'off')
+                self.assertEqual(self.state_with(state, shells=('running',)), 'off')
 
     def test_failures_are_error(self):
-        for state in ('isolation_failed', 'failed', 'something_new'):
+        for state in ('isolation_failed', 'failed'):
             with self.subTest(state=state):
-                self.assertEqual(self.state_with(state, detail='mcp_leak'), 'error')
+                self.assertEqual(self.state_with(state), 'error')
+                self.assertEqual(self.state_with('running', state), 'error', 'one failed agent among running ones')
+        self.assertEqual(self.state_with(invalid=True), 'error', 'registry_invalid')
 
-    def test_the_shell_channel_does_not_change_the_agent_dot(self):
-        self.assertEqual(self.state_with('running', shell='failed'), 'on')
-        self.assertEqual(self.state_with('stopped', shell='running'), 'off')
+    def test_the_shells_do_not_change_the_agent_dot(self):
+        self.assertEqual(self.state_with('running', shells=('failed',)), 'on')
+        self.assertEqual(self.state_with('stopped', shells=('running', 'failed')), 'off')
 
     def test_an_invalid_board_config_is_error(self):
         self.hub.config_info = {'state': 'config_invalid'}
@@ -429,8 +450,7 @@ class HubWiresBoardStateIntoTheWebServicesTests(unittest.IsolatedAsyncioTestCase
         self.addAsyncCleanup(hub.web.stop)
         await hub.web.start()
         self.assertEqual(hub.web.services.board_state(), 'off')
-        hub.board = FakeBoard({'agent': channel('running'), 'shell': channel('running'),
-                               'lease': {'state': 'none', 'epoch': 0, 'since': None}})
+        hub.board = FakeBoard('on')
         self.assertEqual(hub.web.services.board_state(), 'on')
 
 

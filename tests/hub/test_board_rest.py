@@ -110,7 +110,7 @@ class AgentEnvironmentTests(LauncherCase):
         key = started.env['WB_API_KEY']
         principal = self.keys.verify(key, 1.0)
         self.assertEqual((principal.name, principal.grade, principal.scope, principal.system),
-                         ('board-agent', 'editor', {'all': True}, True))
+                         ('board-agent.a-000000000001', 'editor', {'all': True}, True))  # WBX-D58: per agent
         self.assertEqual(started.env['WB_HUB_URL'], f'http://127.0.0.1:{self.listener.port}')
         self.assertNotIn('WB_BOARD_MCP_KEY', started.env)
         self.assertEqual([name for name, value in started.env.items() if key in value], ['WB_API_KEY'])
@@ -210,7 +210,7 @@ class LiveInternalRestTests(unittest.TestCase):
         self.assertEqual(http_status(port, '/api/v1/requests', owner), 401)
         web_host, web_port = rig.browser.host, rig.browser.port  # the external web listener takes every valid key
         self.assertEqual(http_status(web_port, '/api/v1/requests', owner, host=f'{web_host}:{web_port}'), 200)
-        self.assertEqual(rig.restart('agent'), 303)
+        self.assertEqual(rig.restart('agent'), 200)
         rig.wait_state('agent', 'running')
         new = environ_of(rig.board()['agent']['pid'])
         self.assertNotEqual(new['WB_API_KEY'], key)
@@ -349,7 +349,7 @@ class LiveIsolationTests(unittest.TestCase):
 
     def run_agent(self, **extra) -> tuple[Rig, dict]:
         rig = Rig(self, extra_env=extra)
-        self.assertEqual(rig.restart('agent'), 303)
+        self.assertEqual(rig.restart('agent'), 200)
         return rig, rig.wait_state('agent', 'isolation_failed')
 
     def test_a_hub_mcp_tool_now_fails_the_start(self):

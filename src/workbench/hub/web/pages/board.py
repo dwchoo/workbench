@@ -1,14 +1,13 @@
-"""The Board page and its restart confirm page (TI-18; SPEC "웹 route와 화면", "WebSocket terminal 프로토콜").
+"""The Board page (TI-18; web-board-ux SPEC s4 "트랙 D" until WBX-D2's workspace).
 
-``GET /board`` is server-rendered HTML: a tab for the Board agent OMP and one for the shell (each an empty
-``div`` the page script turns into an xterm.js terminal), the channel states, the connection state, the takeover
-banner and the restart links. The state machine and the DOM glue are ``/static/board-state.js`` and
-``/static/board.js`` (module scripts, no inline script); the CSRF token and this response's CSP style nonce
-(:func:`..middleware.style_nonce`, set on xterm's ``<style>`` elements by ``/static/style-nonce.js``) reach them in
-``<meta>`` elements. The page never starts the set: only a WebSocket attach does.
-
-``GET /board/restart?channel=`` is the confirm page (nothing changes); its form posts to ``POST /board/restart``
-(TI-16) and cancel is a plain link back.
+``GET /board`` is server-rendered HTML: a tab for the first Board agent (``agent-1`` after the migration) and one
+for the first shell (each an empty ``div`` the page script turns into an xterm.js terminal), their states, the
+connection state and a restart button per tab. The page script (``/static/board.js`` with the protocol v2 state
+machine ``/static/board-state.js``; module scripts, no inline script) asks ``POST /api/board/open`` for the terminals
+(the first shell of this Hub run is made then, and a not yet started agent starts), then opens one
+``/ws/board/{terminal id}`` per tab. The CSRF token and this response's CSP style nonce (:func:`..middleware.style_nonce`,
+set on xterm's ``<style>`` elements by ``/static/style-nonce.js``) reach it in ``<meta>`` elements. Rendering the page
+starts nothing.
 """
 from __future__ import annotations
 
@@ -24,13 +23,8 @@ CHANNEL_NAMES = tuple(name for name, _ in CHANNELS)
 STYLESHEETS = ("/static/app.css", "/static/vendor/xterm/xterm.css", "/static/board.css")
 SCRIPTS = ("/static/badge.js", "/static/vendor/xterm/xterm.js", "/static/vendor/xterm/addon-fit.js")
 MODULE_SCRIPTS = ("/static/board.js",)
-BANNER_PREFIX = "다른 곳에서 연결됨 — "
 UNAVAILABLE_TEXT = "Board agent 세트를 사용할 수 없습니다 (hub.toml을 확인하세요)"
-STATE_LABELS = {"running": "실행 중", "starting": "시작 중", "not_started": "시작 전"}
-RESTART_EFFECT = {
-    "agent": "Board agent OMP를 끝내고 이전 세션을 이어서(--continue) 다시 띄웁니다. 진행 중인 응답은 끊깁니다.",
-    "shell": "Shell을 끝내고 새로 띄웁니다. 그 shell에서 실행 중인 명령은 종료됩니다.",
-}
+STATE_LABELS = {"running": "실행 중", "starting": "시작 중", "not_started": "시작 전", "stopped": "중지됨"}
 
 
 def channel_label(info: object) -> str:
@@ -65,68 +59,63 @@ def tab_button(name: str, label: str, first: bool) -> render.Markup:
                       class_="tab active" if first else "tab")
 
 
-def panel(name: str, info: object, first: bool) -> render.Markup:
+def panel(name: str, info: dict | None, first: bool) -> render.Markup:
+    """One tab's panel; ``data-terminal`` is the terminal's id when it exists yet (the first shell of a run is made by
+    the page's ``open`` call)."""
+    view = info or {"state": "not_started"}
     head = render.tag("div", render.html_join([
-        render.tag("span", channel_label(info), id=f"state-{name}", class_="channel-state", data_channel=name),
-        render.tag("a", "재시작", href=f"/board/restart?channel={name}", class_="btn btn-sm", id=f"restart-{name}")]),
+        render.tag("span", view.get("name") or "", id=f"name-{name}", class_="channel-name", data_channel=name),
+        render.tag("span", channel_label(view), id=f"state-{name}", class_="channel-state", data_channel=name),
+        render.tag("button", "재시작", type="button", class_="btn btn-sm", id=f"restart-{name}", data_channel=name)]),
         class_="panel-head")
+    attributes = {"data_terminal": info["id"]} if info and info.get("id") else {}
     return render.tag("section", render.html_join([head, render.tag("div", "", id=f"term-{name}", class_="term")]),
                       id=f"panel-{name}", class_="panel active" if first else "panel", data_channel=name,
-                      role="tabpanel")
+                      role="tabpanel", **attributes)
+
+
+def first_views(board) -> dict[str, dict | None]:
+    """The first agent and the first shell (registry order), the two terminals this page shows until WBX-D2."""
+    found: dict[str, dict | None] = {"agent": None, "shell": None}
+    for view in board.views():
+        if found.get(view.get("kind"), 0) is None:
+            found[view["kind"]] = view
+    return found
+
+
+def unavailable(request: web.Request, text: str = UNAVAILABLE_TEXT) -> web.Response:
+    return frame(request, "Board", render.html_join([
+        render.tag("h1", "Board"), render.tag("p", text, class_="error", role="alert")]), status=503)
 
 
 def board_page(request: web.Request, board) -> web.Response:
     if board is None:
-        return frame(request, "Board", render.html_join([
-            render.tag("h1", "Board"), render.tag("p", UNAVAILABLE_TEXT, class_="error", role="alert")]),
-            status=503)
-    status = board.status() or {}
+        return unavailable(request)
+    state = board.board_view()
+    if state.get("state") == "registry_invalid":
+        return unavailable(request, f"Board 목록 파일을 읽을 수 없습니다: {state.get('message') or ''}")
+    views = first_views(board)
     bar = render.tag("div", render.html_join([
         render.tag("span", "연결 중", id="board-connection", class_="connection", role="status"),
         render.tag("button", "다시 연결", type="button", id="board-reconnect", class_="btn", hidden=True),
         render.tag("a", "다시 로그인", href="/login", id="board-login", class_="btn", hidden=True)]),
         class_="board-bar")
-    banner = render.tag("div", render.html_join([
-        render.tag("span", BANNER_PREFIX),
-        render.tag("button", "다시 가져오기", type="button", id="board-retake", class_="btn btn-sm")]),
-        id="board-banner", class_="banner taken", role="alert", hidden=True)
     tabs = render.tag("div", render.html_join(
         tab_button(name, label, index == 0) for index, (name, label) in enumerate(CHANNELS)),
         role="tablist", class_="tabs")
-    panels = render.html_join(panel(name, status.get(name) or {"state": "not_started"}, index == 0)
-                              for index, (name, _) in enumerate(CHANNELS))
+    panels = render.html_join(panel(name, views[name], index == 0) for index, (name, _) in enumerate(CHANNELS))
     notice = render.tag("p", "", id="board-notice", class_="notice-line", role="status", hidden=True)
-    return frame(request, "Board", render.html_join([render.tag("h1", "Board"), bar, banner, notice, tabs,
+    return frame(request, "Board", render.html_join([render.tag("h1", "Board"), bar, notice, tabs,
                                                      render.tag("div", panels, class_="panels")]), board=True)
 
 
-def confirm_page(request: web.Request, channel: str) -> web.Response:
-    label = dict(CHANNELS)[channel]
-    form = render.tag("form", render.html_join([
-        render.csrf_field(session_of(request).csrf), render.hidden("channel", channel),
-        render.tag("button", "확인", type="submit", class_="btn btn-primary")]), method="post", action="/board/restart", class_="inline")
-    return frame(request, f"{label} 재시작 확인", render.html_join([
-        render.tag("h1", f"{label} 재시작 확인"), render.tag("p", RESTART_EFFECT[channel]), form,
-        render.tag("p", render.tag("a", "취소", href="/board"))]))
-
-
 def make_register(board: Callable[[], object | None]) -> Callable[[web.Application], None]:
-    """``GET /board`` and ``GET /board/restart`` over ``board()`` (the Hub's ``BoardSet`` or None)."""
+    """``GET /board`` over ``board()`` (the Hub's ``BoardSet`` or None). (``GET /board/restart`` is gone: restarts
+    are ``POST /api/board/terminals/{id}/restart``.)"""
     @inline_styles  # xterm.js inserts <style> elements: this page's CSP alone allows nonced ones (and style attributes)
     async def get_board(request: web.Request) -> web.Response:
         return board_page(request, board())
 
-    async def get_restart(request: web.Request) -> web.Response:
-        channel = request.query.get("channel")
-        if channel not in CHANNEL_NAMES:
-            return web.Response(status=400, text="bad_channel")
-        if board() is None:
-            return frame(request, "Board", render.html_join([
-                render.tag("h1", "Board"), render.tag("p", UNAVAILABLE_TEXT, class_="error", role="alert")]),
-                status=503)
-        return confirm_page(request, channel)
-
     def register(app: web.Application) -> None:
         app.router.add_get("/board", get_board)
-        app.router.add_get("/board/restart", get_restart)
     return register

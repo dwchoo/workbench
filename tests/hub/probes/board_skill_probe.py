@@ -535,7 +535,7 @@ def run_probe(omp: str, *, timeout: float, turn_timeout: float, model: str | Non
             records: list[dict[str, Any]] = []
             holder: list[str] = []
             hub = start_hub(case, records, holder)
-            issued = hub.keys.rotate_system_key(now=hub.now[0])
+            issued = hub.keys.rotate_system_key('a-000000000001', now=hub.now[0])
             holder.append(issued.raw)
             secret.append(issued.raw)
             ids = seed(hub)

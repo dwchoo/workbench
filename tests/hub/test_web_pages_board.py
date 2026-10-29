@@ -39,19 +39,38 @@ def csp_directives(header: str) -> dict[str, list[str]]:
 
 
 class FakeBoard:
-    """What the page reads: ``status()`` (hub_v1 ``status.board_agent``) and ``restart``."""
+    """What the page reads (WBX-D1): ``board_view()`` and ``views()`` (the terminal views, agents first), and
+    ``closed``/``invalid``/``find`` for the session API and WebSocket routes it shares the app with."""
+
+    closed = False
+    invalid = None
 
     def __init__(self):
-        self.value = None
-        self.restarts: list[tuple] = []
-        self.lease = {'state': 'none', 'epoch': 0, 'since': None}
+        self.terminals = [{'id': 'a-000000000001', 'kind': 'agent', 'name': 'agent-1', 'state': 'not_started',
+                           'pid': None, 'started_at': None, 'detail': None, 'exit_status': None, 'clients': 0,
+                           'busy': False}]
+        self.started: list = []
 
-    def status(self):
-        return self.value
+    def board_view(self):
+        return {'state': 'ok'} if self.invalid is None else {'state': 'registry_invalid', 'message': self.invalid}
 
-    async def restart(self, channel, *, actor='owner', address=None, reason='restart'):
-        self.restarts.append((channel, actor))
-        return {}
+    def views(self):
+        return [dict(view) for view in self.terminals]
+
+    def find(self, terminal_id):
+        return None
+
+    def watch(self, callback):
+        return lambda: None
+
+    def set(self, kind, **view):
+        found = [item for item in self.terminals if item['kind'] == kind]
+        if found:
+            found[0].update(view)
+        else:
+            self.terminals.append({'id': f'{kind[0]}-00000000000{len(self.terminals) + 1}', 'kind': kind,
+                                   'name': f'{kind}-1', 'pid': None, 'started_at': None, 'detail': None,
+                                   'exit_status': None, 'clients': 0, 'busy': False, **view})
 
 
 class Dom(HTMLParser):
@@ -104,15 +123,18 @@ class PageStructureTests(BoardPageCase):
             self.assertIsNotNone(dom.by_id(f'term-{channel}'), channel)
         self.assertIsNotNone(dom.by_id('board-connection'))
         self.assertIn('연결 중', dom.body_text)
+        # WBX-D1: the agent tab names its terminal (the page's script opens /ws/board/<id>); this run's first shell
+        # does not exist before the page's POST /api/board/open.
+        self.assertEqual(dom.by_id('panel-agent').get('data-terminal'), 'a-000000000001')
+        self.assertIsNone(dom.by_id('panel-shell').get('data-terminal'))
+        self.assertIn('agent-1', dom.body_text)
 
-    async def test_takeover_banner_and_retake_button_exist_but_start_hidden(self):
+    async def test_there_is_no_takeover_banner_and_reconnect_and_login_start_hidden(self):
+        """v1 "takeover banner and retake button": shared connections have no takeover (WBX-D54)."""
         _, dom = await self.page()
-        banner = dom.by_id('board-banner')
-        self.assertIsNotNone(banner)
-        self.assertIn('hidden', banner)
-        self.assertEqual(banner.get('role'), 'alert')
-        self.assertIn('다른 곳에서 연결됨 — 다시 가져오기', dom.body_text)
-        self.assertEqual(dom.by_id('board-retake').get('type'), 'button')
+        self.assertIsNone(dom.by_id('board-banner'))
+        self.assertIsNone(dom.by_id('board-retake'))
+        self.assertNotIn('다시 가져오기', dom.body_text)
         reconnect = dom.by_id('board-reconnect')
         self.assertIsNotNone(reconnect)
         self.assertIn('hidden', reconnect)
@@ -239,8 +261,9 @@ class PageStructureTests(BoardPageCase):
     async def test_page_needs_a_session(self):
         response = await self.get('/board')
         self.assertEqual((response.status, response.headers['Location']), (303, '/login'))
-        response = await self.get('/board/restart?channel=agent')
-        self.assertEqual((response.status, response.headers['Location']), (303, '/login'))
+        # WBX-D1: the restart confirm page is gone (an unknown page: 404 with a session).
+        response = await self.get('/board/restart?channel=agent', cookies=self.cookies)
+        self.assertEqual(response.status, 404)
 
 
 class HelperTextareaCssTests(unittest.TestCase):
@@ -272,26 +295,32 @@ class ChannelLabelParityTests(unittest.TestCase):
 
 
 class ChannelStateTests(BoardPageCase):
-    async def test_channel_states_show_running_exited_failed_and_isolation_reasons(self):
-        self.board.value = {
-            'agent': {'state': 'isolation_failed', 'pid': None, 'started_at': None, 'detail': 'mcp_leak',
-                      'exit_status': None},
-            'shell': {'state': 'exited', 'pid': None, 'started_at': 1.0, 'detail': None, 'exit_status': 3},
-            'lease': {'state': 'none', 'epoch': 0, 'since': None},
-        }
+    async def test_channel_states_show_running_exited_failed_stopped_and_isolation_reasons(self):
+        self.board.set('agent', state='isolation_failed', detail='mcp_leak')
+        self.board.set('shell', state='exited', started_at=1.0, exit_status=3)
         _, dom = await self.page()
         self.assertIn('격리 실패: mcp_leak', dom.body_text)
         self.assertIn('종료됨 (종료 코드 3)', dom.body_text)
-        self.board.value['agent'] = {'state': 'running', 'detail': None, 'exit_status': None}
-        self.board.value['shell'] = {'state': 'failed', 'detail': 'spawn_failed', 'exit_status': None}
+        self.board.set('agent', state='running')
+        self.board.set('shell', state='failed', detail='spawn_failed')
         _, dom = await self.page()
         self.assertIn('실행 중', dom.body_text)
         self.assertIn('실패: spawn_failed', dom.body_text)
+        self.board.set('agent', state='stopped')
+        _, dom = await self.page()
+        self.assertIn('중지됨', dom.body_text)
 
-    async def test_never_started_set_reads_not_started_and_page_does_not_start_it(self):
+    async def test_never_started_terminals_read_not_started_and_the_page_starts_nothing(self):
         _, dom = await self.page()
         self.assertEqual(dom.body_text.count('시작 전'), 2)
-        self.assertEqual(self.board.restarts, [])
+        self.assertEqual(self.board.started, [])
+
+    async def test_a_terminal_name_is_text_never_markup(self):  # AC-38
+        self.board.set('agent', name='<img src=x onerror=alert(1)>&')
+        response, dom = await self.page()
+        self.assertNotIn('<img src=x', response.body_text)
+        self.assertIn('&lt;img src=x onerror=alert(1)&gt;&amp;', response.body_text)
+        self.assertEqual(dom.tags('img'), [])
 
     async def test_unavailable_set_is_503_with_the_reason_and_no_terminal(self):
         self.board_ref[0] = None
@@ -300,45 +329,31 @@ class ChannelStateTests(BoardPageCase):
         self.assertIn('Board agent 세트를 사용할 수 없습니다', dom.body_text)
         self.assertIsNone(dom.by_id('term-agent'))
 
-
-class RestartConfirmTests(BoardPageCase):
-    async def test_each_tab_has_a_restart_link_to_its_confirm_page(self):
-        _, dom = await self.page()
-        links = {attrs['href'] for attrs in dom.tags('a') if 'href' in attrs}
-        self.assertIn('/board/restart?channel=agent', links)
-        self.assertIn('/board/restart?channel=shell', links)
-
-    async def test_confirm_page_posts_with_csrf_and_cancel_goes_back_without_a_change(self):
-        response, dom = await self.page('/board/restart?channel=agent')
-        self.assertEqual(response.status, 200)
-        self.assertIn('재시작', dom.body_text)
-        forms = [attrs for tag, attrs in dom.elements if tag == 'form' and attrs.get('action') == '/board/restart']
-        self.assertEqual([form.get('method') for form in forms], ['post'])
-        fields = {attrs.get('name'): attrs.get('value') for tag, attrs in dom.elements if tag == 'input'}
-        self.assertEqual(fields['channel'], 'agent')
-        self.assertTrue(fields['csrf'])
-        cancel = [attrs for attrs in dom.tags('a') if attrs.get('href') == '/board']
-        self.assertTrue(cancel)
-        self.assertIn('취소', dom.body_text)
-        self.assertEqual(self.board.restarts, [], 'a GET changes nothing')
-
-    async def test_confirm_post_restarts_that_channel_and_returns_to_the_board_page(self):
-        _, dom = await self.page('/board/restart?channel=shell')
-        csrf = {attrs.get('name'): attrs.get('value') for tag, attrs in dom.elements if tag == 'input'}['csrf']
-        response = await self.post('/board/restart', {'csrf': csrf, 'channel': 'shell'}, cookies=self.cookies)
-        self.assertEqual((response.status, response.headers['Location']), (303, '/board'))
-        self.assertEqual(self.board.restarts, [('shell', 'owner')])
-        page = await self.get('/board', cookies=self.cookies)
-        self.assertEqual(page.status, 200)
-
-    async def test_unknown_channel_is_400_and_unavailable_set_is_503(self):
-        for query in ('channel=both', 'channel=', ''):
-            response, _ = await self.page('/board/restart' + ('?' + query if query else ''))
-            self.assertEqual(response.status, 400, query)
-        self.board_ref[0] = None
-        response, _ = await self.page('/board/restart?channel=agent')
+    async def test_an_invalid_registry_is_503_with_its_message_and_no_terminal(self):
+        self.board.invalid = 'Board registry /x/board-agents/registry.json is unusable (not JSON).'
+        response, dom = await self.page()
         self.assertEqual(response.status, 503)
+        self.assertIn('registry.json', dom.body_text)
+        self.assertIsNone(dom.by_id('term-agent'))
 
 
-if __name__ == '__main__':
-    unittest.main()
+class RestartTests(BoardPageCase):
+    """v1 "restart link to its confirm page" and the confirm form: WBX-D1 replaces them with a restart button per tab
+    (the page's script asks first, then ``POST /api/board/terminals/{id}/restart`` with ``confirm: true``)."""
+
+    async def test_each_tab_has_a_restart_button_and_no_confirm_page_link(self):
+        _, dom = await self.page()
+        for channel in ('agent', 'shell'):
+            button = dom.by_id(f'restart-{channel}')
+            self.assertEqual((button.get('type'), button.get('data-channel')), ('button', channel))
+        links = {attrs['href'] for attrs in dom.tags('a') if 'href' in attrs}
+        self.assertFalse({'/board/restart?channel=agent', '/board/restart?channel=shell'} & links)
+
+    async def test_the_confirm_page_and_its_form_post_are_gone(self):
+        response, _ = await self.page('/board/restart?channel=agent')
+        self.assertEqual(response.status, 404)
+        _, dom = await self.page()
+        csrf = [attrs for attrs in dom.tags('meta') if attrs.get('name') == 'csrf-token'][0]['content']
+        response = await self.post('/board/restart', {'csrf': csrf, 'channel': 'shell'}, cookies=self.cookies)
+        self.assertIn(response.status, (404, 405))
+        self.assertEqual(self.board.started, [])

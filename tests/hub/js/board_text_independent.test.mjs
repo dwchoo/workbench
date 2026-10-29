@@ -1,7 +1,8 @@
 // Independent verification of Hangul input, copy/paste and scrolling on the Board page (static/board-state.js and
 // static/board.js; no browser, no network). Derived from the user requirements (Korean input without bugs, working
 // copy and paste, working scroll) and SPEC "입력 한도" (a WebSocket input frame carries at most 64 KiB) and
-// "WebSocket terminal 프로토콜" (frame = channel byte | epoch uint32 BE | payload), NOT from the worker's tests.
+// "WebSocket terminal 프로토콜", migrated to web-board-ux SPEC s4 "WebSocket v2" (WBX-D1: a frame is the bare payload,
+// one socket per terminal; v1's channel byte, epoch and takeover are gone), NOT from the worker's tests.
 // Expected bytes always come from Node's own UTF-8 (Buffer / TextEncoder / TextDecoder), never from the module.
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -110,51 +111,50 @@ test("a 2-, 3- and 4-byte character straddling the limit at every alignment is n
   }
 });
 
-test("the input effect keeps order, the channel byte and the epoch on every frame", () => {
+const ATTACHED_V2 = { t: "attached", v: 2, terminal: { id: "s-1", kind: "shell", name: "shell-1", state: "running" },
+    size: [30, 100], clients: 1, heartbeat: 10 };
+
+function attachedState() {
   let state = board.initialState({ csrf: "c" });
   const send = (event) => { const out = board.step(state, event); state = out.state; return out.effects; };
-  send({ type: "start", sizes: {} });
+  send({ type: "start", size: [30, 100] });
   send({ type: "opened", conn: 1 });
-  send({ type: "message", conn: 1, message: { t: "attached", v: 1, run: "r", epoch: 0x01020304, heartbeat: 10,
-    channels: { agent: { state: "running" }, shell: { state: "running" } } } });
-  for (const [channel, id] of [["agent", 0], ["shell", 1]]) {
+  send({ type: "message", conn: 1, message: ATTACHED_V2 });
+  return { send, get state() { return state; } };
+}
+
+test("the input effect keeps order on every frame; a frame is the bare payload (v1: channel byte and epoch)", () => {
+  const tab = attachedState();
+  for (const id of [0, 1]) {
     const bytes = new TextEncoder().encode(mixed(77 + id, (3 << 16) + 11));
-    const frames = send({ type: "input", channel, bytes });
+    const frames = tab.send({ type: "input", bytes });
     assert.ok(frames.every((effect) => effect.type === "send_binary"));
     assert.ok(frames.length >= 3);
     const payloads = frames.map((effect) => {
-      const data = effect.bytes;
-      assert.equal(data[0], id);
-      assert.deepEqual(Array.from(data.subarray(1, 5)), [1, 2, 3, 4]);
-      assert.ok(data.length - 5 <= FRAME_LIMIT, "payload within the server's input frame limit");
-      return data.subarray(5);
+      assert.ok(effect.bytes.length <= FRAME_LIMIT, "payload within the server's input frame limit");
+      return effect.bytes;
     });
     assert.ok(Buffer.concat(payloads.map((p) => Buffer.from(p))).equals(Buffer.from(bytes)));
   }
 });
 
 test("input of exactly 4 MiB is sent whole; one byte more is refused whole with a notice and no frame", () => {
-  let state = board.initialState({ csrf: "c" });
-  const send = (event) => { const out = board.step(state, event); state = out.state; return out.effects; };
-  send({ type: "start", sizes: {} });
-  send({ type: "opened", conn: 1 });
-  send({ type: "message", conn: 1, message: { t: "attached", v: 1, run: "r", epoch: 2, heartbeat: 10,
-    channels: { agent: { state: "running" }, shell: { state: "running" } } } });
+  const tab = attachedState();
   const hangul = new TextEncoder().encode("한".repeat(INPUT_QUEUE / 3)).subarray(0, INPUT_QUEUE - 1);
   const exact = new Uint8Array(INPUT_QUEUE);
   exact.set(hangul);
   exact[INPUT_QUEUE - 1] = 0x21;
-  const accepted = send({ type: "input", channel: "shell", bytes: exact });
+  const accepted = tab.send({ type: "input", bytes: exact });
   assert.ok(accepted.length >= INPUT_QUEUE / FRAME_LIMIT && accepted.every((e) => e.type === "send_binary"));
-  assert.equal(accepted.reduce((sum, e) => sum + e.bytes.length - 5, 0), INPUT_QUEUE);
+  assert.equal(accepted.reduce((sum, e) => sum + e.bytes.length, 0), INPUT_QUEUE);
   const over = new Uint8Array(INPUT_QUEUE + 1).fill(0x61);
-  const refused = send({ type: "input", channel: "shell", bytes: over });
+  const refused = tab.send({ type: "input", bytes: over });
   assert.equal(refused.filter((effect) => effect.type === "send_binary").length, 0, "no partial delivery");
   assert.equal(refused.length, 1);
   assert.equal(refused[0].type, "notice");
   assert.equal(refused[0].reason, "too_large");
   // The state stays usable: the next small input still goes out.
-  assert.equal(send({ type: "input", channel: "shell", bytes: new Uint8Array([0x61]) }).length, 1);
+  assert.equal(tab.send({ type: "input", bytes: new Uint8Array([0x61]) }).length, 1);
 });
 
 test("bytes that are not UTF-8 (xterm onBinary) still split exactly, in bounded pieces, without stalling", () => {
@@ -177,38 +177,31 @@ test("bytes that are not UTF-8 (xterm onBinary) still split exactly, in bounded 
 });
 
 test("an empty input produces no frame", () => {
-  let state = board.initialState({ csrf: "c" });
-  const send = (event) => { const out = board.step(state, event); state = out.state; return out.effects; };
-  send({ type: "start", sizes: {} });
-  send({ type: "opened", conn: 1 });
-  send({ type: "message", conn: 1, message: { t: "attached", v: 1, run: "r", epoch: 1, heartbeat: 10,
-    channels: { agent: { state: "running" }, shell: { state: "running" } } } });
-  assert.deepEqual(send({ type: "input", channel: "agent", bytes: new Uint8Array(0) }), []);
+  const tab = attachedState();
+  assert.deepEqual(tab.send({ type: "input", bytes: new Uint8Array(0) }), []);
 });
 
 // ---------------------------------------------------------------------------------------------------------------
-// Typing only for the lease holder (pure state).
+// Typing only while attached (pure state). v1: "only the lease holder"; in v2 every attached client types.
 
-test("input is sent only while attached: not before the attach, not after a takeover, not after a drop", () => {
+test("input is sent only while attached: not before the attach, not after a release, not after a drop", () => {
   let state = board.initialState({ csrf: "c" });
   const send = (event) => { const out = board.step(state, event); state = out.state; return out.effects; };
-  const typed = { type: "input", channel: "agent", bytes: new TextEncoder().encode("한글") };
+  const typed = { type: "input", bytes: new TextEncoder().encode("한글") };
   assert.deepEqual(send(typed), [], "idle");
-  send({ type: "start", sizes: {} });
+  send({ type: "start", size: [30, 100] });
   assert.deepEqual(send(typed), [], "connecting");
   send({ type: "opened", conn: 1 });
-  send({ type: "message", conn: 1, message: { t: "attached", v: 1, run: "r", epoch: 5, heartbeat: 10,
-    channels: { agent: { state: "running" }, shell: { state: "running" } } } });
-  assert.equal(send(typed).length, 1, "attached");
+  send({ type: "message", conn: 1, message: { ...ATTACHED_V2, clients: 3 } });
+  assert.equal(send(typed).length, 1, "attached, one of three clients");
   assert.equal(board.describe(state).canInput, true);
-  send({ type: "message", conn: 1, message: { t: "taken_over", epoch: 6 } });
-  assert.equal(board.describe(state).canInput, false, "taken over");
+  send({ type: "pagehide" });
+  assert.equal(board.describe(state).canInput, false, "released");
   assert.deepEqual(send(typed), []);
-  send({ type: "retake" });
-  assert.deepEqual(send(typed), [], "reconnecting after retake");
+  send({ type: "pageshow", persisted: true });
+  assert.deepEqual(send(typed), [], "reconnecting");
   send({ type: "opened", conn: 2 });
-  send({ type: "message", conn: 2, message: { t: "attached", v: 1, run: "r", epoch: 7, heartbeat: 10,
-    channels: { agent: { state: "running" }, shell: { state: "running" } } } });
+  send({ type: "message", conn: 2, message: ATTACHED_V2 });
   assert.equal(send(typed).length, 1);
   send({ type: "closed", conn: 2, code: 1006 });
   assert.equal(board.describe(state).canInput, false, "network drop");
@@ -346,6 +339,7 @@ const scrollCalls = [];
 class FakeTerminal {
   constructor(options) {
     this.rows = 30; this.cols = 100; this.options = {}; this.raw = []; this.resets = 0; this.handlers = {};
+    this.resize = (cols, rows) => { this.rows = rows; this.cols = cols; };
     this.created = options; this.selection = ""; this.cleared = 0; this.focused = 0;
     const proxy = new Proxy(this, {
       get(target, prop, receiver) {
@@ -373,10 +367,11 @@ class FakeTerminal {
 }
 class FakeFit { fit() {} }
 const sockets = [];
+const allSent = []; // every socket's sends in order (one socket per terminal in v2)
 class FakeWebSocket {
   static OPEN = 1;
   constructor(url) { this.url = url; this.readyState = 1; this.sent = []; sockets.push(this); }
-  send(data) { this.sent.push(data); }
+  send(data) { this.sent.push(data); allSent.push(data); }
   close() { this.readyState = 3; }
 }
 const documentListeners = {};
@@ -403,20 +398,20 @@ globalThis.WebSocket = FakeWebSocket;
 globalThis.requestAnimationFrame = (callback) => callback();
 globalThis.setTimeout = () => 1;
 globalThis.clearTimeout = () => {};
+const IDS = ["a-000000000001", "s-000000000002"];
+globalThis.fetch = () => Promise.resolve({ status: 200, json: () => Promise.resolve({ ok: true, terminals: [
+  { id: IDS[0], kind: "agent", name: "agent-1", state: "running" },
+  { id: IDS[1], kind: "shell", name: "shell-1", state: "running" }] }) });
 await import("../../../src/workbench/hub/web/static/board.js");
+await new Promise((resolve) => setImmediate(resolve)); // the open call's reply: one socket per tab
 
-const socket = sockets[0];
-const control = (body) => socket.onmessage({ data: JSON.stringify(body) });
-const dataFrame = (channel, epoch, bytes) => {
-  const out = new Uint8Array(5 + bytes.length);
-  out[0] = channel;
-  new DataView(out.buffer).setUint32(1, epoch, false);
-  out.set(bytes, 5);
-  return out.buffer;
-};
-const binaryFrames = () => socket.sent.filter((item) => typeof item !== "string");
-const ATTACHED = (epoch) => ({ t: "attached", v: 1, run: "r", epoch, heartbeat: 10,
-  channels: { agent: { state: "running" }, shell: { state: "running" } } });
+// v2: one socket per terminal (sockets[0] agent-1, sockets[1] shell-1); a data frame is the bare output.
+const control = (index, body) => sockets[index].onmessage({ data: JSON.stringify(body) });
+const dataFrame = (channel, bytes) => bytes.slice().buffer;
+const deliver = (channel, bytes) => sockets[channel].onmessage({ data: dataFrame(channel, bytes) });
+const binaryFrames = () => allSent.filter((data) => typeof data !== "string");
+const ATTACHED = (index) => ({ t: "attached", v: 2, terminal: { id: IDS[index], kind: index ? "shell" : "agent",
+  name: index ? "shell-1" : "agent-1", state: "running" }, size: [30, 100], clients: 1, heartbeat: 10 });
 const key = (k, mods = {}, extra = {}) => ({
   type: "keydown", key: k, code: /^[A-Za-z]$/.test(k) ? `Key${k.toUpperCase()}` : k, keyCode: 0,
   ctrlKey: false, shiftKey: false, altKey: false, metaKey: false, isComposing: false, prevented: 0,
@@ -433,15 +428,17 @@ test("glue: both terminals keep at least 10000 lines of scrollback and scroll to
 });
 
 test("glue: Hangul output split at every byte offset across two frames reaches xterm as bytes and decodes whole", () => {
-  socket.onopen();
-  control(ATTACHED(9));
+  for (const index of [0, 1]) {
+    sockets[index].onopen();
+    control(index, ATTACHED(index));
+  }
   const text = "\x1b[2J\x1b[1;1H한글 입력: \x1b[38;5;196m안녕하세요\x1b[0m ㄱㅏ 한 👨‍👩‍👧 中文 \x1b]0;제목\x07끝\r\n";
   const bytes = new TextEncoder().encode(text);
   for (let offset = 0; offset <= bytes.length; offset += 1) {
     for (const [channel, term] of [[0, terminals[0]], [1, terminals[1]]]) {
       const before = term.raw.length;
-      socket.onmessage({ data: dataFrame(channel, 9, bytes.subarray(0, offset)) });
-      socket.onmessage({ data: dataFrame(channel, 9, bytes.subarray(offset)) });
+      deliver(channel, bytes.subarray(0, offset));
+      deliver(channel, bytes.subarray(offset));
       const written = term.raw.slice(before);
       assert.ok(written.every((item) => item instanceof Uint8Array), `offset ${offset}: bytes, not strings`);
       assert.ok(Buffer.concat(written.map((item) => Buffer.from(item))).equals(Buffer.from(bytes)), `offset ${offset}`);
@@ -465,7 +462,7 @@ test("glue: random multi-frame splits (including 1-byte frames) keep every byte,
     let at = 0;
     while (at < bytes.length) {
       const size = round === 0 ? 1 : between(rand, 1, 400);
-      socket.onmessage({ data: dataFrame(channel, 9, bytes.subarray(at, at + size)) });
+      deliver(channel, bytes.subarray(at, at + size));
       at += size;
     }
     const written = term.raw.slice(before);
@@ -475,27 +472,26 @@ test("glue: random multi-frame splits (including 1-byte frames) keep every byte,
   }
 });
 
-test("glue: stale-epoch output is dropped and output never scrolls the view", () => {
+test("glue: output of one terminal's socket never writes the other terminal and never scrolls the view", () => {
   const before = terminals[0].raw.length;
-  socket.onmessage({ data: dataFrame(0, 8, new TextEncoder().encode("오래됨")) });
-  assert.equal(terminals[0].raw.length, before, "an old epoch does not write");
-  for (let i = 0; i < 200; i += 1) socket.onmessage({ data: dataFrame(i % 2, 9, new TextEncoder().encode(`줄 ${i}\r\n`)) });
+  deliver(1, new TextEncoder().encode("다른 terminal"));
+  assert.equal(terminals[0].raw.length, before, "v1: a stale epoch; v2: another socket does not write here");
+  for (let i = 0; i < 200; i += 1) deliver(i % 2, new TextEncoder().encode(`줄 ${i}\r\n`));
   assert.deepEqual(scrollCalls, [], "no scrollToBottom / scrollLines call came from output");
 });
 
-test("glue: typed and pasted Hangul, jamo and emoji reach the PTY frames as exact UTF-8, in order, with the epoch", () => {
+test("glue: typed and pasted Hangul, jamo and emoji reach the PTY frames as exact UTF-8, in order (v1: with the epoch)", () => {
   const sentBefore = binaryFrames().length;
   const text = mixed(31, 3 * FRAME_LIMIT + 100);
   terminals[1].handlers.data(text);
   const frames = binaryFrames().slice(sentBefore);
   assert.ok(frames.length >= 4);
   frames.forEach((frame) => {
-    assert.equal(frame[0], 1);
-    assert.equal(new DataView(frame.buffer, frame.byteOffset).getUint32(1, false), 9);
-    assert.ok(frame.length - 5 <= FRAME_LIMIT);
-    strict.decode(frame.subarray(5));
+    assert.ok(frame.length <= FRAME_LIMIT);
+    strict.decode(frame);
   });
-  assert.equal(Buffer.concat(frames.map((f) => Buffer.from(f.subarray(5)))).toString("utf8"), text);
+  assert.ok(sockets[1].sent.includes(frames[0]), "on the shell's own socket");
+  assert.equal(Buffer.concat(frames.map((f) => Buffer.from(f))).toString("utf8"), text);
   // xterm's onBinary hands over a binary string (one char per byte)
   const binaryBefore = binaryFrames().length;
   let raw = "";
@@ -503,7 +499,7 @@ test("glue: typed and pasted Hangul, jamo and emoji reach the PTY frames as exac
   terminals[0].handlers.binary(raw);
   const binaryFramesNow = binaryFrames().slice(binaryBefore);
   assert.equal(binaryFramesNow.length, 1);
-  assert.deepEqual(Array.from(binaryFramesNow[0].subarray(5)), Array.from({ length: 256 }, (_, i) => i));
+  assert.deepEqual(Array.from(binaryFramesNow[0]), Array.from({ length: 256 }, (_, i) => i));
 });
 
 test("glue: a paste over 4 MiB sends nothing and tells the user; a 4 MiB paste goes out whole", () => {
@@ -514,10 +510,10 @@ test("glue: a paste over 4 MiB sends nothing and tells the user; a 4 MiB paste g
   assert.equal(element("board-notice").hidden, false);
   terminals[0].handlers.data("a".repeat(INPUT_QUEUE));
   const frames = binaryFrames().slice(before);
-  assert.equal(frames.reduce((sum, f) => sum + f.length - 5, 0), INPUT_QUEUE);
+  assert.equal(frames.reduce((sum, f) => sum + f.length, 0), INPUT_QUEUE);
 });
 
-test("glue: copy fills the browser's copy event with the trimmed Hangul selection and clears it, even without the lease", () => {
+test("glue: copy fills the browser's copy event with the trimmed Hangul selection and clears it, even without a connection", () => {
   const copyOnce = (selection, mods, extra) => {
     const term = terminals[1];
     term.selection = selection;
@@ -525,25 +521,25 @@ test("glue: copy fills the browser's copy event with the trimmed Hangul selectio
     const handled = term.keyHandler(event);
     return { handled, event, term };
   };
-  // holder
+  // attached
   let result = copyOnce("한글 😀   \n둘째 줄   ");
   assert.equal(result.handled, false);
   assert.equal(result.event.prevented, 1);
   assert.deepEqual(clipboard.copied.at(-1), ["text/plain", "한글 😀\n둘째 줄"]);
   assert.equal(result.term.selection, "");
-  // taken over by another tab: input is off, copying still works
-  control({ t: "taken_over", epoch: 10 });
+  // refused (v1: taken over by another tab): input is off, copying still works
+  sockets[0].onclose({ code: 4403 });
+  sockets[1].onclose({ code: 4403 });
   assert.equal(terminals[0].options.disableStdin, true);
   assert.equal(terminals[1].options.disableStdin, true);
   const frames = binaryFrames().length;
   terminals[0].handlers.data("x");
   terminals[1].handlers.data("붙여넣기");
-  assert.equal(binaryFrames().length, frames, "no typing or pasting without the lease");
+  assert.equal(binaryFrames().length, frames, "no typing or pasting without a connection");
   result = copyOnce("가나다   ");
   assert.equal(result.handled, false);
   assert.deepEqual(clipboard.copied.at(-1), ["text/plain", "가나다"]);
-  // a dropped connection after a retake: same
-  socket.onclose({ code: 1006 });
+  // a dropped connection: same
   assert.equal(terminals[1].options.disableStdin, true);
   result = copyOnce("연결 없음   ");
   assert.deepEqual(clipboard.copied.at(-1), ["text/plain", "연결 없음"]);
@@ -594,16 +590,12 @@ test("glue: switching tabs keeps both terminals, their content and their scroll 
   assert.equal(scrollCalls.length, scrolled, "a tab switch does not move any view");
 });
 
-test("pure state: channel state and output of one channel never touch the other channel's state", () => {
-  let state = board.initialState({ csrf: "c" });
-  const send = (event) => { const out = board.step(state, event); state = out.state; return out.effects; };
-  send({ type: "start", sizes: {} });
-  send({ type: "opened", conn: 1 });
-  send({ type: "message", conn: 1, message: ATTACHED(3) });
-  const before = JSON.stringify(board.describe(state).channels);
-  const effects = send({ type: "data", conn: 1, bytes: board.encodeFrame("shell", 3, new TextEncoder().encode("한글")) });
-  assert.deepEqual(effects.map((e) => [e.type, e.channel]), [["write", "shell"]]);
-  assert.equal(JSON.stringify(board.describe(state).channels), before);
-  const agent = send({ type: "data", conn: 1, bytes: board.encodeFrame("agent", 3, new TextEncoder().encode("한글")) });
-  assert.deepEqual(agent.map((e) => [e.type, e.channel]), [["write", "agent"]]);
+test("pure state: a state message changes only the view and data only writes it (v1: per-channel state)", () => {
+  const tab = attachedState();
+  const before = JSON.stringify(board.describe(tab.state).view);
+  const effects = tab.send({ type: "data", conn: 1, bytes: new TextEncoder().encode("한글") });
+  assert.deepEqual(effects.map((e) => e.type), ["write"]);
+  assert.equal(JSON.stringify(board.describe(tab.state).view), before);
+  tab.send({ type: "message", conn: 1, message: { t: "state", terminal: { id: "s-1", kind: "shell", name: "빌드", state: "running" } } });
+  assert.equal(board.describe(tab.state).view.name, "빌드");
 });

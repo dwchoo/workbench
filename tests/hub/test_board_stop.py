@@ -1,12 +1,14 @@
-"""TI-16 on a real ``wb _hub --foreground`` (seam T3): the Board agent set joins the two-phase Hub stop (TI-T07),
-ends on SIGTERM without a question, keeps running with no browser attached (P2-AC-34) and ``wb hub status`` works
-inside it (the Hub is no managed tree).
+"""TI-16 / WBX-D1 on a real ``wb _hub --foreground`` (seam S3): the Board terminals join the two-phase Hub stop
+(TI-T07), end on SIGTERM without a question, keep running with no browser attached (P2-AC-34) and ``wb hub status``
+works inside them (the Hub is no managed tree).
 
-The set is started through ``POST /board/restart`` (session + CSRF) with the fake ``omp`` as the Board agent and a
-small script as ``board_agent.shell``. Expected values come from ``/proc``, ``hub.sqlite3`` and the CLI output.
+The terminals are started through the session API (``POST /api/board/open``, session + ``X-CSRF-Token``) with the
+fake ``omp`` as the Board agent and a small script as ``board_agent.shell``. Expected values come from ``/proc``,
+``hub.sqlite3`` and the CLI output (web-board-ux SPEC s4 "Hub 상태·정지·nav").
 """
 from __future__ import annotations
 
+import http.client
 import json
 import os
 from pathlib import Path
@@ -77,21 +79,43 @@ class BoardHub:
         self.case.assertEqual(status, 200)
         return re.search(r'name="csrf" value="([^"]+)"', page).group(1)
 
-    def restart(self, channel: str) -> int:
-        status, _, _ = self.browser.request('POST', '/board/restart', {'csrf': self.csrf(), 'channel': channel})
+    def api(self, method: str, path: str, body: dict | None = None) -> tuple[int, dict]:
+        """The Board session API as the page calls it (JSON, the session cookie, ``X-CSRF-Token``, this Origin)."""
+        headers = {'Cookie': '; '.join(f'{k}={v}' for k, v in self.browser.cookies.items()),
+                   'Origin': f'http://{self.browser.host}:{self.browser.port}', 'X-CSRF-Token': self.csrf()}
+        data = None
+        if body is not None:
+            data = json.dumps(body)
+            headers['Content-Type'] = 'application/json'
+        connection = http.client.HTTPConnection(self.browser.host, self.browser.port, timeout=30)
+        try:
+            connection.request(method, path, body=data, headers=headers)
+            response = connection.getresponse()
+            return response.status, json.loads(response.read().decode('utf-8') or 'null')
+        finally:
+            connection.close()
+
+    def view(self, kind: str, index: int = 0) -> dict:
+        return (self.board() or {})[kind + 's'][index]
+
+    def restart(self, kind: str) -> int:
+        status, _ = self.api('POST', f"/api/board/terminals/{self.view(kind)['id']}/restart", {'confirm': True})
         return status
 
     def board(self) -> dict | None:
         return self.box.status()['board_agent']
 
-    def start_set(self) -> dict[str, int]:
-        for channel in ('agent', 'shell'):
-            self.case.assertEqual(self.restart(channel), 303, channel)
-        self.case.assertTrue(wait_until(lambda: (self.board() or {}).get('agent', {}).get('state') == 'running', 15),
-                             self.board())
-        board = self.board()
-        self.case.assertEqual(board['shell']['state'], 'running')
-        return {name: board[name]['pid'] for name in ('agent', 'shell')}
+    def start_set(self) -> dict:
+        """``POST /api/board/open`` with agent-1 visible (the page's first open): agent-1 starts, shell-1 is made.
+        Returns both pids (``self.ids``: both ids)."""
+        agent = self.view('agent')
+        status, reply = self.api('POST', '/api/board/open', {'visible': [agent['id']]})
+        self.case.assertEqual(status, 200, reply)
+        self.case.assertTrue(wait_until(lambda: self.view('agent')['state'] == 'running', 15), self.board())
+        shell = self.view('shell')
+        self.case.assertEqual(shell['state'], 'running')
+        self.ids = {'agent': agent['id'], 'shell': shell['id']}
+        return {'agent': self.view('agent')['pid'], 'shell': shell['pid']}
 
     def audit(self, event: str) -> list[dict]:
         db = sqlite3.connect(f'file:{self.box.state / "hub.sqlite3"}?mode=ro', uri=True)
@@ -205,9 +229,9 @@ class HubStopTests(unittest.TestCase):
 
         refused = hub.box.cli('hub', 'stop')
         self.assertEqual(refused.returncode, 1, refused)
-        self.assertIn('Board agent', refused.stdout)
-        self.assertIn(f'agent running(pid {pids["agent"]})', refused.stdout)
-        self.assertIn(f'shell running(pid {pids["shell"]})', refused.stdout)
+        self.assertIn('Board terminal', refused.stdout)  # WBX-D1: every live terminal with its name and state
+        self.assertIn(f'agent agent-1 running(pid {pids["agent"]})', refused.stdout)
+        self.assertIn(f'shell shell-1 running(pid {pids["shell"]})', refused.stdout)
         self.assertIsNone(hub.hub.poll())
         self.assertTrue(all(alive(pid) for pid in pids.values()))
 
@@ -215,8 +239,8 @@ class HubStopTests(unittest.TestCase):
         self.assertEqual(stopped.returncode, 0, stopped)
         self.assertEqual(hub.hub.wait(timeout=20), 0)
         self.assertFalse(any(alive(pid) for pid in pids.values()))
-        self.assertEqual(sorted((row['channel'], row['pid'], row['reason']) for row in hub.audit('board_stop')),
-                         sorted((name, pid, 'hub_stop') for name, pid in pids.items()))
+        self.assertEqual(sorted((row['kind'], row['name'], row['pid'], row['reason']) for row in hub.audit('board_stop')),
+                         sorted((kind, f'{kind}-1', pid, 'hub_stop') for kind, pid in pids.items()))
 
     def test_a_channel_that_ends_between_request_and_confirm_is_a_token_mismatch_and_nothing_stops(self):
         flag = Path(os.environ.get('TMPDIR', '/tmp')) / f'wb-board-flag-{os.getpid()}-{time.monotonic_ns()}'
@@ -233,7 +257,7 @@ class HubStopTests(unittest.TestCase):
                 pathlib.Path(sys.argv[1]).touch()
                 deadline = time.monotonic() + 15
                 while time.monotonic() < deadline:
-                    if client.request("status")["board_agent"]["shell"]["state"] == "exited":
+                    if client.request("status")["board_agent"]["shells"][0]["state"] == "exited":
                         break
                     time.sleep(0.05)
                 print(json.dumps(client.request("stop_confirm", token=offer["token"])), flush=True)
@@ -241,18 +265,19 @@ class HubStopTests(unittest.TestCase):
         result = subprocess.run([sys.executable, '-c', client, str(flag)], env=hub.box.env, capture_output=True,
                                 text=True, timeout=40)
         offered, reply = (json.loads(line) for line in result.stdout.splitlines())
-        self.assertEqual(offered, [{'kind': 'board_agent_set', 'lease': 'none', 'channels': {
-            'agent': {'pid': pids['agent'], 'state': 'running'}, 'shell': {'pid': pids['shell'], 'state': 'running'}}}])
+        self.assertEqual(offered, [{'kind': 'board_agent_set', 'terminals': [
+            {'id': hub.ids['agent'], 'kind': 'agent', 'name': 'agent-1', 'pid': pids['agent'], 'state': 'running'},
+            {'id': hub.ids['shell'], 'kind': 'shell', 'name': 'shell-1', 'pid': pids['shell'], 'state': 'running'}]}])
         self.assertEqual((reply['ok'], reply['reason']), (False, 'stop_token_mismatch'))
         self.assertIsNone(hub.hub.poll())
         self.assertTrue(alive(pids['agent']))
-        self.assertEqual(hub.board()['shell']['exit_status'], 5)
+        self.assertEqual(hub.view('shell')['exit_status'], 5)
 
     def test_without_a_set_the_stop_asks_nothing(self):
         hub = BoardHub(self)
         stopped = hub.box.cli('hub', 'stop')
         self.assertEqual(stopped.returncode, 0, stopped)
-        self.assertNotIn('Board agent', stopped.stdout)
+        self.assertNotIn('Board terminal', stopped.stdout)
         self.assertEqual(hub.hub.wait(timeout=20), 0)
 
     def test_sigterm_ends_the_set_without_a_question(self):
@@ -268,16 +293,15 @@ class SetLifetimeTests(unittest.TestCase):
         hub = BoardHub(self)
         pids = hub.start_set()
         time.sleep(30)  # P2-AC-34: no browser attached for 30 s
-        board = hub.board()
-        self.assertEqual({name: board[name]['pid'] for name in ('agent', 'shell')}, pids)
+        self.assertEqual({kind: hub.view(kind)['pid'] for kind in ('agent', 'shell')}, pids)
         self.assertTrue(all(alive(pid) for pid in pids.values()))
-        self.assertEqual(hub.restart('agent'), 303)
-        self.assertTrue(wait_until(lambda: hub.board()['agent']['state'] == 'running', 15))
-        new = hub.board()['agent']['pid']
+        self.assertEqual(hub.restart('agent'), 200)
+        self.assertTrue(wait_until(lambda: hub.view('agent')['state'] == 'running', 15))
+        new = hub.view('agent')['pid']
         self.assertNotEqual(new, pids['agent'])
         self.assertFalse(alive(pids['agent']))
-        self.assertEqual([(row['actor'], row['channel'], row['pid']) for row in hub.audit('board_restart')][-1],
-                         ('owner', 'agent', pids['agent']))
+        self.assertEqual([(row['actor'], row['kind'], row['name'], row['pid']) for row in hub.audit('board_restart')][-1],
+                         ('owner', 'agent', 'agent-1', pids['agent']))
         self.assertEqual(hub.box.stop_hub(hub.hub, timeout=20), 0)
         self.assertFalse(alive(new))
 
@@ -293,8 +317,7 @@ class SetLifetimeTests(unittest.TestCase):
         self.assertIn('Hub 실행 중', text)
         self.assertNotIn('관리', text.split('rc=')[0].split('Hub 실행 중')[0])
         shown = hub.box.cli('hub', 'status')
-        self.assertIn(f'board_agent: agent running(pid {pids["agent"]}) · shell running(pid {pids["shell"]}) · 연결 없음',
-                      shown.stdout)
+        self.assertIn('board_agent: agent 1/4 실행 중 · shell 1 · 연결 0', shown.stdout)  # WBX-D1 status line
 
 
 if __name__ == '__main__':

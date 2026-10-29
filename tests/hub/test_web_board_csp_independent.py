@@ -227,7 +227,7 @@ class Board200PolicyTests(CspCase):
 
     async def test_a_nonce_never_shows_up_in_a_later_response_of_any_route(self):
         issued = header_nonce((await self.board_get()).headers['Content-Security-Policy'])
-        probes = ['/board', '/board/restart?channel=agent', '/dashboard', '/requests', '/settings', '/login',
+        probes = ['/board', '/api/board', '/dashboard', '/requests', '/settings', '/login',
                   '/static/board.js', '/static/style-nonce.js', '/static/base.css', '/static/board.css']
         for path in probes:
             response = await self.get(path, cookies=self.cookies)
@@ -275,9 +275,7 @@ class StrictElsewhereTests(CspCase):
             'audit': ('/settings/audit', self.cookies),
             'project': (f'/projects/{self.a}', self.cookies),
             'control confirm': (f'/projects/{self.a}/pause', self.cookies),
-            'board restart confirm': ('/board/restart?channel=agent', self.cookies),
-            'board restart confirm shell': ('/board/restart?channel=shell', self.cookies),
-        }
+        }  # WBX-D1: the two board restart confirm pages are gone (restart is POST /api/board/terminals/{id}/restart)
         ok = 0
         for what, (path, cookies) in pages.items():
             response = await self.get(path, cookies=cookies)
@@ -287,11 +285,11 @@ class StrictElsewhereTests(CspCase):
             self.assertEqual(response.headers['Cache-Control'], 'no-store' if cookies is None else 'private, no-cache',
                              what)
             ok += response.status == 200
-        self.assertGreaterEqual(ok, 9, 'most of these must be real 200 pages, or the check proves little')
+        self.assertGreaterEqual(ok, 7, 'most of these must be real 200 pages, or the check proves little')
 
     async def test_requests_settings_control_login_and_project_pages_answer_200_with_the_strict_policy(self):
         for path in ('/requests', '/settings', f'/projects/{self.a}/pause',
-                     f'/projects/{self.a}', '/board/restart?channel=agent'):
+                     f'/projects/{self.a}'):  # WBX-D1: no board restart confirm page
             response = await self.get(path, cookies=self.cookies)
             self.assertEqual(response.status, 200, path)
             self.assert_strict(response, path)
@@ -353,16 +351,16 @@ class StrictElsewhereTests(CspCase):
             self.assertNotIn('style-nonce', getattr(response, 'body_text', ''), what)
 
     async def test_the_error_path_after_a_nonce_exists_still_gets_the_strict_policy(self):
-        # board.status() raising happens before the page renders; render.page raising happens after the nonce
-        # was made (frame() builds the metas first). Both must answer a 500 with the strict policy.
+        # board.views() raising (v1: status()) happens before the page renders; render.page raising happens after the
+        # nonce was made (frame() builds the metas first). Both must answer a 500 with the strict policy.
         class Boom(FakeBoard):
-            def status(self):
+            def views(self):
                 raise RuntimeError('boom')
 
         self.board_ref[0] = Boom()
         before = await self.get('/board', cookies=self.cookies)
         self.assertEqual(before.status, 500)
-        self.assert_strict(before, '500 status() raised')
+        self.assert_strict(before, '500 views() raised')
         self.board_ref[0] = self.board
         with mock.patch('workbench.hub.web.render.page', side_effect=RuntimeError('late failure')):
             late = await self.get('/board', cookies=self.cookies)
@@ -374,10 +372,11 @@ class StrictElsewhereTests(CspCase):
         self.assertIsNotNone(header_nonce(good.headers['Content-Security-Policy']))
 
     async def test_a_ws_board_refusal_is_strict(self):
-        for cookies in (None, self.cookies):
-            response = await self.get('/ws/board', cookies=cookies)
-            self.assertIn(response.status, (400, 401, 403, 426), response.status)
-            self.assert_strict(response, '/ws/board without an upgrade')
+        for path in ('/ws/board/a-000000000001', '/ws/board'):  # WBX-D1: one socket per terminal; /ws/board is gone
+            for cookies in (None, self.cookies):
+                response = await self.get(path, cookies=cookies)
+                self.assertIn(response.status, (400, 401, 403, 404, 426), response.status)
+                self.assert_strict(response, f'{path} without an upgrade')
 
 
 class BoardJsInstallsBeforeXtermOpensTests(unittest.TestCase):

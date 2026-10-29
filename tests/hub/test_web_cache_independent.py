@@ -582,8 +582,14 @@ class ResultViewTests(results.WebResultCase):
 
 
 class FakeBoard:
-    def status(self):
-        return {'agent': {'state': 'running'}, 'shell': {'state': 'running'}}
+    """What the page reads (WBX-D1): the registry state and the terminal views."""
+
+    def board_view(self):
+        return {'state': 'ok'}
+
+    def views(self):
+        return [{'id': 'a-0123456789ab', 'kind': 'agent', 'name': 'agent-1', 'state': 'running'},
+                {'id': 's-0123456789ab', 'kind': 'shell', 'name': 'shell-1', 'state': 'running'}]
 
 
 class BoardNonceTests(HubCase):
@@ -632,12 +638,13 @@ class BoardNonceTests(HubCase):
         status, headers, text = await self.fetch('GET', '/board')
         self.assertEqual((status, headers.getall('Cache-Control')), (303, [NO_STORE]))
         self.assertNotIn('nonce', headers['Content-Security-Policy'])
+        # WBX-D1: the restart confirm page is gone (a 404 page); its POST moved to the session API (no-store JSON)
         status, headers, text = await self.fetch('GET', '/board/restart?channel=agent', cookie=cookie)
-        self.assertEqual((status, headers.getall('Cache-Control')), (200, [SESSION_PAGE]))
+        self.assertEqual(status, 404)
         self.assertNotIn('nonce', headers['Content-Security-Policy'], 'only the /board 200 loosens the CSP')
-        status, headers, text = await self.fetch('POST', '/board/restart', cookie=cookie, headers={'Origin': self.url},
-                                                 data={'csrf': 'stale', 'channel': 'agent'})
-        self.assertEqual((status, headers.getall('Cache-Control')), (403, [SESSION_PAGE]))
+        status, headers, text = await self.fetch('POST', '/api/board/terminals/a-0123456789ab/restart', cookie=cookie,
+                                                 headers={'Origin': self.url, 'X-CSRF-Token': 'stale'})
+        self.assertEqual((status, headers.getall('Cache-Control')), (403, [NO_STORE]))
 
 
 if __name__ == '__main__':

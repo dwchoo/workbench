@@ -92,13 +92,8 @@ def cmd_hub_status(args: argparse.Namespace) -> int:
         print(f"  {line}")
     for line in config_status_lines(status["config"]):
         print(f"  {line}")
-    board = status["board_agent"]
-    if board is None:
-        print("  board_agent: 없음")
-    else:
-        print("  board_agent: " + board_text(board, (board.get("lease") or {}).get("state")))
-        for line in board_failure_lines(board):
-            print(line)
+    for line in board_lines(status["board_agent"]):
+        print(f"  {line}")
     return EXIT_OK
 
 
@@ -518,38 +513,39 @@ def cmd_hub_disable(args: argparse.Namespace) -> int:
     return EXIT_OK
 
 
-LEASE_TEXT = {"connected": "연결됨", "none": "연결 없음"}
+LIVE_TERMINAL_STATES = ("starting", "running")
+FAILED_TERMINAL_STATES = ("failed", "isolation_failed")
 
 
-def board_text(channels: dict, lease: str | None) -> str:
-    """``agent running(pid N) · shell running(pid M) · 연결 없음`` (SPEC "Board agent 세트" 상태)."""
-    parts = []
-    for name in ("agent", "shell"):
-        channel = channels.get(name) or {}
-        state = channel.get("state") or "unknown"
-        pid = channel.get("pid")
-        parts.append(f"{name} {state}" + (f"(pid {pid})" if pid is not None and state in ("starting", "running")
-                                          else ""))
-    if lease is not None:
-        parts.append(LEASE_TEXT.get(lease, str(lease)))
-    return " · ".join(parts)
-
-
-def board_failure_lines(board: dict) -> list[str]:
-    """``    <channel>: <message>`` for each channel that failed with an explanation (directory, fix)."""
-    lines = []
-    for name in ("agent", "shell"):
-        channel = board.get(name)
-        message = channel.get("message") if isinstance(channel, dict) else None
-        if isinstance(message, str) and message:
-            lines.append(f"    {name}: {message}")
+def board_lines(board: dict | None) -> list[str]:
+    """``wb hub status``'s Board lines (web-board-ux SPEC s4 "Hub 상태"): ``board_agent: agent 2/4 실행 중 · shell 3 ·
+    연결 5``, then ``    <name>: <message or detail>`` for each failed terminal; ``registry_invalid`` with its
+    message."""
+    if not isinstance(board, dict):
+        return ["board_agent: 없음"]
+    if board.get("state") == "registry_invalid":
+        return ["board_agent: registry_invalid", f"    {board.get('message') or ''}".rstrip()]
+    agents, shells = board.get("agents") or [], board.get("shells") or []
+    limit = (board.get("options") or {}).get("agent_limit")
+    running = sum(1 for item in agents if item.get("state") in LIVE_TERMINAL_STATES)
+    clients = sum(int(item.get("clients") or 0) for item in [*agents, *shells])
+    lines = [f"board_agent: agent {running}/{limit} 실행 중 · shell {len(shells)} · 연결 {clients}"]
+    for item in [*agents, *shells]:
+        if item.get("state") in FAILED_TERMINAL_STATES:
+            explanation = item.get("message") or item.get("detail") or item.get("state")
+            lines.append(f"    {item.get('name')}: {explanation}")
     return lines
 
 
 def active_text(item) -> str:
-    """One ``stop_request.active`` entry for the stop question."""
+    """One ``stop_request.active`` entry for the stop question: every live Board terminal with its name and state."""
     if isinstance(item, dict) and item.get("kind") == "board_agent_set":
-        return "Board agent 세트: " + board_text(item.get("channels") or {}, item.get("lease"))
+        parts = []
+        for terminal in item.get("terminals") or []:
+            pid = terminal.get("pid")
+            parts.append(f"{terminal.get('kind')} {terminal.get('name')} {terminal.get('state')}"
+                         + (f"(pid {pid})" if pid is not None else ""))
+        return "Board terminal: " + " · ".join(parts)
     return str(item)
 
 

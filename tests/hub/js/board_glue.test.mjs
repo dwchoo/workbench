@@ -1,6 +1,8 @@
-// TI-18 / seam T10: board.js against stub DOM, xterm and WebSocket globals (no browser). It checks the glue
-// wiring only (csrf from the meta tag into the hello, keystrokes to binary frames with the epoch, output to the
-// right terminal, banner and 연결 없음 text, pagehide release). Real rendering is a target-host check.
+// TI-18 / WBX-D1 behaviour 24 / seam S8: board.js against stub DOM, fetch, xterm and WebSocket globals (no browser).
+// It checks the protocol v2 glue only: the page's first POST /api/board/open (csrf header), one /ws/board/{id} per
+// tab, the v2 hello with the tab's size, keystrokes as bare binary frames, output to its own terminal, 연결 없음 text,
+// pagehide release, the server size drawn without a resize back, the restart button. Real rendering is a target-host
+// check. (v1: one /ws/board, channel+epoch frames, the takeover banner and 다시 가져오기 are gone.)
 import test from "node:test";
 import assert from "node:assert/strict";
 
@@ -8,8 +10,10 @@ const elements = new Map();
 function element(id) {
   if (!elements.has(id)) {
     const classes = new Set(id === "panel-agent" ? ["panel", "active"] : []); // the server renders the agent tab first
+    // The server renders agent-1's id on its panel; this run's first shell does not exist before the open call.
+    const dataset = id === "panel-agent" ? { terminal: "a-000000000001" } : {};
     elements.set(id, {
-      id, textContent: "", hidden: ["board-login", "board-reconnect", "board-banner", "board-notice"].includes(id), dataset: {}, listeners: {}, attrs: {},
+      id, textContent: "", hidden: ["board-login", "board-reconnect", "board-notice"].includes(id), dataset, listeners: {}, attrs: {},
       classList: { toggle: (name, on) => (on ? classes.add(name) : classes.delete(name)), contains: (name) => classes.has(name) },
       setAttribute(name, value) { this.attrs[name] = value; },
       addEventListener(type, handler) { this.listeners[type] = handler; },
@@ -39,6 +43,7 @@ class FakeTerminal {
   onData(handler) { this.handlers.data = handler; }
   onBinary(handler) { this.handlers.binary = handler; }
   onResize(handler) { this.handlers.resize = handler; }
+  resize(cols, rows) { this.resizedTo = [rows, cols]; this.rows = rows; this.cols = cols; }
 }
 class FakeFit { fit() {} }
 
@@ -81,19 +86,29 @@ globalThis.WebSocket = FakeWebSocket;
 globalThis.requestAnimationFrame = (callback) => callback();
 globalThis.setTimeout = (callback, ms) => { timerSeq += 1; timers.set(timerSeq, { callback, ms }); return timerSeq; };
 globalThis.clearTimeout = (id) => { timers.delete(id); };
+const fetches = [];
+const TERMINALS = [
+  { id: "a-000000000001", kind: "agent", name: "agent-1", state: "starting", clients: 0, busy: false },
+  { id: "s-000000000002", kind: "shell", name: "shell-1", state: "running", clients: 0, busy: false },
+];
+globalThis.fetch = (path, options) => {
+  fetches.push({ path, options, body: JSON.parse(options.body) });
+  const reply = path === "/api/board/open" ? { ok: true, terminals: TERMINALS }
+    : { ok: true, terminal: { ...TERMINALS[1], state: "running", pid: 99 } };
+  return Promise.resolve({ status: 200, json: () => Promise.resolve(reply) });
+};
+const confirms = [];
+globalThis.confirm = (text) => { confirms.push(text); return true; };
 
 await import("../../../src/workbench/hub/web/static/board.js");
+await new Promise((resolve) => setImmediate(resolve)); // the open call's reply
 
 const json = (socket) => socket.sent.filter((item) => typeof item === "string").map((item) => JSON.parse(item));
 const message = (socket, body) => socket.onmessage({ data: JSON.stringify(body) });
-const frame = (channel, epoch, text) => {
-  const payload = new TextEncoder().encode(text);
-  const bytes = new Uint8Array(5 + payload.length);
-  bytes[0] = channel;
-  new DataView(bytes.buffer).setUint32(1, epoch, false);
-  bytes.set(payload, 5);
-  return bytes.buffer;
-};
+const frame = (text) => new TextEncoder().encode(text).buffer;
+const binaries = (socket) => socket.sent.filter((item) => typeof item !== "string");
+const ATTACHED = (id, extra = {}) => ({ t: "attached", v: 2, terminal: TERMINALS.find((t) => t.id === id), size: [30, 100],
+  clients: 1, heartbeat: 10, ...extra });
 
 test("the style nonce from the meta tag is on <style> elements before any terminal opens; other tags get none", () => {
   assert.equal(terminals.length, 2);
@@ -103,92 +118,89 @@ test("the style nonce from the meta tag is on <style> elements before any termin
   assert.equal(document.createElement("textarea").nonce, "", "xterm's IME helper textarea is untouched");
 });
 
-test("the page opens /ws/board and its hello carries the csrf token from the meta tag and the terminal sizes", () => {
-  assert.equal(sockets.length, 1);
-  assert.equal(sockets[0].url, "ws://127.0.0.1:8780/ws/board");
+test("the page asks POST /api/board/open with agent-1 visible and the csrf header, then opens one socket per tab", () => {
+  assert.equal(fetches.length, 1);
+  assert.equal(fetches[0].path, "/api/board/open");
+  assert.equal(fetches[0].options.method, "POST");
+  assert.equal(fetches[0].options.headers["X-CSRF-Token"], "csrf-from-meta");
+  assert.deepEqual(fetches[0].body, { visible: ["a-000000000001"] });
+  assert.deepEqual(sockets.map((socket) => socket.url),
+    ["ws://127.0.0.1:8780/ws/board/a-000000000001", "ws://127.0.0.1:8780/ws/board/s-000000000002"]);
   assert.equal(element("board-connection").textContent, "연결 중");
-  sockets[0].onopen();
-  assert.deepEqual(json(sockets[0])[0], {
-    t: "hello", v: 1, csrf: "csrf-from-meta", resume: null, sizes: { agent: [30, 100], shell: [30, 100] },
-  });
+  for (const socket of sockets) {
+    socket.onopen();
+    assert.deepEqual(json(socket)[0], { t: "hello", v: 2, csrf: "csrf-from-meta", size: [30, 100] });
+  }
+  assert.equal(element("name-shell").textContent, "shell-1");
 });
 
-test("attached enables input; keystrokes become binary frames with the epoch; output goes to its terminal", () => {
-  const socket = sockets[0];
+test("attached enables input; keystrokes become bare binary frames; output goes to its own terminal", () => {
+  const [agent, shell] = sockets;
   terminals[0].handlers.data("x");
-  assert.equal(socket.sent.filter((item) => typeof item !== "string").length, 0, "no input before attached");
-  message(socket, { t: "attached", v: 1, run: "r", epoch: 7, heartbeat: 10, channels: { agent: { state: "running" }, shell: { state: "exited", exit_status: 0 } } });
+  assert.equal(binaries(agent).length, 0, "no input before attached");
+  message(agent, ATTACHED("a-000000000001", { terminal: { ...TERMINALS[0], state: "running" } }));
+  message(shell, ATTACHED("s-000000000002", { terminal: { ...TERMINALS[1], state: "exited", exit_status: 0 } }));
   assert.equal(element("board-connection").textContent, "연결됨");
   assert.equal(terminals[0].resets, 1);
   assert.equal(element("state-shell").textContent, "종료됨 (종료 코드 0)");
   assert.equal(element("state-agent").textContent, "실행 중");
   terminals[1].handlers.data("ls");
-  const binary = socket.sent.filter((item) => typeof item !== "string").at(-1);
-  assert.deepEqual(Array.from(binary), [1, 0, 0, 0, 7, 0x6c, 0x73]);
-  socket.onmessage({ data: frame(0, 7, "hello") });
-  socket.onmessage({ data: frame(0, 6, "stale") });
+  assert.deepEqual(Array.from(binaries(shell).at(-1)), [0x6c, 0x73]);
+  agent.onmessage({ data: frame("hello") });
   assert.deepEqual(terminals[0].written, ["hello"]);
-  assert.deepEqual([...timers.values()].map((timer) => timer.ms).sort((a, b) => a - b), [10000, 10000, 20000]);
+  assert.deepEqual(terminals[1].written, []);
+});
+
+test("a server size is drawn on the terminal and never sent back as a resize", () => {
+  const shell = sockets[1];
+  message(shell, { t: "size", rows: 40, cols: 120 });
+  assert.deepEqual(terminals[1].resizedTo, [40, 120]);
+  assert.equal(json(shell).filter((item) => item.t === "resize").length, 0);
+  assert.equal([...timers.values()].filter((timer) => timer.ms === 150).length, 0, "no resize is pending");
 });
 
 test("Hangul output split across frames reaches xterm as bytes (its decoder streams); typed Hangul is UTF-8", () => {
-  const socket = sockets[0];
+  const socket = sockets[1];
   const bytes = new TextEncoder().encode("한글 출력");
   const at = terminals[1].raw.length;
-  const payload = (part) => {
-    const out = new Uint8Array(5 + part.length);
-    out[0] = 1;
-    new DataView(out.buffer).setUint32(1, 7, false);
-    out.set(part, 5);
-    return out.buffer;
-  };
-  socket.onmessage({ data: payload(bytes.subarray(0, 2)) }); // inside the first syllable's 3 bytes
-  socket.onmessage({ data: payload(bytes.subarray(2)) });
+  socket.onmessage({ data: bytes.slice(0, 2).buffer }); // inside the first syllable's 3 bytes
+  socket.onmessage({ data: bytes.slice(2).buffer });
   const written = terminals[1].raw.slice(at);
   assert.ok(written.every((item) => item instanceof Uint8Array), "never a per-frame decoded string");
   assert.equal(new TextDecoder("utf-8", { fatal: true }).decode(Buffer.concat(written.map((item) => Buffer.from(item)))),
     "한글 출력");
   terminals[1].handlers.data("가ㄱ\u1100\u1161😀");
-  const sentFrame = socket.sent.filter((item) => typeof item !== "string").at(-1);
-  assert.deepEqual(Buffer.from(sentFrame.subarray(5)), Buffer.from("가ㄱ\u1100\u1161😀", "utf8"));
+  assert.deepEqual(Buffer.from(binaries(socket).at(-1)), Buffer.from("가ㄱ\u1100\u1161😀", "utf8"));
 });
 
-test("taken_over shows the banner and 다시 가져오기 reconnects with resume null", () => {
-  const first = sockets[0];
-  message(first, { t: "taken_over", epoch: 8 });
-  first.onclose({ code: 4001 });
-  assert.equal(element("board-banner").hidden, false);
-  assert.equal(element("board-connection").textContent, "다른 곳에서 연결됨");
-  assert.equal(terminals[0].options.disableStdin, true);
-  assert.equal(sockets.length, 1, "no automatic reconnect");
-  element("board-retake").listeners.click();
-  assert.equal(sockets.length, 2);
-  assert.equal(element("board-banner").hidden, true);
-  sockets[1].onopen();
-  assert.equal(json(sockets[1])[0].resume, null);
+test("the restart button asks first and posts confirm true for its terminal", async () => {
+  element("restart-shell").listeners.click();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(confirms.length, 1);
+  assert.deepEqual(fetches.at(-1).path, "/api/board/terminals/s-000000000002/restart");
+  assert.deepEqual(fetches.at(-1).body, { confirm: true });
 });
 
-test("a network drop shows 연결 없음 and the reconnect button; pagehide releases with the epoch", () => {
-  const socket = sockets[1];
-  message(socket, { t: "attached", v: 1, run: "r", epoch: 9, heartbeat: 10, channels: {} });
+test("a network drop shows 연결 없음 and the reconnect button; pagehide releases (no epoch)", () => {
+  const agent = sockets[0];
   windowListeners.pagehide();
-  assert.deepEqual(json(socket).at(-1), { t: "release", epoch: 9 });
+  assert.deepEqual(json(agent).at(-1), { t: "release" });
   windowListeners.pageshow({ persisted: true });
-  assert.equal(sockets.length, 3);
-  sockets[2].onopen();
-  assert.deepEqual(json(sockets[2])[0].resume, { run: "r", epoch: 9 });
-  sockets[2].onclose({ code: 1006 });
+  const again = sockets.at(-2);
+  assert.equal(again.url, "ws://127.0.0.1:8780/ws/board/a-000000000001");
+  again.onopen();
+  assert.equal(json(again)[0].t, "hello");
+  again.onclose({ code: 1006 });
   assert.equal(element("board-connection").textContent, "연결 없음");
   assert.equal(element("board-reconnect").hidden, false);
 });
 
 test("close 4401 shows 연결 없음 — 다시 로그인 with the login link and no reconnect button or timer", () => {
-  const [id, pending] = [...timers.entries()].find(([, timer]) => timer.ms === 1000); // the backoff of the last test
-  timers.delete(id);
-  pending.callback();
+  for (const [id, timer] of [...timers.entries()]) if (timer.ms === 1000) timers.delete(id); // the drop's backoff
+  element("board-reconnect").listeners.click();
   const socket = sockets.at(-1);
   socket.onopen();
-  message(socket, { t: "attached", v: 1, run: "r", epoch: 11, heartbeat: 10, channels: {} });
+  message(socket, ATTACHED("a-000000000001"));
   socket.onclose({ code: 4401 });
   assert.equal(element("board-connection").textContent, "연결 없음 — 다시 로그인");
   assert.equal(element("board-login").hidden, false);

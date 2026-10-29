@@ -1,6 +1,7 @@
-"""Korean (Hangul) text through the Board terminal (seam T5: ``GET /ws/board`` over a real :class:`BoardSet`).
+"""Korean (Hangul) text through the Board terminal (seam T5: ``GET /ws/board/{id}``, protocol v2 (WBX-D1), over a
+real :class:`BoardSet`).
 
-The channels run :mod:`test_board_ws`'s recorder PTY command (raw mode; it writes every byte it reads to a file and
+The terminals run :mod:`test_board_ws`'s recorder PTY command (raw mode; it writes every byte it reads to a file and
 echoes ``<bytes>``). Expected values are the UTF-8 encoding of the test's own text, cut by the test on code point
 boundaries into frames of at most 64 KiB (SPEC "입력 한도"), and the bytes the recorder wrote.
 Run with ``discover -s tests/hub -p 'test_board_hangul.py'``.
@@ -38,34 +39,35 @@ def code_point_frames(text: str, limit: int = FRAME_LIMIT) -> list[bytes]:
 
 
 class HangulInputTests(board_case.BoardWsCase):
-    async def attached(self):
-        tab = self.tab()
-        epoch = (await tab.attach(self.session.csrf))['epoch']
-        await tab.wait_output('shell', b'ready:shell')
-        await tab.wait_output('agent', b'ready:agent')
-        return tab, epoch
+    async def attached(self, kind: str):
+        """One connection to agent-1 or to a new shell (v2: one socket per terminal)."""
+        terminal = await (self.agent() if kind == 'agent' else self.shell())
+        tab = self.tab(terminal)
+        await tab.attach(self.session.csrf)
+        await tab.wait_output(b'ready:')
+        return tab, terminal
 
     async def test_typed_hangul_jamo_and_emoji_reach_the_pty_byte_exact_and_echo_back(self):
-        tab, epoch = await self.attached()
+        tab, agent = await self.attached('agent')
         typed = '안녕하세요 ㄱㅏ \u1112\u1161\u11ab \u3164 👍🏽'.encode('utf-8')
-        await tab.send_input('agent', epoch, typed)
-        await tab.wait_output('agent', b'<' + typed + b'>')
-        self.assertEqual(self.recorded('agent'), typed)
+        await tab.send_input(typed)
+        await tab.wait_output(b'<' + typed + b'>')
+        self.assertEqual(self.recorded(agent), typed)
 
     async def test_a_one_megabyte_hangul_paste_in_64_kib_frames_arrives_in_order_byte_exact(self):
-        tab, epoch = await self.attached()
+        tab, shell = await self.attached('shell')
         unit = '가나다라마바사 abc 😀 \r'
         text = unit * ((1 << 20) // len(unit.encode('utf-8')) + 1)
         frames = code_point_frames(text)
         self.assertGreaterEqual(len(frames), 16)
         for frame in frames:
-            await tab.send_input('shell', epoch, frame)
+            await tab.send_input(frame)
         expected = text.encode('utf-8')
-        self.assertTrue(await self.eventually(lambda: len(self.recorded('shell')) >= len(expected), 20))
-        self.assertEqual(self.recorded('shell'), expected)
-        self.assertEqual(self.terminal.dropped_inputs, 0)
-        self.assertEqual(self.board.status()['lease']['state'], 'connected')
-        self.assertEqual(self.board.status()['lease']['epoch'], epoch)
+        self.assertTrue(await self.eventually(lambda: len(self.recorded(shell)) >= len(expected), 20))
+        self.assertEqual(self.recorded(shell), expected)
+        # v1: no dropped input and the lease kept; v2: no error and the connection still attached
+        self.assertNotIn('error', [event.get('t') for event in tab.events])
+        self.assertEqual((tab.close_code, self.board.view(shell)['clients']), (None, 1))
 
 
 STALLING_RECORDER = textwrap.dedent('''\
@@ -95,7 +97,7 @@ class PasteBackpressureTests(board_case.BoardWsCase):
     stall = 0.0
 
     async def attached(self):
-        self.launcher.script.write_text(STALLING_RECORDER)  # the set starts at the first hello
+        self.launcher.script.write_text(STALLING_RECORDER)  # before the shell starts
         original = self.launcher.started
 
         def started(name):
@@ -103,30 +105,29 @@ class PasteBackpressureTests(board_case.BoardWsCase):
             launch.env['STALL'] = str(self.stall)
             return launch
         self.launcher.started = started
-        tab = self.tab()
-        epoch = (await tab.attach(self.session.csrf))['epoch']
-        await tab.wait_output('shell', b'ready:shell')
-        return tab, epoch
+        self.shell_id = await self.shell()
+        tab = self.tab(self.shell_id)
+        await tab.attach(self.session.csrf)
+        await tab.wait_output(b'ready:')
+        return tab, self.shell_id
 
-    async def send_pastes(self, tab, epoch, pastes):
+    async def send_pastes(self, tab, shell, pastes):
         for paste in pastes:
             for frame in code_point_frames(paste):
-                await tab.send_input('shell', epoch, frame)
+                await tab.send_input(frame)
 
     async def test_four_three_megabyte_pastes_arrive_byte_exact_and_in_order(self):
-        tab, epoch = await self.attached()
+        tab, shell = await self.attached()
         unit = '가나다라 abc 😀\r'
         pastes = [(f'[붙여넣기 {n}] ' + unit * (3 * (1 << 20) // len(unit.encode('utf-8')))) for n in range(4)]
-        await self.send_pastes(tab, epoch, pastes)
+        await self.send_pastes(tab, shell, pastes)
         expected = ''.join(pastes).encode('utf-8')
         self.assertGreater(len(expected), 12 * (1 << 20))
-        self.assertTrue(await self.eventually(lambda: len(self.recorded('shell')) >= len(expected), 60),
-                        (len(self.recorded('shell')), len(expected)))
-        self.assertEqual(self.recorded('shell'), expected)
-        self.assertEqual(self.terminal.dropped_inputs, 0)
+        self.assertTrue(await self.eventually(lambda: len(self.recorded(shell)) >= len(expected), 60),
+                        (len(self.recorded(shell)), len(expected)))
+        self.assertEqual(self.recorded(shell), expected)
         self.assertNotIn('error', [event.get('t') for event in tab.events])
-        lease = self.board.status()['lease']
-        self.assertEqual((lease['state'], lease['epoch']), ('connected', epoch))
+        self.assertEqual((tab.close_code, self.board.view(shell)['clients']), (None, 1))  # v1: the lease kept
 
 
 class StalledPasteTests(PasteBackpressureTests):
@@ -134,29 +135,36 @@ class StalledPasteTests(PasteBackpressureTests):
 
     stall = 6.0
 
-    async def test_a_paste_waiting_on_a_busy_program_keeps_the_lease_and_arrives_whole(self):
-        tab, epoch = await self.attached()
+    async def test_a_paste_waiting_on_a_busy_program_keeps_the_connection_and_arrives_whole(self):
+        tab, shell = await self.attached()
         paste = '한글 붙여넣기 ' * (3 * (1 << 20) // 20)
-        await self.send_pastes(tab, epoch, [paste])
+        await self.send_pastes(tab, shell, [paste])
         expected = paste.encode('utf-8')
-        self.assertTrue(await self.eventually(lambda: len(self.recorded('shell')) >= len(expected), 60))
-        self.assertEqual(self.recorded('shell'), expected)
+        self.assertTrue(await self.eventually(lambda: len(self.recorded(shell)) >= len(expected), 60))
+        self.assertEqual(self.recorded(shell), expected)
         self.assertIsNone(tab.close_code)
-        self.assertEqual((self.board.status()['lease']['state'], self.terminal.dropped_inputs), ('connected', 0))
+        self.assertEqual(self.board.view(shell)['clients'], 1)  # v1: the lease stayed connected
+        self.assertNotIn('error', [event.get('t') for event in tab.events])
         self.assertNotIn('terminal_timeout', [event for event, _ in self.audit()])
 
-    async def test_a_new_tab_takes_over_at_once_while_the_holders_paste_is_paced(self):
-        tab, epoch = await self.attached()
-        sending = asyncio.ensure_future(self.send_pastes(tab, epoch, ['가' * (2 << 20)]))
+    async def test_a_second_client_attaches_at_once_while_the_first_clients_paste_is_paced(self):
+        """v1 "a new tab takes over at once" (4001): in v2 the second client attaches at once and the first stays;
+        the other client's input goes on while one socket is paced (SPEC s4 "입력")."""
+        tab, shell = await self.attached()
+        paste = '가' * (2 << 20)
+        sending = asyncio.ensure_future(self.send_pastes(tab, shell, [paste]))
         self.addAsyncCleanup(lambda: asyncio.gather(sending, return_exceptions=True))
         await asyncio.sleep(1.0)  # the program sleeps on its first read: the paste piles up in the Hub
         other = self.services.sessions.create('127.0.0.2', 'other', time.time(), generation=self.generation)
-        second = self.tab(other)
+        second = self.tab(shell, other)
         started = time.monotonic()
         attached = await second.attach(other.csrf)
-        self.assertEqual(attached['epoch'], epoch + 1)
+        self.assertEqual(attached['clients'], 2)
         self.assertLess(time.monotonic() - started, 2)
-        self.assertEqual(await tab.wait_closed(5), 4001)
+        await sending
+        self.assertTrue(await self.eventually(lambda: len(self.recorded(shell)) >= len(paste.encode()), 60))
+        self.assertEqual(self.recorded(shell), paste.encode())
+        self.assertIsNone(tab.close_code)
 
 
 class ReplayBoundaryTests(unittest.TestCase):
@@ -262,9 +270,10 @@ class BoardShellHangulTests(set_case.SetCase):
         self.launcher = self.make_launcher(self.config)
         self.board = self.make_board()
         self.start()
-        self.assertTrue(self.board.write('shell', typed))
-        self.assertTrue(self.wait(lambda: needle in self.board.replay('shell')), self.board.replay('shell')[-300:])
-        return self.board.replay('shell')
+        self.assertTrue(self.board.write(self.tid('shell'), typed))
+        self.assertTrue(self.wait(lambda: needle in self.board.replay(self.tid('shell'))),
+                        self.board.replay(self.tid('shell'))[-300:])
+        return self.board.replay(self.tid('shell'))
 
     def test_the_shell_reports_a_utf8_charmap(self):
         replay = self.run_shell('/bin/sh', b'echo "map=$(locale charmap)."\r', b'map=')

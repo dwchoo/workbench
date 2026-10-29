@@ -100,6 +100,7 @@ class WebListener:
         self.routes = tuple(routes)
         self.projects: Callable[[], Iterable[tuple[str, str]]] = lambda: ()  # registry view; the Hub sets it
         self.board_state: Callable[[], str] = lambda: "off"  # the nav's Board dot; the Hub sets it
+        self.board_counts: Callable[[], dict | None] = lambda: None  # the dashboard's Board numbers; the Hub sets it
         self.keepalive_timeout, self.max_connections = keepalive_timeout, max_connections
         self._state: dict = {"state": "password_not_set"}
         self._signature: tuple | None = None
@@ -255,7 +256,8 @@ class WebListener:
         if self.services is None:
             self.services = WebServices(self.passwords, db, policy, insecure_warning=warn, clock=self.clock,
                                         projects=lambda: self.projects(),
-                                        board_state=lambda: self.board_state())
+                                        board_state=lambda: self.board_state(),
+                                        board_counts=lambda: self.board_counts())
         else:  # a reload keeps the services (sessions, Board terminal) and takes the new policy
             self.services.policy, self.services.insecure_warning = policy, warn
         attempts = PORT_ZERO_ATTEMPTS if web_config.port == 0 and len(addresses) > 1 else 1

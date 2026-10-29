@@ -29,7 +29,7 @@ MIB = 1 << 20
 class ArchiveCase(LauncherCase):
     def setUp(self):
         super().setUp()
-        self.home = launch.prepare_board_home(self.box.state, self.box.env)
+        self.home = launch.prepare_board_home(launch.board_dir(self.box.state), self.box.env)  # WBX-D1: agent home
         self.src = self.home.root / 'logs'
         self.dst = self.box.state / 'board-agent' / 'omp-logs'
 
@@ -44,7 +44,7 @@ class ArchiveCase(LauncherCase):
         return path
 
     def archive(self):
-        return launch.archive_omp_logs(self.box.state, self.home)
+        return launch.archive_omp_logs(launch.board_dir(self.box.state), self.home)
 
     def kept(self):
         return sorted(p.name for p in self.dst.iterdir()) if self.dst.exists() else []

@@ -7,8 +7,8 @@ paste must work in the Board agent; scrolling must work) and the SPEC (``docs/fe
 own UTF-8 codec, an independent byte-level model of ECMA-48 / DEC private-mode state written here, and the bytes
 that real child processes record.
 
-Seams: the real ``splitInput`` of ``board-state.js`` run by Node; ``GET /ws/board`` over a real ``BoardSet`` and real
-PTYs; ``Ring.snapshot()``; the real shell channel (``locale charmap``, ``stty``, bash readline); the request pages
+Seams: the real ``splitInput`` of ``board-state.js`` run by Node; ``GET /ws/board/{id}`` (protocol v2, WBX-D1: one
+socket per terminal, bare frames) over a real ``BoardSet`` and real PTYs; ``Ring.snapshot()``; the real shell channel (``locale charmap``, ``stty``, bash readline); the request pages
 over a real inbox store. The pure key / glue / scroll checks are in ``js/board_text_independent.test.mjs``.
 Run with ``discover -s tests/hub -p 'test_board_text_independent.py'``.
 """
@@ -372,13 +372,13 @@ EMITTER = textwrap.dedent('''\
 
 
 class EmitLauncher(ws_case.RecorderLauncher):
-    """The recorder channels, plus an emitter script on the shell: after ``GO`` it writes ``emit.bin`` to the PTY."""
+    """The recorder terminals, plus an emitter script: after ``GO`` it writes ``emit.bin`` to the PTY."""
 
-    def __init__(self, base: Path):
-        super().__init__(base)
-        self.emitter = base / 'emitter.py'
+    def __post_init__(self):
+        super().__post_init__()
+        self.emitter = self.base / 'emitter.py'
         self.emitter.write_text(EMITTER)
-        (base / 'emit.bin').write_bytes(b'')
+        (self.base / 'emit.bin').write_bytes(b'')
 
     def started(self, name: str):
         started = super().started(name)
@@ -413,19 +413,24 @@ class DrainedTab:
 class InputEndToEndTests(ws_case.BoardWsCase):
     async def asyncSetUp(self):
         await super().asyncSetUp()
-        self.board.launcher = EmitLauncher(self.base)
+        self.board.launcher = self.launcher = EmitLauncher(self.base / 'emit', state_dir=self.state)
+        self.emit = self.launcher.base / 'emit.bin'
 
-    async def attached(self):
-        tab = self.tab()
-        epoch = (await tab.attach(self.session.csrf))['epoch']
-        await tab.wait_output('shell', b'ready:shell')
-        await tab.wait_output('agent', b'ready:agent')
-        drain = DrainedTab(tab)
-        self.addAsyncCleanup(drain.stop)
-        return tab, epoch
+    async def attached(self, drained: bool = True):
+        """agent-1 and a shell, one connection each (v2); ``ids`` maps the v1 channel names to terminal ids."""
+        self.ids = {'agent': await self.agent(), 'shell': await self.shell()}
+        tabs = {}
+        for name, terminal in self.ids.items():
+            tab = tabs[name] = self.tab(terminal)
+            await tab.attach(self.session.csrf)
+            await tab.wait_output(b'ready:')
+            if drained:
+                drain = DrainedTab(tab)
+                self.addAsyncCleanup(drain.stop)
+        return tabs
 
     async def test_random_mixed_input_split_by_the_real_page_code_arrives_byte_exact_and_in_order(self):
-        tab, epoch = await self.attached()
+        tabs = await self.attached()
         expected = {'agent': b'', 'shell': b''}
         sizes = [1, 2, 4, 64, FRAME_LIMIT - 3, FRAME_LIMIT - 1, FRAME_LIMIT, FRAME_LIMIT + 1, FRAME_LIMIT + 2,
                  FRAME_LIMIT + 3, 2 * FRAME_LIMIT + 5, 1 << 20]
@@ -437,65 +442,73 @@ class InputEndToEndTests(ws_case.BoardWsCase):
             for piece in pieces:
                 self.assertLessEqual(len(piece), FRAME_LIMIT)
                 piece.decode('utf-8')
-                await tab.send_input(channel, epoch, piece)
+                await tabs[channel].send_input(piece)
             expected[channel] += data
             for name, want in expected.items():
-                self.assertTrue(await self.eventually(lambda: len(self.recorded(name)) >= len(want), 30),
-                                f'size {size} on {name}: {len(self.recorded(name))} of {len(want)} bytes')
-                self.assertEqual(self.recorded(name), want, f'size {size} on {name}')
-        self.assertEqual(self.terminal.dropped_inputs, 0)
-        self.assertEqual(self.board.status()['lease']['epoch'], epoch)
+                terminal = self.ids[name]
+                self.assertTrue(await self.eventually(lambda: len(self.recorded(terminal)) >= len(want), 30),
+                                f'size {size} on {name}: {len(self.recorded(terminal))} of {len(want)} bytes')
+                self.assertEqual(self.recorded(terminal), want, f'size {size} on {name}')
+        # v1: no dropped input and the same epoch; v2: no error and both connections still attached
+        for tab in tabs.values():
+            self.assertNotIn('error', [event.get('t') for event in tab.events])
+            self.assertIsNone(tab.close_code)
 
     async def test_the_echo_of_typed_hangul_comes_back_whole(self):
-        tab, epoch = await self.attached()
+        tabs = await self.attached()
         typed = '안녕하세요 ㄱㅏ 한 ㅤ 👨‍👩‍👧 中文'.encode()
-        await tab.send_input('shell', epoch, typed)
-        self.assertTrue(await self.eventually(lambda: b'<' + typed + b'>' in bytes(tab.output['shell'])))
-        self.assertEqual(self.recorded('shell'), typed)
+        await tabs['shell'].send_input(typed)
+        self.assertTrue(await self.eventually(lambda: b'<' + typed + b'>' in bytes(tabs['shell'].output)))
+        self.assertEqual(self.recorded(self.ids['shell']), typed)
 
     async def test_a_4_mib_input_is_taken_whole_and_one_byte_more_is_refused_whole(self):
         await self.attached()
+        shell = self.ids['shell']
         exact = mixed_bytes(5, QUEUE_LIMIT)
-        self.assertTrue(self.board.write('shell', exact))
-        self.assertTrue(await self.eventually(lambda: len(self.recorded('shell')) >= QUEUE_LIMIT, 40))
-        self.assertEqual(self.recorded('shell'), exact)
+        self.assertTrue(self.board.write(shell, exact))
+        self.assertTrue(await self.eventually(lambda: len(self.recorded(shell)) >= QUEUE_LIMIT, 40))
+        self.assertEqual(self.recorded(shell), exact)
         over = mixed_bytes(6, QUEUE_LIMIT + 1)
-        self.assertFalse(self.board.write('shell', over), 'refused, not split')
+        self.assertFalse(self.board.write(shell, over), 'refused, not split')
         await asyncio.sleep(1.0)
-        self.assertEqual(self.recorded('shell'), exact, 'nothing of the refused input was delivered')
-        # the channel is still fine afterwards and sees no leftover of the refused input
-        self.assertTrue(self.board.write('shell', 'ok 한글'.encode()))
-        self.assertTrue(await self.eventually(lambda: self.recorded('shell').endswith('ok 한글'.encode())))
-        self.assertEqual(self.recorded('shell'), exact + 'ok 한글'.encode())
+        self.assertEqual(self.recorded(shell), exact, 'nothing of the refused input was delivered')
+        # the terminal is still fine afterwards and sees no leftover of the refused input
+        self.assertTrue(self.board.write(shell, 'ok 한글'.encode()))
+        self.assertTrue(await self.eventually(lambda: self.recorded(shell).endswith('ok 한글'.encode())))
+        self.assertEqual(self.recorded(shell), exact + 'ok 한글'.encode())
 
     async def test_a_4_mib_paste_in_the_pages_frames_is_delivered_whole_through_the_websocket(self):
-        tab, epoch = await self.attached()
+        tabs = await self.attached()
+        shell = self.ids['shell']
         data = mixed_bytes(9, QUEUE_LIMIT)
         pieces = node_split(self, data)
         self.assertEqual(b''.join(pieces), data)
         for piece in pieces:
-            await tab.send_input('shell', epoch, piece)
-        self.assertTrue(await self.eventually(lambda: len(self.recorded('shell')) >= len(data), 40))
-        self.assertEqual(self.recorded('shell'), data)
-        self.assertEqual(self.terminal.dropped_inputs, 0)
+            await tabs['shell'].send_input(piece)
+        self.assertTrue(await self.eventually(lambda: len(self.recorded(shell)) >= len(data), 40))
+        self.assertEqual(self.recorded(shell), data)
+        self.assertNotIn('error', [event.get('t') for event in tabs['shell'].events])  # v1: dropped_inputs == 0
 
     async def test_output_is_byte_exact_live_and_a_late_tab_gets_a_replay_from_a_boundary_with_the_modes(self):
         model = build_model(2026, int(RING_BYTES * 1.3))
-        (self.base / 'emit.bin').write_bytes(model.stream)
-        tab, epoch = await self.attached()
-        banner = bytes(tab.output['shell'])
-        self.assertEqual(banner, b'ready:shell\r\n')
-        await tab.send_input('shell', epoch, b'GO')
-        want = len(banner) + len(model.stream) + len(b'done:shell\r\n')
-        await tab.wait_output('shell', b'done:shell', 60)
-        self.assertEqual(len(tab.output['shell']), want)
-        live = bytes(tab.output['shell'])
+        self.emit.write_bytes(model.stream)
+        tabs = await self.attached(drained=False)
+        tab = tabs['shell']
+        label = self.records[self.ids['shell']].stem.encode()  # the recorder's name of this shell
+        banner = bytes(tab.output)
+        self.assertEqual(banner, b'ready:' + label + b'\r\n')
+        await tab.send_input(b'GO')
+        done = b'done:' + label + b'\r\n'
+        want = len(banner) + len(model.stream) + len(done)
+        await tab.wait_output(done, 60)
+        self.assertEqual(len(tab.output), want)
+        live = bytes(tab.output)
         self.assertEqual(live[len(banner):len(banner) + len(model.stream)], model.stream, 'live output is byte-exact')
         self.assertGreater(len(model.stream), RING_BYTES)
-        late = self.tab()
+        late = self.tab(self.ids['shell'])
         await late.attach(self.session.csrf)
-        await late.wait_output('shell', b'done:shell', 30)
-        replay = bytes(late.output['shell'])
+        await late.wait_output(done, 30)
+        replay = bytes(late.output)
         self.assertTrue(len(late.frames) > 1, 'the replay was sent in several frames')
         whole = live  # banner + stream + done marker: what the ring was fed
         stream_cut = None
@@ -511,7 +524,7 @@ class InputEndToEndTests(ws_case.BoardWsCase):
         self.assertLessEqual(len(rest), RING_BYTES + model.max_token)
         # whatever the frame boundaries were, a streaming decode of the frames reconstructs the text
         decoder = codecs.getincrementaldecoder('utf-8')('strict')
-        text = ''.join(decoder.decode(payload) for name, _, payload in late.frames if name == 'shell')
+        text = ''.join(decoder.decode(payload) for payload in late.frames)
         self.assertEqual(text.encode('utf-8'), replay)
 
 
@@ -588,9 +601,10 @@ class ShellChannelTests(set_case.SetCase):
         self.launcher = self.make_launcher(self.config)
         self.board = self.make_board()
         self.start()
-        self.assertTrue(self.board.write('shell', typed))
-        self.assertTrue(self.wait(lambda: needle in self.board.replay('shell')), self.board.replay('shell')[-400:])
-        return self.board.replay('shell')
+        self.assertTrue(self.board.write(self.tid('shell'), typed))
+        self.assertTrue(self.wait(lambda: needle in self.board.replay(self.tid('shell'))),
+                        self.board.replay(self.tid('shell'))[-400:])
+        return self.board.replay(self.tid('shell'))
 
     def test_the_effective_charmap_is_utf8_without_a_locale_with_lang_c_and_with_a_users_utf8_locale(self):
         installed = subprocess.run(['locale', '-a'], capture_output=True, text=True).stdout.split()
@@ -608,11 +622,11 @@ class ShellChannelTests(set_case.SetCase):
 
     def test_the_pty_has_iutf8_and_a_cooked_mode_line_erases_whole_hangul_syllables(self):
         self.run_shell('/bin/sh', b'stty -a\r', b'isig')
-        self.assertRegex(self.board.replay('shell'), rb'(?<!-)iutf8')
+        self.assertRegex(self.board.replay(self.tid('shell')), rb'(?<!-)iutf8')
         typed = 'read v\r한글가나'.encode() + b'\x7f\x7f' + '다\rprintf "<%s>\\n" "$v"\r'.encode()
-        self.board.write('shell', typed)
-        self.assertTrue(self.wait(lambda: '<한글다>'.encode() in self.board.replay('shell')),
-                        self.board.replay('shell')[-400:])
+        self.board.write(self.tid('shell'), typed)
+        self.assertTrue(self.wait(lambda: '<한글다>'.encode() in self.board.replay(self.tid('shell'))),
+                        self.board.replay(self.tid('shell'))[-400:])
 
     @unittest.skipUnless(shutil.which('bash'), 'bash is not installed')
     def test_bash_readline_backspace_removes_one_whole_character_for_syllables_and_emoji(self):
@@ -620,9 +634,9 @@ class ShellChannelTests(set_case.SetCase):
         replay = self.run_shell(shutil.which('bash'), typed, '다]'.encode())
         self.assertIn('[한나다]'.encode(), replay, replay[-400:])
         # a Hangul line typed and left-arrowed over: the cursor moves by characters, not bytes
-        self.board.write('shell', 'printf "[%s]\\n" "가나다'.encode() + b'\x1b[D\x1b[D' + b'X"\r')
-        self.assertTrue(self.wait(lambda: '[가X나다]'.encode() in self.board.replay('shell')),
-                        self.board.replay('shell')[-400:])
+        self.board.write(self.tid('shell'), 'printf "[%s]\\n" "가나다'.encode() + b'\x1b[D\x1b[D' + b'X"\r')
+        self.assertTrue(self.wait(lambda: '[가X나다]'.encode() in self.board.replay(self.tid('shell'))),
+                        self.board.replay(self.tid('shell'))[-400:])
 
 
 # ---------------------------------------------------------------------------------------------------------------

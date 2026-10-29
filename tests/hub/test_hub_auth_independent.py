@@ -1018,11 +1018,11 @@ class SystemKeyTests(AuthCase):
         db = self.hubdb()
         keys = auth.ApiKeyStore(db)
         owner = keys.issue('owner key', 'editor', {'all': True}, None, now=T0)
-        first = keys.rotate_system_key(now=T0 + 1)
+        first = keys.rotate_system_key('a-000000000001', now=T0 + 1)
         principal = keys.verify(first.raw, T0 + 2)
         self.assertEqual((principal.name, principal.grade, principal.scope, principal.system),
-                         ('board-agent', 'editor', {'all': True}, True))
-        second = keys.rotate_system_key(now=T0 + 3)
+                         ('board-agent.a-000000000001', 'editor', {'all': True}, True))  # WBX-D58: per agent
+        second = keys.rotate_system_key('a-000000000001', now=T0 + 3)
         self.assertNotEqual(first.raw, second.raw)
         with self.assertRaises(auth.ApiKeyRefused) as old:
             keys.verify(first.raw, T0 + 4)
@@ -1031,14 +1031,14 @@ class SystemKeyTests(AuthCase):
         self.assertEqual(keys.verify(owner.raw, T0 + 4).name, 'owner key', 'owner keys are untouched by rotation')
         self.assertEqual(self.sql('SELECT count(*) FROM api_keys WHERE system = 1'), [(1,)])
         self.assertEqual(self.sql('SELECT name, expires_at, revoked_at FROM api_keys WHERE system = 1'),
-                         [('board-agent', None, None)])
-        self.assertEqual([k.name for k in keys.list()][0], 'board-agent', 'system key listed first')
+                         [('board-agent.a-000000000001', None, None)])
+        self.assertEqual([k.name for k in keys.list()][0], 'board-agent.a-000000000001', 'system key listed first')
         self.assertNotIn(first.raw.encode(), self.tree_bytes())
         self.assertNotIn(second.raw[15:].encode(), self.tree_bytes())
 
     def test_the_system_key_is_not_a_revocable_list_entry_and_the_name_is_reserved(self):
         keys = auth.ApiKeyStore(self.hubdb())
-        system = keys.rotate_system_key(now=T0)
+        system = keys.rotate_system_key('a-000000000001', now=T0)
         with self.assertRaises(auth.ApiKeyRejected) as raised:
             keys.revoke(system.key_id, now=T0 + 1)
         self.assertEqual(raised.exception.reason, 'system_key')
@@ -1067,10 +1067,20 @@ SPEC_EVENTS = {
     'password_changed': {'source': 'cli', 'invalidated_sessions': 3},
     'api_key_issued': {'key_id': 'abcdefghij', 'name': 'n', 'grade': 'editor', 'scope': {'all': True}, 'expires_at': T0},
     'api_key_revoked': {'key_id': 'abcdefghij', 'name': 'n', 'grade': 'requester', 'scope': {'all': True}, 'expires_at': None},
-    'terminal_attach': {'epoch': 2, 'previous_epoch': 1}, 'terminal_takeover': {'epoch': 3, 'previous_epoch': 2},
-    'terminal_release': {'epoch': 3}, 'terminal_timeout': {'epoch': 3}, 'terminal_closed': {'epoch': 3},
-    'board_restart': {'channel': 'agent', 'pid': 99, 'reason': 'user'}, 'board_start': {'channel': 'shell', 'pid': 100},
-    'board_stop': {'channel': 'agent', 'pid': 99, 'reason': 'hub_stop'},
+    # WBX-D1 (web-board-ux SPEC s4 "감사"): per-connection rows name the terminal; terminal_takeover is gone.
+    'terminal_attach': {'terminal_id': 's-0123456789ab', 'kind': 'shell', 'name': 'shell-1', 'client': 2, 'clients': 2},
+    'terminal_denied': {'terminal_id': 's-0123456789ab', 'kind': 'shell', 'name': 'shell-1', 'client': 3, 'clients': 8,
+                        'reason': 'too_many_clients'},
+    'terminal_release': {'terminal_id': 's-0123456789ab', 'kind': 'shell', 'name': 'shell-1', 'client': 2, 'clients': 1},
+    'terminal_timeout': {'terminal_id': 'a-0123456789ab', 'kind': 'agent', 'name': '전처리', 'client': 4, 'clients': 0},
+    'terminal_closed': {'terminal_id': 'a-0123456789ab', 'kind': 'agent', 'name': 'agent-1', 'client': 5, 'clients': 0},
+    'board_restart': {'terminal_id': 'a-0123456789ab', 'kind': 'agent', 'name': 'agent-1', 'pid': 99, 'reason': 'user'},
+    'board_start': {'terminal_id': 's-0123456789ab', 'kind': 'shell', 'name': 'shell-1', 'pid': 100, 'reason': 'create'},
+    'board_stop': {'terminal_id': 'a-0123456789ab', 'kind': 'agent', 'name': 'agent-1', 'pid': 99, 'reason': 'hub_stop'},
+    'board_terminal_open': {'terminal_id': 's-0123456789ab', 'kind': 'shell', 'name': 'shell-1', 'reason': 'first_open'},
+    'board_terminal_close': {'terminal_id': 'a-0123456789ab', 'kind': 'agent', 'name': 'agent-2', 'memory_removed': True},
+    'board_rename': {'terminal_id': 'a-0123456789ab', 'kind': 'agent', 'old': 'agent-1', 'new': '전처리'},
+    'board_options': {'before': {'agent_limit': 4, 'shell_limit': 10}, 'after': {'agent_limit': 8, 'shell_limit': 10}},
     'web_control': {'project_id': 'p1', 'action': 'pause', 'result': 'ok'},
 }
 
@@ -1115,7 +1125,8 @@ class AuditTests(AuthCase):
             ('login_success', {'delay_seconds': 0, 'token': 't'}), ('password_changed', {'source': 'cli', 'password': 'p'}),
             ('api_key_issued', {'key_id': 'k', 'secret': 'wbk_x'}), ('api_key_issued', {'raw_key': 'wbk_x'}),
             ('api_key_issued', {'key': 'wbk_x'}), ('api_key_revoked', {'secret_hash': 'h'}),
-            ('terminal_attach', {'epoch': 1, 'input': 'rm -rf'}), ('terminal_closed', {'output': 'x'}),
+            ('terminal_attach', {'client': 1, 'input': 'rm -rf'}), ('terminal_closed', {'output': 'x'}),
+            ('terminal_takeover', {'epoch': 3, 'previous_epoch': 2}),  # WBX-D1: gone with the shared connection
             ('web_control', {'project_id': 'p', 'body': 'request body'}), ('board_start', {'command': 'x'}),
             ('login_success', 'not a dict'), ('login_success', None), ('login_success', ['delay_seconds']),
         ]

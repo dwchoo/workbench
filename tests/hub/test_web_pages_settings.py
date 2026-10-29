@@ -190,7 +190,7 @@ class KeyListTests(SettingsCase):
         self.assertIn('만료됨', row)
 
     async def test_system_key_is_labelled_and_has_no_revoke_link(self):
-        issued = self.services.api_keys.rotate_system_key(now=self.now[0])
+        issued = self.services.api_keys.rotate_system_key('a-000000000001', now=self.now[0])
         page = (await self.get('/settings/keys', cookies=self.cookies)).body_text
         row = self.row_of(page, 'Board agent(시스템)')
         self.assertIn(issued.key_id, row)
@@ -247,7 +247,7 @@ class KeyRevokeTests(SettingsCase):
 
     async def test_unknown_system_and_repeated_revocations_are_refused_without_audit(self):
         _raw, key_id = await self.make()
-        system = self.services.api_keys.rotate_system_key(now=self.now[0])
+        system = self.services.api_keys.rotate_system_key('a-000000000001', now=self.now[0])
         csrf = await self.csrf()
         revoke = '/settings/keys/{}/revoke'
         for missing in ('abcdefghij', 'x', 'ABCDEFGHIJ', '..%2f'):

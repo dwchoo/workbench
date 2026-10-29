@@ -85,16 +85,20 @@ class Principal:
 
     kind: str  # owner | board_agent | editor | requester | manager | local
     key_id: str | None = None
-    name: str | None = None
+    name: str | None = None  # a key's name; a Board agent's registry name at this call (WBX-D48)
     scope: frozenset[str] | None = None
+    agent_id: str | None = None  # the Board agent (WBX-D58)
 
     @classmethod
     def owner(cls) -> "Principal":
         return cls("owner")
 
     @classmethod
-    def board_agent(cls, key_id: str) -> "Principal":
-        return cls("board_agent", key_id, "board-agent")
+    def board_agent(cls, key_id: str, agent_id: str | None = None, name: str | None = None) -> "Principal":
+        """A Board agent's system key; ``name`` is that agent's name now (the request origin and author name)."""
+        if agent_id is None:
+            return cls("board_agent", key_id, LEGACY_BOARD_NAME)
+        return cls("board_agent", key_id, name, None, agent_id)
 
     @classmethod
     def editor(cls, key_id: str, name: str, scope: Iterable[str] | None) -> "Principal":
@@ -118,7 +122,7 @@ class Principal:
         if self.kind == "owner":
             return "owner", None, None
         if self.kind == "board_agent":
-            return "board_agent", self.key_id, None
+            return "board_agent", self.key_id, None if self.agent_id is None else self.name
         return "api_key", self.key_id, self.name
 
 
@@ -164,8 +168,21 @@ def untrusted_ids(connection: sqlite3.Connection, request_id: str | None = None)
         f"SELECT request_id FROM ({_UNTRUSTED_TEXT_SQL}) WHERE request_id = ?", (request_id,))}
 
 
+LEGACY_BOARD_NAME = "board-agent"  # the author name the single Board agent's text was stored with (before WBX-D48)
+
+
+def board_agent_label(name: object) -> str:
+    """``Board agent · <name>`` (the name stored at submit time, WBX-D48); ``Board agent`` for older rows."""
+    if isinstance(name, str) and name and name != LEGACY_BOARD_NAME:
+        return f"Board agent · {name}"
+    return "Board agent"
+
+
 def origin_json(kind: str, key_id: str | None, name: str | None) -> dict:
-    label = {"owner": "소유자", "board_agent": "Board agent"}.get(kind, f"key:{name}")
+    if kind == "board_agent":
+        label = board_agent_label(name)
+    else:
+        label = {"owner": "소유자"}.get(kind, f"key:{name}")
     return {"kind": kind, "key_id": key_id, "name": name, "label": label}
 
 

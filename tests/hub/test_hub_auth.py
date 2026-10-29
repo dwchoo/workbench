@@ -517,18 +517,18 @@ class SystemKeyTests(DbCase):
     def test_rotation_issues_an_editor_all_scope_key_and_refuses_the_previous_one(self):
         keys = auth.ApiKeyStore(self.db)
         user = keys.issue('mine', 'requester', {'all': True}, None, now=T0)
-        first = keys.rotate_system_key(now=T0)
+        first = keys.rotate_system_key('a-000000000001', now=T0)
         self.assertRegex(first.raw, f'^{KEY_PATTERN}$')
         principal = keys.verify(first.raw, T0 + 1)
         self.assertEqual((principal.name, principal.grade, principal.scope, principal.system),
-                         ('board-agent', 'editor', {'all': True}, True))
-        second = keys.rotate_system_key(now=T0 + 100)
+                         ('board-agent.a-000000000001', 'editor', {'all': True}, True))  # WBX-D58: per agent
+        second = keys.rotate_system_key('a-000000000001', now=T0 + 100)
         with self.assertRaises(auth.ApiKeyRefused):
             keys.verify(first.raw, T0 + 101)
         self.assertTrue(keys.verify(second.raw, T0 + 101).system)
         system_rows = [info for info in keys.list() if info.system]
         self.assertEqual([(info.key_id, info.name, info.expires_at) for info in system_rows],
-                         [(second.key_id, 'board-agent', None)])
+                         [(second.key_id, 'board-agent.a-000000000001', None)])
         with self.assertRaises(auth.ApiKeyRejected) as caught:
             keys.revoke(second.key_id, now=T0 + 102)
         self.assertEqual(caught.exception.reason, 'system_key')
@@ -561,7 +561,8 @@ class AuditTests(DbCase):
         refused = [
             ('terminal_input', 'owner', 'a', {}),
             ('login_failure', 'owner', 'a', {'password': PASSWORD}),
-            ('terminal_attach', 'owner', 'a', {'epoch': 1, 'data': 'ls -la\n'}),
+            ('terminal_attach', 'owner', 'a', {'client': 1, 'data': 'ls -la\n'}),
+            ('terminal_takeover', 'owner', 'a', {}),  # WBX-D1: no takeover in the shared connection
             ('api_key_issued', 'owner', 'a', {'key_id': 'x', 'raw': 'wbk_x'}),
             ('web_control', 'owner', 'a', {'project_id': 'p', 'body': 'request text'}),
             ('board_start', 'owner', 'a', {'reason': 'x' * 10_000}),
@@ -573,11 +574,12 @@ class AuditTests(DbCase):
                     audit.record(event, actor, addr, detail, now=T0)
         self.assertEqual(self.rows('SELECT count(*) FROM audit'), [(0,)])
         for event in ('login_success', 'login_failure', 'logout', 'password_changed', 'api_key_issued',
-                      'api_key_revoked', 'terminal_attach', 'terminal_takeover', 'terminal_release',
+                      'api_key_revoked', 'terminal_attach', 'terminal_denied', 'terminal_release',
                       'terminal_timeout', 'terminal_closed', 'board_restart', 'board_start', 'board_stop',
+                      'board_terminal_open', 'board_terminal_close', 'board_rename', 'board_options',
                       'web_control'):
             audit.record(event, 'owner', None, {}, now=T0)
-        self.assertEqual(self.rows('SELECT count(*) FROM audit'), [(15,)])
+        self.assertEqual(self.rows('SELECT count(*) FROM audit'), [(19,)])
 
     def test_detail_values_are_checked_per_field_and_accept_the_spec_scope_shapes(self):
         audit = auth.AuditLog(self.db)
@@ -596,7 +598,12 @@ class AuditTests(DbCase):
             ('api_key_issued', dict(key, expires_at='tomorrow')),
             ('password_changed', {'source': 'cli', 'invalidated_sessions': 'many'}),
             ('password_changed', {'source': 'somewhere'}),
-            ('terminal_attach', {'epoch': 'one'}),
+            ('terminal_attach', {'client': 'one'}),
+            ('terminal_attach', {'epoch': 1}),  # WBX-D1: v1's epoch field is gone
+            ('board_start', {'channel': 'agent'}),
+            ('board_rename', {'terminal_id': 's-1', 'kind': 'shell', 'old': 'a', 'new': 'x' * 65}),
+            ('board_options', {'before': {'agent_limit': 4}, 'after': {'agent_limit': 4, 'shell_limit': 10}}),
+            ('board_terminal_close', {'memory_removed': 'yes'}),
             ('login_failure', {'delay_seconds': True}),
             ('board_start', {'pid': '123'}),
             ('web_control', {'project_id': ['p']}),

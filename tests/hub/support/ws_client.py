@@ -1,39 +1,29 @@
-"""A Python stand-in for the Board page's WebSocket client (Task Inbox SPEC "WebSocket terminal 프로토콜").
+"""A Python stand-in for one Board widget's WebSocket client, protocol v2 (web-board-ux SPEC s4 "WebSocket v2").
 
-``Tab`` is one browser tab: it connects to ``/ws/board`` with the session cookie and the page's ``Origin``, sends
-the hello, and reads control (text JSON) and data (binary ``channel | epoch(uint32 BE) | payload``) frames. It does
-not reconnect by itself (TI-18's client rules); tests drive every step.
+``Tab`` is one connection to one terminal: it connects to ``/ws/board/{terminal_id}`` with the session cookie and the
+page's ``Origin``, sends the hello ``{"t": "hello", "v": 2, "csrf", "size": [rows, cols]}`` and reads control (text
+JSON) and data (binary: the bare output bytes) frames. It does not reconnect by itself; tests drive every step.
 """
 from __future__ import annotations
 
 import asyncio
 import json
 import socket
-import struct
 import time
 
 import aiohttp
 
-CHANNEL_IDS = {'agent': 0, 'shell': 1}
-CHANNEL_NAMES = {value: key for key, value in CHANNEL_IDS.items()}
-
-
-def frame(channel: str | int, epoch: int, payload: bytes) -> bytes:
-    channel_id = CHANNEL_IDS[channel] if isinstance(channel, str) else channel
-    return bytes([channel_id]) + struct.pack('>I', epoch) + payload
-
-
-def parse_frame(data: bytes) -> tuple[str, int, bytes]:
-    return CHANNEL_NAMES[data[0]], struct.unpack('>I', data[1:5])[0], data[5:]
+PROTOCOL_VERSION = 2
 
 
 class Tab:
-    """One tab's connection. ``events`` collects every received control message (dicts) in order; ``output``
-    collects the data bytes per channel."""
+    """One connection. ``events`` collects every received control message (dicts) in order; ``output`` the data
+    bytes and ``frames`` each data frame."""
 
-    def __init__(self, base: str, cookie: str | None, *, origin: str | None = None, headers: dict | None = None,
-                 cookie_name: str = 'wb_hub_session'):
+    def __init__(self, base: str, cookie: str | None, terminal_id: str, *, origin: str | None = None,
+                 headers: dict | None = None, cookie_name: str = 'wb_hub_session'):
         self.base = base
+        self.terminal_id = terminal_id
         self.origin = base if origin is None else origin
         self.headers = dict(headers or {})
         if cookie is not None:
@@ -41,8 +31,8 @@ class Tab:
         self.http = aiohttp.ClientSession(cookie_jar=aiohttp.DummyCookieJar())
         self.ws: aiohttp.ClientWebSocketResponse | None = None
         self.events: list[dict] = []
-        self.output: dict[str, bytearray] = {'agent': bytearray(), 'shell': bytearray()}
-        self.frames: list[tuple[str, int, bytes]] = []
+        self.output = bytearray()
+        self.frames: list[bytes] = []
         self.close_code: int | None = None
         self.closed_at: float | None = None
 
@@ -50,33 +40,33 @@ class Tab:
         headers = dict(self.headers)
         if self.origin:
             headers['Origin'] = self.origin
-        self.ws = await self.http.ws_connect(self.base + '/ws/board', headers=headers, autoping=True,
-                                             max_msg_size=8 << 20)
+        self.ws = await self.http.ws_connect(f'{self.base}/ws/board/{self.terminal_id}', headers=headers,
+                                             autoping=True, max_msg_size=8 << 20)
         return self.ws
 
-    async def hello(self, csrf: str, *, resume: dict | None = None, sizes: dict | None = None, **extra) -> None:
-        message = {'t': 'hello', 'v': 1, 'csrf': csrf, 'resume': resume,
-                   'sizes': sizes if sizes is not None else {'agent': [30, 100], 'shell': [30, 100]}, **extra}
+    async def hello(self, csrf, *, size=(30, 100), **extra) -> None:
+        message = {'t': 'hello', 'v': PROTOCOL_VERSION, 'csrf': csrf, **extra}
+        if size is not None:
+            message['size'] = list(size)
         await self.ws.send_str(json.dumps(message))
 
     async def send(self, message: dict) -> None:
         await self.ws.send_str(json.dumps(message))
 
-    async def send_input(self, channel: str | int, epoch: int, payload: bytes) -> None:
-        await self.ws.send_bytes(frame(channel, epoch, payload))
+    async def send_input(self, payload: bytes) -> None:
+        await self.ws.send_bytes(payload)
 
     async def _next(self, timeout: float):
-        """One message, recorded; returns it (or the close)."""
+        """One message, recorded; returns it (or None for the close)."""
         message = await asyncio.wait_for(self.ws.receive(), timeout)
         if message.type == aiohttp.WSMsgType.TEXT:
             event = json.loads(message.data)
             self.events.append(event)
             return event
         if message.type == aiohttp.WSMsgType.BINARY:
-            channel, epoch, payload = parse_frame(message.data)
-            self.frames.append((channel, epoch, payload))
-            self.output[channel] += payload
-            return (channel, epoch, payload)
+            self.frames.append(message.data)
+            self.output += message.data
+            return message.data
         if message.type in (aiohttp.WSMsgType.CLOSE, aiohttp.WSMsgType.CLOSING, aiohttp.WSMsgType.CLOSED,
                             aiohttp.WSMsgType.ERROR):
             if self.close_code is None:
@@ -86,12 +76,13 @@ class Tab:
         return message
 
     async def receive_until(self, predicate, timeout: float = 10.0):
-        """Read until ``predicate(item)`` holds for a received item (dict, frame tuple or None for close)."""
+        """Read until ``predicate(item)`` holds for a received item (dict, bytes or None for the close)."""
         deadline = time.monotonic() + timeout
         while True:
             remaining = deadline - time.monotonic()
             if remaining <= 0:
-                raise AssertionError(f'timed out; events={self.events} close={self.close_code}')
+                raise AssertionError(f'timed out; events={self.events} close={self.close_code} '
+                                     f'tail={bytes(self.output[-200:])!r}')
             item = await self._next(remaining)
             if predicate(item):
                 return item
@@ -101,10 +92,19 @@ class Tab:
     async def event(self, kind: str, timeout: float = 10.0) -> dict:
         return await self.receive_until(lambda item: isinstance(item, dict) and item.get('t') == kind, timeout)
 
-    async def wait_output(self, channel: str, needle: bytes, timeout: float = 10.0) -> None:
-        if needle in self.output[channel]:
+    async def wait_output(self, needle: bytes, timeout: float = 10.0) -> None:
+        if needle in self.output:
             return
-        await self.receive_until(lambda item: needle in self.output[channel], timeout)
+        await self.receive_until(lambda item: needle in self.output, timeout)
+
+    async def drain(self, quiet: float = 0.2) -> None:
+        """Read (recording) until nothing arrives for ``quiet`` seconds or the connection closes."""
+        while self.close_code is None:
+            try:
+                if await self._next(quiet) is None:
+                    return
+            except asyncio.TimeoutError:
+                return
 
     async def wait_closed(self, timeout: float = 10.0) -> int | None:
         """Read (recording everything) until the server's close; returns the close code."""
@@ -116,10 +116,10 @@ class Tab:
             await self._next(remaining)
         return self.close_code
 
-    async def attach(self, csrf: str, *, resume: dict | None = None, sizes: dict | None = None) -> dict:
+    async def attach(self, csrf: str, *, size=(30, 100)) -> dict:
         if self.ws is None:
             await self.connect()
-        await self.hello(csrf, resume=resume, sizes=sizes)
+        await self.hello(csrf, size=size)
         return await self.event('attached')
 
     def kill(self) -> None:

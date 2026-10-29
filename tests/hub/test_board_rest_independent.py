@@ -102,7 +102,7 @@ class InternalAdversarialCase(unittest.TestCase):
         self.hub.run(self.listener.start())
         self.addCleanup(lambda: self.hub.run(self.listener.stop()))
         self.port = self.listener.port
-        self.system = self.own.rotate_system_key(now=self.hub.now[0]).raw
+        self.system = self.own.rotate_system_key('a-000000000001', now=self.hub.now[0]).raw
 
     def board(self, key='default', **kwargs) -> RestClient:
         return RestClient('127.0.0.1', self.port, self.system if key == 'default' else key, **kwargs)
@@ -153,7 +153,7 @@ class RefusedKeyTests(InternalAdversarialCase):
 
     def test_a_replaced_system_key_is_401_on_both_listeners_and_a_new_one_works(self):
         old = self.system
-        new = self.own.rotate_system_key(now=self.hub.now[0]).raw
+        new = self.own.rotate_system_key('a-000000000001', now=self.hub.now[0]).raw
         self.assertNotEqual(old, new)
         self.assertEqual(self.last_used(old), 'no row')  # the previous row is deleted (the name is unique)
         self.assertEqual(self.board(old).get('/requests').status, 401)
@@ -531,7 +531,7 @@ class CopiedClientThroughAProxyTests(unittest.TestCase):
         listener = rest.InternalListener(hub.keys, hub.api, clock=lambda: hub.now[0])
         url = hub.run(listener.start())
         self.addCleanup(lambda: hub.run(listener.stop()))
-        key = hub.keys.rotate_system_key(now=hub.now[0]).raw
+        key = hub.keys.rotate_system_key('a-000000000001', now=hub.now[0]).raw
         root = Path(tempfile.mkdtemp(prefix='wbp-'))
         self.addCleanup(shutil.rmtree, root, True)
         home = root / 'home'
@@ -541,7 +541,7 @@ class CopiedClientThroughAProxyTests(unittest.TestCase):
         state.mkdir(mode=0o700)
         base = {'PATH': '/usr/bin:/bin', 'HOME': str(home), 'LANG': 'C.UTF-8',
                 **{name: 'http://127.0.0.1:9' for name in ('http_proxy', 'HTTP_PROXY', 'all_proxy', 'ALL_PROXY')}}
-        omp_home = launch.prepare_board_home(state, base)
+        omp_home = launch.prepare_board_home(launch.board_dir(state), base)  # WBX-D1: an agent home
         env = launch.board_environment(base, omp_home, key, url)
         script = state / 'board-agent' / 'skills' / 'wb-inbox' / 'wb_inbox.py'
 
@@ -624,7 +624,7 @@ class LiveKeyHygieneTests(unittest.TestCase):
         key1 = environ_of(pids['agent'])['WB_API_KEY']
         port = int(environ_of(pids['agent'])['WB_HUB_URL'].rpartition(':')[2])
         self.assertEqual(get_status(port, '/api/v1/requests', key1), 200)
-        self.assertEqual(rig.restart('agent'), 303)
+        self.assertEqual(rig.restart('agent'), 200)
         rig.wait_state('agent', 'running')
         agent2 = rig.board()['agent']['pid']
         key2 = environ_of(agent2)['WB_API_KEY']
@@ -661,7 +661,7 @@ class LiveKeyHygieneTests(unittest.TestCase):
         old, port = env1['WB_API_KEY'], int(env1['WB_HUB_URL'].rpartition(':')[2])
         web = rig.browser.port
         for _ in range(2):
-            self.assertEqual(rig.restart('agent'), 303)
+            self.assertEqual(rig.restart('agent'), 200)
             rig.wait_state('agent', 'running')
         new = environ_of(rig.board()['agent']['pid'])['WB_API_KEY']
         self.assertEqual(api_rows(rig.state, 'SELECT key_id FROM api_keys WHERE system = 1'), [(new[4:14],)])
@@ -703,7 +703,7 @@ class LiveBoardHomeTests(unittest.TestCase):
             path.write_text('---\nname: decoy\ndescription: planted\n---\n')
         mcp = rig.state / 'board-agent' / 'omp-root' / 'agent' / 'mcp.json'
         mcp.write_text('{"mcpServers": {"workbench-hub": {"type": "http", "url": "http://127.0.0.1:1/mcp"}}}')
-        self.assertEqual(rig.restart('agent'), 303)
+        self.assertEqual(rig.restart('agent'), 200)
         rig.wait_state('agent', 'running')  # the isolation check passed: the fake showed no decoy
         assert_skill_copy(self, skills)
         self.assertFalse(os.path.lexists(mcp))
@@ -715,7 +715,7 @@ class LiveBoardHomeTests(unittest.TestCase):
 
     def test_the_fake_does_show_a_decoy_skill_so_the_rebuild_test_above_can_fail(self):
         rig = Rig(self, extra_env={'FAKE_BOARD_SKILLS': json.dumps(['decoy', 'wb-inbox'])})
-        self.assertEqual(rig.restart('agent'), 303)
+        self.assertEqual(rig.restart('agent'), 200)
         agent = rig.wait_state('agent', 'isolation_failed')
         self.assertIn('skill:decoy', agent['detail'])
 
@@ -730,7 +730,7 @@ class LiveIsolationAdversarialTests(unittest.TestCase):
 
     def failed(self, **extra) -> tuple[Rig, dict]:
         rig = Rig(self, extra_env=extra)
-        self.assertEqual(rig.restart('agent'), 303)
+        self.assertEqual(rig.restart('agent'), 200)
         return rig, rig.wait_state('agent', 'isolation_failed')
 
     def test_a_refused_start_never_runs_the_agent_and_leaks_no_key_into_state_audit_or_status(self):

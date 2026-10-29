@@ -589,13 +589,18 @@ KEY_LENGTH = len(KEY_PREFIX) + KEY_ID_LENGTH + 1 + KEY_SECRET_LENGTH
 KEY_ID_ATTEMPTS = 8
 _BASE64URL = frozenset("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_")
 GRADES = ("requester", "editor")
-SYSTEM_KEY_NAME = "board-agent"
+SYSTEM_KEY_NAME = "board-agent"  # the single Board agent's key before Track D (rows are purged at Board start)
+SYSTEM_KEY_PREFIX = "board-agent."  # WBX-D58: one system key per Board agent, ``board-agent.<agent id>``
 KEY_NAME_MAX = 64
 _KEY_NAME_CHARS = frozenset("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789 ._-")
 KEY_EXPIRY_DAYS_MAX = 3650
 PROJECT_ID_MAX = 128
 SCOPE_PROJECTS_MAX = 1000
 _DUMMY_HASH = hashlib.sha256(b"").hexdigest()
+
+
+def system_key_name(agent_id: str) -> str:
+    return SYSTEM_KEY_PREFIX + agent_id
 
 
 class ApiKeyRefused(Exception):
@@ -717,7 +722,7 @@ class ApiKeyStore:
 
             def steps(execute):
                 if replace_system:
-                    execute("DELETE FROM api_keys WHERE system = 1")
+                    execute("DELETE FROM api_keys WHERE system = 1 AND name = ?", (name,))
                 execute("INSERT INTO api_keys (key_id, name, grade, scope_json, secret_hash, created_at, "
                         "expires_at, system) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
                         (key_id, name, grade, json.dumps(scope, sort_keys=True), _secret_hash(secret), now,
@@ -725,7 +730,8 @@ class ApiKeyStore:
             try:
                 self.db.write(steps)
             except sqlite3.IntegrityError:
-                if self.db.query("SELECT 1 FROM api_keys WHERE name = ?", (name,)) and not replace_system:
+                if self.db.query("SELECT 1 FROM api_keys WHERE name = ? AND system = 0", (name,)) or (
+                        not replace_system and self.db.query("SELECT 1 FROM api_keys WHERE name = ?", (name,))):
                     raise ApiKeyRejected("name_taken") from None
                 continue  # key_id collision: draw again
             return IssuedKey(f"{KEY_PREFIX}{key_id}_{secret}", key_id)
@@ -736,7 +742,7 @@ class ApiKeyStore:
         if (not isinstance(name, str) or not 0 < len(name) <= KEY_NAME_MAX
                 or any(char not in _KEY_NAME_CHARS for char in name)):
             raise ApiKeyRejected("name_invalid")
-        if name == SYSTEM_KEY_NAME:
+        if name == SYSTEM_KEY_NAME or name.startswith(SYSTEM_KEY_PREFIX):
             raise ApiKeyRejected("name_reserved")
         if grade not in GRADES:
             raise ApiKeyRejected("grade_invalid")
@@ -747,13 +753,30 @@ class ApiKeyStore:
         expires_at = None if expires_days is None else now + expires_days * 86400.0
         return self._insert(name, grade, scope, expires_at, now, False)
 
-    def rotate_system_key(self, *, now: float) -> IssuedKey:
-        """Board agent start: a new editor, all-scope, non-expiring ``board-agent`` key.
+    def rotate_system_key(self, agent_id: str, *, now: float) -> IssuedKey:
+        """A Board agent's start: a new editor, all-scope, non-expiring ``board-agent.<agent_id>`` key (WBX-D58).
 
-        The previous system key row is deleted in the same transaction (the name is UNIQUE),
-        so its raw key verifies as ``unknown`` from then on.
+        That agent's previous system key row is deleted in the same transaction (the name is UNIQUE), so its raw
+        key verifies as ``unknown`` from then on; other agents' rows stay. ``name_taken`` when a person's key
+        (issued before the prefix was reserved) has the name.
         """
-        return self._insert(SYSTEM_KEY_NAME, "editor", {"all": True}, None, now, True, replace_system=True)
+        return self._insert(system_key_name(agent_id), "editor", {"all": True}, None, now, True,
+                            replace_system=True)
+
+    def name_in_use(self, name: str) -> bool:
+        return bool(self.db.query("SELECT 1 FROM api_keys WHERE name = ?", (name,)))
+
+    def delete_system_key(self, agent_id: str, key_id: str | None = None) -> int:
+        """The agent's system key row gone (only the row of ``key_id`` when given: an older start's end never
+        removes a newer start's key); returns the rows deleted."""
+        sql, args = "DELETE FROM api_keys WHERE system = 1 AND name = ?", [system_key_name(agent_id)]
+        if key_id is not None:
+            sql, args = sql + " AND key_id = ?", [*args, key_id]
+        return self.db.write(lambda execute: execute(sql, tuple(args)).rowcount)
+
+    def delete_system_keys(self) -> int:
+        """Every system key row (Board creation: rows of an earlier Hub run, the pre-Track-D ``board-agent`` too)."""
+        return self.db.write(lambda execute: execute("DELETE FROM api_keys WHERE system = 1").rowcount)
 
     def verify(self, raw: str, now: float, *, system_only: bool = False) -> ApiKeyPrincipal:
         """The key's principal, or :class:`ApiKeyRefused`. No rate limit. ``system_only`` (the Board agent's internal
@@ -807,8 +830,11 @@ AUDIT_PAGE_SIZE = 100
 AUDIT_PAGE_SIZE_MAX = 1000
 AUDIT_TEXT_LIMIT = 256
 _KEY_DETAIL = frozenset({"key_id", "name", "grade", "scope", "expires_at"})
-_TERMINAL_DETAIL = frozenset({"epoch", "previous_epoch"})
-_BOARD_DETAIL = frozenset({"channel", "pid", "reason"})
+# web-board-ux SPEC s4 "감사": a connection names its terminal, its run-wide client number and the terminal's clients
+# after it; Board actions name the terminal (``channel``/``epoch`` rows of before Track D stay readable as they are).
+_WHO = frozenset({"terminal_id", "kind", "name"})
+_TERMINAL_DETAIL = _WHO | {"client", "clients"}
+_BOARD_DETAIL = _WHO | {"pid", "reason"}
 # SPEC "감사 기록": the only events and detail fields; no input, password, secret or body field exists.
 AUDIT_EVENTS: dict[str, frozenset] = {
     "login_success": frozenset({"delay_seconds"}),
@@ -817,15 +843,18 @@ AUDIT_EVENTS: dict[str, frozenset] = {
     "password_changed": frozenset({"source", "invalidated_sessions"}),
     "api_key_issued": _KEY_DETAIL,
     "api_key_revoked": _KEY_DETAIL,
-    "terminal_attach": _TERMINAL_DETAIL,
-    "terminal_takeover": _TERMINAL_DETAIL,
+    "terminal_attach": _TERMINAL_DETAIL,  # (``terminal_takeover`` is gone with the shared connection, WBX-D54)
     "terminal_release": _TERMINAL_DETAIL,
     "terminal_timeout": _TERMINAL_DETAIL,
     "terminal_closed": _TERMINAL_DETAIL,
-    "terminal_denied": _TERMINAL_DETAIL,  # a refused hello or a taken_elsewhere (TI-17): the epoch then, no content
+    "terminal_denied": _TERMINAL_DETAIL | {"reason"},  # a refused hello, csrf or the 9th client; no content
     "board_restart": _BOARD_DETAIL,
     "board_start": _BOARD_DETAIL,
     "board_stop": _BOARD_DETAIL,
+    "board_terminal_open": _WHO | {"reason"},
+    "board_terminal_close": _WHO | {"memory_removed"},
+    "board_rename": frozenset({"terminal_id", "kind", "old", "new"}),
+    "board_options": frozenset({"before", "after"}),
     "web_control": frozenset({"project_id", "action", "result"}),
 }
 
@@ -866,6 +895,11 @@ def _scope_ok(value: object) -> bool:
         return False
 
 
+def _limits_ok(value: object) -> bool:
+    return (isinstance(value, dict) and set(value) == {"agent_limit", "shell_limit"}
+            and all(type(item) is int and 0 < item <= 64 for item in value.values()))
+
+
 # One check per SPEC detail field: the value type is fixed, not only the key name.
 _DETAIL_CHECKS = {
     "delay_seconds": lambda value: _number(value) and value >= 0,
@@ -878,7 +912,15 @@ _DETAIL_CHECKS = {
     "expires_at": lambda value: value is None or _number(value),
     "epoch": lambda value: value is None or type(value) is int,
     "previous_epoch": lambda value: value is None or type(value) is int,
-    "channel": _text(32),
+    "terminal_id": _text(32),
+    "kind": lambda value: value in ("agent", "shell", None),
+    "client": lambda value: type(value) is int and value >= 0,
+    "clients": lambda value: type(value) is int and value >= 0,
+    "memory_removed": lambda value: type(value) is bool,
+    "old": _text(64),
+    "new": _text(64),
+    "before": _limits_ok,
+    "after": _limits_ok,
     "pid": lambda value: value is None or type(value) is int,
     "reason": _text(AUDIT_TEXT_LIMIT),
     "project_id": _text(PROJECT_ID_MAX),

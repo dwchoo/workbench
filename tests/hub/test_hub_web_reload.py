@@ -290,16 +290,15 @@ class BoardReloadTests(ReloadCase):
         return browser
 
     def start_set(self, browser) -> dict[str, int]:
-        for channel in ('agent', 'shell'):
-            _, _, page = browser.request('GET', '/settings')
-            csrf = re.search(r'name="csrf" value="([^"]+)"', page).group(1)
-            status, _, _ = browser.request('POST', '/board/restart', {'csrf': csrf, 'channel': channel})
-            self.assertEqual(status, 303, channel)
-        self.assertTrue(wait_until(lambda: all((self.box.status()['board_agent'] or {}).get(name, {}).get('state')
+        """WBX-D1: the page's first open (``POST /api/board/open``: agent-1 starts, shell-1 is made)."""
+        from support.board_stub import first_open, terminal_of
+        status, reply = first_open(browser)
+        self.assertEqual(status, 200, reply)
+        self.assertTrue(wait_until(lambda: all(terminal_of(self.box.status()['board_agent'], name).get('state')
                                                == 'running' for name in ('agent', 'shell')), 15),
                         self.box.status()['board_agent'])
         board = self.box.status()['board_agent']
-        return {name: board[name]['pid'] for name in ('agent', 'shell')}
+        return {name: terminal_of(board, name)['pid'] for name in ('agent', 'shell')}
 
     def test_enabling_by_reload_opens_the_listener_and_the_board_set(self):
         self.board_config(False)
@@ -307,13 +306,13 @@ class BoardReloadTests(ReloadCase):
         self.hub = self.box.start_hub()
         time.sleep(2.5)  # past a watchdog poll
         self.assertEqual(self.listening(), [])
-        self.assertIsNone(self.box.status()['board_agent'])
+        self.assertIsNone(self.box.status()['board_agent'])  # web off: no Board at all (null)
         self.board_config(True)
         result = self.reload()
         self.assertEqual(result.returncode, 0, result)
         self.assertIn('web.enabled', result.stdout)
         self.assertEqual(self.box.wait_listening(self.hub.pid), ('127.0.0.1', self.port))
-        pids = self.start_set(self.browser())  # 303, not 503 board_unavailable: the set exists
+        pids = self.start_set(self.browser())  # 200, not 503 board_unavailable: the set exists
         self.assertTrue(all(alive(pid) for pid in pids.values()))
 
     def test_disabling_keeps_a_running_set_and_re_enabling_reuses_it(self):
@@ -333,9 +332,10 @@ class BoardReloadTests(ReloadCase):
         self.assertTrue(refused('127.0.0.1', self.port))
         internal = self.listening()
         self.assertEqual(len(internal), 1, internal)
+        from support.board_stub import terminal_of
         board = self.box.status()['board_agent']
-        self.assertEqual({name: board[name]['pid'] for name in ('agent', 'shell')}, pids)
-        self.assertEqual({board[name]['state'] for name in ('agent', 'shell')}, {'running'})
+        self.assertEqual({name: terminal_of(board, name)['pid'] for name in ('agent', 'shell')}, pids)
+        self.assertEqual({terminal_of(board, name)['state'] for name in ('agent', 'shell')}, {'running'})
         self.assertTrue(all(alive(pid) for pid in pids.values()))
         self.board_config(True)
         reply = self.hub_reload()
@@ -343,9 +343,9 @@ class BoardReloadTests(ReloadCase):
         self.assertTrue(wait_until(lambda: self.listening() == sorted([*internal, ('127.0.0.1', self.port)]), 5),
                         self.listening())
         board = self.box.status()['board_agent']
-        self.assertEqual({name: board[name]['pid'] for name in ('agent', 'shell')}, pids)
+        self.assertEqual({name: terminal_of(board, name)['pid'] for name in ('agent', 'shell')}, pids)
         self.assertEqual(descendants(self.hub.pid), before, 'no second Board agent set')
-        self.assertIn(f'board_agent: agent running(pid {pids["agent"]}) · shell running(pid {pids["shell"]})',
+        self.assertIn('board_agent: agent 1/4 실행 중 · shell 1 · 연결 0',  # WBX-D1 status line
                       self.box.cli('hub', 'status').stdout)
 
     def test_a_board_agent_change_is_said_to_apply_at_the_next_start(self):

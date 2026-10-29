@@ -395,7 +395,7 @@ class PermissionTests(RestResultCase):
 
     def test_editors_in_scope_and_the_board_agent_see_every_request_in_scope(self):
         editor = self.client(self.hub.key('ed-a', 'editor', {'projects': [self.hub.a]}))
-        board = self.client(self.hub.keys.rotate_system_key(now=self.hub.now[0]).raw)
+        board = self.client(self.hub.keys.rotate_system_key('a-000000000001', now=self.hub.now[0]).raw)
         clients = [editor, board]
         for client in clients:
             value = client.tool('inbox_result', request_id=self.rid, full=True, artifact_path='a.txt')

@@ -101,7 +101,7 @@ class PortCase(unittest.TestCase):
         self.idem = 0
 
     def board(self):
-        return self.hub.rest(self.hub.keys.rotate_system_key(now=self.hub.now[0]).raw)
+        return self.hub.rest(self.hub.keys.rotate_system_key('a-000000000001', now=self.hub.now[0]).raw)
 
     def ok(self, reply, status: int = 200) -> dict:
         self.assertEqual(reply.status, status, reply.body)

@@ -68,7 +68,7 @@ class BoardHomeTests(unittest.TestCase):
         self.box = BoardSandbox(self)
 
     def test_home_is_under_hub_state_with_agent_db_linked_to_the_user_store(self):
-        home = launch.prepare_board_home(self.box.state, self.box.env)
+        home = launch.prepare_board_home(launch.board_dir(self.box.state), self.box.env)  # WBX-D1: an agent home
         root = self.box.state / 'board-agent' / 'omp-root'
         self.assertEqual(home.root, root)
         self.assertEqual(home.agent_dir, root / 'agent')
@@ -111,8 +111,13 @@ class LauncherCase(unittest.TestCase):
     def arun(self, coroutine):
         return self.loop.run_until_complete(coroutine)
 
-    def prepare(self, launcher=None) -> launch.AgentLaunch:
-        return self.arun((launcher or self.launcher).prepare_agent())
+    AGENT = 'a-000000000001'  # WBX-D1: the migrated agent-1 (its home is board-agent/)
+
+    def spec(self, agent_id: str | None = None, home: str = 'board-agent') -> launch.AgentSpec:
+        return launch.AgentSpec(agent_id or self.AGENT, 'agent-1', self.box.state / home)
+
+    def prepare(self, launcher=None, spec=None) -> launch.AgentLaunch:
+        return self.arun((launcher or self.launcher).prepare_agent(spec or self.spec()))
 
 
 class OmpSelectionDetailTests(LauncherCase):
@@ -140,7 +145,7 @@ class SystemKeyTests(LauncherCase):
         first = self.prepare()
         principal = self.keys.verify(first.env['WB_API_KEY'], 1.0)
         self.assertEqual((principal.name, principal.grade, principal.scope, principal.system),
-                         ('board-agent', 'editor', {'all': True}, True))
+                         ('board-agent.a-000000000001', 'editor', {'all': True}, True))  # WBX-D58: per agent
         second = self.prepare()
         self.assertNotEqual(first.env['WB_API_KEY'], second.env['WB_API_KEY'])
         with self.assertRaises(auth.ApiKeyRefused):

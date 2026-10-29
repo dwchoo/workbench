@@ -86,8 +86,19 @@ def request_counts(items: list[dict] | None) -> dict:
 
 
 def board_card(request: web.Request) -> dict:
+    """The nav's Board state and (web-board-ux SPEC s4) how many agents run and how many shells there are."""
     state = render.nav_for(request).board_state
-    return {"state": state, "label": render.BOARD_DOT_TITLES[state], "url": "/board"}
+    try:
+        counts = request.app[SERVICES].board_counts()
+    except Exception:  # noqa: BLE001 - the card shows the state alone
+        counts = None
+    if isinstance(counts, dict):
+        counts = {"agents_running": int(counts.get("agents_running") or 0), "shells": int(counts.get("shells") or 0)}
+        summary = f"agent {counts['agents_running']} 실행 중 · shell {counts['shells']}"
+    else:
+        counts = summary = None
+    return {"state": state, "label": render.BOARD_DOT_TITLES[state], "url": "/board", "counts": counts,
+            "summary": summary}
 
 
 def state_text(item: dict) -> str:
@@ -299,6 +310,7 @@ def dashboard_body(model: dict) -> render.Markup:
         render.tag("p", render.html_join([
             render.tag("span", "", id="board-dot", class_=f"dot dot-{board['state']}"),
             render.tag("strong", board["label"], id="board-label")]), class_="agent-state"),
+        render.tag("p", board["summary"], id="board-counts", class_="muted") if board["summary"] else "",
         render.tag("a", "열기", href=board["url"], id="board-open", class_="btn btn-primary btn-block")]),
         id="board-agent", class_="card agent-card", aria_labelledby="agent-h")
     attention_card = render.tag("section", render.html_join([

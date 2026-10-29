@@ -15,5 +15,6 @@
   {"info": {"state": 7}, "label": "알 수 없음"},
   {"info": {}, "label": "알 수 없음"},
   {"info": null, "label": "알 수 없음"},
-  {"info": "running", "label": "알 수 없음"}
+  {"info": "running", "label": "알 수 없음"},
+  {"info": {"state": "stopped"}, "label": "중지됨"}
 ]

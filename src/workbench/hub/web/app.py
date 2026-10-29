@@ -62,6 +62,8 @@ class WebServices:
     clock: Callable[[], float] = time.time
     # The Board agent's state dot in the nav: ``"on"``/``"off"``/``"error"`` (non-blocking; the Hub supplies it).
     board_state: Callable[[], str] = lambda: "off"
+    # The dashboard's Board card numbers (``BoardSet.counts()``: running agents, shells), None without a Board.
+    board_counts: Callable[[], dict | None] = lambda: None
     sessions: auth.SessionStore = field(init=False)
     throttle: auth.LoginThrottle = field(init=False)
     audit: auth.AuditLog = field(init=False)
@@ -120,20 +122,18 @@ async def flush_last_used(app: web.Application):
     await asyncio.gather(*in_flight, return_exceptions=True)
 
 
-BOARD_CHANNELS = ("agent", "shell")
-
-
 def board_routes(board: Callable[[], object | None]) -> Callable[[web.Application], None]:
-    """``POST /board/restart`` (form ``channel``): the logged-in owner restarts one Board channel (TI-16), and
-    ``GET /ws/board``, the Board terminal WebSocket (TI-17).
+    """The Board (web-board-ux SPEC s4 "트랙 D"): the page ``GET /board`` (``pages/board.py``), the session API
+    ``/api/board…`` (``pages/board_api.py``) and the terminal WebSockets ``GET /ws/board/{terminal_id}`` (protocol v2,
+    ``board/ws.py``).
 
-    Session and CSRF are the ``session_check`` middleware's (a page route, unsafe method); API keys cannot reach
-    it. ``board()`` returns the Hub's ``BoardSet`` or None (``hub.toml`` invalid). The Board page and the restart
-    confirm page (``GET /board``, ``GET /board/restart``) are TI-18's (``pages/board.py``).
-    The set's one :class:`~workbench.hub.board.ws.BoardTerminal` (its lease and epochs) outlives a listener
-    reopen: it is kept here, per set.
+    Session and CSRF are the ``session_check`` middleware's; API keys cannot reach any of them. ``board()`` returns the
+    Hub's ``BoardSet`` or None (``hub.toml`` invalid, web disabled). The set's one
+    :class:`~workbench.hub.board.ws.BoardTerminal` (its attached clients) outlives a listener reopen: it is kept here,
+    per set.
     """
     from ..board import ws as board_ws
+    from .pages import board_api
     terminals: dict[str, board_ws.BoardTerminal] = {}
 
     def terminal_for(app: web.Application) -> board_ws.BoardTerminal | None:
@@ -142,23 +142,14 @@ def board_routes(board: Callable[[], object | None]) -> Callable[[web.Applicatio
             return None
         terminal = terminals.get("current")
         if terminal is None or terminal.board is not current:
+            if terminal is not None:
+                terminal.unwatch()
             terminal = terminals["current"] = board_ws.BoardTerminal(current, audit=board_ws.audit_to(app[SERVICES]))
         return terminal
 
-    async def post_restart(request: web.Request) -> web.Response:
-        current = board()
-        if current is None:
-            return web.Response(status=503, text="board_unavailable")
-        form = await request.post()
-        channel = form.get("channel")
-        if channel not in BOARD_CHANNELS:
-            return web.Response(status=400, text="bad_channel")
-        await current.restart(channel, actor="owner", address=request.remote)
-        return middleware.see_other("/board")
-
     def register(app: web.Application) -> None:
-        app.router.add_post("/board/restart", post_restart)
         board_ws.routes(lambda: terminal_for(app))(app)
+        board_api.routes(board)(app)
         board_page.make_register(board)(app)
     return register
 

@@ -97,6 +97,15 @@ class BoardLaunchError(RuntimeError):
 
 
 @dataclass(frozen=True, slots=True)
+class AgentSpec:
+    """Which Board agent starts (WBX-D44): its registry id and name and its home directory (absolute)."""
+
+    id: str
+    name: str
+    home: Path
+
+
+@dataclass(frozen=True, slots=True)
 class AgentLaunch:
     """One Board agent start. ``env`` carries the system key; never log or audit it."""
 
@@ -105,6 +114,7 @@ class AgentLaunch:
     cwd: str = ""
     key_id: str = ""
     started_at: float = 0.0  # wall clock of prepare_agent (the Board events line)
+    home: Path | None = None  # the agent's home (its ``omp-logs/board-events.log``)
 
 
 @dataclass(frozen=True, slots=True)
@@ -130,10 +140,10 @@ def _remove(path: Path) -> None:
         os.unlink(path)
 
 
-def install_board_skill(state_dir: Path | str) -> Path:
-    """Rebuild ``<hub state>/board-agent/skills/wb-inbox/`` (0700) from the installed skill's
-    :data:`SKILL_FILES` (0600, nothing else); returns the skills directory."""
-    skills = ensure_private_dir(board_dir(state_dir)) / SKILLS_DIR_NAME
+def install_board_skill(home_dir: Path | str) -> Path:
+    """Rebuild ``<agent home>/skills/wb-inbox/`` (0700) from the installed skill's :data:`SKILL_FILES` (0600, nothing
+    else); returns the skills directory."""
+    skills = ensure_private_dir(Path(home_dir)) / SKILLS_DIR_NAME
     _remove(skills)
     folder = ensure_private_dir(ensure_private_dir(skills) / SKILL_NAME)
     for name in SKILL_FILES:
@@ -141,15 +151,16 @@ def install_board_skill(state_dir: Path | str) -> Path:
     return skills
 
 
-def prepare_board_home(state_dir: Path | str, environment: Mapping[str, str]) -> omp_home.OmpHome:
-    """``<hub state>/board-agent/omp-root`` with ``agent.db`` linked to the user's store (``omp_home`` rules).
+def prepare_board_home(home_dir: Path | str, environment: Mapping[str, str]) -> omp_home.OmpHome:
+    """``<agent home>/omp-root`` with ``agent.db`` linked to the user's store (``omp_home`` rules; no copy, C-D64).
+    The agent home is ``<hub state>/board-agent`` (the migrated ``agent-1``) or ``<hub state>/board-agents/<id>``.
 
     Every isolation provider stays off (``native`` included: no MCP file is read); the only skill directory is the fresh
     ``wb-inbox`` copy (:func:`install_board_skill`); no Workbench subagent definitions (an empty private directory).
     """
-    root = ensure_private_dir(board_dir(state_dir))
+    root = ensure_private_dir(Path(home_dir))
     empty = ensure_private_dir(root / EMPTY_DIR_NAME)
-    skills = install_board_skill(state_dir)
+    skills = install_board_skill(root)
     return omp_home.prepare_omp_home(root, environment, skills_dir=skills, provider_ids=ISOLATION_PROVIDER_IDS,
                                      agents_dir=empty)
 
@@ -209,11 +220,10 @@ def _open_logs_dir(path: Path) -> int | None:
     return fd
 
 
-def archive_omp_logs(state_dir: Path | str, home: omp_home.OmpHome) -> list[str]:
-    """Copy the Board home's OMP logs (regular files this user owns, never through a symlink) into
-    ``board-agent/omp-logs`` (0700, files 0600, redacted, bounded) and keep the newest :data:`OMP_LOG_KEEP` there.
-    Returns the names copied."""
-    archive = ensure_private_dir(board_dir(state_dir) / OMP_LOG_ARCHIVE_NAME)
+def archive_omp_logs(home_dir: Path | str, home: omp_home.OmpHome) -> list[str]:
+    """Copy the agent's OMP logs (regular files this user owns, never through a symlink) into ``<agent home>/omp-logs``
+    (0700, files 0600, redacted, bounded) and keep the newest :data:`OMP_LOG_KEEP` there. Returns the names copied."""
+    archive = ensure_private_dir(Path(home_dir) / OMP_LOG_ARCHIVE_NAME)
     source = _open_logs_dir(home.root / OMP_LOGS_DIR_NAME)
     copied = []
     if source is not None:
@@ -267,10 +277,12 @@ def _stamp(seconds: float) -> str:
     return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(seconds))
 
 
-def record_board_event(state_dir: Path | str, event: Mapping[str, Any]) -> None:
-    """Append one redacted JSON line to ``board-agent/omp-logs/board-events.log`` (0600, never through a symlink);
+def record_board_event(home_dir: Path | str, event: Mapping[str, Any]) -> None:
+    """Append one redacted JSON line to ``<agent home>/omp-logs/board-events.log`` (0600, never through a symlink);
     past :data:`OMP_EVENTS_LIMIT` bytes only the newer half of the lines is kept."""
-    archive = ensure_private_dir(board_dir(state_dir) / OMP_LOG_ARCHIVE_NAME)
+    if not os.path.isdir(home_dir) or os.path.islink(home_dir):
+        return  # a deleted agent's home is never made again by a late event line
+    archive = ensure_private_dir(Path(home_dir) / OMP_LOG_ARCHIVE_NAME)
     path = archive / OMP_EVENTS_NAME
     line = redact_log(json.dumps(event, ensure_ascii=False, sort_keys=True).encode()).replace(b"\n", b" ") + b"\n"
     fd = os.open(path, os.O_WRONLY | os.O_APPEND | os.O_CREAT | os.O_NOFOLLOW | os.O_CLOEXEC, 0o600)
@@ -305,10 +317,10 @@ def _json_bytes(value: Mapping[str, Any]) -> bytes:
     return (json.dumps(value, indent=2) + "\n").encode()
 
 
-def write_board_files(state_dir: Path | str, home: omp_home.OmpHome) -> Path:
+def write_board_files(home_dir: Path | str, home: omp_home.OmpHome) -> Path:
     """Rewrite the overlay (0600) and remove an older version's ``mcp.json`` at every start; returns the overlay."""
-    overlay = board_dir(state_dir) / OVERLAY_NAME
-    write_private_bytes(overlay, _json_bytes(board_overlay(board_dir(state_dir) / SKILLS_DIR_NAME)))
+    overlay = Path(home_dir) / OVERLAY_NAME
+    write_private_bytes(overlay, _json_bytes(board_overlay(Path(home_dir) / SKILLS_DIR_NAME)))
     _remove(home.agent_dir / LEGACY_MCP_FILE)
     return overlay
 
@@ -459,12 +471,60 @@ def board_environment(base: Mapping[str, str], home: omp_home.OmpHome, key: str,
     return env
 
 
+class HomeRemovalRefused(Exception):
+    """An agent home that must not be removed (outside ``<hub state>``, a symlink, another owner); nothing changed."""
+
+
+def remove_board_home(state_dir: Path | str, relative: str) -> None:
+    """Remove an agent's home ``<hub state>/<relative>`` (WBX-D44 "삭제") without following any symlink: every path
+    component is opened ``O_NOFOLLOW`` below the Hub state directory and must be this user's directory; the tree is
+    removed through directory fds (``shutil.rmtree(dir_fd=)``), so a symlink inside (``agent.db``) is unlinked, never
+    its target. A missing home is already removed. :class:`HomeRemovalRefused` before anything changes; an
+    ``OSError`` once some of it is gone (a partial delete)."""
+    parts = Path(relative).parts
+    if not parts or any(part in ("", ".", "..") or "/" in part for part in parts) or Path(relative).is_absolute():
+        raise HomeRemovalRefused(f"{relative} is not a home below the Hub state directory")
+    state = Path(state_dir)
+    path = state.joinpath(*parts)
+    flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
+    try:
+        current = os.open(state, flags)
+    except OSError as exc:
+        raise HomeRemovalRefused(f"{state} cannot be opened: {exc.strerror}") from None
+    try:
+        for part in parts[:-1]:
+            try:
+                following = os.open(part, flags, dir_fd=current)
+            except FileNotFoundError:
+                return
+            except OSError as exc:
+                raise HomeRemovalRefused(f"{path} is not below {state} through plain directories "
+                                         f"({part}: {exc.strerror})") from None
+            os.close(current)
+            current = following
+            if os.fstat(current).st_uid != os.geteuid():
+                raise HomeRemovalRefused(f"{path} is in a directory another user owns")
+        name = parts[-1]
+        try:
+            info = os.lstat(name, dir_fd=current)
+        except FileNotFoundError:
+            return
+        if stat.S_ISLNK(info.st_mode) or not stat.S_ISDIR(info.st_mode):
+            raise HomeRemovalRefused(f"{path} is not a plain directory (a symlink is never followed)")
+        if info.st_uid != os.geteuid():
+            raise HomeRemovalRefused(f"{path} is owned by another user")
+        shutil.rmtree(name, dir_fd=current)
+    finally:
+        os.close(current)
+
+
 class BoardLauncher:
     """Prepares each Board agent start; owned by the Hub's ``BoardSet``.
 
-    ``api_keys`` returns the Hub's key store (``hub.sqlite3``); ``listener`` is the Board agent's
-    internal REST listener (WBX-B5), or a callable that makes it on the first start (the key store
-    may open only then); it is started on the first start and stopped by :meth:`close`.
+    ``api_keys`` returns the Hub's key store (``hub.sqlite3``); ``listener`` is the Board agents' one internal REST
+    listener (WBX-B5), or a callable that makes it on the first start (the key store may open only then); it is
+    started on the first start and stopped by :meth:`close`. Every agent gets its own home and its own system key
+    ``board-agent.<agent id>`` (WBX-D44/D58); role prompt, model, overlay rules and the isolation check are shared.
     """
 
     def __init__(self, state_dir: Path | str, config: BoardAgentConfig, *,
@@ -484,49 +544,77 @@ class BoardLauncher:
     async def _blocking(self, function, *args):
         return await asyncio.get_running_loop().run_in_executor(None, function, *args)
 
-    def _home(self) -> omp_home.OmpHome:
+    def _home(self, home_dir: Path) -> omp_home.OmpHome:
         try:
-            return prepare_board_home(self.state_dir, self.environment)
+            return prepare_board_home(home_dir, self.environment)
         except (omp_home.OmpHomeError, DataDirError, OSError) as exc:
-            raise BoardLaunchError("home_unavailable", str(exc)) from exc
+            raise BoardLaunchError("home_unavailable", str(exc),
+                                   message=f"Board agent home {home_dir}: {exc}"[:MESSAGE_LIMIT]) from exc
 
-    def _keep_logs(self, home: omp_home.OmpHome) -> None:
+    def _keep_logs(self, home_dir: Path, home: omp_home.OmpHome) -> None:
         try:
-            archive_omp_logs(self.state_dir, home)
+            archive_omp_logs(home_dir, home)
         except Exception as exc:  # noqa: BLE001 - diagnostics only: never blocks a start (DataDirError, OSError, ...)
             _log(f"OMP log copy skipped: {type(exc).__name__}: {exc}")
 
-    def _rotate(self) -> auth.IssuedKey:
+    def _rotate(self, agent_id: str) -> auth.IssuedKey:
         try:
-            return self.api_keys().rotate_system_key(now=float(self.clock()))
-        except Exception as exc:  # noqa: BLE001 - HubDbError, sqlite3, a missing store
+            return self.api_keys().rotate_system_key(agent_id, now=float(self.clock()))
+        except Exception as exc:  # noqa: BLE001 - HubDbError, sqlite3, a missing store, name_taken
             raise BoardLaunchError("hub_db_unavailable", type(exc).__name__) from exc
 
-    async def prepare_agent(self) -> AgentLaunch:
-        """Home and skill copy, new system key, internal listener, overlay and argv for one start."""
+    def drop_key(self, agent_id: str, key_id: str | None = None) -> None:
+        """Blocking (executor): the agent's system key row gone once its process ended (WBX-D58); never raises."""
+        try:
+            self.api_keys().delete_system_key(agent_id, key_id)
+        except Exception as exc:  # noqa: BLE001 - the store may be closed at Hub stop
+            _log(f"system key removal skipped: {type(exc).__name__}")
+
+    def purge_keys(self) -> bool:
+        """Blocking (executor): every system key row gone (Board creation); False while the key store is closed."""
+        try:
+            self.api_keys().delete_system_keys()
+        except Exception as exc:  # noqa: BLE001
+            _log(f"system key purge deferred: {type(exc).__name__}")
+            return False
+        return True
+
+    def key_name_free(self, agent_id: str) -> bool:
+        """Blocking: no key (a person's from before the prefix was reserved) has this agent's key name."""
+        try:
+            return not self.api_keys().name_in_use(auth.system_key_name(agent_id))
+        except Exception:  # noqa: BLE001 - checked again (name_taken) at the start
+            return True
+
+    async def prepare_agent(self, agent: AgentSpec) -> AgentLaunch:
+        """Home and skill copy, a new system key, the internal listener, overlay and argv for one start of
+        ``agent``."""
         omp = resolve_omp(self.environment)
         prompt = role_prompt(self.config)
         model = board_model(self.config)
-        home = await self._blocking(self._home)
-        await self._blocking(self._keep_logs, home)
+        home = await self._blocking(self._home, agent.home)
+        await self._blocking(self._keep_logs, agent.home, home)
         resume = await self._blocking(previous_session, home)
-        issued = await self._blocking(self._rotate)
+        issued = await self._blocking(self._rotate, agent.id)
         try:
             if self.listener is None:
                 self.listener = self._listener_source()
             url = await self.listener.start()
         except RuntimeError as exc:  # the Hub's key store is not open (web services stopped)
+            await self._blocking(self.drop_key, agent.id, issued.key_id)
             raise BoardLaunchError("hub_db_unavailable", str(exc)) from exc
         except OSError as exc:
+            await self._blocking(self.drop_key, agent.id, issued.key_id)
             raise BoardLaunchError("internal_listener_failed", str(exc)) from exc
         try:
-            overlay = await self._blocking(write_board_files, self.state_dir, home)
+            overlay = await self._blocking(write_board_files, agent.home, home)
         except OSError as exc:
+            await self._blocking(self.drop_key, agent.id, issued.key_id)
             raise BoardLaunchError("home_unavailable", str(exc)) from exc
         env = board_environment(self.environment, home, issued.raw, url)
         cwd = str(omp_home.environment_home(self.environment))
         return AgentLaunch(board_argv(omp, overlay, prompt, resume=resume, model=model), env, cwd, issued.key_id,
-                           float(self.clock()))
+                           float(self.clock()), Path(agent.home))
 
     def prepare_shell(self) -> ShellLaunch:
         """``board_agent.shell`` / ``$SHELL`` / ``/bin/sh`` in ``$HOME`` with ``hub_environment()`` + ``TERM`` and a
@@ -545,7 +633,7 @@ class BoardLauncher:
         except launcher.StartRequirementError as exc:
             verdict = f"check_failed:{exc}"[:REASON_LIMIT]
             self.record_event({"event": "start", "started_at": _stamp(started.started_at),
-                               "resume": "--continue" in started.argv, "isolation": verdict})
+                               "resume": "--continue" in started.argv, "isolation": verdict}, started.home)
             return verdict
         environment = {**started.env, **omp_home.withheld_user_values(hub_environment(self.environment))}
         result = launcher.check_isolation([item for item in started.argv if item != "--continue"],
@@ -554,17 +642,22 @@ class BoardLauncher:
                                           timeout=self.check_timeout,
                                           cancel=cancel)
         verdict = isolation_failure(result)
+        if cancel is not None and cancel.is_set():  # stopped or deleted meanwhile: its home may be gone
+            return verdict
         cleanup = result.get("cleanup") or {}
         self.record_event({"event": "start", "started_at": _stamp(started.started_at),
                            "resume": "--continue" in started.argv, "omp_version": version,
                            "isolation": verdict or "ok", "check_state": result.get("state"),
-                           "check_stop": {key: cleanup.get(key) for key in ("stage", "elapsed", "returncode")}})
+                           "check_stop": {key: cleanup.get(key) for key in ("stage", "elapsed", "returncode")}},
+                          started.home)
         return verdict
 
-    def record_event(self, event: Mapping[str, Any]) -> None:
-        """One line in ``board-agent/omp-logs/board-events.log``; never raises (diagnostics only)."""
+    def record_event(self, event: Mapping[str, Any], home: Path | str | None = None) -> None:
+        """One line in ``<agent home>/omp-logs/board-events.log`` (``board-agent/`` without a home); never raises
+        (diagnostics only)."""
         try:
-            record_board_event(self.state_dir, {"at": _stamp(self.clock()), **event})
+            record_board_event(home if home is not None else board_dir(self.state_dir),
+                               {"at": _stamp(self.clock()), **event})
         except Exception as exc:  # noqa: BLE001
             _log(f"Board event not recorded: {type(exc).__name__}: {exc}")
 

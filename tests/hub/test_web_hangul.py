@@ -207,7 +207,7 @@ class HangulRestTests(unittest.TestCase):
         self.assertEqual([item['request_id'] for item in found.json['requests']], [value['request_id']])
 
     def test_inbox_projects_query_matches_hangul_names_composed_or_decomposed(self):
-        board = self.hub.rest(self.hub.keys.rotate_system_key(now=self.hub.now[0]).raw)
+        board = self.hub.rest(self.hub.keys.rotate_system_key('a-000000000001', now=self.hub.now[0]).raw)
         self.hub.rows[0]['name'] = '알파 프로젝트'
         self.hub.rows[1]['name'] = unicodedata.normalize('NFD', '베타 실험')
         for query, expected in (('알파', '알파 프로젝트'), (unicodedata.normalize('NFD', '알파'), '알파 프로젝트'),

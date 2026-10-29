@@ -222,7 +222,10 @@ class InProcessHubDisabledTests(unittest.TestCase):
     def test_enabled_does_build_the_board_set(self):
         hub, _path = self.hub('[web]\nenabled = true\n')
         self.assertIsNotNone(hub.board)
-        self.assertEqual(hub.board.status(), None)  # nothing started yet
+        # WBX-D1: the Board lists the migrated agent-1, nothing started yet (v1: status() was None until a start)
+        self.assertEqual([(view['name'], view['state']) for view in hub.board.status()['agents']],
+                         [('agent-1', 'not_started')])
+        self.assertEqual(hub.board.status()['shells'], [])
         self.assertIsNone(hub.internal_rest)  # lazily, with the first Board start
         self.assertEqual(len(hub.web.stop_hooks), 1)
 

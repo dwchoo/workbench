@@ -103,26 +103,31 @@ class WebStates(unittest.TestCase):
 
 
 class BoardAgent(unittest.TestCase):
+    """WBX-D1 (web-board-ux SPEC s4 "Hub 상태"): ``status.board_agent`` lists agents and shells; the header counts the
+    running agents of the limit and the shells (v1: the agent channel's state and a differing shell's)."""
+
     def board(self, board: object) -> str:
         return " ".join(hub_text(model_with(status(board_agent=board))))
+
+    @staticmethod
+    def shape(agents=(), shells=(), state="ok", limit=4):
+        return {"state": state, "options": {"agent_limit": limit, "shell_limit": 10},
+                "agents": [{"name": f"agent-{i + 1}", "state": value} for i, value in enumerate(agents)],
+                "shells": [{"name": f"shell-{i + 1}", "state": value} for i, value in enumerate(shells)]}
 
     def test_no_board_agent_set_is_none(self):
         self.assertIn("Board agent: 없음", self.board(None))
 
-    def test_running_and_stopped_come_from_the_agent_channel(self):
-        running = {"agent": {"state": "running", "pid": 7}, "shell": {"state": "running", "pid": 8},
-                   "lease": {"state": "none"}}
-        self.assertIn("Board agent: running", self.board(running))
-        stopped = {"agent": {"state": "stopped", "pid": None}, "shell": {"state": "stopped", "pid": None},
-                   "lease": {"state": "none"}}
-        text = self.board(stopped)
-        self.assertIn("Board agent: stopped", text)
+    def test_running_agents_of_the_limit_and_the_shells_are_counted(self):
+        self.assertIn("Board agent: agent 2/4 실행 중 · shell 1",
+                      self.board(self.shape(["running", "starting", "stopped"], ["running"])))
+        text = self.board(self.shape(["stopped"], []))
+        self.assertIn("Board agent: agent 0/4 실행 중 · shell 0", text)
         self.assertNotIn("running", text)
 
-    def test_a_shell_that_differs_is_named(self):
-        text = self.board({"agent": {"state": "running"}, "shell": {"state": "stopped"}})
-        self.assertIn("running", text)
-        self.assertIn("shell stopped", text)
+    def test_a_failed_agent_and_an_invalid_registry_are_named(self):
+        self.assertIn("실패 1", self.board(self.shape(["running", "isolation_failed"], ["exited"])))
+        self.assertIn("Board agent: registry_invalid", self.board(self.shape(state="registry_invalid")))
 
 
 class UnknownAndPartial(unittest.TestCase):
@@ -186,7 +191,9 @@ class Width(unittest.TestCase):
     def test_no_header_line_is_wider_than_the_terminal(self):
         replies = (status(web={"state": "listening", "url": "http://매우긴호스트이름.example.com:8080/아주/긴/경로",
                                "insecure_warning": True},
-                          board_agent={"agent": {"state": "running", "pid": 7}, "shell": {"state": "실패함"}}),
+                          board_agent={"state": "ok", "options": {"agent_limit": 8, "shell_limit": 32},
+                                       "agents": [{"name": "전처리" * 10, "state": "running"}],
+                                       "shells": [{"name": "s", "state": "실패함"}]}),
                    status(web={"state": "bind_failed", "detail": "주소가 이미 사용 중입니다" * 3}),
                    status(), None)
         for reply in replies:

@@ -442,7 +442,8 @@ class BoardSetUpdateTests(UpdateHubFixture):
     PASSWORD = 'correct horse battery staple'
 
     def start_hub_with_board_shell(self) -> tuple[subprocess.Popen, int]:
-        """A real Hub whose Board shell channel runs (started through ``POST /board/restart``)."""
+        """A real Hub whose Board shell runs (WBX-D1: made through ``POST /api/board/shells``; v1 restarted the fixed
+        shell channel through ``POST /board/restart``)."""
         import http.client
         import re
         from urllib.parse import urlencode
@@ -466,10 +467,14 @@ class BoardSetUpdateTests(UpdateHubFixture):
         host, port = '127.0.0.1', web_status()['web']['port']
         cookies: dict[str, str] = {}
 
-        def request(method, path, data=None):
+        def request(method, path, data=None, *, csrf=None):
             headers = {'Cookie': '; '.join(f'{k}={v}' for k, v in cookies.items())} if cookies else {}
             body = None
-            if data is not None:
+            if csrf is not None:  # the Board session API: JSON with the session's X-CSRF-Token
+                body = json.dumps(data or {})
+                headers.update({'Content-Type': 'application/json', 'Origin': f'http://{host}:{port}',
+                                'X-CSRF-Token': csrf})
+            elif data is not None:
                 body = urlencode(data)
                 headers.update({'Content-Type': 'application/x-www-form-urlencoded',
                                 'Origin': f'http://{host}:{port}'})
@@ -492,10 +497,10 @@ class BoardSetUpdateTests(UpdateHubFixture):
         self.assertEqual(request('POST', '/login', {'login_token': token, 'password': self.PASSWORD})[0], 303)
         _, page = request('GET', '/settings')
         csrf = re.search(r'name="csrf" value="([^"]+)"', page).group(1)
-        self.assertEqual(request('POST', '/board/restart', {'csrf': csrf, 'channel': 'shell'})[0], 303)
-        board = web_status()['board_agent']
-        self.assertEqual(board['shell']['state'], 'running')
-        return hub, board['shell']['pid']
+        self.assertEqual(request('POST', '/api/board/shells', {}, csrf=csrf)[0], 201)
+        shell = web_status()['board_agent']['shells'][0]
+        self.assertEqual(shell['state'], 'running')
+        return hub, shell['pid']
 
     def test_the_question_lists_the_set_and_a_decline_keeps_hub_and_set(self):
         hub, shell = self.start_hub_with_board_shell()
@@ -503,8 +508,8 @@ class BoardSetUpdateTests(UpdateHubFixture):
         status, output, error = self.invoke(stdin=Tty('n\n'), tool=self.recording_tool)
         self.assertEqual(status, 1, output + error)
         question = output[:output.index('[y/N]')]
-        self.assertIn('Board agent 세트', question)
-        self.assertIn(f'shell running(pid {shell})', question)
+        self.assertIn('Board terminal', question)  # WBX-D1: every live terminal with its name and state
+        self.assertIn(f'shell shell-1 running(pid {shell})', question)
         self.assertIn(f'Hub(pid {hub.pid}', question)
         self.assertEqual(self.events, [])
         self.assertIsNone(hub.poll())

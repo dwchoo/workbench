@@ -318,21 +318,48 @@ test("selectionText strips only padding at line ends and never duplicates or dro
 });
 
 // ---------------------------------------------------------------------------------------------------------------
-// Glue (board.js) against stub DOM, xterm and WebSocket: output bytes, keys, lease gating, scroll.
+// Glue (board.js) against stub DOM, xterm and WebSocket: output bytes, keys, connection gating, scroll.
+// Migrated for web-board-ux WBX-D2: the page is a panel + grid workspace (no tab/panel-agent/term-agent elements);
+// board.js builds one widget (one xterm, one socket) per visible terminal, so the stub DOM has to support element
+// creation (append, insertBefore, replaceChildren, remove, style.setProperty, classList).
 
-const elements = new Map();
-function element(id) {
-  if (!elements.has(id)) {
-    const classes = new Set(id === "panel-agent" ? ["panel", "active"] : []);
-    elements.set(id, {
-      id, textContent: "", hidden: false, dataset: {}, listeners: {}, attrs: {},
-      classList: { toggle: (name, on) => (on ? classes.add(name) : classes.delete(name)), contains: (n) => classes.has(n) },
-      setAttribute(name, value) { this.attrs[name] = value; },
-      addEventListener(type, handler) { this.listeners[type] = handler; },
-    });
+class El {
+  constructor(tag, id = "") {
+    this.tagName = String(tag).toUpperCase(); this.id = id; this.children = []; this.parent = null; this.listeners = {};
+    this.attrs = {}; this.dataset = {}; this._text = ""; this.hidden = false; this.disabled = false; this.value = "";
+    const classes = new Set();
+    this.classes = classes;
+    this.classList = {
+      add: (...names) => names.forEach((name) => classes.add(name)), remove: (...names) => names.forEach((name) => classes.delete(name)),
+      toggle: (name, on) => { if (on === undefined ? !classes.has(name) : on) classes.add(name); else classes.delete(name); return classes.has(name); },
+      contains: (name) => classes.has(name),
+    };
+    const props = new Map();
+    this.style = { setProperty: (name, value) => props.set(name, String(value)), removeProperty: (name) => props.delete(name) };
+    this.clientWidth = 600; this.clientHeight = 400;
   }
-  return elements.get(id);
+  get className() { return [...this.classes].join(" "); }
+  set className(value) { this.classes.clear(); for (const name of String(value).split(/\s+/).filter(Boolean)) this.classes.add(name); }
+  get textContent() { return this._text + this.children.map((child) => child.textContent).join(""); }
+  set textContent(value) { this._text = String(value); this.children = []; }
+  setAttribute(name, value) { this.attrs[name] = String(value); }
+  append(...nodes) { for (const node of nodes) { node.parent = this; this.children.push(node); } }
+  insertBefore(node, ref) { node.parent = this; const at = this.children.indexOf(ref); this.children.splice(at < 0 ? this.children.length : at, 0, node); }
+  replaceChildren(...nodes) { this.children = []; this.append(...nodes); }
+  remove() { if (this.parent) this.parent.children = this.parent.children.filter((child) => child !== this); this.parent = null; }
+  addEventListener(type, handler) { (this.listeners[type] ||= []).push(handler); }
+  fire(type, event = {}) { for (const handler of this.listeners[type] || []) handler({ target: this, preventDefault() {}, ...event }); }
+  closest(selector) { for (let node = this; node; node = node.parent) if (node.tagName === selector.toUpperCase()) return node; return null; }
+  getBoundingClientRect() { return { left: 0, top: 0, width: 600, height: 400 }; }
+  focus() {}
+  select() {}
+  find(predicate, out = []) { if (predicate(this)) out.push(this); for (const child of this.children) child.find(predicate, out); return out; }
 }
+const elements = new Map();
+const element = (id) => {
+  if (!elements.has(id)) elements.set(id, new El("div", id));
+  return elements.get(id);
+};
 
 const terminals = [];
 const scrollCalls = [];
@@ -365,7 +392,7 @@ class FakeTerminal {
   onBinary(handler) { this.handlers.binary = handler; }
   onResize(handler) { this.handlers.resize = handler; }
 }
-class FakeFit { fit() {} }
+class FakeFit { proposeDimensions() { return { rows: 30, cols: 100 }; } }
 const sockets = [];
 const allSent = []; // every socket's sends in order (one socket per terminal in v2)
 class FakeWebSocket {
@@ -379,6 +406,7 @@ const clipboard = { copied: [] };
 globalThis.document = {
   getElementById: element,
   querySelector: () => ({ content: "csrf-x" }),
+  createElement: (tag) => new El(tag),
   addEventListener: (type, handler) => { documentListeners[type] = handler; },
   execCommand(command) {
     if (command !== "copy") return false;
@@ -403,7 +431,7 @@ globalThis.fetch = () => Promise.resolve({ status: 200, json: () => Promise.reso
   { id: IDS[0], kind: "agent", name: "agent-1", state: "running" },
   { id: IDS[1], kind: "shell", name: "shell-1", state: "running" }] }) });
 await import("../../../src/workbench/hub/web/static/board.js");
-await new Promise((resolve) => setImmediate(resolve)); // the open call's reply: one socket per tab
+for (let i = 0; i < 8; i += 1) await new Promise((resolve) => setImmediate(resolve)); // GET /api/board, POST /api/board/open, then one widget and one socket per terminal
 
 // v2: one socket per terminal (sockets[0] agent-1, sockets[1] shell-1); a data frame is the bare output.
 const control = (index, body) => sockets[index].onmessage({ data: JSON.stringify(body) });
@@ -574,20 +602,22 @@ test("glue: IME and scroll keys reach xterm untouched; paste keys are left to th
   }
 });
 
-test("glue: switching tabs keeps both terminals, their content and their scroll position", () => {
+test("glue: collapsing the panel and resetting the layout keep both terminals, their content and their scroll position", () => {
+  // v1 intent: switching between the two tabs recreated nothing and moved no view. The tabs are gone (WBX-D42); the
+  // equivalent operations that only change the page around the terminals are the panel toggle and the layout reset.
   const resets = terminals.map((t) => t.resets);
   const scrolled = scrollCalls.length;
   const instances = terminals.length;
-  element("tab-shell").listeners.click();
-  assert.equal(element("panel-shell").classList.contains("active"), true);
-  assert.equal(element("panel-agent").classList.contains("active"), false);
-  assert.equal(element("tab-shell").attrs["aria-selected"], "true");
-  element("tab-agent").listeners.click();
-  assert.equal(element("panel-agent").classList.contains("active"), true);
-  assert.equal(element("panel-shell").classList.contains("active"), false);
+  element("board-panel-toggle").fire("click");
+  assert.equal(element("board-panel").hidden, true, "the panel collapsed");
+  assert.equal(element("board-panel-toggle").attrs["aria-expanded"], "false");
+  element("board-panel-toggle").fire("click");
+  assert.equal(element("board-panel").hidden, false);
+  element("board-reset-layout").fire("click");
   assert.equal(terminals.length, instances, "no terminal is recreated");
-  assert.deepEqual(terminals.map((t) => t.resets), resets, "no terminal is reset by a tab switch");
-  assert.equal(scrollCalls.length, scrolled, "a tab switch does not move any view");
+  assert.deepEqual(terminals.map((t) => t.resets), resets, "no terminal is reset");
+  assert.equal(scrollCalls.length, scrolled, "no view moves");
+  assert.equal(terminals.every((t) => t.disposed !== true), true, "no terminal is disposed");
 });
 
 test("pure state: a state message changes only the view and data only writes it (v1: per-channel state)", () => {

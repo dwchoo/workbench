@@ -139,8 +139,7 @@ class FailurePathTests(SetCase):
         self.assertTrue(self.wait(lambda: child_pids() <= before, 5), child_pids() - before)
 
     def test_a_shell_that_cannot_start_notifies_the_watchers(self):
-        self.box.env['SHELL'] = str(self.box.root / 'no-such-shell')
-        self.launcher = self.make_launcher(self.config)
+        self.launcher = self.make_launcher(type(self.config)(shell=str(self.box.root / 'no-such-shell')))  # WBX-D4: not $SHELL
         self.board = self.make_board()
         changes = []
         self.board.watch(lambda terminal_id, event: changes.append(self.board.view(terminal_id)['state']))
@@ -177,14 +176,15 @@ class FailurePathTests(SetCase):
 
 
 class ShellChannelTests(SetCase):
-    def test_shell_is_the_users_shell_in_home_leading_its_own_session_with_the_hub_environment(self):
+    def test_shell_is_bash_by_default_in_home_leading_its_own_session_with_the_hub_environment(self):  # WBX-D4: not $SHELL
         self.start()
         shell = self.view('shell')
         self.assertEqual(shell['state'], 'running')
         pid = shell['pid']
         fields = proc_stat(pid)
         self.assertEqual((int(fields[1]), int(fields[2]), int(fields[3])), (os.getpid(), pid, pid))  # ppid, pgrp, session
-        self.assertEqual(os.path.realpath(f'/proc/{pid}/exe'), os.path.realpath('/bin/sh'))
+        bash = next((path for path in ('/bin/bash', '/usr/bin/bash') if os.access(path, os.X_OK)), None)
+        self.assertEqual(os.path.realpath(f'/proc/{pid}/exe'), os.path.realpath(bash or '/bin/sh'))  # $SHELL here is /bin/sh
         self.assertEqual(os.readlink(f'/proc/{pid}/cwd'), str(self.box.home))
         env = environ(pid)
         self.assertEqual((env['HOME'], env['TERM']), (str(self.box.home), 'xterm-256color'))

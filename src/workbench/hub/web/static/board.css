@@ -1,22 +1,68 @@
-/* Board page (TI-18) on the shared tokens. No inline style anywhere: CSP style-src 'self' (the xterm <style> elements
-   carry this response's nonce). The terminal itself keeps xterm's own colours on a black pane in both themes. */
-.board-bar { display: flex; flex-wrap: wrap; gap: 0.75rem; align-items: center; margin: 0.5rem 0; }
-.connection { font-weight: 600; }
-.connection[data-phase="attached"] { color: var(--ok); }
-.connection[data-phase="disconnected"], .connection[data-phase="released"] { color: var(--danger); }
-.connection[data-phase="taken_elsewhere"] { color: var(--warn-fg); }
-.banner.taken { margin: 0.5rem 0; padding: 0.5rem 0.75rem; border: 1px solid var(--warn-bd); border-radius: var(--radius); text-align: left; }
-.banner.taken button { margin-left: 0.5rem; }
-.notice-line { margin: 0.25rem 0; color: var(--danger); }
-.tabs { display: flex; gap: 0.25rem; margin-top: 0.75rem; border-bottom: 1px solid var(--border-strong); }
-.tab { padding: 0.4rem 0.9rem; border: 1px solid var(--border-strong); border-bottom: 0; border-radius: var(--radius) var(--radius) 0 0; background: var(--surface-2); color: var(--text); font: inherit; cursor: pointer; }
-.tab.active { background: var(--surface); font-weight: 700; }
-.panels { display: grid; }
-.panel { grid-area: 1 / 1; display: flex; flex-direction: column; min-width: 0; visibility: hidden; }
-.panel.active { visibility: visible; }
-.panel-head { display: flex; flex-wrap: wrap; gap: 0.75rem; align-items: center; padding: 0.4rem 0; }
-.channel-state { color: var(--muted); overflow-wrap: anywhere; }
-.term { height: 70vh; min-height: 16rem; padding: 0.25rem; background: var(--term-bg); border-radius: var(--radius); }
+/* Board workspace (TI-18, WBX-D2) on the shared tokens. No inline style element anywhere: CSP style-src 'self' (the xterm
+   <style> elements carry this response's nonce); widget positions are written with CSSOM by board.js. The terminal
+   itself keeps xterm's own colours on a black pane in both themes. */
+.page-board main { max-width: none; padding-bottom: 1rem; }
+.board-bar { display: flex; flex-wrap: wrap; gap: 0.5rem 0.75rem; align-items: center; margin: 0.25rem 0 0.5rem; }
+.board-bar h1 { margin: 0; }
+.notice-line { margin: 0; color: var(--danger); font-weight: 600; }
+
+/* panel (left, collapsible) + grid workspace */
+.board-shell { display: grid; grid-template-columns: 16rem minmax(0, 1fr); gap: var(--gap); align-items: start; }
+.board-shell:has(.board-panel[hidden]) { grid-template-columns: minmax(0, 1fr); }
+.board-panel { display: grid; gap: 0.75rem; padding: 0.75rem; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-lg); min-width: 0; }
+.board-panel h2 { margin: 0 0 0.35rem; font-size: 0.95rem; }
+.panel-list { margin: 0; padding: 0; list-style: none; display: grid; gap: 0.4rem; }
+.panel-list:empty { display: none; }
+.panel-row { display: grid; gap: 0.25rem; padding: 0.4rem 0.5rem; border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg); min-width: 0; }
+.panel-row-top { display: flex; align-items: center; gap: 0.4rem; min-width: 0; }
+.panel-name { font-weight: 700; overflow-wrap: anywhere; }
+.panel-note { margin-left: 0.4rem; }
+.panel-state, .panel-note { color: var(--muted); font-size: 0.8rem; overflow-wrap: anywhere; }
+.panel-actions { display: flex; flex-wrap: wrap; gap: 0.25rem; }
+.panel-create { display: flex; align-items: center; gap: 0.5rem; margin-top: 0.4rem; }
+.panel-limits { display: grid; gap: 0.4rem; }
+.panel-limits input[type="number"] { width: 4.5rem; padding: 0.2rem 0.4rem; }
+.panel-limits .error { margin: 0; }
+.rename-input { width: 100%; padding: 0.25rem 0.4rem; }
+.row-error { margin: 0; color: var(--danger); font-size: 0.8rem; font-weight: 600; }
+.dot-warn { background: var(--warn-bd); }
+
+/* the grid: 12 columns, 2.5rem rows, 0.5rem gaps (board-layout.js holds the same numbers in cells) */
+.board-workspace { position: relative; display: grid; grid-template-columns: repeat(12, minmax(0, 1fr)); grid-auto-rows: 2.5rem; gap: 0.5rem; min-height: 24rem; padding: 0.5rem; background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--radius-lg); min-width: 0; }
+.workspace-floor { grid-column: 1; height: 0; pointer-events: none; }
+.board-widget { position: relative; z-index: 1; display: flex; flex-direction: column; min-width: 0; min-height: 0; background: var(--surface); border: 2px solid var(--border-strong); border-radius: var(--radius); overflow: hidden; touch-action: none; }
+.board-widget.is-focused { border-color: var(--focus); box-shadow: 0 0 0 1px var(--focus); }
+.board-widget.is-dragging { z-index: 5; opacity: 0.85; box-shadow: var(--shadow); }
+.board-widget.is-resizing { z-index: 5; }
+.widget-bar { display: flex; align-items: center; gap: 0.4rem; padding: 0.2rem 0.4rem; background: var(--surface-2); border-bottom: 1px solid var(--border); cursor: grab; user-select: none; touch-action: none; min-width: 0; }
+.is-dragging .widget-bar { cursor: grabbing; }
+.widget-name { font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.widget-others { color: var(--accent); font-size: 0.8rem; white-space: nowrap; }
+.widget-status { margin-left: auto; color: var(--muted); font-size: 0.8rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.widget-hide, .widget-close { flex: none; }
+.widget-body { position: relative; flex: 1 1 auto; min-height: 0; background: var(--term-bg); overflow: hidden; }
+.widget-scroll { position: absolute; inset: 0; overflow: auto; }
+.widget-term .xterm { padding: 0.25rem; } /* on .xterm, not the host: fit() subtracts the padding of .xterm only */
+.widget-cover { position: absolute; inset: 0; z-index: 2; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 0.6rem; padding: 1rem; background: color-mix(in srgb, var(--surface) 88%, transparent); text-align: center; }
+.cover-text { margin: 0; font-weight: 600; overflow-wrap: anywhere; }
+.widget-handle { position: absolute; right: 0; bottom: 0; z-index: 3; width: 1.1rem; height: 1.1rem; cursor: nwse-resize; touch-action: none; background: linear-gradient(135deg, transparent 50%, var(--border-strong) 50%); }
+.drop-preview { z-index: 4; border: 2px dashed var(--accent); border-radius: var(--radius); background: color-mix(in srgb, var(--accent) 12%, transparent); pointer-events: none; display: flex; align-items: center; justify-content: center; color: var(--accent); font-weight: 700; }
+.drop-preview.is-bad { border-color: var(--danger); background: color-mix(in srgb, var(--danger) 14%, transparent); color: var(--danger); }
+dialog.board-confirm { max-width: min(26rem, calc(100vw - 2rem)); padding: 1rem 1.2rem; border: 1px solid var(--border-strong); border-radius: var(--radius-lg); background: var(--surface); color: var(--text); box-shadow: var(--shadow); }
+dialog.board-confirm::backdrop { background: color-mix(in srgb, var(--text) 40%, transparent); }
+dialog.board-confirm p { margin: 0 0 0.8rem; overflow-wrap: anywhere; }
+
+/* under 720 px (the same boundary as board-layout.js NARROW_QUERY): no grid, one terminal fills the screen */
+@media (max-width: 719.98px) {
+  .board-shell, .board-shell:has(.board-panel[hidden]) { grid-template-columns: minmax(0, 1fr); }
+  .board-workspace { display: block; padding: 0; background: transparent; border: 0; min-height: 0; }
+  .board-widget { height: calc(100vh - 12rem); height: calc(100dvh - 12rem); min-height: 16rem; }
+  .widget-bar { flex-wrap: wrap; cursor: default; }
+  .widget-name { max-width: 100%; }
+  .widget-status { flex-basis: 100%; margin-left: 0; }
+  .widget-hide { display: none; }
+  .widget-handle, .drop-preview, .workspace-floor { display: none; }
+}
 /* xterm's helper textarea takes the IME input; xterm sets its width to the composition's while composing. base.css's
    textarea max-width: 100% (of the 0-wide .xterm-helpers box) would clamp it to 0, and Chrome then commits each
    Hangul syllable with the caret at 0, so xterm sends the wrong text ("안녕하세요" -> "안안안안안"). */

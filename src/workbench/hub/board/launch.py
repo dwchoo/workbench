@@ -74,6 +74,7 @@ URL_ENV = "WB_HUB_URL"
 NO_PROXY_ENV = ("NO_PROXY", "no_proxy")  # urllib follows ``*_PROXY``: the loopback listener is always direct
 CHECK_ROLE = "board"
 DEFAULT_SHELL = "/bin/sh"
+BASH_CANDIDATES = ("/bin/bash", "/usr/bin/bash")  # then ``bash`` on the Hub's PATH (WBX-D4)
 REASON_LIMIT = 256  # the audit ``reason`` limit
 MESSAGE_LIMIT = 1024  # the human ``message`` next to a failed channel
 FALLBACK_LOCALE = "C.UTF-8"
@@ -616,11 +617,25 @@ class BoardLauncher:
         return AgentLaunch(board_argv(omp, overlay, prompt, resume=resume, model=model), env, cwd, issued.key_id,
                            float(self.clock()), Path(agent.home))
 
+    def shell_program(self) -> str:
+        """WBX-D4: ``[board_agent] shell`` (it must be an absolute, executable path: else ``shell_unavailable``), else
+        bash (:data:`BASH_CANDIDATES`, then ``bash`` on the Hub's PATH), else :data:`DEFAULT_SHELL`. ``$SHELL`` is not
+        consulted."""
+        if self.config.shell:
+            shell = self.config.shell
+            if not os.path.isabs(shell) or not os.access(shell, os.X_OK):
+                raise BoardLaunchError("shell_unavailable", shell)
+            return shell
+        for candidate in (*BASH_CANDIDATES, shutil.which("bash", path=self.environment.get("PATH", os.defpath))):
+            if candidate and os.path.isabs(candidate) and os.access(candidate, os.X_OK):
+                return candidate
+        return DEFAULT_SHELL
+
     def prepare_shell(self) -> ShellLaunch:
-        """``board_agent.shell`` / ``$SHELL`` / ``/bin/sh`` in ``$HOME`` with ``hub_environment()`` + ``TERM`` and a
-        UTF-8 locale (:func:`utf8_locale`)."""
-        shell = self.config.shell or self.environment.get("SHELL") or DEFAULT_SHELL
-        if not os.path.isabs(shell) or not os.access(shell, os.X_OK):
+        """:meth:`shell_program` in ``$HOME`` with ``hub_environment()`` + ``TERM`` and a UTF-8 locale
+        (:func:`utf8_locale`)."""
+        shell = self.shell_program()
+        if not os.access(shell, os.X_OK):
             raise BoardLaunchError("shell_unavailable", shell)
         env = utf8_locale(hub_environment(self.environment))
         env["TERM"] = DISPLAY_TERM

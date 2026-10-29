@@ -151,18 +151,32 @@ test("a createElement that throws still throws, and the failure is not swallowed
 
 test("board.js wires the meta nonce before the first Terminal is constructed and before any open()", async () => {
   const log = [];
+  // WBX-D2: board.js is a panel + grid workspace page; it builds widget elements with document.createElement and
+  // fetches the terminal list first, so the stub elements need the tree methods and a fetch must answer.
+  class StubElement {
+    constructor(tag, id = "") {
+      this.tagName = String(tag).toUpperCase(); this.id = id; this.nonce = ""; this.textContent = ""; this.hidden = false;
+      this.dataset = {}; this.attrs = {}; this.children = []; this.parent = null; this.value = ""; this.disabled = false; this.className = "";
+      this.classList = { add() {}, remove() {}, toggle() {}, contains: () => false };
+      this.style = { setProperty() {}, removeProperty() {} };
+    }
+    setAttribute(name, value) { this.attrs[name] = String(value); }
+    append(...nodes) { for (const node of nodes) { node.parent = this; this.children.push(node); } }
+    insertBefore(node) { node.parent = this; this.children.push(node); }
+    replaceChildren(...nodes) { this.children = []; this.append(...nodes); }
+    remove() {}
+    addEventListener() {}
+    closest() { return null; }
+    getBoundingClientRect() { return { left: 0, top: 0, width: 600, height: 400 }; }
+    focus() {}
+    select() {}
+  }
   const elementCache = new Map();
   const element = (id) => {
-    if (!elementCache.has(id)) {
-      elementCache.set(id, {
-        id, textContent: "", hidden: false, dataset: {}, attrs: {},
-        classList: { toggle() {}, contains: () => false },
-        setAttribute() {}, addEventListener() {},
-      });
-    }
+    if (!elementCache.has(id)) elementCache.set(id, new StubElement("div", id));
     return elementCache.get(id);
   };
-  const originalCreateElement = (tag) => ({ tagName: String(tag).toUpperCase(), nonce: "" });
+  const originalCreateElement = (tag) => new StubElement(tag);
   const doc = {
     getElementById: element,
     querySelector: (selector) => (selector.includes("style-nonce") ? { content: "meta-N" } : selector.includes("csrf") ? { content: "csrf" } : null),
@@ -172,6 +186,7 @@ test("board.js wires the meta nonce before the first Terminal is constructed and
   };
   globalThis.document = doc;
   class T {
+    dispose() {}
     constructor() {
       this.rows = 30; this.cols = 100; this.options = {};
       log.push(["construct", doc.createElement !== originalCreateElement, doc.createElement("style").nonce]);
@@ -188,7 +203,7 @@ test("board.js wires the meta nonce before the first Terminal is constructed and
     onResize() {}
   }
   globalThis.Terminal = T;
-  globalThis.FitAddon = { FitAddon: class { fit() {} } };
+  globalThis.FitAddon = { FitAddon: class { proposeDimensions() { return { rows: 30, cols: 100 }; } } };
   Object.defineProperty(globalThis, "navigator", { value: { platform: "Linux x86_64", userAgent: "t" }, configurable: true });
   globalThis.isSecureContext = false;
   globalThis.window = { addEventListener() {} };
@@ -197,7 +212,10 @@ test("board.js wires the meta nonce before the first Terminal is constructed and
   globalThis.requestAnimationFrame = (cb) => cb();
   globalThis.setTimeout = () => 0;
   globalThis.clearTimeout = () => {};
+  globalThis.fetch = () => Promise.resolve({ status: 200, json: () => Promise.resolve({ ok: true, terminals: [
+    { id: "a-000000000001", kind: "agent", name: "agent-1", state: "running" }] }) });
   await import("../../../src/workbench/hub/web/static/board.js");
+  for (let i = 0; i < 8; i += 1) await new Promise((resolve) => setImmediate(resolve)); // list, open, then the widgets are made
   assert.ok(log.filter((item) => item[0] === "construct").length >= 1, "terminals were made");
   for (const [kind, wrapped, nonce] of log.filter((item) => item[0] === "construct")) {
     assert.equal(wrapped, true, "the wrapper is installed before the first Terminal is constructed");

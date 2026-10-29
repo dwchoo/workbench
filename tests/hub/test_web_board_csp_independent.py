@@ -351,16 +351,18 @@ class StrictElsewhereTests(CspCase):
             self.assertNotIn('style-nonce', getattr(response, 'body_text', ''), what)
 
     async def test_the_error_path_after_a_nonce_exists_still_gets_the_strict_policy(self):
-        # board.views() raising (v1: status()) happens before the page renders; render.page raising happens after the
-        # nonce was made (frame() builds the metas first). Both must answer a 500 with the strict policy.
+        # WBX-D2: /board is a pure frame (it no longer calls board.views(); the list comes from GET /api/board). Its
+        # one real failure before the page renders is board.board_view() raising (the state it reads to choose between
+        # the page and the 503 notices); render.page raising happens after the nonce was made (frame() builds the metas
+        # first). Both must answer a 500 with the strict policy.
         class Boom(FakeBoard):
-            def views(self):
+            def board_view(self):
                 raise RuntimeError('boom')
 
         self.board_ref[0] = Boom()
         before = await self.get('/board', cookies=self.cookies)
         self.assertEqual(before.status, 500)
-        self.assert_strict(before, '500 views() raised')
+        self.assert_strict(before, '500 board_view() raised')
         self.board_ref[0] = self.board
         with mock.patch('workbench.hub.web.render.page', side_effect=RuntimeError('late failure')):
             late = await self.get('/board', cookies=self.cookies)

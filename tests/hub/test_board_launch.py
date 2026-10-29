@@ -17,6 +17,7 @@ import stat
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 from workbench.hub import auth, rest
 from workbench.hub.board import launch
@@ -200,6 +201,63 @@ def manager_default_selector() -> str:
         elif section == 'manager' and line.strip().startswith('default:'):
             return line.split(':', 1)[1].split('#', 1)[0].strip()
     raise AssertionError('no manager default selector')
+
+
+class ShellProgramTests(LauncherCase):
+    """WBX-D4: a new Board shell runs ``[board_agent] shell`` (absolute) if set, else bash (``/bin/bash``,
+    ``/usr/bin/bash``, ``bash`` on the Hub's PATH), else ``/bin/sh``. ``$SHELL`` is never consulted."""
+
+    def exe(self, name: str) -> str:
+        path = self.box.root / name
+        path.write_text('#!/bin/sh\nexit 0\n')
+        path.chmod(0o755)
+        return str(path)
+
+    def program(self, *, shell_env=None, config='', fixed=(), path=None) -> list:
+        env = dict(self.box.env)
+        env.pop('SHELL', None)
+        if shell_env is not None:
+            env['SHELL'] = shell_env
+        if path is not None:
+            env['PATH'] = path
+        self.box.env.clear()
+        self.box.env.update(env)
+        launcher = self.make_launcher(BoardAgentConfig(shell=config))
+        with mock.patch.object(launch, 'BASH_CANDIDATES', tuple(fixed)), mock.patch.object(launch, 'DEFAULT_SHELL', '/bin/sh'):
+            return launcher.prepare_shell().argv
+
+    def test_the_configured_shell_wins_over_everything(self):
+        mine, bash = self.exe('myshell'), self.exe('bash1')
+        self.assertEqual(self.program(config=mine, shell_env='/bin/sh', fixed=[bash]), [mine])
+
+    def test_a_hub_without_shell_or_with_sh_gets_bash(self):
+        bash = self.exe('bash1')
+        self.assertEqual(self.program(shell_env=None, fixed=[bash]), [bash])
+        self.assertEqual(self.program(shell_env='/bin/sh', fixed=[bash]), [bash])
+
+    def test_shell_environment_is_not_consulted_even_when_it_is_a_real_shell(self):
+        bash, zsh = self.exe('bash1'), self.exe('zsh')
+        self.assertEqual(self.program(shell_env=zsh, fixed=[bash]), [bash])
+
+    def test_bash_candidates_are_tried_in_order_and_skip_missing_ones(self):
+        first, second = self.exe('bash1'), self.exe('bash2')
+        self.assertEqual(self.program(fixed=[str(self.box.root / 'missing'), second, first]), [second])
+
+    def test_bash_on_the_hubs_path_is_next(self):
+        folder = self.box.root / 'onpath'
+        folder.mkdir()
+        (folder / 'bash').write_text('#!/bin/sh\nexit 0\n')
+        (folder / 'bash').chmod(0o755)
+        self.assertEqual(self.program(path=str(folder), fixed=[]), [str(folder / 'bash')])
+
+    def test_without_any_bash_it_is_bin_sh(self):
+        self.assertEqual(self.program(shell_env=self.exe('zsh'), path=str(self.box.root / 'empty'), fixed=[]), ['/bin/sh'])
+
+    def test_a_configured_shell_that_is_unusable_still_fails_loudly(self):
+        for bad in ('relative-shell', str(self.box.root / 'absent')):
+            with self.assertRaises(launch.BoardLaunchError) as caught:
+                self.program(config=bad, fixed=[self.exe('bash1')])
+            self.assertEqual(caught.exception.reason, 'shell_unavailable')
 
 
 class OverlayArgvTests(LauncherCase):

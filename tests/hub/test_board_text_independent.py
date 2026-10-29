@@ -597,8 +597,7 @@ class ShellChannelTests(set_case.SetCase):
 
     def run_shell(self, shell: str, typed: bytes, needle: bytes, **env) -> bytes:
         self.box.env.update(env)
-        self.box.env['SHELL'] = shell
-        self.launcher = self.make_launcher(self.config)
+        self.launcher = self.make_launcher(type(self.config)(shell=shell))  # WBX-D4: [board_agent] shell, not $SHELL
         self.board = self.make_board()
         self.start()
         self.assertTrue(self.board.write(self.tid('shell'), typed))

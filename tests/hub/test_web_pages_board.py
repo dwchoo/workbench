@@ -1,4 +1,7 @@
-"""TI-18 Board page (seam T2): the real ``create_app`` with ``board_routes`` over a fake Board set.
+"""TI-18 / WBX-D2 Board page (seams S1+S6): the real ``create_app`` with ``board_routes`` over a fake Board set.
+
+WBX-D2: ``/board`` is an empty frame (panel + grid workspace + confirm dialog); the terminal list, the widgets and the
+names come from ``GET /api/board`` and are drawn by ``static/board.js`` (tests/hub/js).
 
 Expected values are the SPEC/ticket strings (routes, labels, asset paths, CSP) and stdlib ``html.parser``
 facts about the served HTML. The browser behavior (xterm rendering, WebSocket) is a target-host check; the
@@ -111,38 +114,74 @@ class BoardPageCase(web_auth.WebAppCase):
 
 
 class PageStructureTests(BoardPageCase):
-    async def test_page_has_two_tabs_for_the_agent_and_the_shell_and_a_connection_state(self):
+    async def test_page_is_a_panel_and_an_empty_grid_workspace_with_no_tabs(self):
         response, dom = await self.page()
         self.assertEqual(response.status, 200)
         self.assertTrue(response.headers['Content-Type'].startswith('text/html'))
-        tabs = [attrs for attrs in dom.tags('button') if attrs.get('role') == 'tab']
-        self.assertEqual([attrs.get('data-channel') for attrs in tabs], ['agent', 'shell'])
-        self.assertIn('Board agent', dom.body_text)
-        self.assertIn('Shell', dom.body_text)
-        for channel in ('agent', 'shell'):
-            self.assertIsNotNone(dom.by_id(f'term-{channel}'), channel)
-        self.assertIsNotNone(dom.by_id('board-connection'))
-        self.assertIn('연결 중', dom.body_text)
-        # WBX-D1: the agent tab names its terminal (the page's script opens /ws/board/<id>); this run's first shell
-        # does not exist before the page's POST /api/board/open.
-        self.assertEqual(dom.by_id('panel-agent').get('data-terminal'), 'a-000000000001')
-        self.assertIsNone(dom.by_id('panel-shell').get('data-terminal'))
-        self.assertIn('agent-1', dom.body_text)
+        panel = dom.by_id('board-panel')
+        self.assertEqual(panel.get('class'), 'board-panel')
+        workspace = dom.by_id('board-workspace')
+        self.assertEqual(workspace.get('class'), 'board-workspace')
+        self.assertEqual([tag for tag, attrs in dom.elements if tag == 'aside'], ['aside'])
+        self.assertFalse([attrs for attrs in dom.tags('button') if attrs.get('role') == 'tab'], 'the tab UI is gone')
+        for old in ('tabs', 'panels', 'term-agent', 'term-shell', 'panel-agent', 'panel-shell', 'restart-agent'):
+            self.assertIsNone(dom.by_id(old), old)
+            self.assertFalse([1 for _, attrs in dom.elements if old in (attrs.get('class') or '').split()], old)
+        # the server draws no terminal: the list, the names and the states come from GET /api/board
+        self.assertEqual(self.board.started, [])
+        self.assertNotIn('agent-1', response.body_text)
+        self.assertNotIn('시작 전', dom.body_text)
+        self.assertIn('Board', dom.body_text)
 
-    async def test_there_is_no_takeover_banner_and_reconnect_and_login_start_hidden(self):
-        """v1 "takeover banner and retake button": shared connections have no takeover (WBX-D54)."""
+    async def test_page_without_javascript_says_it_needs_javascript(self):
+        response, _ = await self.page()
+        self.assertRegex(response.body_text, r'<noscript>[^<]*<[^>]*>이 화면은 JavaScript가 필요합니다')
+
+    async def test_panel_has_the_rows_buttons_limit_form_and_toggle_the_script_binds_to(self):
         _, dom = await self.page()
-        self.assertIsNone(dom.by_id('board-banner'))
-        self.assertIsNone(dom.by_id('board-retake'))
+        toggle = dom.by_id('board-panel-toggle')
+        self.assertEqual((toggle.get('type'), toggle.get('aria-controls'), toggle.get('aria-expanded')),
+                         ('button', 'board-panel', 'true'))
+        for ident, tag in (('board-agents', 'ul'), ('board-shells', 'ul')):
+            self.assertIn(tag, [t for t, attrs in dom.elements if attrs.get('id') == ident], ident)
+        for ident, text in (('board-new-agent', '새 Board agent'), ('board-new-shell', '새 shell'),
+                            ('board-reset-layout', '배치 초기화')):
+            self.assertEqual(dom.by_id(ident).get('type'), 'button', ident)
+            self.assertIn(text, dom.body_text, ident)
+        self.assertIn('이 브라우저만', dom.body_text)
+        form = dom.by_id('board-options')
+        self.assertIsNotNone(form)
+        self.assertIn('novalidate', form, 'the page shows its own explanation (the Hub\'s sentence), not the browser bubble')
+        numbers = {attrs.get('id'): attrs for attrs in dom.tags('input') if attrs.get('type') == 'number'}
+        self.assertEqual(set(numbers), {'board-agent-limit', 'board-shell-limit'})
+        self.assertEqual((numbers['board-agent-limit'].get('min'), numbers['board-agent-limit'].get('max')), ('1', '8'))
+        self.assertEqual((numbers['board-shell-limit'].get('min'), numbers['board-shell-limit'].get('max')), ('1', '32'))
+        self.assertEqual(dom.by_id('board-options-error').get('role'), 'alert')
+        self.assertIn('hidden', dom.by_id('board-options-error'))
+        notice = dom.by_id('board-notice')
+        self.assertEqual(notice.get('role'), 'status')
+        self.assertIn('hidden', notice)
+
+    async def test_confirm_goes_through_a_dialog_element_with_a_cancel_and_an_ok_button(self):
+        _, dom = await self.page()
+        self.assertEqual(len(dom.tags('dialog')), 1)
+        self.assertEqual(dom.by_id('board-confirm').get('aria-labelledby'), 'board-confirm-text')
+        self.assertIsNotNone(dom.by_id('board-confirm-text'))
+        self.assertEqual(dom.by_id('board-confirm-cancel').get('type'), 'button')
+        self.assertEqual(dom.by_id('board-confirm-ok').get('type'), 'button')
+        self.assertNotIn('open', dom.by_id('board-confirm'), 'closed until the script asks')
+
+    async def test_there_is_no_takeover_banner_and_no_page_wide_reconnect_control(self):
+        """v1 "takeover banner and retake button": shared connections have no takeover (WBX-D54); the reconnect and
+        login actions are per widget now (drawn by the script)."""
+        _, dom = await self.page()
+        for old in ('board-banner', 'board-retake', 'board-reconnect', 'board-login', 'board-connection'):
+            self.assertIsNone(dom.by_id(old), old)
         self.assertNotIn('다시 가져오기', dom.body_text)
-        reconnect = dom.by_id('board-reconnect')
-        self.assertIsNotNone(reconnect)
-        self.assertIn('hidden', reconnect)
-        login = dom.by_id('board-login')
-        self.assertIsNotNone(login, 'shown by the client after close 4401 (the login session ended)')
-        self.assertEqual(login.get('href'), '/login')
-        self.assertIn('hidden', login)
-        self.assertIn('다시 로그인', dom.body_text)
+
+    async def test_board_body_class_lets_the_workspace_use_the_full_width(self):
+        response, _ = await self.page()
+        self.assertRegex(response.body_text, r'<body class="page-board">')
 
     async def test_csrf_token_is_in_a_meta_tag_and_equals_the_session_token(self):
         _, dom = await self.page()
@@ -181,6 +220,7 @@ class PageStructureTests(BoardPageCase):
 
     async def test_own_assets_and_xterm_assets_are_served_with_a_javascript_type_and_no_external_url(self):
         for path, kind in (('/static/board.js', 'javascript'), ('/static/board-state.js', 'javascript'),
+                           ('/static/board-layout.js', 'javascript'), ('/static/board-panel.js', 'javascript'),
                            ('/static/style-nonce.js', 'javascript'),
                            ('/static/vendor/xterm/xterm.js', 'javascript'),
                            ('/static/vendor/xterm/addon-fit.js', 'javascript'),
@@ -188,7 +228,7 @@ class PageStructureTests(BoardPageCase):
             response = await self.get(path)
             self.assertEqual(response.status, 200, path)
             self.assertIn(kind, response.headers['Content-Type'], path)
-        for name in ('board.js', 'board-state.js', 'style-nonce.js', 'board.css'):
+        for name in ('board.js', 'board-state.js', 'board-layout.js', 'board-panel.js', 'style-nonce.js', 'board.css'):
             text = (STATIC / name).read_text()
             self.assertEqual(re.findall(r'https?://', text), [], name)
             self.assertNotIn('eval(', text, name)
@@ -294,60 +334,36 @@ class ChannelLabelParityTests(unittest.TestCase):
             self.assertEqual(channel_label(row['info']), row['label'], row['info'])
 
 
-class ChannelStateTests(BoardPageCase):
-    async def test_channel_states_show_running_exited_failed_stopped_and_isolation_reasons(self):
-        self.board.set('agent', state='isolation_failed', detail='mcp_leak')
+class PageIsAFrameTests(BoardPageCase):
+    async def test_the_page_starts_nothing_and_shows_no_terminal_state_or_name(self):
+        self.board.set('agent', state='isolation_failed', detail='mcp_leak', name='<img src=x onerror=alert(1)>&')
         self.board.set('shell', state='exited', started_at=1.0, exit_status=3)
-        _, dom = await self.page()
-        self.assertIn('격리 실패: mcp_leak', dom.body_text)
-        self.assertIn('종료됨 (종료 코드 3)', dom.body_text)
-        self.board.set('agent', state='running')
-        self.board.set('shell', state='failed', detail='spawn_failed')
-        _, dom = await self.page()
-        self.assertIn('실행 중', dom.body_text)
-        self.assertIn('실패: spawn_failed', dom.body_text)
-        self.board.set('agent', state='stopped')
-        _, dom = await self.page()
-        self.assertIn('중지됨', dom.body_text)
-
-    async def test_never_started_terminals_read_not_started_and_the_page_starts_nothing(self):
-        _, dom = await self.page()
-        self.assertEqual(dom.body_text.count('시작 전'), 2)
-        self.assertEqual(self.board.started, [])
-
-    async def test_a_terminal_name_is_text_never_markup(self):  # AC-38
-        self.board.set('agent', name='<img src=x onerror=alert(1)>&')
         response, dom = await self.page()
-        self.assertNotIn('<img src=x', response.body_text)
-        self.assertIn('&lt;img src=x onerror=alert(1)&gt;&amp;', response.body_text)
+        self.assertEqual(self.board.started, [])
+        for text in ('격리 실패', '종료됨', 'mcp_leak', 'onerror', 'img src'):
+            self.assertNotIn(text, response.body_text, text)
         self.assertEqual(dom.tags('img'), [])
 
-    async def test_unavailable_set_is_503_with_the_reason_and_no_terminal(self):
+    async def test_unavailable_set_is_503_with_the_reason_and_no_workspace(self):
         self.board_ref[0] = None
         response, dom = await self.page()
         self.assertEqual(response.status, 503)
         self.assertIn('Board agent 세트를 사용할 수 없습니다', dom.body_text)
-        self.assertIsNone(dom.by_id('term-agent'))
+        self.assertIsNone(dom.by_id('board-workspace'))
+        self.assertIsNone(dom.by_id('board-panel'))
+        self.assertFalse([1 for _, attrs in dom.elements if (attrs.get('src') or '').endswith('board.js')])
 
-    async def test_an_invalid_registry_is_503_with_its_message_and_no_terminal(self):
+    async def test_an_invalid_registry_is_503_with_its_message_and_no_workspace(self):
         self.board.invalid = 'Board registry /x/board-agents/registry.json is unusable (not JSON).'
         response, dom = await self.page()
         self.assertEqual(response.status, 503)
         self.assertIn('registry.json', dom.body_text)
-        self.assertIsNone(dom.by_id('term-agent'))
+        self.assertIsNone(dom.by_id('board-workspace'))
 
 
-class RestartTests(BoardPageCase):
-    """v1 "restart link to its confirm page" and the confirm form: WBX-D1 replaces them with a restart button per tab
-    (the page's script asks first, then ``POST /api/board/terminals/{id}/restart`` with ``confirm: true``)."""
-
-    async def test_each_tab_has_a_restart_button_and_no_confirm_page_link(self):
-        _, dom = await self.page()
-        for channel in ('agent', 'shell'):
-            button = dom.by_id(f'restart-{channel}')
-            self.assertEqual((button.get('type'), button.get('data-channel')), ('button', channel))
-        links = {attrs['href'] for attrs in dom.tags('a') if 'href' in attrs}
-        self.assertFalse({'/board/restart?channel=agent', '/board/restart?channel=shell'} & links)
+class RestartPageTests(BoardPageCase):
+    """WBX-D1: the restart confirm page and its form post are gone; a restart is ``POST /api/board/terminals/{id}/restart``
+    (the widget asks through the dialog first)."""
 
     async def test_the_confirm_page_and_its_form_post_are_gone(self):
         response, _ = await self.page('/board/restart?channel=agent')
@@ -357,3 +373,46 @@ class RestartTests(BoardPageCase):
         response = await self.post('/board/restart', {'csrf': csrf, 'channel': 'shell'}, cookies=self.cookies)
         self.assertIn(response.status, (404, 405))
         self.assertEqual(self.board.started, [])
+        links = {attrs['href'] for attrs in dom.tags('a') if 'href' in attrs}
+        self.assertFalse({'/board/restart?channel=agent', '/board/restart?channel=shell'} & links)
+
+
+class ScriptSourceTests(unittest.TestCase):
+    """Static reads of the page scripts (seam S5). A terminal name is the owner's text: it must reach the DOM through
+    ``textContent`` only (AC-38); no library, CDN or dynamic code (WBX-D52)."""
+
+    FILES = ('board.js', 'board-layout.js', 'board-panel.js', 'board-state.js')
+
+    def code(self, name: str) -> str:
+        return re.sub(r'(?m)^\s*//.*$|(?<=\s)//[^\n]*$', '', (STATIC / name).read_text(encoding='utf-8'))
+
+    def test_no_markup_is_built_from_text(self):
+        for name in self.FILES:
+            text = self.code(name)
+            for needle in ('innerHTML', 'outerHTML', 'insertAdjacentHTML', 'document.write', 'createContextualFragment',
+                           'DOMParser', 'new Function', 'eval('):
+                self.assertNotIn(needle, text, f'{name}: {needle}')
+
+    def test_no_external_url_import_or_library(self):
+        for name in self.FILES:
+            text = self.code(name)
+            self.assertEqual(re.findall(r'https?://', text), [], name)
+            for spec in re.findall(r'from\s+"([^"]+)"', text) + re.findall(r'import\(\s*"([^"]+)"', text):
+                self.assertTrue(spec.startswith('./'), f'{name} imports {spec}')
+            self.assertNotRegex(text, r'(?i)\b(sortable|interact\.?js|gridstack|jquery|react)\b', name)
+
+    def test_positions_are_written_through_cssom_never_through_the_style_attribute_or_cssText(self):
+        text = self.code('board.js')
+        self.assertIn('style.setProperty', text)
+        for needle in ("setAttribute('style'", 'setAttribute("style"', 'cssText', '.style =', 'insertRule', 'createElement("style")',
+                       "createElement('style')"):
+            self.assertNotIn(needle, text, needle)
+
+    def test_the_page_script_keeps_the_nonce_helper_and_ime_rule(self):
+        self.assertIn('installStyleNonce', self.code('board.js'))
+        css = (STATIC / 'board.css').read_text(encoding='utf-8')
+        self.assertRegex(css, r'\.xterm\s+\.xterm-helper-textarea\s*\{\s*max-width:\s*none')
+
+
+if __name__ == '__main__':
+    unittest.main()

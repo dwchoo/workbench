@@ -109,7 +109,7 @@ enabled = false
 # role_prompt_file: 기본 역할 prompt 뒤에 덧붙일 파일의 절대 경로. 기본값 ""(없음).
 # role_prompt_file = ""
 
-# shell: Board terminal이 쓸 shell의 절대 경로. 기본값 ""($SHELL, 없으면 /bin/sh).
+# shell: Board terminal이 쓸 shell의 절대 경로. 기본값 ""(bash: /bin/bash, /usr/bin/bash, PATH의 bash 순서, 없으면 /bin/sh. $SHELL은 쓰지 않습니다).
 # shell = ""
 """
 

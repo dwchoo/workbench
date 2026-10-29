@@ -134,17 +134,20 @@ test("a copied selection keeps Hangul and loses only the padding spaces at line 
   assert.equal(board.selectionText(""), "");
 });
 
-test("the board CSS gives the terminal a height and never hides the overflow xterm's viewport scrolls in", () => {
+test("the board CSS gives the widget body its height and never hides the overflow xterm's viewport scrolls in", () => {
   const css = readFileSync(new URL("../../../src/workbench/hub/web/static/board.css", import.meta.url), "utf8");
   const rule = (selector) => {
-    const match = new RegExp(`(^|\\n)${selector.replace(".", "\\.")}\\s*\\{([^}]*)\\}`).exec(css);
+    const match = new RegExp(`(^|\\n)${selector.replace(/\./g, "\\.")}\\s*\\{([^}]*)\\}`).exec(css);
     return match ? match[2] : "";
   };
-  assert.match(rule(".term"), /(^|;|\s)height:\s*\d/);
-  for (const selector of [".term", ".panel", ".panels", ".panel.active"]) {
+  // WBX-D2: a widget is a flex column of the grid (its height comes from its rows); the body fills what the bar leaves
+  // and the scroller inside it (absolute, overflow auto) is what scrolls when another screen's bigger size is drawn.
+  assert.match(rule(".board-workspace"), /grid-auto-rows:\s*2\.5rem/);
+  assert.match(rule(".widget-body"), /flex:\s*1 1 auto/);
+  assert.match(rule(".widget-scroll"), /overflow:\s*auto/);
+  for (const selector of [".widget-scroll", ".widget-term", ".widget-term .xterm"]) {
     assert.doesNotMatch(rule(selector), /overflow\s*:\s*hidden/, selector);
   }
-  // A hidden tab keeps its layout (visibility, not display:none): its scroll position and size survive a switch.
-  assert.match(rule(".panel"), /visibility:\s*hidden/);
-  assert.doesNotMatch(rule(".panel"), /display:\s*none/);
+  // A hidden widget is removed (and released), not kept invisible: no visibility trick on the widgets.
+  assert.doesNotMatch(rule(".board-widget"), /visibility\s*:/);
 });

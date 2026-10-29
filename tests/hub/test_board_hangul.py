@@ -266,8 +266,7 @@ class BoardShellHangulTests(set_case.SetCase):
             self.box.env.pop(key, None)
 
     def run_shell(self, shell: str, typed: bytes, needle: bytes) -> bytes:
-        self.box.env['SHELL'] = shell
-        self.launcher = self.make_launcher(self.config)
+        self.launcher = self.make_launcher(type(self.config)(shell=shell))  # WBX-D4: $SHELL is not consulted
         self.board = self.make_board()
         self.start()
         self.assertTrue(self.board.write(self.tid('shell'), typed))

@@ -17,3 +17,7 @@
 .panel-head { display: flex; flex-wrap: wrap; gap: 0.75rem; align-items: center; padding: 0.4rem 0; }
 .channel-state { color: var(--muted); overflow-wrap: anywhere; }
 .term { height: 70vh; min-height: 16rem; padding: 0.25rem; background: var(--term-bg); border-radius: var(--radius); }
+/* xterm's helper textarea takes the IME input; xterm sets its width to the composition's while composing. base.css's
+   textarea max-width: 100% (of the 0-wide .xterm-helpers box) would clamp it to 0, and Chrome then commits each
+   Hangul syllable with the caret at 0, so xterm sends the wrong text ("안녕하세요" -> "안안안안안"). */
+.xterm .xterm-helper-textarea { max-width: none; }

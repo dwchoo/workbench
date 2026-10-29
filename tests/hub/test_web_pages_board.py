@@ -18,6 +18,7 @@ REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO / 'src'))
 
 import test_hub_web_auth as web_auth  # noqa: E402  (module import: its test classes stay uncollected here)
+import test_web_design as design  # noqa: E402
 from workbench.hub.web.app import board_routes  # noqa: E402
 from workbench.hub.web.pages.board import channel_label  # noqa: E402
 
@@ -240,6 +241,26 @@ class PageStructureTests(BoardPageCase):
         self.assertEqual((response.status, response.headers['Location']), (303, '/login'))
         response = await self.get('/board/restart?channel=agent')
         self.assertEqual((response.status, response.headers['Location']), (303, '/login'))
+
+
+class HelperTextareaCssTests(unittest.TestCase):
+    """xterm's hidden helper <textarea> takes the IME input. During a composition xterm.js sets its inline width to
+    the composition's width; its parent ``.xterm-helpers`` is an absolute box of width 0, so the page's generic
+    ``textarea { max-width: 100% }`` (base.css) clamps it to 0 and Chrome then commits a Hangul syllable with the
+    caret at 0: the next syllable goes in front of it and xterm reads back the wrong text ("안녕하세요" sent as
+    "안안안안안"; seen with CDP ``Input.imeSetComposition``/``insertText`` on 2026-10-29). Static read (seam S5)."""
+
+    def rules(self, name: str) -> list[tuple[str, dict[str, str]]]:
+        text = (STATIC / name).read_text(encoding='utf-8')
+        return [(selector, design.declarations(body)) for selector, body in design.all_rules(text)]
+
+    def test_a_page_wide_textarea_max_width_is_undone_for_the_xterm_helper_textarea(self):
+        page_wide = [(name, selector) for name in ('base.css', 'app.css') for selector, props in self.rules(name)
+                     if 'max-width' in props and 'textarea' in [part.strip() for part in selector.split(',')]]
+        self.assertTrue(page_wide, 'base.css no longer limits every textarea: drop this test and the board.css rule')
+        undone = [props.get('max-width') for selector, props in self.rules('board.css')
+                  if any(re.fullmatch(r'\.xterm\s+\.xterm-helper-textarea', part.strip()) for part in selector.split(','))]
+        self.assertIn('none', undone, page_wide)
 
 
 class ChannelLabelParityTests(unittest.TestCase):

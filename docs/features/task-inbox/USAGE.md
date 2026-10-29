@@ -6,7 +6,7 @@ Hub가 제공하는 웹(Web Board)과 외부 요청 API(`/api/v1/` REST)·`wb-in
 
 ## 1. 처음 설정
 
-웹을 쓰려면 먼저 `hub.toml`(1.2)의 `[web]`에서 `enabled = false`를 아래처럼 `true`로 바꾸고 `wb hub reload`로 실행 중인 Hub에 반영한다(2026-10-27 사용자 결정: bind 여러 주소, allow_from, wb hub reload. Hub가 꺼져 있으면 `wb hub start`). 이 파일은 Hub가 처음 시작할 때(또는 `wb hub passwd`가) 없으면 주석 달린 기본 템플릿으로 자동으로 만든다(2026-10-26 사용자 요청: hub.toml 자동 생성). 직접 만들 필요가 없다. 웹은 가장 많이 노출되는 부분이라 기본으로 꺼져 있다. 꺼져 있는 동안 웹 화면, 외부 요청 API(`/api/v1/`), skill 제공(`/skill/`), `/ws/board`, Board agent 세트가 모두 열리지 않고, Hub의 나머지(등록·목록·TUI·요청 전달·검토)는 그대로 동작한다.
+웹을 쓰려면 먼저 `hub.toml`(1.2)의 `[web]`에서 `enabled = false`를 아래처럼 `true`로 바꾸고 `wb hub reload`로 실행 중인 Hub에 반영한다(2026-10-27 사용자 결정: bind 여러 주소, allow_from, wb hub reload. Hub가 꺼져 있으면 `wb hub start`). 이 파일은 Hub가 처음 시작할 때(또는 `wb hub passwd`가) 없으면 주석 달린 기본 템플릿으로 자동으로 만든다(2026-10-26 사용자 요청: hub.toml 자동 생성). 직접 만들 필요가 없다. 웹은 가장 많이 노출되는 부분이라 기본으로 꺼져 있다. 꺼져 있는 동안 웹 화면, 외부 요청 API(`/api/v1/`), skill 제공(`/skill/`), `/ws/board/<id>`, Board workspace가 모두 열리지 않고, Hub의 나머지(등록·목록·TUI·요청 전달·검토)는 그대로 동작한다.
 
 ```toml
 [web]
@@ -39,17 +39,17 @@ printf '%s\n' "$PW" | wb hub passwd --stdin   # 스크립트용. terminal에서�
 
 | 표 | key | 기본값 | 의미 |
 |---|---|---|---|
-| `[web]` | `enabled` | `false` | 웹(화면, 외부 요청 API `/api/v1/`, skill 제공 `/skill/`, `/ws/board`)과 Board agent 세트를 켤지. TOML bool만 된다(그 밖의 형식은 `config_invalid:web.enabled`). 바꾸면 `wb hub reload`로 반영한다 |
+| `[web]` | `enabled` | `false` | 웹(화면, 외부 요청 API `/api/v1/`, skill 제공 `/skill/`, `/ws/board/<id>`)과 Board workspace(agent·shell)를 켤지. TOML bool만 된다(그 밖의 형식은 `config_invalid:web.enabled`). 바꾸면 `wb hub reload`로 반영한다 |
 | `[web]` | `bind` | `"127.0.0.1"` | 열 주소. IP literal 하나 또는 IP literal 목록(최대 16개, 중복 불가)이다(호스트 이름 불가). 목록이면 모든 주소를 같은 port로 열고, 하나라도 열지 못하면 아무 주소도 열지 않는다. `"0.0.0.0"`·`"::"`은 직접 쓸 때만 |
 | `[web]` | `port` | `8780` | 0~65535. 0이면 임의 port(실제 값은 `wb hub status`에 보임) |
 | `[web]` | `tls_cert`, `tls_key` | `""` | 인증서·key 절대 경로. 빈 값이면 기본 경로 `~/.config/omp-workbench/tls/hub-cert.pem`, `hub-key.pem` |
 | `[web]` | `allow_insecure_http` | `true` | TLS 파일이 없을 때 평문 HTTP를 허용할지. `false`면 TLS가 없으면 열지 않음 |
 | `[web]` | `server_names` | `[]` | bind IP 외에 `Host`로 받을 DNS 이름 목록(예: `"box.vpn"`). DNS rebinding 방어용이며 인증서 SAN에도 들어감 |
-| `[web]` | `allow_from` | `[]` | 접속을 받을 client IP 주소·대역(CIDR) 목록(최대 256개). 비어 있으면 제한 없음. 목록 밖 주소는 본문 없는 403(화면·`/static`·`/api/v1/`·`/skill/`·`/ws/board` 모두. REST 전용 허용 목록은 없다). Board agent는 Hub 내부 loopback listener를 쓰므로 여기서 loopback을 빼도 끊기지 않는다. 대역은 끝자리를 0으로(`"192.168.10.0/24"`; `"192.168.10.5/24"`는 `config_invalid`). loopback도 자동 허용하지 않는다 |
+| `[web]` | `allow_from` | `[]` | 접속을 받을 client IP 주소·대역(CIDR) 목록(최대 256개). 비어 있으면 제한 없음. 목록 밖 주소는 본문 없는 403(화면·`/static`·`/api/v1/`·`/skill/`·`/ws/board/<id>` 모두. REST 전용 허용 목록은 없다). Board agent는 Hub 내부 loopback listener를 쓰므로 여기서 loopback을 빼도 끊기지 않는다. 대역은 끝자리를 0으로(`"192.168.10.0/24"`; `"192.168.10.5/24"`는 `config_invalid`). loopback도 자동 허용하지 않는다 |
 | `[web]` | `skill_repo_url` | `""` | 선택. skill이 있는 repository 주소(`https://…` 또는 `http://…`, 2048자 이하, userinfo 없음). 값이 있으면 key 발급 화면에 GitHub 링크로, `/skill/README.md`에 `Source repository: <주소>` 줄로 보인다. 잘못되면 `config_invalid:web.skill_repo_url` |
 | `[board_agent]` | `model` | `""` | Board agent의 OMP model selector. 빈 값이면 `omp-models.yml`의 manager 항목 |
 | `[board_agent]` | `role_prompt_file` | `""` | 추가 role prompt 절대 경로. 기본 prompt 뒤에 붙고 대체하지 않는다 |
-| `[board_agent]` | `shell` | `""` | 웹 shell 프로그램 절대 경로. 빈 값이면 `$SHELL`, 없으면 `/bin/sh` |
+| `[board_agent]` | `shell` | `""` | Board shell 프로그램 절대 경로. 빈 값이면 bash(`/bin/bash`, `/usr/bin/bash`, `PATH`의 bash 순서), 없으면 `/bin/sh`. `$SHELL`은 쓰지 않는다 |
 
 모르는 key, 모르는 표, 잘못된 형식, 호스트 이름인 `bind`는 파일 전체가 `config_invalid:<항목>`이 된다. Hub 시작 때면 웹과 Board agent만 닫히고 Hub의 나머지(등록·목록·켜기/끄기)는 그대로 동작한다. `wb hub reload` 때면 실행 중인 설정을 그대로 둔다. 파일은 64 KiB까지다.
 
@@ -115,7 +115,7 @@ wb hub status            # web: listening https://10.8.0.2:8780 / web: not_liste
 - 켜져 있는 WB 프로젝트(backend·manager·worker)는 건드리지 않는다. 등록 목록·요청 전달·검토도 그대로다.
 - 파일이 잘못되었으면 실행 중인 설정을 그대로 두고 `hub.toml의 '<항목>' 항목이 잘못되어 …`를 보이며 exit 1이다. `wb hub status`에 `config: 마지막 'wb hub reload' 실패 …`가 남는다(다음 성공한 reload가 지운다).
 - 새 주소·port를 열지 못하면(port 사용 중 등) 이전 설정으로 되돌리지 않고 `web: not_listening (bind_failed:EADDRINUSE 127.0.0.1:8780)`처럼 원인과 주소를 보이며 exit 1이다. 30초마다 새 설정으로 다시 시도한다. 되돌리지 않는 이유는 보안 때문에 뺀 주소가 다시 열리지 않게 하고, 파일과 실제 상태가 어긋나지 않게 하기 위해서다.
-- `enabled = false`로 바꾸면 웹(화면·`/api/v1/`·`/skill/`·`/ws/board`)이 닫히지만, 실행 중인 Board agent 세트는 작업 중일 수 있어 멈추지 않는다. `wb hub stop`까지 계속 돌고, 다시 `true`로 바꾸면 같은 세트를 그대로 쓴다.
+- `enabled = false`로 바꾸면 웹(화면·`/api/v1/`·`/skill/`·`/ws/board/<id>`)이 닫히지만, 실행 중인 Board agent·shell은 작업 중일 수 있어 멈추지 않는다. `wb hub stop`까지 계속 돌고, 다시 `true`로 바꾸면 같은 terminal을 그대로 쓴다.
 - `[board_agent]` 변경은 다음 Board agent 시작(재시작) 때 적용된다.
 - Hub가 실행 중이 아니면 exit 3이다(reload는 Hub를 자동 시작하지 않는다). 부팅 때 자동 시작하려면 `wb hub enable`([Hub 사용 안내](../workbench-hub/USAGE.md#부팅-자동-시작과-linger)). `wb hub status --json`은 hub_v1 `status`를 그대로 보인다.
 
@@ -144,7 +144,7 @@ wb hub status            # web: listening https://10.8.0.2:8780 / web: not_liste
 
 ## 3. API key (외부 agent용)
 
-**설정 > API key**(`/settings/keys`)에서 소유자만 발급·폐기한다. API key로는 웹 로그인, terminal, Board agent 세트, 프로젝트 제어, 비밀번호·key·감사 조회를 할 수 없다.
+**설정 > API key**(`/settings/keys`)에서 소유자만 발급·폐기한다. API key로는 웹 로그인, terminal, Board workspace, 프로젝트 제어, 비밀번호·key·감사 조회를 할 수 없다.
 
 - 발급 항목: 이름(1~64자, 영문·숫자·공백·`.`·`_`·`-`), 등급, scope, 만료(없음 또는 1~3650일).
 - 형식: `wbk_<10자>_<43자>`. **원문은 발급 직후 한 번만** 보인다. 이후 어디에도 없고 저장소에는 hash만 남는다. 잃어버리면 폐기하고 새로 발급한다.
@@ -343,64 +343,98 @@ wb hub review-mode /path/to/project manual     # auto | manual
 - 로그인한 소유자 세션만 된다. API key로는 이 경로에 닿을 수 없다.
 - **웹에는 manager·worker·host pane 입력 수단이 없다.** 웹으로 그 pane을 조작하지 못하고, 요청 흐름 밖에서 일을 시키는 통로는 Board agent뿐이다.
 
-## 7. Board agent 세트
+## 7. Board workspace (Board agent와 shell)
 
-> 2026-10-29: 이 절은 트랙 D(Board workspace: 여러 agent·shell, 격자 widget, 공유 연결) 구현 뒤 다시 쓴다. 결정은 [web-board-ux BRIEF](../web-board-ux/BRIEF.md) WBX-D42~D58. 아래는 현재 동작이다.
+`/board`는 **workspace**다. 왼쪽 **panel**에서 Board agent(OMP)와 shell을 만들고 켜고 끄고, 오른쪽 격자에 terminal을 **widget**으로 놓아 여러 개를 동시에 본다. Hub가 소유하는 소유자 전용 화면이며 어느 프로젝트의 manager·worker와도 별개다. Hub가 켜진 동안 terminal은 유지되고 브라우저를 닫아도 계속 돈다. 첫 `/board` 연결 때 시작한다(Hub가 시작될 때 자동으로 띄우지 않는다).
 
-`/board`의 **Board agent**(OMP) tab과 **shell** tab이다. Hub가 소유하는 소유자 전용 화면이며 어느 프로젝트의 manager·worker와도 별개다. Hub가 켜진 동안 유지되고 브라우저를 닫아도 계속 돈다. 첫 `/board` 연결 때 시작한다(Hub가 시작될 때 자동으로 띄우지 않는다).
+- **Board agent**: 한도 기본 4개(1~8), 기본 이름 `agent-1`, `agent-2`…. 각자 자기 세션·메모리(home)와 API key를 가진다. 처음에는 `agent-1` 하나다.
+- **shell**: 한도 기본 10개(1~32), 기본 이름 `shell-1`, `shell-2`…. 이번 Hub 실행에서 shell을 한 번도 만들지 않았다면 첫 `/board` 열기가 `shell-1`을 만든다. shell은 Hub를 다시 시작하면 사라진다(agent는 남는다).
+- 한도를 넘으면 새로 만들 수 없다(panel의 만들기 버튼이 비활성이고 "한도 N개"가 보인다).
+
+### 화면: panel과 widget
+
+- **panel**(접을 수 있다): agent 행(상태 점, 이름, 보이기/숨기기, 시작/중지, 이름 바꾸기, 삭제), shell 행(이름, 이름 바꾸기, 보이기/숨기기, 닫기), "새 Board agent"·"새 shell", "배치 초기화"(이 브라우저만), **한도 설정**(agent·shell 숫자 입력과 저장). 한도는 현재 개수보다 작게 줄일 수 없고 범위(agent 1~8, shell 1~32) 밖은 서버가 거절해 문구를 보인다.
+- **widget**: 제목 막대(상태 점, 이름, 숨기기, 닫기 ×)와 본문 terminal. 제목 막대를 끌어 옮기고 오른쪽 아래 모서리를 끌어 크기를 바꾼다(끄는 동안 놓일 칸을 미리 보이고, 겹치면 "놓을 수 없음"이며 놓으면 마지막 유효 자리로 돌아간다). widget을 누르면 강조 테두리가 생기고 키보드 입력이 그리로 간다.
+- 멈춘 agent는 본문 위에 "중지됨 — 시작"(시작 전이면 "시작 전 — 시작"), 스스로 끝났거나 실패한 terminal은 상태 문구와 "재시작"이 나온다.
+- **이름 규칙**: 앞뒤 공백을 지운 1~40자, 제어 문자 없음, 같은 종류(agent끼리, shell끼리) 안에서 대소문자 구분 없이 중복 불가. 기본 이름은 `<종류>-N`에서 쓰이지 않은 가장 작은 번호다. 이름 바꾸기는 panel 행에서 제자리 입력(Enter 저장, Esc 취소)으로 한다.
+- **배치는 브라우저별로 기억한다**: widget 위치·크기·보임, panel 열림/닫힘, 좁은 화면에서 고른 terminal이 이 브라우저의 `localStorage`에만 저장된다(Hub에 저장하지 않으므로 기기마다 다르다). 저장소를 못 쓰거나 값이 맞지 않으면 그 항목은 버리고 자동 배치한다. 새 terminal은 이 브라우저에서 만들었으면 자동 배치로 보이고, 다른 기기에서 생긴 것은 숨김 상태로 panel에 나타난다. "배치 초기화"는 이 브라우저의 기억만 지운다.
+- **좁은 화면**(너비 720px 미만): 격자를 쓰지 않는다. panel에서 terminal 하나를 고르면 그 terminal만 화면 전체로 보이고 연결한다. 고른 것이 없으면 첫 agent다. 화면이 넓어지면 저장된 배치로 돌아간다.
+- 목록은 5초마다와 내 동작 뒤에 갱신된다. 이 화면은 JavaScript가 필요하다.
 
 ### 7.1 위험 (읽고 쓰기)
 
 **Board agent와 웹 shell은 sandbox 없이 당신의 일반 shell과 같은 OS 권한으로 실행된다.** 코드 수정, `gh`/`git` 인증, `wb init`, GPU 사용을 하게 하려는 의도적 선택이다([ADR-0003](../../adr/0003-board-agent-without-sandbox.md)). 그 결과:
 
-- **웹 로그인이 유일한 장벽이다.** 비밀번호나 세션이 새면 공격자는 당신의 OS 사용자 권한으로 이 컴퓨터에서 무엇이든 할 수 있다(코드·자격 증명·다른 프로젝트 자료 포함).
+- **웹 로그인이 유일한 장벽이다.** 비밀번호나 세션이 새면 공격자는 당신의 OS 사용자 권한으로 이 컴퓨터에서 무엇이든 할 수 있다(코드·자격 증명·다른 프로젝트 자료 포함). 같은 소유자의 **모든 유효 세션**이 모든 terminal에 붙을 수 있다.
 - 평문 HTTP는 네트워크 보호(VPN 등)에 전적으로 의존한다.
 - Board agent와 shell은 요청 흐름 밖에서 명령을 실행할 수 있다. "검토 전에는 실행되지 않는다"는 보장은 REST API·요청 경로에 대한 것이다.
+- Board agent들은 서로 구분될 뿐이다. 이름과 key는 **보안 경계가 아니다**: 같은 OS 사용자 권한이라 한 agent가 다른 agent의 key·home을 읽을 수 있다.
 - 완화: 비밀번호를 길게, `bind`를 필요한 주소 하나로, 가능하면 TLS와 VPN을 쓴다. Board agent는 MCP가 없고 skill은 `wb-inbox` 하나뿐이며 프로젝트·사용자 `~/.omp` 설정은 막히지만 이것은 **설정 노출을 줄일 뿐 OS 권한 경계가 아니다.**
 
-### 7.2 연결, 인수, 재연결
+### 7.2 공유 연결: 여러 브라우저·기기
 
-> 2026-10-29: 한 연결 lease와 인수는 트랙 D에서 공유 연결로 바뀐다(WBX-D54).
+- terminal마다 WebSocket(`/ws/board/<id>`)을 따로 연다. **같은 terminal에 여러 브라우저·기기가 동시에 붙을 수 있다.** 모두 같은 출력을 보고, 어느 쪽 입력이든 Hub에 **도착한 순서대로** 그 terminal에 들어간다(두 곳에서 동시에 치면 섞일 수 있다). 다른 곳에 붙어 있으면 widget 제목 막대에 "다른 화면 N개 연결됨"이 보인다.
+- 한 terminal에는 연결이 **8개**까지다. 9번째는 "연결 수 한도(8개)를 넘었습니다"와 "다시 연결"이 나온다(close 4429). 한 연결이 다른 연결을 밀어내는 일은 없다.
+- **크기는 가장 최근에 입력하거나 크기를 바꾼 화면을 따른다.** 그 화면의 크기가 terminal 크기가 되고, 다른 화면은 terminal을 그 크기로 그리며 widget이 크면 남는 곳을 비우고 작으면 스크롤한다. 입력하는 화면이 바뀌면 terminal이 그 화면 크기로 다시 맞춰진다. 보이는 widget만 연결하고 숨기거나 좁은 화면에서 고르지 않은 terminal은 연결을 닫는다.
+- 연결이 끊기면 자동으로 다시 붙는다(1→2→4…최대 15초 간격, 안정적으로 10초 붙어 있었으면 처음부터). 다시 붙으면 terminal의 최근 출력(최대 1 MiB)을 다시 받는다. close 4400~4499는 같은 요청을 다시 보내도 소용없으므로 자동 재연결하지 않고(4404는 widget이 사라지고, 4401은 "연결 없음 — 다시 로그인", 4429는 한도 문구, 그 밖은 "다시 연결"), close 코드는 10.3에 있다.
+- 한도: upgrade 전 열린 `/ws/board/*` 소켓 전체 128개(넘으면 503), 한 로그인 세션의 hello 전 소켓 8개(넘으면 429). 한 message 1 MiB 초과는 연결을 닫고(1009), 입력 frame은 64 KiB까지이며 넘으면 그 입력은 버려지고 안내가 보인다.
+- 화면 쪽 감시: 20초 동안 pong이 없으면 화면이 스스로 연결을 닫고(4000, 서버 코드가 아님) 다시 붙는다. Heartbeat는 연결마다 10초 신호, Hub는 20초(+1초) 무신호면 그 연결만 끊는다. 연결이 없으면 입력한 키는 어디에도 전달되지 않는다.
+- 브라우저 back/forward cache로 page가 복원되면(`pageshow`) 떠날 때(`pagehide`) 해제한 연결을 다시 잇는다.
+- 로그아웃·비밀번호 변경(`wb hub passwd` 포함)·24시간 만료로 세션이 무효가 되면 그 세션의 연결이 닫힌다(close 4401). 연결은 로그인한 세션만 열 수 있고 API key로는 열 수 없다.
 
-- 세트는 한 번에 **하나의 연결**만 쓴다(lease). 다른 브라우저·기기에서 `/board`를 열면 **새로 연결한 곳이 즉시 인수**하고, 이전 연결에는 인수당했다는 안내가 나온 뒤 닫힌다.
-- 인수당한 쪽 화면에는 **"다른 곳에서 연결됨 — 다시 가져오기"**가 보인다. 버튼을 누르면 다시 가져온다. 두 tab 사이에 자동으로 뺏고 뺏기지 않도록 인수당한 뒤에는 자동 재연결을 하지 않는다.
-- 같은 tab에서 네트워크가 잠깐 끊기면 자동으로 다시 붙는다(1→2→4…최대 15초 간격). 안정적으로 10초 동안 붙어 있었으면 간격은 처음(1초)부터 다시 시작한다. 남은 "연결됨"이 새 연결을 막지는 않는다.
-- close 4400~4499(hello 오류 4400, hello CSRF 불일치 4403 등 서버가 이 page 자체를 거절한 경우)는 같은 hello를 다시 보내도 소용없으므로 **자동 재연결하지 않는다**. "연결 없음"으로 두고 소유자가 "다시 연결"을 누를 때까지 기다린다.
-- close 4401은 "연결 없음 — 다시 로그인"으로 보이고 로그인 동작이 나온다. 자동 재연결은 없다.
-- 연결 수 한도: 열린 `/ws/board` 소켓이 모두 8개를 넘으면 upgrade가 **503**으로, 한 로그인 세션에서 hello 전 소켓이 2개를 넘으면 **429**로 거절된다. client는 거절당하면 backoff를 두고 다시 시도한다.
-- 크기 한도: 한 message가 1 MiB를 넘으면 Hub가 연결을 닫는다(1009). 입력 frame은 64 KiB까지이고 넘으면 그 입력은 버려지며 `error`(`too_large`)가 돌아온다.
-- 화면 쪽 감시: 20초 동안 pong이 없으면 화면이 스스로 연결을 닫고(4000, 서버 코드가 아님) 다시 붙는다.
-- 브라우저 back/forward cache로 page가 복원되면(`pageshow`) 떠날 때(`pagehide`) 해제했던 연결을 다시 이어 받는다.
-- Heartbeat: 화면이 10초마다 신호를 보내고, Hub는 20초(+1초)간 아무 신호도 없으면 연결을 끊고 상태를 "연결 없음"으로 둔다. 연결 없음일 때 입력한 키는 어디에도 전달되지 않는다.
-- 로그아웃·비밀번호 변경(`wb hub passwd` 포함)·24시간 만료로 세션이 무효가 되면 열린 연결도 닫힌다(close 4401).
-- 연결은 로그인한 세션만 열 수 있고 API key로는 열 수 없다.
+### 7.3 시작, 중지, 재시작, 닫기, 삭제
 
-### 7.3 재시작
+| 동작 | 대상 | 효과 |
+|---|---|---|
+| 만들기 | agent·shell | 기본 이름으로 만들고 바로 시작한다 |
+| 시작 | agent(시작 전·중지·종료·실패 상태), shell(종료·실패 상태) | 새로 띄운다. agent는 그 home에 이전 세션이 있으면 `--continue`로 잇는다 |
+| 중지 | agent | process를 끝낸다(SIGHUP → SIGTERM → 5초 → SIGKILL). **메모리(세션)는 남고** 상태는 `stopped`이며 widget은 "중지됨 — 시작"이 된다 |
+| 재시작 | agent·shell | 끝내고 다시 띄운다(agent는 `--continue`). 확인 page 없이 panel·widget에서 한다 |
+| 닫기 | shell | 종료하고 목록에서 제거한다. 실행 중인 명령이 끝난다 |
+| 삭제 | agent | 중지하고 **그 agent의 home(세션·메모리·log)을 지우고** 목록에서 제거한다. 되돌릴 수 없다 |
 
-> 2026-10-29: 트랙 D에서 재시작은 왼쪽 panel·widget의 동작이 된다(확인 page 없음, WBX-D49).
+- 중지·재시작·닫기·삭제는 확인 dialog를 거친다(삭제는 "세션과 메모리를 지웁니다. 되돌릴 수 없습니다"). 이름 바꾸기·시작·만들기는 확인이 없다.
+- 삭제는 symlink를 따라가지 않으며 `<hub state>` 밖을 지우지 않는다. **OMP 로그인 저장소(`agent.db`)는 사용자 것으로의 symlink라 link만 지워지고 사용자 `agent.db`는 건드리지 않는다.** 일부만 지워졌으면 항목이 `failed`(`delete_failed`)로 남아 다시 삭제할 수 있다.
+- 이미 닫히거나 삭제된 terminal을 보던 화면은 "terminal이 없어졌습니다"(close 4404)를 보이고 widget이 사라진다.
+- 한 terminal에 동작이 진행 중이면 같은 terminal의 다른 동작은 거절된다(`terminal_busy`). 다른 terminal은 영향이 없다. 한 terminal의 시작 실패(omp 없음, 격리 확인 실패 `isolation_failed` 등)는 그 terminal만 `failed`다.
+- Agent 목록(이름·home)과 두 한도는 `<hub state>/board-agents/registry.json`(0600)에 저장된다(shell은 저장하지 않는다). 이 파일이 손상되면 Board 전체가 `registry_invalid`가 되어(파일 경로와 고치는 방법을 화면이 보인다) 어떤 terminal도 시작되지 않지만, Hub의 요청·REST는 그대로 동작한다. 파일은 덮어쓰지 않는다.
 
-channel(agent 또는 shell) 하나만 재시작할 수 있다(`/board`의 재시작 버튼, 확인 page). 그 channel의 session을 SIGHUP → SIGTERM → 5초 → SIGKILL로 끝내고 새로 띄운다. Board agent는 이전 세션을 `--continue`로 잇는다. channel이 스스로 끝나면 `exited`(종료 코드)로 보이고 다시 시작 버튼이 나온다. Board agent OMP를 띄우지 못하거나(omp 없음, 격리 확인 실패 `isolation_failed`) 해도 shell은 따로 동작한다.
+### 7.4 Board agent의 home, key, 출처 이름
 
-### 7.4 Board agent의 home과 역할 안내
-
-- Board agent의 home은 `~/.local/state/omp-workbench/hub/board-agent/`(0700)다. 세션과 메모리가 여기에 남는다. OMP 로그인은 사용자 `agent.db`를 따라간다. 이 위치를 지우면 Board agent의 기억이 사라진다.
-- Board agent는 MCP를 쓰지 않는다. Hub 내부 loopback listener(`127.0.0.1`의 임의 port, REST `/api/v1/`만)를 `wb-inbox` skill과 bash로 쓴다. Hub는 시작마다 새 시스템 key를 만들어 env `WB_API_KEY`로, 내부 주소를 `WB_HUB_URL`로 준다. 내부 listener는 그 시작의 시스템 key만 받는다(다른 key는 401). `allow_from`과 상관없이 동작한다. Board shell tab에는 이 두 값이 없다.
-- Skill은 시작마다 설치본에서 `<hub state>/board-agent/skills/wb-inbox/`로 새로 복사한다(`.env` 없음). 기본 role prompt(`omp_bridge/board/ROLE.md`)는 skill 사용법을 안내하며 skill 경로를 적지 않는다(OMP가 `skill://wb-inbox`로 찾는다).
-- 격리 확인: 시작 직후 별도 OMP로 tool·skill 목록을 확인해 MCP tool이 하나라도 있거나, `wb-inbox` 밖의 skill이 보이거나, `wb-inbox`가 없으면(`skill_missing:wb-inbox`) Board agent를 띄우지 않고 `isolation_failed`(사유)로 표시한다. 확인용 OMP는 stdin을 닫은 뒤 최대 10초 스스로 끝나기를 기다리고, 남으면 SIGTERM 3초, SIGKILL 3초 순서로 끝낸다(공유 로그인 저장소를 쓰는 도중에 죽이지 않기 위해서다. OMP 18.13.2는 약 0.2초 만에 끝난다).
-- Board OMP log: 시작마다 OMP가 남긴 log를 `<hub state>/board-agent/omp-logs/`에 복사해 둔다(최근 20개 파일, 파일당 1 MiB까지, key 값은 가림). 같은 폴더의 `board-events.log`에는 시작·종료·정지가 한 줄씩 남는다. Hub·Board agent를 다시 시작해도 남는다. Workbench는 OMP 인증 저장소(`agent.db`)를 복사하지 않는다(Board home의 `agent.db`는 사용자 것으로의 symlink).
+- agent마다 home이 따로다. 이행된 `agent-1`은 기존 `~/.local/state/omp-workbench/hub/board-agent/`(0700)를 그대로 쓰고(이전 세션·메모리가 이어진다), 새로 만든 agent는 `board-agents/<id>/`를 쓴다. 세션과 메모리가 여기에 남는다. OMP 로그인은 사용자 `agent.db`를 따라간다. **home을 지우거나 agent를 삭제하면 그 agent의 기억만 사라진다.** `agent-1`을 삭제하면 `board-agent/`가 지워지고, 그 뒤 만드는 agent는 `board-agents/<id>/`다.
+- Board agent는 MCP를 쓰지 않는다. Hub 내부 loopback listener(`127.0.0.1`의 임의 port, REST `/api/v1/`만)를 `wb-inbox` skill과 bash로 쓴다. Hub는 agent마다 **자기 시스템 key**(이름 `board-agent.<id>`)를 만들어 env `WB_API_KEY`로, 내부 주소를 `WB_HUB_URL`로 준다. 그 key는 그 agent process가 사는 동안에만 유효하다(중지·종료·삭제·Hub 정지 때 지워진다). 내부 listener는 지금 실행 중인 agent의 이번 시작 key만 받는다(다른 key는 401). `allow_from`과 상관없이 동작한다. shell에는 이 두 값이 없다. 사람이 `board-agent`나 `board-agent.`로 시작하는 이름의 API key를 새로 발급하는 것은 막힌다.
+- **출처**: Board agent가 낸 요청·댓글·편집의 출처는 "Board agent · <이름>"으로 저장 당시의 이름이 남는다(이름을 바꾸거나 agent를 삭제해도 이미 저장된 이름은 그대로, 이전 요청의 옛 이름 `board-agent`는 "Board agent"로 보인다).
+- Skill은 시작마다 설치본에서 그 agent의 `skills/wb-inbox/`로 새로 복사한다(`.env` 없음). 기본 role prompt(`omp_bridge/board/ROLE.md`)는 skill 사용법을 안내하며 skill 경로를 적지 않는다(OMP가 `skill://wb-inbox`로 찾는다).
+- 격리 확인: 시작 직후 별도 OMP로 tool·skill 목록을 확인해 MCP tool이 하나라도 있거나, `wb-inbox` 밖의 skill이 보이거나, `wb-inbox`가 없으면(`skill_missing:wb-inbox`) 그 agent를 띄우지 않고 `isolation_failed`(사유)로 표시한다. 확인용 OMP는 stdin을 닫은 뒤 최대 10초 스스로 끝나기를 기다리고, 남으면 SIGTERM 3초, SIGKILL 3초 순서로 끝낸다(공유 로그인 저장소를 쓰는 도중에 죽이지 않기 위해서다). 여러 agent가 함께 시작하면 확인 OMP도 그 수만큼 돌지만 서로를 기다리지 않는다.
+- Board OMP log: 시작마다 OMP가 남긴 log를 그 agent의 `omp-logs/`에 복사해 둔다(최근 20개 파일, 파일당 1 MiB까지, key 값은 가림). 같은 폴더의 `board-events.log`에는 시작·종료·정지가 한 줄씩 남는다. Workbench는 OMP 인증 저장소(`agent.db`)를 복사하지 않는다.
 - 기본 role prompt에는 두 가지 안내가 있다. (1) GPU를 쓰기 전에 `nvidia-smi`와 실행 중 명령을 확인해 사용 중이면 **"계속할까요?"**라고 묻는다. (2) 진행 중인 Task·명령이 있는 프로젝트 root 아래 파일을 고치기 전에 **"계속할까요?"**라고 묻는다. 잠금이나 중재는 하지 않으며 어디까지나 모델이 묻는 안내다. 직접 만든 prompt는 `board_agent.role_prompt_file`로 뒤에 붙인다.
 - Board agent는 Workbench bridge가 없어서 승인·worker 전달을 할 수 없다. 요청을 찾고 쓰고 정리하는 데까지다.
-- Board agent 안의 `wb`는 Hub의 후손이므로 WB 관리 terminal이 아니다. `wb init`의 확인은 PTY에서 답한다.
+- **shell의 program**: `[board_agent] shell`이 비어 있지 않으면 그 절대 경로만 쓴다(없거나 실행할 수 없으면 `shell_unavailable`이고 다른 것으로 넘어가지 않는다). 비어 있으면 **bash**(`/bin/bash`, `/usr/bin/bash`, Hub `PATH`의 `bash` 순서), 없으면 `/bin/sh`다. `$SHELL`은 보지 않는다(zsh 등 다른 로그인 shell을 쓰고 싶으면 `shell`에 절대 경로를 넣는다). 시작·재시작 때마다 정해지고 돌던 shell은 그대로다.
+- Board agent·shell 안의 `wb`는 Hub의 후손이므로 WB 관리 terminal이 아니다. `wb init`의 확인은 PTY에서 답한다.
 
 ### 7.5 Hub 정지와 업데이트
 
-세트의 channel이 살아 있으면 `wb hub stop`과 `wb update`가 확인 목록에 "Board agent 세트: agent running(pid N) · shell running(pid M) · 연결됨"을 보이고 `계속할까요? [y/N]`을 묻는다. 확인하면 세트를 끝낸 뒤 Hub가 멈춘다. 거절하면 아무것도 멈추지 않는다. 확인하는 사이 channel 상태가 바뀌면 다시 확인한다. `--yes`는 확인 질문만 건너뛰며 terminal이 없으면 `--yes` 없이는 멈추지 않는다. Hub가 `SIGTERM`을 받으면 확인 없이 세트를 끝낸다. Hub가 `SIGKILL`로 죽으면 PTY가 닫혀 SIGHUP을 받지만 그 뒤 남는 프로세스는 보장하지 않는다. Hub 재시작 뒤에는 세트·WebSocket·REST 취소 token이 사라지지만, 열려 있던 `/board` tab은 로그인 세션이 아직 유효하면 자동으로 다시 붙는다(세션이 무효면 4401로 "다시 로그인"). 요청·API key·세션·감사 기록은 유지된다.
+살아 있는 terminal이 있으면 `wb hub stop`과 `wb update`가 확인 목록에 "Board terminal: agent agent-1 running(pid N) · shell shell-1 running(pid M)"처럼 이름과 상태를 보이고 `계속할까요? [y/N]`을 묻는다(연결 수는 넣지 않으므로 화면이 붙고 떨어져도 확인이 어긋나지 않는다). 확인하면 모든 terminal을 끝낸 뒤 Hub가 멈춘다. 거절하면 아무것도 멈추지 않는다. 확인하는 사이 상태가 바뀌면 다시 확인한다. `--yes`는 확인 질문만 건너뛰며 terminal이 없으면 `--yes` 없이는 멈추지 않는다. Hub가 `SIGTERM`을 받으면 확인 없이 끝낸다. Hub가 `SIGKILL`로 죽으면 PTY가 닫혀 SIGHUP을 받지만 그 뒤 남는 프로세스는 보장하지 않는다. Hub 재시작 뒤에는 shell·WebSocket·REST 취소 token이 사라지지만 agent 목록·메모리·이름·한도는 남고, 열려 있던 `/board` tab은 로그인 세션이 아직 유효하면 자동으로 다시 붙는다(세션이 무효면 4401로 "다시 로그인"). 요청·API key·세션·감사 기록은 유지된다.
 
 ## 8. 감사 기록
 
 **설정 > 감사 기록**(`/settings/audit`)에 최근 순으로 최대 50,000건이 남고 넘으면 오래된 것부터 지워진다. 위치는 Hub 상태 디렉터리의 `hub.sqlite3`(`~/.local/state/omp-workbench/hub/`)다.
 
-남는 사건: 로그인 성공·실패·로그아웃, 비밀번호 변경(웹·CLI), API key 발급·폐기, terminal 연결·인수·해제·시간 초과·닫힘, Board agent 시작·정지·재시작, 웹 프로젝트 제어(켜기/끄기·일시정지·재개·`confirm-boot`·검토 방식 변경·검토 시작). **terminal 입력·출력, 비밀번호, key 원문, 요청 본문은 남기지 않는다.**
+남는 사건: 로그인 성공·실패·로그아웃, 비밀번호 변경(웹·CLI), API key 발급·폐기, 프로젝트 제어(켜기/끄기·일시정지·재개·`confirm-boot`·검토 방식 변경·검토 시작), 그리고 Board 사건:
+
+| 사건 | 남기는 때 |
+|---|---|
+| `board_terminal_open` | agent·shell 만들기(첫 shell 자동 생성 포함). 사유 `create`/`first_open` |
+| `board_terminal_close` | shell 닫기, agent 삭제(삭제는 `memory_removed`) |
+| `board_start` | 시작. 사유 `first_open`(첫 열기)·`create`·`owner`(시작 버튼)·`restart` |
+| `board_stop` | 중지·끝남. 사유 `owner`·`delete`·`isolation_failed`·`hub_stop` |
+| `board_restart` | 재시작 |
+| `board_rename` | 이름 바꾸기(이전·새 이름) |
+| `board_options` | 한도 변경(이전·새 값) |
+| `terminal_attach` / `terminal_release` / `terminal_timeout` / `terminal_closed` | 연결별 붙음 / 해제 / heartbeat 끊김 / 그 밖의 끝(EOF·Hub 정지·큐 초과·세션 무효·terminal 없어짐) |
+| `terminal_denied` | hello 오류·CSRF 불일치·terminal당 연결 한도 초과(`too_many_clients`) |
+
+Board 사건은 terminal id·종류·이름을 담고, 연결 사건은 연결 일련번호와 그 뒤 연결 수를 담는다. 연결이 서로를 밀어내지 않으므로 인수 사건은 새로 남지 않는다(이전 행은 그대로). **terminal 입력·출력, 비밀번호, key 원문, 요청 본문은 남기지 않는다.**
 
 ## 9. `wb hub enable` 사용자는 다시 실행하세요
 
@@ -425,7 +459,7 @@ Web Board 이전에 `wb hub enable`을 한 사용자는 **`wb hub enable`을 한
 | `bind_failed:<errno 이름> <주소>:<port>` | 그 주소가 이 컴퓨터에 없거나 port가 쓰이는 중(예: `EADDRINUSE`, `EADDRNOTAVAIL`, `EACCES`). 여러 주소 중 하나라도 실패하면 아무 주소도 열지 않는다. 30초마다 다시 시도한다 → `bind`·`port`를 고치고 `wb hub reload` |
 | `stopping` | Hub가 멈추는 중 |
 
-`wb hub status`의 `board_agent:` 줄은 `agent running(pid N) · shell running(pid M) · 연결됨|연결 없음`이거나 `없음`이다.
+`wb hub status`의 `board_agent:` 줄은 `agent 2/4 실행 중 · shell 3 · 연결 5`(agent 실행 수/한도, shell 수, 붙어 있는 연결 수)이거나 `없음`이다. 실패한 terminal은 아래 줄에 `    <이름>: <사유>`로, 목록 파일이 손상됐으면 `board_agent: registry_invalid`와 사유가 나온다. `wb ui` 목록 머리에는 `Board agent: agent 2/4 실행 중 · shell 3`(실패가 있으면 `· 실패 N`)이 보인다.
 
 ### 10.2 브라우저에 `421 misdirected_request`·빈 403이 보일 때
 
@@ -435,22 +469,24 @@ Web Board 이전에 `wb hub enable`을 한 사용자는 **`wb hub enable`을 한
 
 ### 10.3 WebSocket close 코드
 
-> 2026-10-29: 트랙 D에서 4001이 없어지고 4404·4429가 생긴다(web-board-ux SPEC s4 "WebSocket v2").
+`/ws/board/<terminal id>`의 close 코드다(terminal마다 연결 하나).
 
 | 코드 | 의미 |
 |---|---|
-| 4001 | 다른 연결이 인수했다(다른 곳에서 연결됨). 자동 재연결 안 함 → "다시 가져오기" |
+| 1000 | 정상 해제(탭 닫기·숨기기·release) |
+| 1001 | Hub가 멈추는 중. 같은 tab이 다시 붙는다 |
+| 1009 | message가 1 MiB 초과 |
 | 4000 | 화면이 스스로 닫음: 20초 동안 pong 없음. 같은 tab이 다시 붙는다(서버 코드 아님) |
-| 4002 | heartbeat 시간 초과(20초 무신호). 연결 없음으로 바뀌며 같은 tab이 다시 붙는다 |
+| 4002 | heartbeat 시간 초과(20초 무신호). 그 연결만 끊기고 같은 tab이 다시 붙는다 |
 | 4003 | 보내야 할 출력이 너무 쌓여(연결당 4 MiB) 끊었다. 다시 붙는다 |
-| 4400 | hello를 5초 안에 보내지 않았거나 형식이 틀렸다. 자동 재연결 안 함 |
+| 4400 | hello를 5초 안에 보내지 않았거나 형식이 틀렸다(두 번째 hello 포함). 자동 재연결 안 함 → "다시 연결" |
 | 4401 | 세션이 무효가 됐다(로그아웃·비밀번호 변경·만료). "연결 없음 — 다시 로그인"과 로그인 동작이 나온다. 자동 재연결 안 함 |
 | 4403 | hello의 CSRF 토큰이 맞지 않는다. page를 새로 고친다. 자동 재연결 안 함 |
-| 4400~4499 | 서버가 이 page를 거절한 코드 전체. 모두 자동 재연결 안 함 → "다시 연결" |
-| 1009 | message가 1 MiB 초과 |
-| (upgrade 거절) | 503: 열린 소켓 8개 초과. 429: 한 세션의 hello 전 소켓 2개 초과. client는 backoff 후 재시도 |
-| 1000 | 정상 해제(탭 닫기·release) |
-| 1001 | Hub가 멈추는 중 |
+| 4404 | terminal이 닫히거나 삭제됐다. "terminal이 없어졌습니다"가 보이고 widget이 사라진다 |
+| 4429 | 그 terminal에 이미 연결 8개가 붙어 있다. "연결 수 한도(8개)를 넘었습니다"와 "다시 연결". 자동 재연결 안 함 |
+| (upgrade 거절) | 503: 열린 `/ws/board/*` 소켓 128개 초과. 429: 한 세션의 hello 전 소켓 8개 초과. 404: 모르는 terminal id. client는 backoff 후 재시도(화면은 hello 전 소켓을 동시에 4개까지만 연다) |
+
+4400~4499는 서버가 이 page를 거절한 코드라 자동 재연결하지 않는다.
 
 ### 10.4 그 밖
 
@@ -476,7 +512,7 @@ Web Board 이전에 `wb hub enable`을 한 사용자는 **`wb hub enable`을 한
 
 개발 host에서는 검증하지 못한 항목이다. 처음 쓰는 컴퓨터에서 한 번 확인한다.
 
-1. 실제 브라우저(Firefox·Chromium·휴대폰)에서 page·확인 page·badge·xterm.js 렌더링, tab 닫기·강제 종료·다른 브라우저 인수의 체감 동작. `/board` 200 응답만 xterm DOM renderer 때문에 `style-src 'self' 'nonce-<N>'; style-src-attr 'unsafe-inline'`을 쓴다(2026-10-26 사용자 결정. `script-src`는 `'self'` 그대로). Nonce가 없는 `<style>`은 막히고, style 속성은 xterm truecolor 색 때문에 허용한다. 다른 page는 inline style을 허용하지 않는다.
+1. 실제 브라우저(Firefox·Chromium·휴대폰)에서 page·확인 page·badge·xterm.js 렌더링, tab 닫기·강제 종료와 여러 기기를 한 terminal에 동시에 붙였을 때의 체감 동작(공유 연결, 크기 따름), widget 끌기·크기 조절 감각, 좁은 화면 전환, 한글 IME 입력. `/board` 200 응답만 xterm DOM renderer 때문에 `style-src 'self' 'nonce-<N>'; style-src-attr 'unsafe-inline'`을 쓴다(2026-10-26 사용자 결정. `script-src`는 `'self'` 그대로). Nonce가 없는 `<style>`은 막히고, style 속성은 xterm truecolor 색 때문에 허용한다. 다른 page는 inline style을 허용하지 않는다.
 2. LAN/VPN 주소 bind와 다른 기기 접근, 자체 서명 인증서의 브라우저 신뢰 흐름.
 3. GPU 안내: 실제 `nvidia-smi`와 실제 모델의 "계속할까요?" 응답. 개발 host에는 NVIDIA GPU가 없다.
 4. 실제 OMP·실제 모델로 Board agent가 `wb-inbox` skill로 요청을 쓰고 manager가 검토하는 전체 흐름(유료 provider). Skill 로드와 내부 REST 호출 한 번은 개발 host에서 확인했다(web-board-ux [PROBE-BOARD-SKILL](../web-board-ux/PROBE-BOARD-SKILL.md), 2026-10-28).
@@ -484,6 +520,6 @@ Web Board 이전에 `wb hub enable`을 한 사용자는 **`wb hub enable`을 한
 6. 실제 `systemd --user`에서 `KillMode=process` unit과 재부팅 뒤 시작, linger.
 7. 온라인 dependency advisory 확인은 **실행하지 않았다**(`not_run`). 고정 버전과 license 기록은 [DEPENDENCY-AUDIT](DEPENDENCY-AUDIT.md)에 있고, 알려진 취약점이 없다는 증명이 아니다.
 
-그 밖의 한계: 다중 사용자·OAuth·외부 identity 없음, 파일 첨부 없음, rate limit 없음, 웹에서의 manager·worker·host pane 조작 없음, 외부 알림 없음, 하나의 Board agent 세트에 한 번에 한 연결.
+그 밖의 한계: 다중 사용자·OAuth·외부 identity 없음, 파일 첨부 없음, rate limit 없음, 웹에서의 manager·worker·host pane 조작 없음, 외부 알림 없음, terminal당 연결 8개 제한(그 이상은 거절), 여러 화면에서 동시에 입력하면 입력이 섞일 수 있음.
 
 관련 문서: [BRIEF](BRIEF.md) · [SPEC](SPEC.md) · [web-board-ux BRIEF](../web-board-ux/BRIEF.md) · [web-board-ux SPEC](../web-board-ux/SPEC.md) · [skill README](../../../skills/README.md) · [OMP MCP probe(이력)](PROBE-OMP-MCP.md) · [ADR-0006](../../adr/0006-rest-skill-single-external-contact.md) · [ADR-0003](../../adr/0003-board-agent-without-sandbox.md) · [ADR-0004](../../adr/0004-auto-execution-after-manager-review.md) · [ADR-0005](../../adr/0005-per-project-inbox-store-hub-single-writer.md) · [Hub 사용 안내](../workbench-hub/USAGE.md) · [README](../../../README.md)

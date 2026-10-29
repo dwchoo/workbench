@@ -30,3 +30,9 @@ WBX-AC-24~38의 최종 통합(사용자 browser·IME 확인은 `pending`으로 �
 ## 출력
 
 변경 문서 경로, 수락 기준별 증거 표, 회귀 명령·결과, 사용자 확인 목록(WBX-O06).
+
+## D3 결과 (2026-10-29, 문서 + 통합 확인)
+
+변경 문서: `docs/features/task-inbox/USAGE.md`(§1.2 `shell` 줄·웹 꺼짐 문구, §7 전체, §8 감사, §10.1 `board_agent:` 줄, §10.3 close code v2, §11 한계), `docs/features/workbench-hub/USAGE.md`(Board 상태 줄·정지 확인 목록), `README.md`(Web Board 문단), `CONTEXT.md`("트랙 D 완료 전" 표시 제거, 세트 용어를 공유 연결로). USAGE §7 구성: 머리·화면(panel·widget·이름·배치 기억·좁은 화면)·7.1 위험·7.2 공유 연결·7.3 시작/중지/재시작/닫기/삭제·7.4 home·key·출처·shell program·7.5 정지.
+S5 정적 확인: USAGE에 `4001`·"다시 가져오기"·`/ws/board`(id 없는)·`/board/restart`·lease·"Board agent 세트" 문구가 남지 않음. close code 표는 SPEC s4 "Close code v2"(1000·1001·1009·4002·4003·4400·4401·4403·4404·4429)와 같고 화면 자체 코드 4000을 따로 적음.
+회귀: 이 문서의 보고(오케스트레이터 최종 보고)에 둔다. 사용자 확인(WBX-O06)은 `pending`.

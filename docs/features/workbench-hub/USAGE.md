@@ -35,7 +35,7 @@ Hub pid 4242 · wb 0.3.1 · 프로젝트 5개 · Board agent: 없음 · 가동 3
 web: disabled — hub.toml의 [web] enabled = false를 true로 바꾸고 'wb hub reload'를 실행하세요 · config 12:30
 ```
 
-- 첫 줄: Hub pid, `wb` version, 등록된 프로젝트 수, Board agent 상태(agent 채널의 `running`/`stopped` 등, shell이 다르면 `(shell …)`, 세트를 한 번도 시작하지 않았으면 `없음`), 가동 시간.
+- 첫 줄: Hub pid, `wb` version, 등록된 프로젝트 수, Board agent 상태(`agent 2/4 실행 중 · shell 3`: 실행 중인 agent 수/한도와 shell 수, 실패한 agent가 있으면 `· 실패 N`, Board가 없으면 `없음`, 목록 파일이 손상됐으면 `registry_invalid`), 가동 시간.
 - 둘째 줄 `web:`: `disabled`(켜는 방법을 같이 보임), `listening <url> [<url>…]`(여러 주소면 모두, 평문 HTTP면 `[!] 평문 HTTP` 표시), `not_listening: <이유>`, `config_invalid:<항목>` 중 하나. 끝에 `· config HH:MM`(실행 중인 `hub.toml`을 읽은 시각)과, 마지막 `wb hub reload`가 거절되었으면 `· reload 실패: config_invalid:<항목>`이 붙는다(2026-10-27).
 - 상태를 가져오지 못하면(Hub 연결 끊김·응답 없음) `Hub 상태 불명` 한 줄만 보인다. 응답이 일부만 오면 아는 값은 보이고 모르는 항목은 `불명`이다. 알 수 없는 상태를 `disabled`나 `없음`으로 보이지 않는다. 첫 응답 전에는 `Hub 상태 불러오는 중…`이다.
 - 좁은 terminal에서는 각 줄을 폭에 맞춰 `…`로 자른다(가동 시간이 가장 먼저 잘림). 화면이 아주 낮으면 프로젝트 행을 최소 3줄 남기도록 이 줄들을 줄인다.
@@ -122,7 +122,7 @@ backend나 실험 shell 아래(WB가 관리하는 terminal)에서 Hub를 띄우�
 
 ## `wb update`와 Hub
 
-`wb update`는 backend 종료 전에 Hub를 먼저 멈춘다. Hub가 실행 중이면 확인 목록에 "Hub(pid N, version V)를 멈춥니다"가 더해지고(Board agent 세트가 돌고 있으면 그 목록도 함께 보이며 확인하면 세트도 끝난다), Board agent 세트가 없으면 Hub 정지만으로는 새 질문이 생기지 않는다. Hub를 멈추지 못하거나 상태를 알 수 없으면 어떤 backend도 종료하지 않고 업데이트를 중단한다(`wb hub stop` 안내). 업데이트가 끝나도 Hub를 다시 띄우지 않고, 다음 자동 시작 대상 `wb`가 새 설치본으로 띄운다. `wb hub status`가 새 version을 보인다.
+`wb update`는 backend 종료 전에 Hub를 먼저 멈춘다. Hub가 실행 중이면 확인 목록에 "Hub(pid N, version V)를 멈춥니다"가 더해지고(Board agent·shell이 돌고 있으면 이름과 상태가 함께 보이며 확인하면 모두 끝난다), 돌고 있는 Board terminal이 없으면 Hub 정지만으로는 새 질문이 생기지 않는다. Hub를 멈추지 못하거나 상태를 알 수 없으면 어떤 backend도 종료하지 않고 업데이트를 중단한다(`wb hub stop` 안내). 업데이트가 끝나도 Hub를 다시 띄우지 않고, 다음 자동 시작 대상 `wb`가 새 설치본으로 띄운다. `wb hub status`가 새 version을 보인다.
 
 ## 부팅 자동 시작과 linger
 

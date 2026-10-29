@@ -1,0 +1,260 @@
+{
+  "schema_version": 1,
+  "revision": "wbx-r0.5-s4-p5",
+  "authority": "2026-10-27 사용자: BRIEF r0.1 승인(WBX-D01~D19, WBX-AC-01~20), 같은 날 SPEC s1 확인 항목 U1~U10 답(BRIEF r0.2 WBX-D14·D20~D28). 2026-10-28 사용자: 실제 Chrome 확인 피드백과 결정 WBX-D29~D33(BRIEF r0.3, WBX-AC-21~23의 근거; D34·D35는 orchestrator 결정). 2026-10-28 오후: BRIEF r0.4(WBX-D36 사용자 결정 Q39 a, D37~D40 orchestrator 결정, AC-03 보충 2; 수락 기준 ID·gate 변화 없음). Bundle(BRIEF r0.4/SPEC s3/PLAN p4) 승인은 별도 기록. 2026-10-29 사용자: WBX-A5 확인 결과, 한글 IME 결함 보고(WBX-D41 → WBX-A8, orchestrator 결정), 트랙 D \"Board workspace\" 결정 Q42~Q54(BRIEF r0.5 WBX-D42~D45·D47·D49~D54, 사용자 결정; D46·D48·D55~D58은 orchestrator 결정)과 그 수락 기준 WBX-AC-24~38. Bundle(BRIEF r0.5/SPEC s4/PLAN p5) 승인은 별도 기록.",
+  "acceptance_ids": [
+    "WBX-AC-01",
+    "WBX-AC-02",
+    "WBX-AC-03",
+    "WBX-AC-04",
+    "WBX-AC-05",
+    "WBX-AC-06",
+    "WBX-AC-07",
+    "WBX-AC-08",
+    "WBX-AC-09",
+    "WBX-AC-10",
+    "WBX-AC-11",
+    "WBX-AC-12",
+    "WBX-AC-13",
+    "WBX-AC-14",
+    "WBX-AC-15",
+    "WBX-AC-16",
+    "WBX-AC-17",
+    "WBX-AC-18",
+    "WBX-AC-19",
+    "WBX-AC-20",
+    "WBX-AC-21",
+    "WBX-AC-22",
+    "WBX-AC-23",
+    "WBX-AC-24",
+    "WBX-AC-25",
+    "WBX-AC-26",
+    "WBX-AC-27",
+    "WBX-AC-28",
+    "WBX-AC-29",
+    "WBX-AC-30",
+    "WBX-AC-31",
+    "WBX-AC-32",
+    "WBX-AC-33",
+    "WBX-AC-34",
+    "WBX-AC-35",
+    "WBX-AC-36",
+    "WBX-AC-37",
+    "WBX-AC-38"
+  ],
+  "gate_items": [
+    {
+      "id": "WBX-G-A1",
+      "acceptance_ids": [
+        "WBX-AC-01"
+      ],
+      "required_evidence_level": "fixture"
+    },
+    {
+      "id": "WBX-G-A2",
+      "acceptance_ids": [
+        "WBX-AC-02",
+        "WBX-AC-03"
+      ],
+      "required_evidence_level": "fixture"
+    },
+    {
+      "id": "WBX-G-A3",
+      "acceptance_ids": [
+        "WBX-AC-05"
+      ],
+      "required_evidence_level": "fixture"
+    },
+    {
+      "id": "WBX-G-A4",
+      "acceptance_ids": [
+        "WBX-AC-06"
+      ],
+      "required_evidence_level": "fixture"
+    },
+    {
+      "id": "WBX-G-A5",
+      "acceptance_ids": [
+        "WBX-AC-04"
+      ],
+      "required_evidence_level": "runtime"
+    },
+    {
+      "id": "WBX-G-B1",
+      "acceptance_ids": [
+        "WBX-AC-07",
+        "WBX-AC-08",
+        "WBX-AC-09",
+        "WBX-AC-10",
+        "WBX-AC-11"
+      ],
+      "required_evidence_level": "runtime"
+    },
+    {
+      "id": "WBX-G-B2",
+      "acceptance_ids": [
+        "WBX-AC-13",
+        "WBX-AC-14"
+      ],
+      "required_evidence_level": "runtime"
+    },
+    {
+      "id": "WBX-G-B3",
+      "acceptance_ids": [
+        "WBX-AC-11",
+        "WBX-AC-15"
+      ],
+      "required_evidence_level": "fixture"
+    },
+    {
+      "id": "WBX-G-B4",
+      "acceptance_ids": [
+        "WBX-AC-17"
+      ],
+      "required_evidence_level": "runtime"
+    },
+    {
+      "id": "WBX-G-B5",
+      "acceptance_ids": [
+        "WBX-AC-16"
+      ],
+      "required_evidence_level": "runtime"
+    },
+    {
+      "id": "WBX-G-B8",
+      "acceptance_ids": [
+        "WBX-AC-12"
+      ],
+      "required_evidence_level": "runtime"
+    },
+    {
+      "id": "WBX-G-C0",
+      "acceptance_ids": [
+        "WBX-AC-18"
+      ],
+      "required_evidence_level": "static"
+    },
+    {
+      "id": "WBX-G-C1",
+      "acceptance_ids": [
+        "WBX-AC-19"
+      ],
+      "required_evidence_level": "fixture"
+    },
+    {
+      "id": "WBX-G-C2",
+      "acceptance_ids": [
+        "WBX-AC-20"
+      ],
+      "required_evidence_level": "fixture"
+    },
+    {
+      "id": "WBX-G-A6",
+      "acceptance_ids": [
+        "WBX-AC-03",
+        "WBX-AC-21"
+      ],
+      "required_evidence_level": "fixture"
+    },
+    {
+      "id": "WBX-G-B11",
+      "acceptance_ids": [
+        "WBX-AC-22"
+      ],
+      "required_evidence_level": "runtime"
+    },
+    {
+      "id": "WBX-G-B12",
+      "acceptance_ids": [
+        "WBX-AC-23"
+      ],
+      "required_evidence_level": "runtime"
+    },
+    {
+      "id": "WBX-G-I1",
+      "acceptance_ids": [
+        "WBX-AC-01",
+        "WBX-AC-02",
+        "WBX-AC-03",
+        "WBX-AC-04",
+        "WBX-AC-05",
+        "WBX-AC-06",
+        "WBX-AC-07",
+        "WBX-AC-08",
+        "WBX-AC-09",
+        "WBX-AC-10",
+        "WBX-AC-11",
+        "WBX-AC-12",
+        "WBX-AC-13",
+        "WBX-AC-14",
+        "WBX-AC-15",
+        "WBX-AC-16",
+        "WBX-AC-17",
+        "WBX-AC-18",
+        "WBX-AC-19",
+        "WBX-AC-20",
+        "WBX-AC-21",
+        "WBX-AC-22",
+        "WBX-AC-23"
+      ],
+      "required_evidence_level": "runtime"
+    },
+    {
+      "id": "WBX-G-A8",
+      "acceptance_ids": [
+        "WBX-AC-24"
+      ],
+      "required_evidence_level": "runtime"
+    },
+    {
+      "id": "WBX-G-D1",
+      "acceptance_ids": [
+        "WBX-AC-27",
+        "WBX-AC-28",
+        "WBX-AC-29",
+        "WBX-AC-30",
+        "WBX-AC-31",
+        "WBX-AC-32",
+        "WBX-AC-33",
+        "WBX-AC-34",
+        "WBX-AC-37",
+        "WBX-AC-38"
+      ],
+      "required_evidence_level": "runtime"
+    },
+    {
+      "id": "WBX-G-D2",
+      "acceptance_ids": [
+        "WBX-AC-25",
+        "WBX-AC-26",
+        "WBX-AC-30",
+        "WBX-AC-32",
+        "WBX-AC-33",
+        "WBX-AC-35",
+        "WBX-AC-36"
+      ],
+      "required_evidence_level": "fixture"
+    },
+    {
+      "id": "WBX-G-D3",
+      "acceptance_ids": [
+        "WBX-AC-24",
+        "WBX-AC-25",
+        "WBX-AC-26",
+        "WBX-AC-27",
+        "WBX-AC-28",
+        "WBX-AC-29",
+        "WBX-AC-30",
+        "WBX-AC-31",
+        "WBX-AC-32",
+        "WBX-AC-33",
+        "WBX-AC-34",
+        "WBX-AC-35",
+        "WBX-AC-36",
+        "WBX-AC-37",
+        "WBX-AC-38"
+      ],
+      "required_evidence_level": "runtime"
+    }
+  ]
+}

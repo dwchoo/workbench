@@ -1,17 +1,17 @@
 {
   "schema_version": 1,
   "feature_id": "web-board-ux",
-  "revision": "p4",
+  "revision": "p5",
   "source_brief": {
     "path": "BRIEF.md",
-    "revision": "r0.4"
+    "revision": "r0.5"
   },
   "spec": {
     "path": "SPEC.md",
-    "revision": "s3"
+    "revision": "s4"
   },
   "status": "draft_requires_bundle_confirmation",
-  "note": "2026-10-27 사용자가 SPEC s1 U1~U10에 답함(BRIEF r0.2 WBX-D14 선택·D20~D28). Seam S1~S8 확정. C0 충족(mockup 방향 A). 2026-10-28(p3): 사용자 Chrome 확인 피드백과 결정 WBX-D29~D35(BRIEF r0.3). 새 ticket WBX-A6(/dashboard·뒤로 가기), WBX-B11(agent별 skill 설치 README), WBX-B12(공유 OMP 로그인 완화). WBX-B4는 B12 뒤 실제 로그인으로 재실행(WBX-D33). Probe WBX-B4가 failed/inconclusive면 B5·B8·B9·I1 보류. 2026-10-28 오후(p4): BRIEF r0.4 WBX-D36(사용자 결정 Q39 a)으로 WBX-A7(뒤로 가기로 다시 보인 화면을 세션 확인까지 가림, ← A6, 완료 commit 1573ebc) 추가, A5 ← A7, I1 ← A7. WBX-D37~D40은 통합된 구현 기록. WBX-B4 재실행 passed(2026-10-28).",
+  "note": "2026-10-27 사용자가 SPEC s1 U1~U10에 답함(BRIEF r0.2 WBX-D14 선택·D20~D28). Seam S1~S8 확정. C0 충족(mockup 방향 A). 2026-10-28(p3): 사용자 Chrome 확인 피드백과 결정 WBX-D29~D35(BRIEF r0.3). 새 ticket WBX-A6(/dashboard·뒤로 가기), WBX-B11(agent별 skill 설치 README), WBX-B12(공유 OMP 로그인 완화). WBX-B4는 B12 뒤 실제 로그인으로 재실행(WBX-D33). Probe WBX-B4가 failed/inconclusive면 B5·B8·B9·I1 보류. 2026-10-28 오후(p4): BRIEF r0.4 WBX-D36(사용자 결정 Q39 a)으로 WBX-A7(뒤로 가기로 다시 보인 화면을 세션 확인까지 가림, ← A6, 완료 commit 1573ebc) 추가, A5 ← A7, I1 ← A7. WBX-D37~D40은 통합된 구현 기록. WBX-B4 재실행 passed(2026-10-28). 2026-10-29(p5): BRIEF r0.5 WBX-D41(한글 IME → WBX-A8, 진행 중)과 트랙 D \"Board workspace\"(WBX-D42~D58, AC-24~38). 새 ticket WBX-A8, WBX-D1(server, ← A8), WBX-D2(화면, ← A8·D1), WBX-D3(문서·통합, ← D1·D2). WBX-A5에 2026-10-29 사용자 확인 결과. I1은 A/B/C 범위 그대로이고 트랙 D·A8의 최종 통합은 D3.",
   "scheduling": {
     "max_open_child_threads": 4,
     "max_parallel_writer_workspaces": 2,
@@ -29,7 +29,8 @@
     "WBX-A3",
     "WBX-A6",
     "WBX-B1",
-    "WBX-B12"
+    "WBX-B12",
+    "WBX-A8"
   ],
   "tickets": [
     {
@@ -1336,6 +1337,296 @@
       ],
       "isolated_run_note": "CLAUDE.md sandbox 규칙; checkpoint·hash manifest exclude graphify-out/, .workflow/, .worktrees/, .venv/, 격리 home·캐시; 전후 du -sh 보고",
       "owner": "root"
+    },
+    {
+      "id": "WBX-A8",
+      "path": "tickets/WBX-A8.md",
+      "title": "Board terminal 한글 IME 입력",
+      "kind": "implementation",
+      "depends_on": [],
+      "dependency_reasons": {},
+      "acceptance_ids": [
+        "WBX-AC-24"
+      ],
+      "deliverable": "한글 IME 입력이 친 그대로 도착(원인 판정, 수정, 정적 검사), 사용자 실제 IME 확인 기록",
+      "write_scope_hint": [
+        "src/workbench/hub/web/static/board.css",
+        "src/workbench/hub/web/static/board.js",
+        "tests/hub/test_web_pages_board.py",
+        "tests/hub/js/*.test.mjs"
+      ],
+      "resource_claims": [
+        {
+          "resource": "file:src/workbench/hub/web/static/board.css",
+          "mode": "exclusive"
+        },
+        {
+          "resource": "file:src/workbench/hub/web/static/board.js",
+          "mode": "exclusive"
+        }
+      ],
+      "workspace_requirement": "isolated_if_parallel",
+      "worker": "sonnet",
+      "routing_hint": {
+        "reason_codes": [
+          "bounded_pattern"
+        ],
+        "evidence_refs": [
+          "BRIEF.md WBX-D41",
+          "SPEC.md#board-terminal-한글-ime"
+        ]
+      },
+      "verification_unit": "U-A8",
+      "base_requirements": [
+        "승인된 exact BRIEF r0.5 / SPEC s4 / PLAN p5 bundle",
+        "SPEC 테스트 결정의 seam S1~S8 사용자 확정(2026-10-27, WBX-D20·D21) — 충족; s4 트랙 D는 새 seam 없음(S1·S3·S5·S6·S7·S8, T5, 기존 Board seam)",
+        "현재 source·dirty baseline 대조",
+        "선행 ticket의 통합·검증된 artifact"
+      ],
+      "contract_requirements": [
+        "SPEC s4 \"Board terminal 한글 IME\", BRIEF r0.5 WBX-D41"
+      ],
+      "status_note": "2026-10-29 진행 중(작업 트리에 commit 전 후보 수정)."
+    },
+    {
+      "id": "WBX-D1",
+      "path": "tickets/WBX-D1.md",
+      "title": "Board terminal registry, 여러 agent·shell, agent별 신원, 공유 연결(server)",
+      "kind": "implementation",
+      "depends_on": [
+        "WBX-A8"
+      ],
+      "dependency_reasons": {
+        "WBX-A8": "같은 /board static 파일(board.js 등)을 고침; D1은 board-state.js v2와 현행 화면 glue를 바꾼다"
+      },
+      "acceptance_ids": [
+        "WBX-AC-27",
+        "WBX-AC-28",
+        "WBX-AC-29",
+        "WBX-AC-30",
+        "WBX-AC-31",
+        "WBX-AC-32",
+        "WBX-AC-33",
+        "WBX-AC-34",
+        "WBX-AC-37",
+        "WBX-AC-38"
+      ],
+      "deliverable": "terminal registry 파일·이름·한도, BoardSet N terminal 수명, agent별 home·system key·내부 listener 판정·출처 이름, session API, /ws/board/{id} v2 공유 연결(크기 주인·연결 8개·연결별 heartbeat), board-state.js v2와 현행 화면 glue, status·active·nav, 감사, 이행",
+      "write_scope_hint": [
+        "src/workbench/hub/board/*.py",
+        "src/workbench/hub/auth.py",
+        "src/workbench/hub/rest.py",
+        "src/workbench/hub/inbox/service.py",
+        "src/workbench/hub/server.py",
+        "src/workbench/hub/cli.py",
+        "src/workbench/hub/web/app.py",
+        "src/workbench/hub/web/pages/board.py",
+        "src/workbench/hub/web/pages/board_status.py",
+        "src/workbench/hub/web/pages/dashboard.py",
+        "src/workbench/hub/web/pages/requests.py",
+        "src/workbench/hub/web/static/board-state.js",
+        "src/workbench/hub/web/static/board.js",
+        "tests/hub/test_board_*.py",
+        "tests/hub/test_hub_auth*.py",
+        "tests/hub/test_inbox_service.py",
+        "tests/hub/test_hub_board_status_text.py",
+        "tests/hub/test_web_route_audit.py",
+        "tests/hub/test_web_dashboard*.py",
+        "tests/hub/test_web_pages_board*.py",
+        "tests/hub/js/*.test.mjs",
+        "tests/hub/fixtures/fake_omp_board.py",
+        "tests/hub/support/ws_client.py"
+      ],
+      "resource_claims": [
+        {
+          "resource": "file:src/workbench/hub/board/set.py",
+          "mode": "exclusive"
+        },
+        {
+          "resource": "file:src/workbench/hub/board/ws.py",
+          "mode": "exclusive"
+        },
+        {
+          "resource": "file:src/workbench/hub/board/launch.py",
+          "mode": "exclusive"
+        },
+        {
+          "resource": "file:src/workbench/hub/web/static/board.js",
+          "mode": "exclusive"
+        },
+        {
+          "resource": "file:src/workbench/hub/web/static/board-state.js",
+          "mode": "exclusive"
+        },
+        {
+          "resource": "runtime:/tmp/omp-workbench-<uid>",
+          "mode": "shared"
+        }
+      ],
+      "workspace_requirement": "isolated_if_parallel",
+      "worker": "opus",
+      "routing_hint": {
+        "reason_codes": [
+          "coupled_invariants"
+        ],
+        "evidence_refs": [
+          "SPEC.md#트랙-d-board-workspace",
+          "BRIEF.md WBX-D44",
+          "BRIEF.md WBX-D54",
+          "BRIEF.md WBX-D55",
+          "BRIEF.md WBX-D58"
+        ]
+      },
+      "verification_unit": "U-D1",
+      "base_requirements": [
+        "승인된 exact BRIEF r0.5 / SPEC s4 / PLAN p5 bundle",
+        "SPEC 테스트 결정의 seam S1~S8 사용자 확정(2026-10-27, WBX-D20·D21) — 충족; s4 트랙 D는 새 seam 없음(S1·S3·S5·S6·S7·S8, T5, 기존 Board seam)",
+        "현재 source·dirty baseline 대조",
+        "선행 ticket의 통합·검증된 artifact"
+      ],
+      "contract_requirements": [
+        "SPEC s4 \"트랙 D\" 공개 계약·독립 기대값, BRIEF r0.5 WBX-D44~D48·D54~D58"
+      ],
+      "isolated_run_note": "CLAUDE.md sandbox 규칙; checkpoint·hash manifest exclude graphify-out/, .workflow/, .worktrees/, .venv/, 격리 home·캐시; 전후 du -sh 보고"
+    },
+    {
+      "id": "WBX-D2",
+      "path": "tickets/WBX-D2.md",
+      "title": "Board workspace 화면(격자 widget, panel, 브라우저별 기억, 좁은 화면)",
+      "kind": "implementation",
+      "depends_on": [
+        "WBX-A8",
+        "WBX-D1"
+      ],
+      "dependency_reasons": {
+        "WBX-A8": "같은 board.js·board.css",
+        "WBX-D1": "session API·WebSocket v2·board-state.js v2·terminal view 계약"
+      },
+      "acceptance_ids": [
+        "WBX-AC-25",
+        "WBX-AC-26",
+        "WBX-AC-30",
+        "WBX-AC-32",
+        "WBX-AC-33",
+        "WBX-AC-35",
+        "WBX-AC-36"
+      ],
+      "deliverable": "panel + 격자 workspace, 손으로 쓴 끌기·크기 조절, board-layout.js, localStorage 배치·panel·좁은 화면 선택, 확인 dialog, 보이는 widget만 연결, resize debounce·letterbox, focus 테두리, 720 px 미만 단일 terminal",
+      "write_scope_hint": [
+        "src/workbench/hub/web/pages/board.py",
+        "src/workbench/hub/web/static/board.js",
+        "src/workbench/hub/web/static/board-layout.js",
+        "src/workbench/hub/web/static/board.css",
+        "tests/hub/test_web_pages_board*.py",
+        "tests/hub/test_web_board_csp*.py",
+        "tests/hub/js/*.test.mjs"
+      ],
+      "resource_claims": [
+        {
+          "resource": "file:src/workbench/hub/web/static/board.js",
+          "mode": "exclusive"
+        },
+        {
+          "resource": "file:src/workbench/hub/web/static/board.css",
+          "mode": "exclusive"
+        }
+      ],
+      "workspace_requirement": "isolated_if_parallel",
+      "worker": "sonnet",
+      "routing_hint": {
+        "reason_codes": [
+          "bounded_pattern"
+        ],
+        "evidence_refs": [
+          "SPEC.md#화면-workspace와-panel",
+          "BRIEF.md WBX-D42",
+          "BRIEF.md WBX-D49",
+          "BRIEF.md WBX-D57"
+        ]
+      },
+      "verification_unit": "U-D2",
+      "base_requirements": [
+        "승인된 exact BRIEF r0.5 / SPEC s4 / PLAN p5 bundle",
+        "SPEC 테스트 결정의 seam S1~S8 사용자 확정(2026-10-27, WBX-D20·D21) — 충족; s4 트랙 D는 새 seam 없음(S1·S3·S5·S6·S7·S8, T5, 기존 Board seam)",
+        "현재 source·dirty baseline 대조",
+        "선행 ticket의 통합·검증된 artifact"
+      ],
+      "contract_requirements": [
+        "SPEC s4 \"화면: workspace와 panel\"·WebSocket v2 client 규칙, BRIEF r0.5 WBX-D42~D53·D56·D57"
+      ]
+    },
+    {
+      "id": "WBX-D3",
+      "path": "tickets/WBX-D3.md",
+      "title": "트랙 D 문서와 통합 확인",
+      "kind": "integration_verification",
+      "depends_on": [
+        "WBX-D1",
+        "WBX-D2"
+      ],
+      "dependency_reasons": {
+        "WBX-D1": "server 동작을 USAGE에 옮김",
+        "WBX-D2": "화면 동작을 USAGE에 옮김, 트랙 D 전체 통합"
+      },
+      "acceptance_ids": [
+        "WBX-AC-24",
+        "WBX-AC-25",
+        "WBX-AC-26",
+        "WBX-AC-27",
+        "WBX-AC-28",
+        "WBX-AC-29",
+        "WBX-AC-30",
+        "WBX-AC-31",
+        "WBX-AC-32",
+        "WBX-AC-33",
+        "WBX-AC-34",
+        "WBX-AC-35",
+        "WBX-AC-36",
+        "WBX-AC-37",
+        "WBX-AC-38"
+      ],
+      "deliverable": "task-inbox USAGE §7·§8·§10.3 재작성, 개정 주석 확인·CONTEXT.md 표시 제거, AC-24~38 증거 표, 디렉터리별 회귀, graphify update",
+      "write_scope_hint": [
+        "docs/features/task-inbox/USAGE.md",
+        "docs/features/task-inbox/BRIEF.md",
+        "docs/features/task-inbox/SPEC.md",
+        "docs/adr/0003-board-agent-without-sandbox.md",
+        "CONTEXT.md",
+        "docs/features/web-board-ux/**"
+      ],
+      "resource_claims": [
+        {
+          "resource": "integration-workspace",
+          "mode": "exclusive"
+        },
+        {
+          "resource": "runtime:/tmp/omp-workbench-<uid>",
+          "mode": "shared"
+        }
+      ],
+      "workspace_requirement": "root_integration_workspace",
+      "worker": "sonnet",
+      "routing_hint": {
+        "reason_codes": [
+          "bounded_pattern"
+        ],
+        "evidence_refs": [
+          "SPEC.md#문서-갱신-배정",
+          "SPEC.md#수락-기준"
+        ]
+      },
+      "verification_unit": "U-D3",
+      "base_requirements": [
+        "승인된 exact BRIEF r0.5 / SPEC s4 / PLAN p5 bundle",
+        "SPEC 테스트 결정의 seam S1~S8 사용자 확정(2026-10-27, WBX-D20·D21) — 충족; s4 트랙 D는 새 seam 없음(S1·S3·S5·S6·S7·S8, T5, 기존 Board seam)",
+        "현재 source·dirty baseline 대조",
+        "선행 ticket의 통합·검증된 artifact"
+      ],
+      "contract_requirements": [
+        "SPEC s4 공개 계약·독립 기대값"
+      ],
+      "isolated_run_note": "CLAUDE.md sandbox 규칙; checkpoint·hash manifest exclude graphify-out/, .workflow/, .worktrees/, .venv/, 격리 home·캐시; 전후 du -sh 보고",
+      "owner": "root"
     }
   ],
   "gate_items": [
@@ -1622,6 +1913,88 @@
       ],
       "required_evidence_level": "runtime",
       "check": "통합 회귀·live·wheel·수락 기준별 증거 연결(사용자 browser·대상 host는 pending 명시)"
+    },
+    {
+      "id": "WBX-G-A8",
+      "owner_ticket": "WBX-A8",
+      "acceptance_ids": [
+        "WBX-AC-24"
+      ],
+      "requires_tickets": [
+        "WBX-A8"
+      ],
+      "required_evidence_level": "runtime",
+      "check": "정적 CSS 검사(S5), JS를 바꾸면 S8, 사용자 실제 Chrome·한글 IME 확인(S7, 그 전에는 pending)"
+    },
+    {
+      "id": "WBX-G-D1",
+      "owner_ticket": "WBX-D1",
+      "acceptance_ids": [
+        "WBX-AC-27",
+        "WBX-AC-28",
+        "WBX-AC-29",
+        "WBX-AC-30",
+        "WBX-AC-31",
+        "WBX-AC-32",
+        "WBX-AC-33",
+        "WBX-AC-34",
+        "WBX-AC-37",
+        "WBX-AC-38"
+      ],
+      "requires_tickets": [
+        "WBX-A8",
+        "WBX-D1"
+      ],
+      "required_evidence_level": "runtime",
+      "check": "registry·이름·한도·이행(기존 Board seam), 실제 Hub+fake OMP 여러 agent의 env·key·내부 listener·출처·삭제와 symlink 대상 불변·정지 목록(S3), 두 연결 공유·도착 순서·4429·크기 주인·연결별 끊김·감사(T5), session API·CSRF·Bearer 401·route audit(S1), board-state.js v2(S8)"
+    },
+    {
+      "id": "WBX-G-D2",
+      "owner_ticket": "WBX-D2",
+      "acceptance_ids": [
+        "WBX-AC-25",
+        "WBX-AC-26",
+        "WBX-AC-30",
+        "WBX-AC-32",
+        "WBX-AC-33",
+        "WBX-AC-35",
+        "WBX-AC-36"
+      ],
+      "requires_tickets": [
+        "WBX-D1",
+        "WBX-D2"
+      ],
+      "required_evidence_level": "fixture",
+      "check": "board-layout.js·panel 상태·resize 규칙(S8), page 틀·CSP·script(S1·S6), 외부 URL·library 없음(S5); 실제 browser는 D3에서 pending"
+    },
+    {
+      "id": "WBX-G-D3",
+      "owner_ticket": "WBX-D3",
+      "acceptance_ids": [
+        "WBX-AC-24",
+        "WBX-AC-25",
+        "WBX-AC-26",
+        "WBX-AC-27",
+        "WBX-AC-28",
+        "WBX-AC-29",
+        "WBX-AC-30",
+        "WBX-AC-31",
+        "WBX-AC-32",
+        "WBX-AC-33",
+        "WBX-AC-34",
+        "WBX-AC-35",
+        "WBX-AC-36",
+        "WBX-AC-37",
+        "WBX-AC-38"
+      ],
+      "requires_tickets": [
+        "WBX-A8",
+        "WBX-D1",
+        "WBX-D2",
+        "WBX-D3"
+      ],
+      "required_evidence_level": "runtime",
+      "check": "수락 기준별 증거 연결, 디렉터리별 회귀, USAGE 정적 확인(사용자 browser·IME·두 기기는 pending 명시, WBX-O06)"
     }
   ],
   "acceptance_trace": [
@@ -1821,9 +2194,132 @@
       ],
       "seam": "기존 backend 격리 seam(test_omp_isolation*, fake OMP)+S3+S5",
       "final_integration": "WBX-I1"
+    },
+    {
+      "acceptance_id": "WBX-AC-24",
+      "tickets": [
+        "WBX-A8"
+      ],
+      "seam": "S5(+S8)+S7 사용자 IME (확정 seam, WBX-D20·D21)",
+      "final_integration": "WBX-D3"
+    },
+    {
+      "acceptance_id": "WBX-AC-25",
+      "tickets": [
+        "WBX-D2"
+      ],
+      "seam": "S8+S1·S6+S5+S7 (확정 seam)",
+      "final_integration": "WBX-D3"
+    },
+    {
+      "acceptance_id": "WBX-AC-26",
+      "tickets": [
+        "WBX-D2"
+      ],
+      "seam": "S8+S1·S6+S7 (확정 seam)",
+      "final_integration": "WBX-D3"
+    },
+    {
+      "acceptance_id": "WBX-AC-27",
+      "tickets": [
+        "WBX-D1"
+      ],
+      "seam": "S3+기존 Board seam+S1",
+      "final_integration": "WBX-D3"
+    },
+    {
+      "acceptance_id": "WBX-AC-28",
+      "tickets": [
+        "WBX-D1"
+      ],
+      "seam": "S3(/proc environ, 내부 listener, REST 제출)+기존 Board seam",
+      "final_integration": "WBX-D3"
+    },
+    {
+      "acceptance_id": "WBX-AC-29",
+      "tickets": [
+        "WBX-D1"
+      ],
+      "seam": "S3+기존 Board seam",
+      "final_integration": "WBX-D3"
+    },
+    {
+      "acceptance_id": "WBX-AC-30",
+      "tickets": [
+        "WBX-D1",
+        "WBX-D2"
+      ],
+      "seam": "기존 Board seam+S1+S8",
+      "final_integration": "WBX-D3"
+    },
+    {
+      "acceptance_id": "WBX-AC-31",
+      "tickets": [
+        "WBX-D1"
+      ],
+      "seam": "기존 Board seam+S1+S3(Hub 재시작)",
+      "final_integration": "WBX-D3"
+    },
+    {
+      "acceptance_id": "WBX-AC-32",
+      "tickets": [
+        "WBX-D1",
+        "WBX-D2"
+      ],
+      "seam": "T5(test_board_ws)+S8+S7 두 기기",
+      "final_integration": "WBX-D3"
+    },
+    {
+      "acceptance_id": "WBX-AC-33",
+      "tickets": [
+        "WBX-D1",
+        "WBX-D2"
+      ],
+      "seam": "T5+S8+S7",
+      "final_integration": "WBX-D3"
+    },
+    {
+      "acceptance_id": "WBX-AC-34",
+      "tickets": [
+        "WBX-D1"
+      ],
+      "seam": "T5+S1(audit sqlite3)",
+      "final_integration": "WBX-D3"
+    },
+    {
+      "acceptance_id": "WBX-AC-35",
+      "tickets": [
+        "WBX-D2"
+      ],
+      "seam": "S8+S1·S6+S7",
+      "final_integration": "WBX-D3"
+    },
+    {
+      "acceptance_id": "WBX-AC-36",
+      "tickets": [
+        "WBX-D2"
+      ],
+      "seam": "S8+S7",
+      "final_integration": "WBX-D3"
+    },
+    {
+      "acceptance_id": "WBX-AC-37",
+      "tickets": [
+        "WBX-D1"
+      ],
+      "seam": "기존 Board seam+S3",
+      "final_integration": "WBX-D3"
+    },
+    {
+      "acceptance_id": "WBX-AC-38",
+      "tickets": [
+        "WBX-D1"
+      ],
+      "seam": "S1(route audit·Bearer·CSRF)+S6+S3(정지 확인 목록)",
+      "final_integration": "WBX-D3"
     }
   ],
-  "requirements_identity": "f42dabff34652f1cb6174e57740c7ceeff9c9ef4909e884e16878228d985ec31",
+  "requirements_identity": "49838d9b922431e9ba5138d07789c222885368625469061196b409d27b347522",
   "revision_history": [
     {
       "revision": "p1",
@@ -1840,6 +2336,10 @@
     {
       "revision": "p4",
       "note": "2026-10-28 BRIEF r0.4(WBX-D36~D40) 반영; WBX-A7 추가(← A6), A5 ← A7, I1 ← A7, AC-03 trace에 A7; requirements-p4(수락 기준·gate 불변, authority 갱신)"
+    },
+    {
+      "revision": "p5",
+      "note": "2026-10-29 BRIEF r0.5(WBX-D41~D58, AC-24~38) 반영; WBX-A8(한글 IME), 트랙 D WBX-D1(← A8)·D2(← A8·D1)·D3(← D1·D2) 추가, gate WBX-G-A8·D1·D2·D3, requirements-p5"
     }
   ]
 }

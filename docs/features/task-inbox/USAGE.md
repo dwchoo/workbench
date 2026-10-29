@@ -345,6 +345,8 @@ wb hub review-mode /path/to/project manual     # auto | manual
 
 ## 7. Board agent 세트
 
+> 2026-10-29: 이 절은 트랙 D(Board workspace: 여러 agent·shell, 격자 widget, 공유 연결) 구현 뒤 다시 쓴다. 결정은 [web-board-ux BRIEF](../web-board-ux/BRIEF.md) WBX-D42~D58. 아래는 현재 동작이다.
+
 `/board`의 **Board agent**(OMP) tab과 **shell** tab이다. Hub가 소유하는 소유자 전용 화면이며 어느 프로젝트의 manager·worker와도 별개다. Hub가 켜진 동안 유지되고 브라우저를 닫아도 계속 돈다. 첫 `/board` 연결 때 시작한다(Hub가 시작될 때 자동으로 띄우지 않는다).
 
 ### 7.1 위험 (읽고 쓰기)
@@ -357,6 +359,8 @@ wb hub review-mode /path/to/project manual     # auto | manual
 - 완화: 비밀번호를 길게, `bind`를 필요한 주소 하나로, 가능하면 TLS와 VPN을 쓴다. Board agent는 MCP가 없고 skill은 `wb-inbox` 하나뿐이며 프로젝트·사용자 `~/.omp` 설정은 막히지만 이것은 **설정 노출을 줄일 뿐 OS 권한 경계가 아니다.**
 
 ### 7.2 연결, 인수, 재연결
+
+> 2026-10-29: 한 연결 lease와 인수는 트랙 D에서 공유 연결로 바뀐다(WBX-D54).
 
 - 세트는 한 번에 **하나의 연결**만 쓴다(lease). 다른 브라우저·기기에서 `/board`를 열면 **새로 연결한 곳이 즉시 인수**하고, 이전 연결에는 인수당했다는 안내가 나온 뒤 닫힌다.
 - 인수당한 쪽 화면에는 **"다른 곳에서 연결됨 — 다시 가져오기"**가 보인다. 버튼을 누르면 다시 가져온다. 두 tab 사이에 자동으로 뺏고 뺏기지 않도록 인수당한 뒤에는 자동 재연결을 하지 않는다.
@@ -372,6 +376,8 @@ wb hub review-mode /path/to/project manual     # auto | manual
 - 연결은 로그인한 세션만 열 수 있고 API key로는 열 수 없다.
 
 ### 7.3 재시작
+
+> 2026-10-29: 트랙 D에서 재시작은 왼쪽 panel·widget의 동작이 된다(확인 page 없음, WBX-D49).
 
 channel(agent 또는 shell) 하나만 재시작할 수 있다(`/board`의 재시작 버튼, 확인 page). 그 channel의 session을 SIGHUP → SIGTERM → 5초 → SIGKILL로 끝내고 새로 띄운다. Board agent는 이전 세션을 `--continue`로 잇는다. channel이 스스로 끝나면 `exited`(종료 코드)로 보이고 다시 시작 버튼이 나온다. Board agent OMP를 띄우지 못하거나(omp 없음, 격리 확인 실패 `isolation_failed`) 해도 shell은 따로 동작한다.
 
@@ -428,6 +434,8 @@ Web Board 이전에 `wb hub enable`을 한 사용자는 **`wb hub enable`을 한
 - 같은 거절은 1분에 한 줄, 전체는 1분에 20줄까지만 남는다(넘친 수는 다음 줄에 `(+N more refusals not logged: rate limit)`). Host 값은 출력 가능한 ASCII만, 100자까지 남는다.
 
 ### 10.3 WebSocket close 코드
+
+> 2026-10-29: 트랙 D에서 4001이 없어지고 4404·4429가 생긴다(web-board-ux SPEC s4 "WebSocket v2").
 
 | 코드 | 의미 |
 |---|---|

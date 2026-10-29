@@ -1,8 +1,8 @@
 # Web Board 사용성·외부 요청 API — 구현 명세
 
-Revision: s3; source brief: [BRIEF.md](BRIEF.md) r0.3 (사용자 승인 2026-10-27, r0.3은 2026-10-28 결정 추가). state: 초안(bundle 승인은 digest와 함께 따로 기록). 작성일: 2026-10-27. s2(2026-10-27): s1의 확인 항목 U1~U10에 사용자가 모두 답했다(BRIEF WBX-D14 선택, WBX-D20~D28). 바뀐 곳: seam 확정, JS node seam(S8), A5 범위, 내부 listener key 제한, `submit --new`, 트랙 C 선택. s3(2026-10-28): 사용자 실제 Chrome 확인의 피드백과 결정(BRIEF WBX-D29~D35, AC-21~23). 바뀐 곳: dashboard 주소 `/dashboard`와 `/` 303, `back_forward` navigation의 세션 확인과 pagehide 정리, skill README 설치 계약, 공유 OMP 로그인 완화, B1 검증 관찰 메모. 새 seam은 없다. 2026-10-28 주석(revision 유지): BRIEF r0.4의 WBX-D36~D40이 이 문서의 몇 값을 정하거나 바꾼다. 해당 자리에 `[BRIEF r0.4 WBX-Dnn: …]` 주석을 달았다(WBX-A7, B12 최종 값, result 400, foreground env, ROLE.md 경로).
+Revision: s4; source brief: [BRIEF.md](BRIEF.md) r0.5 (사용자 승인 2026-10-27, r0.3~r0.4는 2026-10-28 결정, r0.5는 2026-10-29 결정 추가). state: 초안(bundle 승인은 digest와 함께 따로 기록). 작성일: 2026-10-27. s2(2026-10-27): s1의 확인 항목 U1~U10에 사용자가 모두 답했다(BRIEF WBX-D14 선택, WBX-D20~D28). 바뀐 곳: seam 확정, JS node seam(S8), A5 범위, 내부 listener key 제한, `submit --new`, 트랙 C 선택. s3(2026-10-28): 사용자 실제 Chrome 확인의 피드백과 결정(BRIEF WBX-D29~D35, AC-21~23). 바뀐 곳: dashboard 주소 `/dashboard`와 `/` 303, `back_forward` navigation의 세션 확인과 pagehide 정리, skill README 설치 계약, 공유 OMP 로그인 완화, B1 검증 관찰 메모. 새 seam은 없다. 2026-10-28 주석(revision 유지): BRIEF r0.4의 WBX-D36~D40이 이 문서의 몇 값을 정하거나 바꾼다. 해당 자리에 `[BRIEF r0.4 WBX-Dnn: …]` 주석을 달았다(WBX-A7, B12 최종 값, result 400, foreground env, ROLE.md 경로). s4(2026-10-29): BRIEF r0.5의 WBX-D41(한글 IME, WBX-A8)과 트랙 D "Board workspace"(WBX-D42~D58, AC-24~38). 바뀐 곳: 새 절 "Board terminal 한글 IME"와 "트랙 D: Board workspace", 수락 기준 대응, 테스트 결정의 트랙 D 명령, ticket 그래프. s3까지의 절은 바꾸지 않았다. 새 seam은 없다.
 
-BRIEF의 결정 WBX-D01~D35와 수락 기준 WBX-AC-01~23(AC-03 보충 포함)은 바꾸지 않는다. "기술 보완"은 코드 조사(2026-10-27, HEAD `4898f39`, 작업 트리에 미commit 문서 변경 있음)로 정한 구체 형태다. 약속된 동작·호환성을 바꿀 수 있는 항목은 "열린 결정·사용자 확인 항목"에 모았고 정하지 않았다. Test seam S1~S8은 사용자가 확정했다(WBX-D20·D21). 트랙 C는 mockup 방향 A로 정해졌다(WBX-D14, 아래 "트랙 C 선택").
+BRIEF의 결정 WBX-D01~D58과 수락 기준 WBX-AC-01~38(AC-03 보충 포함)은 바꾸지 않는다. "기술 보완"은 코드 조사(2026-10-27, HEAD `4898f39`, 작업 트리에 미commit 문서 변경 있음)로 정한 구체 형태다. 약속된 동작·호환성을 바꿀 수 있는 항목은 "열린 결정·사용자 확인 항목"에 모았고 정하지 않았다. Test seam S1~S8은 사용자가 확정했다(WBX-D20·D21). 트랙 C는 mockup 방향 A로 정해졌다(WBX-D14, 아래 "트랙 C 선택").
 
 ## 문제와 해결 방향
 
@@ -206,6 +206,182 @@ CLI(`python3 wb_inbox.py <command> [options]`, argparse, stdlib만):
 2. Migrate: skill(B2·B3), probe(B4), Board 전환(B5), 테스트 이전(B6·B7).
 3. Contract(WBX-B8): `mcp.py`, `/mcp` route, `McpServer`, `Hub.mcp`/`internal_mcp` 이름, `support/mcp_client.py`·`mcp_hub.py`, `probes/omp_mcp_probe.py`, `test_hub_mcp*.py`를 지운다. Route audit에서 `('*','/mcp')` pin과 CSRF 예외를 지운다. `hub.toml` 템플릿·docstring의 `/mcp` 문구를 REST로 바꾼다. `test_web_assets`의 "mcp SDK import 없음" 검사는 유지한다. Backend launcher의 manager·worker MCP 누출 검사는 유지한다.
 
+### Board terminal 한글 IME(WBX-D41, AC-24, s4)
+
+- 증상(사용자 관찰 2026-10-29, 실제 Chrome): Board terminal에서 한글 IME로 "안녕하세요"를 치면 "녕녕녕녕녕안."이 들어간다.
+- 고치는 곳은 WBX-A8이 정한다(진행 중). 2026-10-29 작업 트리에 commit 전 후보가 있다: `base.css`의 `textarea { max-width: 100% }`가 xterm의 helper textarea(IME 입력을 받는 숨은 textarea, 폭 0인 `.xterm-helpers` 안)를 폭 0으로 묶어 Chrome이 조합 중인 음절을 caret 0에서 확정한다는 진단과, `board.css`의 `.xterm .xterm-helper-textarea { max-width: none; }` 규칙 및 그 정적 검사(S5). 후보는 A8의 판정 전까지 계약이 아니다.
+- 계약: AC-24. 영문 입력·붙여넣기·`onBinary` 경로와 `/board` CSP는 바뀌지 않는다. 트랙 D(WBX-D1·D2)는 A8 통합 뒤에 시작한다(같은 static 파일).
+
+### 트랙 D: Board workspace(WBX-D42~D58, AC-25~38, s4)
+
+현행(task-inbox SPEC "Board agent 세트"·"WebSocket terminal 프로토콜", 코드 `hub/board/set.py`·`ws.py`·`launch.py`, `web/app.py`의 `board_routes`, `pages/board.py`, `static/board.js`·`board-state.js`): `BoardSet`이 고정 channel 두 개(`agent`, `shell`)의 `Slot`을 갖고, `BoardTerminal`이 set 전체에 lease 하나(epoch, run)를 두며, `/ws/board` 하나가 binary header `byte0 = channel, bytes1..4 = epoch`로 두 channel을 나른다. 이 절은 그것을 terminal registry, terminal마다의 공유 연결, agent별 신원으로 바꾼다. 아래에서 "기술 보완"이라고 쓴 값은 이 SPEC이 정한 것이고, 나머지는 BRIEF 결정이다.
+
+#### 데이터 모델: terminal registry
+
+Terminal view(JSON, session API·WebSocket·hub_v1 status가 같은 모양을 쓴다):
+
+| field | 값 |
+|---|---|
+| `id` | Hub가 정하는 불투명 문자열. `a-` 또는 `s-` + 소문자 hex 12자(`secrets.token_hex(6)`). Agent id는 registry 파일 안에서, shell id는 Hub run 안에서 다시 쓰지 않는다. URL 경로에 그대로 쓴다 |
+| `kind` | `agent` / `shell` |
+| `name` | WBX-D47·D48의 이름 |
+| `state` | agent: `not_started`, `starting`, `running`, `stopped`(소유자가 중지), `exited`(스스로 끝남), `failed`, `isolation_failed`. shell: `running`, `exited`, `failed`. 기존 값의 뜻은 그대로이고 `stopped`만 새 값이다 |
+| `pid`, `started_at`, `detail`, `message?`, `exit_status` | 기존 `Slot.view()`와 같다 |
+| `clients` | 이 terminal에 지금 붙어 있는 WebSocket 수(0~8) |
+| `busy` | 시작·중지·재시작·닫기·삭제가 진행 중이면 true(그동안 같은 terminal의 다른 동작은 409 `terminal_busy`) |
+
+순서: agent 먼저 만든 순서, 그다음 shell 만든 순서.
+
+저장(기술 보완):
+- Agent와 한도는 `<hub state>/board-agents/registry.json`(디렉터리 0700, 파일 0600, 소유자 uid, symlink 아님, 임시 파일 → fsync → rename으로 원자적 교체)에 둔다. 내용 `{"schema_version":1,"options":{"agent_limit":4,"shell_limit":10},"agents":[{"id","name","home","created_at"}]}`. `home`은 `<hub state>` 기준 상대 경로로 `board-agent`(이행된 첫 agent) 또는 `board-agents/<id>`만 허용한다.
+- Shell은 저장하지 않는다(메모리만, Hub run과 함께 끝남, WBX-D45).
+- 상태는 저장하지 않는다. Hub가 다시 시작하면 모든 agent는 `not_started`이고, WBX-D56 (1)에 따라 보이는 widget이 있는 첫 열기에서 시작한다(이전 run에서 중지했던 agent도 같다).
+- `hub.sqlite3`에 table을 더하지 않는 이유: `auth.HubDb.open`은 `SCHEMA_VERSION = 1`이 아닌 DB를 거절하므로, version을 올리면 이전 판으로 되돌렸을 때 Hub DB 전체(세션·API key·감사)를 열 수 없다. 별도 파일은 이전 판이 무시한다(BRIEF "호환, 트랙 D").
+- 쓰기 순서: 새 registry를 먼저 쓰고 성공한 뒤에 메모리 상태를 바꾼다. 쓰기 실패(디스크 가득 참·EIO 등)면 동작을 `registry_write_failed`로 거절하고 아무 process도 시작·종료하지 않는다.
+- 읽기 실패(JSON 오류, schema 다름, mode·소유자·symlink 이상, 허용 밖 값, 이름 규칙 위반, id 중복): Board 전체를 `registry_invalid`로 두고(파일 경로와 고치는 방법을 `message`로) 어떤 terminal도 시작하지 않으며 파일을 덮어쓰지 않는다. Hub의 나머지(목록·요청·REST)는 그대로 돈다.
+- 파일이 없으면 Hub가 Board를 만들 때(web enabled) `agent-1` 하나(`home: "board-agent"`, 한도 기본값)로 새로 쓴다. 새 설치와 업데이트가 같은 규칙이다(이행, 아래).
+
+이름(WBX-D47·D48):
+- 검사: 문자열 → 앞뒤 공백(`str.strip()`) 제거 → 길이 1~40(code point) → Unicode category `Cc`·`Cf`·`Zl`·`Zp` 문자 없음 → 같은 kind의 다른 terminal과 `casefold()` 비교로 다름. 위반은 `name_invalid` / `name_taken`.
+- 기본 이름: 같은 kind에서 `casefold()`한 이름이 `<kind>-N`(N은 앞자리 0 없는 10진수)인 것을 모아 쓰이지 않은 가장 작은 N ≥ 1. 사용자가 다른 이름으로 바꾼 번호는 다시 쓸 수 있다.
+- 화면은 이름을 `textContent`로만 쓰고 서버 HTML은 escape한다(AC-38).
+
+#### Agent별 home·메모리·system key(WBX-D44·D58)
+
+- Home: agent마다 현행 `board-agent/`와 같은 구성(`omp-root/`, `skills/wb-inbox/`, `empty/`, `omp-logs/`와 그 안의 `board-events.log`). `prepare_board_home`·`install_board_skill`·`archive_omp_logs`·`record_board_event`는 `<hub state>/board-agent` 고정 대신 그 agent의 home을 받는다. `agent.db`는 home마다 `omp_home` 규칙으로 사용자 store에 symlink한다(복사 없음, C-D64). `--continue`는 그 home에 이전 세션이 있을 때만이다.
+- 공유: `omp_bridge/board/ROLE.md` + `role_prompt_file`, `[board_agent] model`·`shell`, isolation overlay, 시작마다의 격리 확인(`allowed_skills=("wb-inbox",)`, WBX-D37 종료 단계), 내부 REST listener 하나, `WB_HUB_URL`.
+- System key(기술 보완): agent마다 이름 `board-agent.<agent id>`, `system=1`, editor, 전체 scope, 만료 없음. `rotate_system_key(agent_id)`는 그 이름의 system 행만 지우고 새로 넣는다. 사람의 key 발급은 `board-agent`와 `board-agent.`로 시작하는 이름을 `name_reserved`로 거절한다(이미 있는 사람 key는 그대로 동작한다. 새 system key 이름이 그와 같으면 id를 다시 뽑는다). Agent process가 끝나면(중지·스스로 끝남·격리 실패·삭제·Hub 정지) 그 agent의 system 행을 지운다. Hub가 Board를 만들 때 남은 system 행(이전 판의 `board-agent` 포함)을 모두 지운다. 따라서 key는 그 agent process가 사는 동안에만 유효하다.
+- Env: 그 agent의 key를 `WB_API_KEY`로, 공유 내부 주소를 `WB_HUB_URL`로(현행 `board_environment` 그대로). Shell의 env에는 둘 다 없다(현행).
+- 내부 listener(`rest.create_internal_app`, `system_only`): key가 system key이고 그 이름의 agent가 지금 `starting`/`running`이며 그 key가 그 agent의 이번 시작 key일 때만 인증한다(WBX-D24 일반화). Principal은 `board_agent(key_id, agent_id)`.
+- 출처 이름(WBX-D48): Board agent principal이 요청을 내면 `origin_name`에 그 순간 registry의 이름을 저장한다(`requests.origin_name` column은 이미 있다, schema 변경 없음). `origin_json`의 `label`은 `origin_name`이 있으면 `Board agent · <이름>`, 없으면(이전 요청) `Board agent`. 댓글·편집의 작성자 표시(`author_name` column이 이미 있음)도 같은 규칙을 쓴다(기술 보완). Agent를 삭제해도 저장된 이름은 남는다.
+- 삭제: `busy`로 표시 → 살아 있으면 중지(SIGHUP → SIGTERM → 5 s → SIGKILL, 현행 `terminate`) → system 행 삭제 → home 삭제 → registry에서 제거 → 감사. Home 삭제는 디렉터리 fd 기준으로 내려가며 symlink를 따라가지 않는다(`agent.db` symlink는 link만 지우고 대상은 건드리지 않는다). Home의 실제 경로가 `<hub state>` 밖이거나 소유 uid가 다르면 지우지 않고 `delete_failed`. 일부만 지워졌으면 registry 항목은 남기고 `state=failed, detail=delete_failed`(경로·고치는 방법은 `message`), 다시 삭제할 수 있다.
+- 이행된 `agent-1`을 삭제하면 `board-agent/`가 지워지고, 그 뒤 만드는 agent는 `board-agents/<id>/`를 쓴다.
+
+#### Shell(WBX-D45·D56)
+
+- 시작은 현행 `prepare_shell`(`[board_agent] shell` / `$SHELL` / `/bin/sh`, cwd `$HOME`, `hub_environment()` + `TERM` + UTF-8 locale). Shell마다 자기 PTY session이다.
+- 닫기: `busy` → `terminate`(현행 순서) → 메모리 registry에서 제거 → 그 terminal의 WebSocket에 `{"t":"gone"}` 뒤 4404 → 감사. 스스로 끝난 shell은 `exited`로 남고 "재시작"·"닫기"를 보인다.
+- 첫 열기 규칙(WBX-D56 (3)): `POST /api/board/open`이 왔을 때 이번 Hub run에서 shell을 한 번도 만들지 않았고 지금 shell이 0개면 `shell-1`을 만든다(이름은 기본 이름 규칙).
+
+#### Session API: 화면과 panel 동작(기술 보완)
+
+모두 세션 route(`@api`)다. 세션이 없으면 401, 상태를 바꾸는 method는 `X-CSRF-Token` header가 세션 csrf와 같아야 한다(아니면 403, 기존 middleware). Bearer API key는 읽지 않는다(AC-08·38). 요청 body는 JSON 객체(≤ 4 KiB, 모르는 field는 400 `bad_input`), 응답은 `application/json`, `Cache-Control: no-store`. 응답 모양은 기존 세션 제어 API(`pages/control.py`)를 따른다: 성공 `{"ok":true,…}`, 실패 `{"ok":false,"reason":<code>,"detail":<고정 문장>}`.
+
+| method·path | body | 동작 | 성공 |
+|---|---|---|---|
+| `GET /api/board` | — | 읽기만 | 200 `{ok, board:{state:"ok"\|"registry_invalid", message?}, options:{agent_limit, shell_limit, agent_range:[1,8], shell_range:[1,32]}, terminals:[view…]}` |
+| `POST /api/board/open` | `{visible:[id…]}`(≤ 40) | WBX-D56 (1)·(3): 첫 shell 규칙, `visible` 중 `not_started` agent 시작 | 200 `{ok, terminals}` |
+| `POST /api/board/agents` | `{}` | 기본 이름으로 만들고 시작 | 201 `{ok, terminal}` |
+| `POST /api/board/shells` | `{}` | 기본 이름으로 만들고 시작 | 201 `{ok, terminal}` |
+| `POST /api/board/terminals/{id}/start` | `{}` | agent: `not_started`·`stopped`·`exited`·`failed`·`isolation_failed`에서 시작. shell: `exited`·`failed`에서 시작 | 200 `{ok, terminal}` |
+| `POST /api/board/terminals/{id}/stop` | `{confirm:true}` | agent 중지, 메모리 유지 → `stopped` | 200 |
+| `POST /api/board/terminals/{id}/restart` | `{confirm:true}` | 둘 다: 끝내고 다시 시작(agent는 `--continue`) | 200 |
+| `POST /api/board/terminals/{id}/close` | `{confirm:true}` | shell: 종료하고 제거 | 200 `{ok}` |
+| `POST /api/board/terminals/{id}/delete` | `{confirm:true}` | agent: 중지하고 메모리(home) 삭제, 제거 | 200 `{ok}` |
+| `POST /api/board/terminals/{id}/rename` | `{name}` | 이름 바꾸기 | 200 `{ok, terminal}` |
+| `POST /api/board/options` | `{agent_limit?, shell_limit?}` | 한도 저장 | 200 `{ok, options}` |
+
+오류 code와 status: 400 `bad_input`·`name_invalid`·`confirm_required`(`confirm`이 정확히 `true`가 아님)·`limit_out_of_range`·`wrong_kind`(shell에 stop/delete, agent에 close 등)·`bad_state`(그 상태에서 할 수 없는 동작); 404 `unknown_terminal`; 409 `name_taken`·`limit_reached`·`limit_below_count`·`terminal_busy`; 500 `registry_write_failed`·`delete_failed`; 503 `board_unavailable`(web 꺼짐·Hub 정지 중)·`registry_invalid`.
+
+- 확인(`confirm:true`)은 화면의 확인 dialog를 거쳤다는 표시이고, CSRF가 cross-site 호출을 막는다. 두 단계 token은 쓰지 않는다(현행 `/board/restart` 확인 page와 같은 수준).
+- 동시성(기술 보완): registry 쓰기는 하나의 lock으로 직렬화한다. 시작·중지·삭제는 terminal별로 직렬화하고(`busy`), 한 terminal의 느린 종료(최대 5 s + reap)가 다른 terminal의 동작을 그만큼 막지 않는다(현행 `BoardSet.lock` 하나를 terminal별 lock + registry lock으로 나눈다). Hub 정지는 모든 진행 중 동작보다 우선한다(정지가 시작되면 새 동작은 503).
+- 없어지는 route: `GET /board/restart`(확인 page), `POST /board/restart`, `GET /ws/board`. Route audit(`test_web_route_audit.py`)의 pin을 새 route로 바꾼다. `GET /board`는 page로 남는다.
+
+#### WebSocket v2: terminal마다 공유 연결(WBX-D54·D55)
+
+- `GET /ws/board/{terminal_id}`: 세션 cookie 필수, `Origin`은 기대 origin과 정확히 같아야 함(아니면 upgrade 전 403, 현행 `origin_exact`), 모르는 id는 upgrade 전 404, Board 없음·`registry_invalid`는 503. API key로는 열 수 없다.
+- Upgrade 전 한도(기술 보완): 열린 `/ws/board/*` socket 전체 128개(넘으면 503 `too_many_connections`), 한 로그인 세션의 hello 전 socket 8개(넘으면 429 `too_many_pending`). 현행 전체 8·세션당 2는 terminal 하나를 전제한 값이다. 화면은 hello 전 socket을 동시에 4개까지만 연다.
+- Hello(연결 뒤 5 s 안, 아니면 4400): `{"t":"hello","v":2,"csrf":…,"size":[rows,cols]}`. `size`는 1..500으로 맞춘다(현행 hello 규칙). `v`가 2가 아니면 4400. CSRF 불일치 4403.
+- Terminal당 연결 한도 8(WBX-D54): hello가 맞고 이미 8개가 붙어 있으면 `{"t":"refused","reason":"too_many_clients","limit":8}` 뒤 4429. 감사 `terminal_denied`(reason `too_many_clients`).
+- Attach(현행 `_attach`처럼 await 없이 한 단계): 연결을 terminal의 client 집합에 넣고 `{"t":"attached","v":2,"terminal":view,"size":[rows,cols],"clients":N,"heartbeat":10}`, 그 terminal ring의 replay(64 KiB 조각), 출력 구독. 그 사이에 출력 조각이 빠지거나 겹치지 않는다. `clients` 수가 바뀌면 그 terminal의 모든 연결에 `{"t":"clients","count":N}`.
+- 시작 규칙: attach는 process를 시작하지 않는다. 시작은 session API(`open`·`start`·만들기)만 한다(WBX-D56 (1)). 붙은 terminal이 멈춰 있으면 replay(남은 마지막 출력)와 `state`만 보인다.
+- Binary frame: header 없이 payload만이다(socket이 terminal 하나이므로 channel·epoch가 필요 없다). Client → server는 입력 bytes(≤ 64 KiB, 넘으면 버리고 `{"t":"error","reason":"too_large"}`), server → client는 출력 bytes.
+- 입력(WBX-D54): 붙은 모든 연결의 입력을 Hub event loop에 도착한 순서대로 그 terminal의 PTY 입력 queue에 넣는다(연결 사이 순서 보장은 도착 순서뿐, 섞임 수용). 붙여넣기 backpressure는 현행 `_paced`대로 그 socket만 읽기를 멈춘다(다른 연결의 입력은 계속, queue의 hard cap 4 MiB를 넘으면 `input_refused`). Process가 없으면 `input_refused`.
+- 크기(WBX-D54, AC-33):
+  - 서버는 연결마다 마지막으로 알린 크기(hello `size`, 이후 `resize`)를 기억한다.
+  - 크기 주인 = 가장 최근에 입력 frame 또는 `resize`를 보낸 연결. `resize`를 받으면 그 연결이 주인이 되고 PTY 크기를 그 값으로 바꾼다. 주인이 아닌 연결의 입력이 오면 그 연결이 주인이 되고, 그 연결의 기억한 크기가 PTY 크기와 다르면 입력을 쓰기 전에 PTY 크기를 먼저 바꾼다.
+  - Hello `size`는 그 연결이 그 terminal의 유일한 연결일 때만 PTY 크기를 정한다. 주인이 끊겨도 크기는 그대로다(다음 입력·resize까지).
+  - PTY 크기가 바뀔 때마다 그 terminal의 모든 연결에 `{"t":"size","rows":r,"cols":c}`. 주인 여부는 보내지 않는다(client가 자기 크기와 비교한다).
+  - Client 규칙(반복 방지): `resize`는 자기 layout 변화(창 크기, widget 크기·보이기, 좁은 화면 전환)에서만, 150 ms debounce 뒤에 보낸다. `size`·`attached`를 받은 것에 반응해 보내지 않는다. 주인이 아닌 client는 xterm을 서버 크기로 `resize(cols, rows)`하고 widget 본문 안에서 남으면 비우고(letterbox) 모자라면 scroll한다.
+- Control(client → server): `{"t":"resize","rows","cols"}`(1..500 정수, 아니면 `bad_resize`), `{"t":"ping","n"}` → `{"t":"pong","n"}`, `{"t":"release"}` → 1000(tab 닫기 `pagehide`, best-effort). Epoch field는 없다.
+- Server → client: 위의 `attached`·`clients`·`size`·`pong`·`error`·`refused`, `{"t":"state","terminal":view}`(그 terminal의 상태·이름·`busy` 변화), `{"t":"gone"}`(닫기·삭제, 뒤에 4404).
+- Heartbeat·세션·queue(현행 값, 연결별): client는 10 s마다 `ping`, 서버는 20 s + 1 s 무신호면 그 연결만 4002. 세션 무효(로그아웃·비밀번호 변경·`wb hub passwd`·24 h 만료)면 그 세션의 연결만 4401(약 5 s 재확인, 로그아웃·변경 때 즉시). 송신 queue 4 MiB 초과면 그 연결만 4003. Message 1 MiB 초과 1009. Hub 정지 1001.
+- 재연결(`board-state.js`): 1006·1001·4002·4003·4000(화면 자체 pong 감시)은 지수 backoff(1→2→4…≤15 s, 10 s 안정 뒤 처음부터)로 새 hello(resume 없음). 4400~4499는 자동 재연결하지 않는다: 4401 "연결 없음 — 다시 로그인", 4404 widget 제거, 4429 "연결 수 한도(8개)를 넘었습니다", 그 밖 "다시 연결".
+- Close code v2: 1000 해제, 1001 Hub 정지, 1009 너무 큼, 4002 heartbeat, 4003 queue, 4400 hello, 4401 세션, 4403 csrf, 4404 terminal 없어짐, 4429 terminal당 연결 한도. 4001과 `taken_over`·`taken_elsewhere`·"다시 가져오기"는 없어진다.
+- 보이는 widget만 연결한다. 숨긴 widget·좁은 화면에서 고르지 않은 terminal은 `release`로 연결을 닫는다.
+
+#### Hub 상태·정지·nav
+
+- hub_v1 `status.board_agent`: `{state:"ok"|"registry_invalid", message?, options:{agent_limit, shell_limit}, agents:[view…], shells:[view…]} | null`(web 꺼짐 등 Board가 없을 때 null). 이전 `agent`·`shell`·`lease` key는 없어진다(`wb` CLI와 Hub는 같은 설치본이다).
+- `wb hub status` 한 줄: `board_agent: agent 2/4 실행 중 · shell 3 · 연결 5`, 실패한 terminal마다 아래에 `    <이름>: <message 또는 detail>`, `registry_invalid`면 `board_agent: registry_invalid` 아래 message.
+- `Hub.active()`: 살아 있는 terminal이 하나라도 있으면 `[{"kind":"board_agent_set","terminals":[{"id","kind","name","pid","state"}…]}]`. 연결 수는 넣지 않는다(연결이 붙고 떨어질 때마다 정지 token이 `stop_token_mismatch`가 되지 않게). `wb hub stop`·`wb update` 확인 목록은 이름과 상태를 보인다. 확인하면 모든 terminal을 끝낸 뒤 Hub가 멈춘다(현행 2단계 정지, AC-38).
+- Nav 상태 점(`WebServices.board_state`): agent 중 `failed`·`isolation_failed`가 있거나 `registry_invalid`면 `error`, 아니면 살아 있는 agent가 있으면 `on`, 아니면 `off`. Dashboard의 Board card는 같은 값과 "agent N 실행 중 · shell M"을 보인다(`/api/dashboard`의 `board` 항목에 수를 더한다).
+
+#### 감사(WBX-D44·D45·D54, AC-34)
+
+| event | 남기는 때 | detail |
+|---|---|---|
+| `terminal_attach`, `terminal_release`, `terminal_timeout`, `terminal_closed` | 연결별 붙음·해제(release)·heartbeat 끊김·그 밖의 끝(EOF·1001·4003·4401·4404) | `terminal_id`, `kind`, `name`, `client`(Hub run 안의 연결 일련번호), `clients`(그 뒤 연결 수) |
+| `terminal_denied` | hello 오류·CSRF·terminal당 한도 | 위 + `reason` |
+| `board_terminal_open` | agent·shell 만들기(첫 shell 자동 생성 포함) | `terminal_id`, `kind`, `name`, `reason`(`create`/`first_open`) |
+| `board_terminal_close` | shell 닫기, agent 삭제 | `terminal_id`, `kind`, `name`, `memory_removed`(agent) |
+| `board_start`, `board_stop`, `board_restart` | 현행과 같은 때 | 현행 `channel` 대신 `terminal_id`, `kind`, `name` + `pid`, `reason` |
+| `board_rename` | 이름 바꾸기 | `terminal_id`, `kind`, `old`, `new` |
+| `board_options` | 한도 변경 | `before`, `after` |
+
+Actor는 `owner`(Hub 동작은 `hub`), client 주소를 남긴다. `terminal_takeover`는 더 이상 남기지 않는다(이전 행은 그대로). Terminal 입출력·key 값은 남기지 않는다.
+
+#### 이행과 되돌리기(WBX-D44·D48, AC-37)
+
+- 새 판의 첫 Hub 시작: `board-agents/registry.json`이 없으면 `agent-1`(`home: "board-agent"`)로 만든다. 기존 `<hub state>/board-agent/`의 세션·메모리·`omp-logs/`는 그대로 그 agent의 것이고 첫 시작이 `--continue`로 잇는다. 남은 `board-agent` system 행은 지운다. 기존 Board agent 요청(`origin_name` 없음)은 "Board agent"로 보인다.
+- Shell은 Hub 재시작으로 이미 끝났으므로 옮길 것이 없다. 그 run의 첫 `/board` 열기가 `shell-1`을 만든다.
+- 이전 판의 `/board` tab이 열려 있었다면 `/ws/board`가 404라 연결되지 않는다. 새로 고치면 새 화면이다.
+- 이전 판으로 되돌림: 이전 판은 `board-agents/`를 무시하고 `board-agent/`를 쓰므로 `agent-1`의 세션·메모리가 그대로다. 둘째 이후 agent는 다시 새 판이 될 때까지 보이지 않는다(지워지지 않음). 이전 판은 시작 때 system 행을 모두 바꾼다. 이름이 저장된 요청은 이전 판에서 "Board agent"로 보인다.
+- 배치 localStorage는 새 key라 옮길 것이 없다.
+
+#### 화면: workspace와 panel(WBX-D42~D53, D57)
+
+- 구성: `/board` = `<aside class="board-panel">`(접힘) + `<section class="board-workspace">`(격자). 기존 tab·restart 확인 page는 없어진다. 서버 HTML은 panel·workspace의 빈 틀만 주고(inline script 없음), 화면은 첫 `GET /api/board`로 목록을 받는다. JS가 없으면 "이 화면은 JavaScript가 필요합니다"를 보인다.
+- 격자(기술 보완, D2가 조정할 수 있고 조정값을 출력에 적는다): 12열, 행 높이 2.5rem, 간격 0.5rem. Widget 최소 3열 × 6행. 위치 `{x, y, w, h}`는 칸 단위 정수. 끌기는 제목 막대의 pointer event(`setPointerCapture`), 크기는 오른쪽 아래 모서리 손잡이. 끄는 동안 놓일 칸을 미리 보이고, 겹치면 미리 보기를 "놓을 수 없음"으로 보인다. 놓을 때 겹치면 마지막 유효 자리로 돌아간다(WBX-D57). 위치는 CSSOM(`element.style.setProperty`)으로 쓴다(CSP 변경 없음).
+- Widget: 제목 막대(상태 점, 이름, "다른 화면 N개 연결됨"(N ≥ 1일 때, N = `clients − 1`), 숨기기, 닫기 ×), 본문 xterm. 멈춘 agent는 본문 위에 "중지됨 — 시작" 버튼, `exited`·`failed`는 상태 문구와 "재시작".
+- Focus(WBX-D53): widget에서 `pointerdown` → 그 widget에 focus class(강조 테두리, token `--focus`)와 `term.focus()`. 다른 widget의 class는 지운다. 단축키 없음.
+- Panel(WBX-D49): agent 행(상태 점, 이름, 보이기/숨기기, 시작/중지, 이름 바꾸기(제자리 입력, Enter 저장·Esc 취소), 삭제), shell 행(이름, 이름 바꾸기, 보이기/숨기기, 닫기), "새 Board agent"·"새 shell"(한도에 닿으면 비활성과 "한도 N개" 문구), 배치 초기화(이 브라우저만), 한도 설정(숫자 입력 2개 + 저장, 서버 오류 문구 표시). 확인이 필요한 동작은 `<dialog>`로 묻는다: 중지 "<이름>을 중지합니다. 메모리는 남습니다", 삭제 "<이름>의 세션과 메모리를 지웁니다. 되돌릴 수 없습니다", 닫기(shell) "<이름>을 닫습니다. 실행 중인 명령이 끝납니다", 재시작.
+- 목록 갱신: `GET /api/board`를 5 s마다와 자기 동작 뒤에 부른다. `pagehide`에서 fetch abort·timer 정지, `pageshow`(persisted)에서 다시(WBX-D34 규칙). 401이면 `/login`.
+- 브라우저 저장(WBX-D50, 모두 try/catch, 실패하면 기본값으로 동작): `wb.board.layout` = `{"v":1,"widgets":{<id>:{"x","y","w","h","visible"}}}`, `wb.board.panel` = `"open"`·`"closed"`, `wb.board.narrow` = 고른 terminal id. 읽은 값은 검사하고(모르는 `v`, 범위 밖 값, 겹침) 맞지 않으면 그 항목을 버리고 자동 배치한다.
+- 맞추기(WBX-D57): 저장된 배치가 없으면 모든 terminal을 agent 먼저 자동 배치(위에서부터 빈 자리를 찾는 순서)하고 보인다. 있으면 없는 id는 버리고, 새 id는 숨김으로 둔다. 이 브라우저에서 만든 terminal은 자동 배치해 보인다.
+- 좁은 화면(WBX-D51): `matchMedia("(max-width: 719.98px)")`. 격자를 쓰지 않고 panel이 terminal 하나를 고르며 그 terminal만 화면 전체(header 아래)로 보이고 연결한다. 고른 것이 없으면 첫 agent. 넓어지면 저장된 배치로 돌아가고 보이는 widget을 다시 연결한다.
+- JS 배치(기술 보완): 순수 logic은 `static/board-layout.js`(칸 맞춤, 겹침, 자동 배치, 이동·크기 검사, 저장 값 parse/검사/serialize, 목록과 맞추기, 좁은 화면 선택)와 `static/board-state.js`(protocol v2 상태 기계, terminal 하나당 하나)에 두고 S8로 시험한다. `board.js`는 DOM·socket·pointer glue만 둔다(현행 원칙).
+
+#### 보안(AC-38)
+
+- 모든 `/api/board*`·`/ws/board/*`는 세션 전용이고 API key로 닿지 않는다. 내부 listener와 `/api/v1/` REST에는 Board 동작이 없다(WBX-AC-08 그대로).
+- Agent별 key·출처 이름은 구분일 뿐 보안 경계가 아니다(WBX-D58). Agent는 서로의 key·home을 같은 OS 사용자 권한으로 읽을 수 있다. 내부 listener가 멈춘 agent의 key를 거절하는 것은 오래 남은 key를 줄이기 위함이다.
+- 삭제는 symlink를 따라가지 않고 `<hub state>` 밖을 지우지 않는다. 사용자 `agent.db`는 어떤 경로로도 지우거나 복사하지 않는다.
+- 공유 연결: 같은 소유자의 모든 유효 세션이 붙을 수 있다. 로그아웃은 그 세션의 연결만 닫는다(현행). 세션이 하나라도 새면 모든 terminal이 노출되는 것은 현행과 같다(ADR-0003).
+- 이름은 소유자 입력이며 감사 detail에 그대로 남는다(≤ 40자).
+
+#### 실패와 경계 동작
+
+- Agent 하나의 시작 실패(`omp_unavailable`, `home_unavailable`, `hub_db_unavailable`, `internal_listener_failed`, `isolation_failed`)는 그 agent만 `failed`/`isolation_failed` + `message`다. 다른 terminal은 영향이 없다.
+- 여러 agent가 함께 시작하면(Hub 재시작 뒤 첫 열기에 보이는 agent가 여럿) 격리 확인 OMP가 그 수만큼 돈다. 시작은 terminal별로 진행되고 서로를 기다리지 않는다.
+- 메모리: terminal당 출력 ring 1 MiB, 최대 8 + 32 terminal. 연결당 송신 queue ≤ 4 MiB.
+- Hub `SIGKILL`: 현행처럼 PTY master가 닫혀 SIGHUP. 남는 process는 보장하지 않는다. Registry 파일은 원자적 교체라 반쯤 쓴 상태가 없다.
+- `[web] enabled = false`·`wb hub reload`: 현행 규칙 그대로(꺼도 실행 중 terminal은 `wb hub stop`까지 돈다).
+
+#### 시험(기존 seam 재사용, 새 seam 없음)
+
+| 대상 | seam | 독립 기대값 |
+|---|---|---|
+| Session API route·CSRF·Bearer 401·route audit·page 틀(panel, workspace, 이름 escape) | S1 + S6 | 이 절 표 |
+| Registry 파일(mode·원자성·`registry_invalid`·이행), 이름·한도 규칙, 기본 이름 | 기존 Board seam(`tests/hub/test_board_set.py`·`test_board_launch.py`의 temp state dir) | 이 절 |
+| 여러 agent process·home·env(agent마다 자기 key, shell 없음), 내부 listener의 key 판정, 출처 이름(REST 제출), 중지·삭제와 symlink 대상 불변, Hub 재시작 뒤 shell 없음·agent 남음, 정지 확인 목록 | S3(`wb _hub --foreground` + fake OMP, `/proc/<pid>/environ`) | 이 절, `/proc` 값, 파일 inode·내용 |
+| 공유 연결(두 연결 같은 출력, 도착 순서 입력, 9번째 4429, 크기 주인, `clients`·`size` message, 연결별 heartbeat·4401·4003, 4404) | 기존 seam T5(task-inbox SPEC, `tests/hub/test_board_ws.py`: in-process `create_app` + 실제 `BoardSet`과 recorder PTY, `support/ws_client.py`의 `Tab`을 여러 개) | 이 절 WebSocket v2 |
+| `board-state.js` v2, `board-layout.js`, panel 상태 | S8 | 이 절 |
+| 외부 URL·inline script·새 library 없음, CSP 그대로 | S5 | BRIEF AC-25 |
+| 끌기 감각, 두 기기, 좁은 화면, IME | S7(사용자) | 사용자 관찰 |
+
+새 seam은 없다. 위 "기존 Board seam"과 T5는 task-inbox SPEC 테스트 결정에서 이미 쓰는 것이다. Worker가 이 seam으로 잡을 수 없는 behavior를 찾으면 새 seam을 만들지 말고 orchestrator에 반환한다(사용자 확인 대상).
+
 ### 문서 갱신 배정
 
 | 문서·절 | ticket |
@@ -220,6 +396,7 @@ CLI(`python3 wb_inbox.py <command> [options]`, argparse, stdlib만):
 | task-inbox USAGE 머리의 "외부 `/mcp`", §1.2 `allow_from` 줄, §4(→ skill 설치), §7.4, §10.2 | WBX-B9 |
 | workbench-hub SPEC·USAGE의 MCP 문구, ADR-0004:18, ADR-0005:12(개정 주석), CONTEXT.md의 "(WBX 트랙 B 완료 전에는 MCP가 현행)" 표시 제거, `README.md`의 MCP 언급 | WBX-B9 |
 | task-inbox `PROBE-OMP-MCP.md`, TI ticket | 고치지 않는다(이력) |
+| (s4) task-inbox USAGE §7(머리, 7.2 연결, 7.3 재시작, 7.4 home), §8 감사, §10.3 close code를 트랙 D 현재 동작으로 다시 씀; task-inbox BRIEF·SPEC·ADR-0003·CONTEXT.md의 2026-10-29 개정 주석은 r0.5 작성 때 달았고 D3는 확인만; CONTEXT.md의 "(트랙 D 완료 전에는 현행)" 표시 제거 | WBX-D3 |
 
 ## 상태 전이, 실패와 경계 동작
 
@@ -291,6 +468,14 @@ BRIEF의 WBX-AC-01~23을 그대로 쓴다. 대응(PLAN.json `acceptance_trace`�
 | 21 | A6 | S1 + S6 | fixture | I1 + 사용자 browser `pending`(A5) |
 | 22 | B11 | S5 + S1 + S4(제공 README의 설치 block을 temp HOME에서 실행) | runtime(loopback) | I1 + 실제 agent(Claude Code·Codex·OMP)의 설치 `pending`(대상 host) |
 | 23 | B12 | 기존 backend 격리 seam(`tests/backend/test_omp_isolation*.py`, fake OMP) + S3 + S5 | runtime, static | I1 + B4 재실행의 log |
+| 24 (s4) | A8 | S5(정적 CSS) + S8(JS를 바꾸면) + S7 | static, runtime(사용자) | D3 + 사용자 IME `pending` |
+| 25 (s4) | D2 | S8(`board-layout.js`) + S1·S6 + S5 + S7 | fixture, static | D3 + 사용자 browser `pending` |
+| 26, 35, 36 (s4) | D2 | S8 + S1·S6 + S7 | fixture | D3 + 사용자 browser `pending` |
+| 27, 28, 29, 31, 37 (s4) | D1 | S3 + 기존 Board seam(`test_board_set`·`test_board_launch`) + S1 | runtime | D3 |
+| 30 (s4) | D1(규칙·저장), D2(panel·제목) | 기존 Board seam + S1 + S8 | runtime, fixture | D3 |
+| 32, 33 (s4) | D1(server·`board-state.js`), D2(표시) | T5(`test_board_ws.py`) + S8 | runtime(loopback), fixture | D3 + 두 기기 사용자 확인 `pending` |
+| 34 (s4) | D1 | T5 + S1(`audit` 행을 `sqlite3`로 읽음) | runtime | D3 |
+| 38 (s4) | D1 | S1(route audit, Bearer 401, CSRF) + S3(정지 확인 목록) + S6(이름 escape) | fixture, runtime | D3 |
 
 ## 테스트 결정
 
@@ -307,6 +492,7 @@ BRIEF의 WBX-AC-01~23을 그대로 쓴다. 대응(PLAN.json `acceptance_trace`�
 | S7 (사용자) | 사용자의 실제 Chrome(평문 HTTP LAN) | AC-04, bfcache 복원, 배너 기억, 복사 버튼, 좁은 화면 접힘 | 자동 반복 | 사용자 관찰 기록 |
 | S8 (=T10 재사용) | `tests/hub/test_board_state_js.py`가 `tests/hub/js/*.test.mjs`를 `node --test`로 실행(node 없으면 skip, package·설치 없음). 새 JS는 순수 함수 + stub global(DOM·`localStorage`·`fetch`·`navigator.clipboard`·`document.execCommand`)로 시험 | `session-check.js`(persisted일 때만 확인, 401 → `/login`, 오류 무시), `login-restore.js`, `insecure-banner.js`(저장 값→class, 저장소 예외 시 펼침, 닫기·다시 펼치기), `copy.js`(clipboard → execCommand → 수동 안내 순서), 트랙 C `dashboard.js`(JSON → 숫자·표, 401) | 실제 browser의 bfcache·CSS·clipboard 권한(→ S7) | 이 SPEC 트랙 A 절 |
 
+- (s4) 트랙 D의 JS logic(`board-state.js` v2, `board-layout.js`, panel 상태)도 S8로 RED → GREEN 한다. Pointer·DOM glue(`board.js`)와 끌기 감각·두 기기 공유 연결은 S7이다. 새 seam·새 도구 없음.
 - JS(`session-check.js`, `login-restore.js`, `insecure-banner.js`, `copy.js`, 트랙 C `dashboard.js`, s3의 `back_forward` 판정과 pagehide 정리)의 logic은 S8(기존 node seam)로 RED → GREEN 한다. s3의 headless Chrome DevTools 진단(A6)은 seam이 아니다. 실제 browser 동작은 S7. 새 도구 없음(WBX-D21). 명령: `… -m unittest discover -s tests/hub -p 'test_board_state_js.py'`.
 - TDD 예외: `skills/README.md`·`SKILL.md`·`ROLE.md`·USAGE·SPEC 문서(B2 일부, B5 일부, B9, A2·A4의 USAGE 절)는 RED 없이 S5 정적 확인. 순수 이동(B1의 expand 단계 0)은 RED를 만들지 않고 기존 MCP 테스트 GREEN 유지로 증명한다. Probe(B4)는 실험 기록. CSS 시각은 S7.
 - 명령(공통 접두 `python3 tools/shm_tests.py -- env PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src .venv/bin/python -m unittest`):
@@ -319,6 +505,10 @@ BRIEF의 WBX-AC-01~23을 그대로 쓴다. 대응(PLAN.json `acceptance_trace`�
   - (s3) Skill README·설치: `discover -s tests/hub -p 'test_web_skill*.py'`, `-p 'test_wb_inbox*.py'`, `-p 'test_web_pages_settings*.py'`
   - (s3) 격리 확인 종료·log·helper: `discover -s tests/backend -p 'test_omp_isolation*.py'`, `-p 'test_paths_launcher.py'`; Board `discover -s tests/hub -p 'test_board_*.py'`; helper 정적 검사 `discover -s tests/integration -p 'test_real_summary_independent.py'`와 B12가 더하는 정적 검사 module
   - 통합 회귀(I1): `discover -s tests/hub`, `discover -s tests/backend/installation`, `discover -s tests/backend -p 'test_omp_isolation*.py'`
+  - (s4) IME(A8): `discover -s tests/hub -p 'test_web_pages_board*.py'`, JS를 바꾸면 `-p 'test_board_state_js.py'`
+  - (s4) 트랙 D server(D1): `discover -s tests/hub -p 'test_board_*.py'`, `-p 'test_hub_auth*.py'`, `-p 'test_inbox_service.py'`, `-p 'test_hub_board_status_text.py'`, `-p 'test_web_route_audit.py'`, `-p 'test_web_dashboard*.py'`; JS protocol `-p 'test_board_state_js.py'`
+  - (s4) 트랙 D 화면(D2): `discover -s tests/hub -p 'test_web_pages_board*.py'`, `-p 'test_web_board_csp*.py'`, `-p 'test_board_state_js.py'`(node: `board_layout*.test.mjs` 등)
+  - (s4) 트랙 D 통합(D3): `discover -s tests/hub`, `discover -s tests/backend -p 'test_omp_isolation*.py'`
 - Hub·backend runtime을 만드는 테스트(S2·S3·S4)는 CLAUDE.md "테스트 실행" 규칙: `/tmp` 아래 짧은 private `XDG_RUNTIME_DIR`, temp HOME/XDG_STATE_HOME, `WORKBENCH_HUB_AUTOSTART=0`, 실행 전후 `ls /tmp/omp-workbench-<uid> | wc -l` 동일.
 - 각 ticket 뒤 독립 test_designer(Sonnet)가 계약에서 시나리오를 먼저 도출하고, reviewer가 diff를 본다. 보안 초점: REST cookie 무시, token 재사용·타 key, 오류에 경로·stack 없음, `/skill/`에 `.env`·key 없음, Board shell env, `wb_inbox.py` 출력의 key.
 
@@ -348,6 +538,8 @@ s1의 U1~U10은 2026-10-27 사용자가 모두 제안대로 답했다. 기록은
 
 남은 열린 항목 없음. Probe(WBX-B4)가 failed/inconclusive면 그때 사용자 결정(BRIEF WBX-D11).
 
+s4(2026-10-29)의 결정은 BRIEF r0.5 WBX-D41~D58에 있다. 사용자가 바꿀 수 있는 orchestrator 결정은 BRIEF WBX-O08에 모았다(구현을 막지 않음). 이 SPEC s4의 기술 보완 중 사용자 노출 동작에 닿는 값: 격자 칸 크기·widget 최소 크기, `/ws/board/*` 전체 128·세션당 hello 전 8, panel 목록 5 s 갱신, 확인 dialog 문구. D2가 격자 값을 바꾸면 출력에 적는다.
+
 s3(2026-10-28)의 결정은 BRIEF r0.3 WBX-D29~D35에 있다. 사용자에게 물을 새 항목은 없다. 남은 관측: Chrome "Always use secure connections" 설정(A5), 실제 OMP의 RPC stdin EOF 종료(B12), B4 재실행 판정. 메모로 남긴 후속: REST 인증의 executor 공유(위 "외부 요청 API" 메모).
 
 ### 트랙 C 선택(WBX-D14, 2026-10-27)
@@ -365,5 +557,6 @@ PLAN.json이 정본이다(의존·자원·gate·acceptance trace). 요약:
 - 트랙 B: B1 REST(expand) → B2 skill·client → B3 `/skill/`·packaging·config → B4 probe(← B1·B2·B12, s3: B12 뒤 재실행) → B5 Board 전환(← B3·B4) ; B6·B7 테스트 이전(← B1) → B8 MCP 제거(← B5·B6·B7) → B9 문서. s3: B11 skill 설치 README(← B3), B12 로그인 완화(선행 없음).
 - 트랙 C: C0 mockup 선택 gate(충족: 방향 A) → C1 design system(← A1·A2·A3) → C2 dashboard.
 - I1 최종 통합(← A4·A5·A6·A7·B9·B11·B12·C2).
+- (s4) 트랙 A 보충: A8 한글 IME(선행 없음, 진행 중). 트랙 D: D1 server(← A8; registry·agent 여러 개·shell 여러 개·agent별 신원·공유 연결과 `board-state.js` protocol v2·한도·감사·이행) → D2 workspace 화면(← A8·D1) → D3 문서·통합 확인(← D1·D2). D1은 `board-state.js`와 현행 두 tab 화면의 최소 glue도 v2로 맞춰 D1과 D2 사이에도 `/board`가 동작하게 한다(현행 `board.js`는 protocol 규칙을 `board-state.js`에 둔다).
 - 처음 시작 가능: A1, A2, A3, A6, B1, B12(C0은 충족). `render.py`를 쓰는 A1·A2·A3·A6·C1·C2는 자원 `file:src/workbench/hub/web/render.py`로 직렬화한다. `backend/launcher.py`를 쓰는 B12는 B4 재실행·B5보다 먼저 끝난다.
-- 요구사항 정본: [requirements-p4.json](requirements-p4.json)(p1~p3 판은 이력으로 보존)(WBX-AC-01~23, gate WBX-G-*; p4는 수락 기준·gate 변화 없이 authority만 BRIEF r0.4로 갱신). PLAN p4 기준 `validate_plan.py` valid.
+- 요구사항 정본: [requirements-p5.json](requirements-p5.json)(p1~p4 판은 이력으로 보존)(WBX-AC-01~38, gate WBX-G-*; p5는 AC-24~38과 gate WBX-G-A8·D1·D2·D3를 더함). PLAN p5 기준 `validate_plan.py` valid. p4까지: WBX-AC-01~23, p4는 수락 기준·gate 변화 없이 authority만 BRIEF r0.4로 갱신.

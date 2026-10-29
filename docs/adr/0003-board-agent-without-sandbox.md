@@ -14,7 +14,7 @@ Hub listener는 LAN에 공개되며 HTTP도 허용한다(VPN 전제, D-07). 그�
 ## 결정
 
 - Board agent와 웹 shell은 sandbox 없이 사용자의 일반 shell과 같은 OS 권한으로 실행한다.
-- 보호는 세 가지에 의존한다: (1) 웹 로그인(scrypt 비밀번호, HttpOnly 세션, CSRF 방어, 반복 실패 지연, 24시간 만료), (2) listener를 설정한 주소에만 bind(`0.0.0.0`은 명시 설정), 비밀번호가 없으면 listener를 열지 않음, (3) 감사 기록(로그인, terminal 열기·닫기·인수, API key 발급·폐기. 입력 내용은 기록하지 않음).
+- 보호는 세 가지에 의존한다: (1) 웹 로그인(scrypt 비밀번호, HttpOnly 세션, CSRF 방어, 반복 실패 지연, 24시간 만료), (2) listener를 설정한 주소에만 bind(`0.0.0.0`은 명시 설정), 비밀번호가 없으면 listener를 열지 않음, (3) 감사 기록(로그인, terminal 열기·닫기·인수, API key 발급·폐기. 입력 내용은 기록하지 않음). [2026-10-29 개정: 공유 연결로 "인수"가 없어지고 연결별 연결·해제를 남긴다. 이 결정은 여러 Board agent·shell 모두에 같다. [web-board-ux](../features/web-board-ux/BRIEF.md) WBX-D54·D58]
 - API key로는 terminal을 열 수 없다. Board agent 세트는 로그인한 소유자만 쓴다.
 - Sandbox를 두지 않는 대신 OMP 설정의 노출은 좁힌다. Board agent의 MCP는 Hub MCP(editor 등급) 하나만 허용하고, 다른 MCP·프로젝트 설정·사용자 `~/.omp` 설정은 막는다. WB 프로젝트의 manager·worker MCP는 계속 비활성이다. 이 제한은 설정 노출의 범위이며 OS 권한 경계가 아니다. [2026-10-27 개정: Board agent는 MCP가 없고 허용 skill은 `wb-inbox` 하나이며 Hub 내부 listener의 REST를 쓴다. [web-board-ux](../features/web-board-ux/BRIEF.md) WBX-D11, ADR-0006]
 

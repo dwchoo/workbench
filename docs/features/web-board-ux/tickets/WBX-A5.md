@@ -22,6 +22,19 @@
 
 남은 확인: (1) WBX-A6 통합 뒤 `/dashboard`·자동 갱신 없는 화면 사이 뒤로 가기 경고와 로그아웃 → 뒤로 가기 재확인, (2) Chrome 설정 상태, (3) 복사 버튼, (4) WBX-B12·B4 재실행 뒤 `/board`(Board agent 화면) 확인. 이 부분 결과는 `CHECK-CHROME.md`를 만들 때 그대로 옮긴다.
 
+## 결과(2026-10-29, 사용자 확인, 평문 HTTP LAN 주소의 Hub)
+
+| 항목 | 결과 |
+|---|---|
+| Dashboard 표가 화면 폭에 맞고 좁은 화면에서 card로 바뀜(WBX-AC-20, commit `cf67e15` 뒤) | 문제없음 |
+| 로그아웃 → 뒤로 가기에서 이전 화면이 보이지 않음(WBX-AC-03 보충 2, WBX-A7) | 문제없음 |
+| `/board`의 Board agent가 REST + `wb-inbox` skill로 동작(WBX-AC-16 실제 OMP·모델) | 문제없음 |
+| Chrome "Always use secure connections" 설정(WBX-AC-04) | 사용자 답 "문제없음" |
+| 실제 agent의 skill 설치(WBX-AC-22 대상 host) | 사용자가 미룸(BRIEF WBX-O07) |
+| 같은 기회의 새 관찰: 한글 IME "안녕하세요" → "녕녕녕녕녕안." | WBX-D41·WBX-A8 |
+
+남은 것: 복사 버튼(WBX-AC-06) 보고 없음, 자동 갱신 없는 화면 사이 뒤로 가기의 명시 기록, skill 설치(미룸). `CHECK-CHROME.md`는 아직 만들지 않았다(만들 때 2026-10-28·29 결과를 그대로 옮긴다).
+
 ## 수락 기준
 
 - WBX-AC-04: 효과가 있으면 그 기록, 없으면 알려진 한계로 기록하고 USAGE(WBX-A2가 쓴 항목)가 TLS를 근본 해결로 안내함을 확인.

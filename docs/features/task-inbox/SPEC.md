@@ -140,7 +140,7 @@ CSRF·출처:
 | `login_success`, `login_failure`, `logout` | 로그인 | 지연 초 |
 | `password_changed` | 웹·CLI(`source`) | 무효화한 세션 수 |
 | `api_key_issued`, `api_key_revoked` | key 관리 | key_id, name, grade, scope, expires_at |
-| `terminal_attach`, `terminal_takeover`, `terminal_release`, `terminal_timeout`, `terminal_closed` | WebSocket | epoch, 이전 epoch |
+| `terminal_attach`, `terminal_takeover`, `terminal_release`, `terminal_timeout`, `terminal_closed` | WebSocket | epoch, 이전 epoch [2026-10-29 개정: terminal id·종류·이름·연결 번호·연결 수, `terminal_takeover` 폐지, 새 `board_terminal_open`·`board_terminal_close`·`board_rename`·`board_options`. [web-board-ux SPEC](../web-board-ux/SPEC.md) s4 "트랙 D" 감사] |
 | `terminal_denied` (2026-10-25 추가) | WebSocket hello 실패·`taken_elsewhere`·세션 무효 4401 | epoch, reason(내용 없음) |
 | `board_restart`, `board_start`, `board_stop` | Board agent 세트 | channel, pid, 이유 |
 | `web_control` | 켜기/끄기·pause·resume·confirm-boot·검토 방식 변경·검토 시작 | project_id, action, 결과 |
@@ -384,6 +384,8 @@ Board agent에는 bridge extension이 없으므로 `to_worker`·`workbench_inbox
 
 ### Board agent 세트(D-25·26·27, ADR-0003, 기술 보완)
 
+[2026-10-29 개정: 고정 channel 두 개를 terminal registry(agent 여러 개·shell 여러 개, agent별 home·system key)로 바꾼다. [web-board-ux SPEC](../web-board-ux/SPEC.md) s4 "트랙 D: Board workspace", BRIEF WBX-D44~D48·D56·D58]
+
 - Hub의 `BoardSet`이 두 channel을 소유한다: `agent`(OMP), `shell`(`board_agent.shell` / `$SHELL` / `/bin/sh`, cwd `$HOME`). 각각 `pty.fork`로 새 session leader가 되는 Hub의 자식이다(backend `OmpPane`·`_OwnedSession` 방식 재사용, 어느 backend의 후손도 아님). 환경 = `hub_environment()` + `TERM=xterm-256color`. 출력은 channel마다 1 MiB ring buffer에 두고 attach 때 replay한다.
 - 시작: 첫 `/board` 연결 때 시작한다(Hub 시작 때 자동으로 띄우지 않는다. HB-O09: 다음 Hub 시작에서도 복원하지 않고 첫 연결에서 `--continue`로 이전 세션을 잇는다).
 - Board agent OMP: home `<hub state>/board-agent/omp-root`(`PI_CONFIG_DIR`는 HOME 기준 상대, agent dir `…/agent`, `agent.db`는 사용자 것을 symlink, `omp_home`의 규칙 재사용, D-25 "같은 OMP 로그인"). argv = `omp --config <omp-isolation.yml> --config <board overlay> --no-extensions --append-system-prompt <role prompt> [--continue] [--model <selector>]`. Workbench bridge extension(`--extension`)은 싣지 않는다.
@@ -397,6 +399,8 @@ Board agent에는 bridge extension이 없으므로 `to_worker`·`workbench_inbox
 - Board agent 안의 `wb`는 조상이 Hub이므로 관리 tree가 아니다(Hub SPEC 확장 3). `wb init`의 확인은 PTY에서 답한다.
 
 ### WebSocket terminal 프로토콜(D-26, D-28, P2-AC-34·35)
+
+[2026-10-29 개정: `/ws/board` 하나·lease·epoch·4001을 terminal마다의 `/ws/board/{id}` protocol v2 공유 연결로 바꾼다. [web-board-ux SPEC](../web-board-ux/SPEC.md) s4 "WebSocket v2", BRIEF WBX-D54·D55]
 
 `GET /ws/board`(세션 cookie 필수, `Origin`은 기대 origin과 정확히 같아야 함, 아니면 upgrade 전 403. API key로는 열 수 없다). 세트 하나에 lease 하나(현재 연결 하나)다.
 
@@ -464,7 +468,7 @@ D-05~D-36 전부와 BRIEF 불변식 (1)~(7). ADR-0003(sandbox 없음, 보호는 
 12. REVIEWING 중 편집은 그 자리에서 반영하고 새 review round(orchestrator 지시, Q-10). READY·RUNNING 편집의 `revised` 통지는 검토 방식과 무관하게 보낸다.
 13. 사용자 Task 취소는 backend의 새 `TaskFlow.cancel_by_user`(기존 `_cancel` 절차 재사용, `by: user`)와 기존 사용자 명령 stop의 조합이다.
 14. Board agent의 MCP는 Board agent 전용 loopback 내부 listener로 붙는다(외부 listener의 bind 주소·자체 서명 TLS와 무관). [2026-10-28 개정: MCP → 같은 내부 listener의 REST]
-15. Board agent 세트는 첫 연결 때 시작하고 Hub 재시작 뒤 자동 복원하지 않는다(HB-O09). OMP 세션은 `--continue`로 잇는다.
+15. Board agent 세트는 첫 연결 때 시작하고 Hub 재시작 뒤 자동 복원하지 않는다(HB-O09). OMP 세션은 `--continue`로 잇는다. [2026-10-29 개정: agent는 "열 때" 시작한다(web-board-ux BRIEF WBX-D56)]
 16. systemd unit에 `KillMode=process`와 사용자 환경 일부(`Environment=`)를 더한다.
 17. MCP 2단계 취소 token TTL 60 s(Q-03), link token 30 s. [2026-10-28 개정: REST `POST …/cancel`의 같은 token·TTL]
 18. 감사 기록은 최근 50,000건 유지.

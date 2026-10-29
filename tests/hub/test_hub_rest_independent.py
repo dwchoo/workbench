@@ -1449,7 +1449,8 @@ class RealHubRoutesTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_a_bearer_key_is_refused_by_every_session_route(self):
         params = {'key_id': 'abcdefghij', 'project_id': str(uuid.uuid4()), 'action': 'power-on',
-                  'rid': str(uuid.uuid4()), 'tail': 'x', 'terminal_id': 'a-0123456789ab'}  # WBX-D1 Board routes
+                  'rid': str(uuid.uuid4()), 'tail': 'x', 'terminal_id': 'a-0123456789ab',  # WBX-D1 Board routes
+                  'pane_id': f'{uuid.uuid4()}:host'}  # WBX-E2 pane actions
         checked = 0
         for method, path, access in sorted(self.routes(), key=str):
             if access in ('public', 'own') or path.startswith(('/static', '/api/v1')):

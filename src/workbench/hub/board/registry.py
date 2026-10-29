@@ -33,8 +33,8 @@ NAME_MAX = 40
 RESERVED_NAME = "board-agent"  # orchestrator decision 2026-10-29: no terminal takes this name (any case)
 KINDS = ("agent", "shell")
 _FORBIDDEN_CATEGORIES = frozenset({"Cc", "Cf", "Zl", "Zp", "Cs"})  # Cs: a lone surrogate (JSON "\ud800")
-_ID = {"agent": re.compile(r"^a-[0-9a-f]{12}$"), "shell": re.compile(r"^s-[0-9a-f]{12}$")}
-_DEFAULT = re.compile(r"^(agent|shell)-([1-9][0-9]*)$")
+_ID = {"agent": re.compile(r"^a-[0-9a-f]{12}\Z"), "shell": re.compile(r"^s-[0-9a-f]{12}\Z")}
+_DEFAULT = re.compile(r"^(agent|shell)-([1-9][0-9]*)\Z")
 FIX = ("Fix or move the file away (the Board then starts over with agent-1 in board-agent/), "
        "then restart the Hub (wb hub stop; wb hub start).")
 

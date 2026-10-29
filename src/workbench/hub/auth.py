@@ -835,6 +835,11 @@ _KEY_DETAIL = frozenset({"key_id", "name", "grade", "scope", "expires_at"})
 _WHO = frozenset({"terminal_id", "kind", "name"})
 _TERMINAL_DETAIL = _WHO | {"client", "clients"}
 _BOARD_DETAIL = _WHO | {"pid", "reason"}
+# web-board-ux SPEC s5 "감사" (WBX-D63): a project pane's connection rows and pane actions; never input bytes, a paste,
+# a byte count, an input refusal or a resize.
+_PANE_WHO = frozenset({"pane_id", "project_id", "project_name", "pane"})
+_PANE_CONNECTION = _PANE_WHO | {"client", "clients"}
+_PANE_ACTION = _PANE_WHO | {"ok", "reason"}
 # SPEC "감사 기록": the only events and detail fields; no input, password, secret or body field exists.
 AUDIT_EVENTS: dict[str, frozenset] = {
     "login_success": frozenset({"delay_seconds"}),
@@ -856,6 +861,17 @@ AUDIT_EVENTS: dict[str, frozenset] = {
     "board_rename": frozenset({"terminal_id", "kind", "old", "new"}),
     "board_options": frozenset({"before", "after"}),
     "web_control": frozenset({"project_id", "action", "result"}),
+    "pane_attach": _PANE_CONNECTION,
+    "pane_release": _PANE_CONNECTION,
+    "pane_timeout": _PANE_CONNECTION,
+    "pane_closed": _PANE_CONNECTION,
+    "pane_denied": _PANE_CONNECTION | {"reason"},
+    "pane_takeover_request": _PANE_ACTION | {"input_owner"},
+    "pane_takeover_confirm": _PANE_ACTION | {"input_owner"},
+    "pane_handoff": _PANE_ACTION | {"input_owner"},
+    "pane_stop": _PANE_WHO | {"command_id", "outcome"},
+    "pane_restart": _PANE_ACTION,
+    "pane_kill": _PANE_ACTION,
 }
 
 
@@ -926,6 +942,13 @@ _DETAIL_CHECKS = {
     "project_id": _text(PROJECT_ID_MAX),
     "action": _text(64),
     "result": _text(AUDIT_TEXT_LIMIT),
+    "pane_id": _text(64),
+    "project_name": _text(AUDIT_TEXT_LIMIT),
+    "pane": lambda value: value in ("manager", "worker", "host"),
+    "ok": lambda value: type(value) is bool,
+    "input_owner": lambda value: value in ("manager", "user", None),
+    "command_id": _text(64),
+    "outcome": _text(AUDIT_TEXT_LIMIT),
 }
 
 

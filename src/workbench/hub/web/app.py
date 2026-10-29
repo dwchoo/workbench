@@ -122,7 +122,8 @@ async def flush_last_used(app: web.Application):
     await asyncio.gather(*in_flight, return_exceptions=True)
 
 
-def board_routes(board: Callable[[], object | None]) -> Callable[[web.Application], None]:
+def board_routes(board: Callable[[], object | None], panes: Callable[[], object | None] = lambda: None
+                 ) -> Callable[[web.Application], None]:
     """The Board (web-board-ux SPEC s4 "트랙 D"): the page ``GET /board`` (``pages/board.py``), the session API
     ``/api/board…`` (``pages/board_api.py``) and the terminal WebSockets ``GET /ws/board/{terminal_id}`` (protocol v2,
     ``board/ws.py``).
@@ -130,7 +131,7 @@ def board_routes(board: Callable[[], object | None]) -> Callable[[web.Applicatio
     Session and CSRF are the ``session_check`` middleware's; API keys cannot reach any of them. ``board()`` returns the
     Hub's ``BoardSet`` or None (``hub.toml`` invalid, web disabled). The set's one
     :class:`~workbench.hub.board.ws.BoardTerminal` (its attached clients) outlives a listener reopen: it is kept here,
-    per set.
+    per set. ``panes()`` is the Hub's ``PaneHub`` (s5 트랙 E: project pane WebSockets and actions) or None.
     """
     from ..board import ws as board_ws
     from .pages import board_api
@@ -141,15 +142,17 @@ def board_routes(board: Callable[[], object | None]) -> Callable[[web.Applicatio
         if current is None:
             return None
         terminal = terminals.get("current")
-        if terminal is None or terminal.board is not current:
+        hub = panes()
+        if terminal is None or terminal.board is not current or terminal.panes is not hub:
             if terminal is not None:
                 terminal.unwatch()
-            terminal = terminals["current"] = board_ws.BoardTerminal(current, audit=board_ws.audit_to(app[SERVICES]))
+            terminal = terminals["current"] = board_ws.BoardTerminal(current, audit=board_ws.audit_to(app[SERVICES]),
+                                                                     panes=hub)
         return terminal
 
     def register(app: web.Application) -> None:
         board_ws.routes(lambda: terminal_for(app))(app)
-        board_api.routes(board)(app)
+        board_api.routes(board, panes)(app)
         board_page.make_register(board)(app)
     return register
 

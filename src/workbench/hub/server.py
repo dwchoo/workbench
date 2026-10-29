@@ -162,6 +162,10 @@ class Hub:
         # REST listener (WBX-B5; started lazily by the set, so it never starts without one).
         self.board = None
         self.internal_rest: rest.InternalListener | None = None
+        # web-board-ux s5 트랙 E: the project pane relays (one shared attach per project, opened from the web)
+        from .board.panes import PaneHub
+        self.panes = PaneHub(lambda: registry.read(self.layout), power=self.lister.list,
+                             audit=lambda event, address, detail: self._board_audit(event, "owner", address, detail))
         # 2026-10-27 ``wb hub reload``: what the running config came from, and the last refused reload.
         self.config_environment = None
         self.config_info: dict = {}
@@ -192,7 +196,7 @@ class Hub:
         Hub's list, the request pages over its inbox, the ``/api/v1/`` REST (WBX-B1) and the Board restart endpoint."""
         return [project_pages.routes(self.lister.list, self.inbox, self.lister.list_one),
                 request_pages.routes(self.inbox, self._dispatch_targets), rest.routes(self.api),
-                board_routes(lambda: self.board)]
+                board_routes(lambda: self.board, lambda: self.panes)]
 
     # --- Board agent set (TI-16) -----------------------------------------------------------------
 
@@ -228,9 +232,13 @@ class Hub:
         return self.board.agent_for_key(key_id, name) if self.board is not None else None
 
     async def stop_board(self) -> None:
-        """Stop order (A): after the WebSockets close, before the API key flush; idempotent."""
-        if self.board is not None:
-            await self.board.stop()
+        """Stop order (A): after the WebSockets close, before the API key flush; idempotent. The project pane relays
+        (s5 트랙 E) end here too, each with a best-effort ``share_detach``."""
+        try:
+            await self.panes.stop()
+        finally:
+            if self.board is not None:
+                await self.board.stop()
 
     async def _api_projects(self) -> list[dict]:
         """``inbox_projects`` rows: the Hub list (cached observation, request counts and review mode)."""

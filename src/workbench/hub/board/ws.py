@@ -19,6 +19,7 @@ from typing import Any, Callable
 from aiohttp import WSMsgType, web
 
 from ..web import middleware
+from . import panes as pane_relay
 from .set import INPUT_HIGH_WATER, INPUT_LOW_WATER, MAX_SIZE, MIN_SIZE
 
 PROTOCOL_VERSION = 2
@@ -169,6 +170,7 @@ class Connection:
         self.client = 0  # this Hub run's connection number (audit)
         self.size: tuple[int, int] | None = None  # the size this client last told (hello, resize)
         self.end_event: str | None = None  # the audit row its end writes (release, timeout; else closed)
+        self.pane: tuple[str, str] | None = None  # a project pane's (project_id, pane) (web-board-ux s5 트랙 E)
         self.on_close: Callable[["Connection"], None] = lambda connection: None
 
     def start(self) -> None:
@@ -297,8 +299,9 @@ class BoardTerminal:
     def __init__(self, board, *, audit: Audit | None = None, heartbeat: float = HEARTBEAT, misses: int = MISSES,
                  slack: float = SLACK, hello_timeout: float = HELLO_TIMEOUT, queue_limit: int = SEND_QUEUE_LIMIT,
                  session_check: float = SESSION_CHECK, max_connections: int = MAX_CONNECTIONS,
-                 max_pending: int = MAX_PENDING, max_clients: int = MAX_CLIENTS):
+                 max_pending: int = MAX_PENDING, max_clients: int = MAX_CLIENTS, panes=None):
         self.board = board
+        self.panes = panes  # the Hub's ``PaneHub`` (project pane WebSockets, s5 트랙 E), None: no pane ids
         self.audit = audit
         self._audit_tail: asyncio.Future | None = None
         self.heartbeat = heartbeat
@@ -314,11 +317,25 @@ class BoardTerminal:
         self.connections: set[Connection] = set()  # every open WebSocket
         self.attached: dict[str, list[Connection]] = {}  # terminal id -> its clients, in attach order
         self.owner: dict[str, Connection] = {}  # terminal id -> the client whose size the PTY follows
-        self.unwatch = board.watch(self._board_changed)
+        unwatch_board = board.watch(self._board_changed)
+        unwatch_panes = panes.watch(self._pane_changed) if panes is not None else (lambda: None)
+
+        def unwatch() -> None:
+            unwatch_board()
+            unwatch_panes()
+        self.unwatch = unwatch
 
     # --- audit -----------------------------------------------------------------------------------
 
     def _who(self, terminal_id: str, connection: Connection, **more) -> dict:
+        pane = pane_relay.parse_pane_id(terminal_id)
+        if pane is not None:  # a project pane (SPEC s5 감사): its registry name now, else the last one seen
+            name = self.panes.name(pane[0]) if self.panes is not None else None
+            if name is not None:
+                connection.who = ("pane", name)
+            return {"pane_id": terminal_id, "project_id": pane[0], "project_name": connection.who[1],
+                    "pane": pane[1], "client": connection.client,
+                    "clients": len(self.attached.get(terminal_id, ())), **more}
         terminal = self.board.find(terminal_id)
         if terminal is not None:  # its name now; a closed or deleted terminal keeps the last one seen
             connection.who = (terminal.kind, terminal.name)
@@ -327,9 +344,12 @@ class BoardTerminal:
                 "clients": len(self.attached.get(terminal_id, ())), **more}
 
     def _record(self, event: str, address: str | None, detail: dict) -> None:
-        """Queue one audit row; rows are written in order in the executor and never delay the terminal."""
+        """Queue one audit row; rows are written in order in the executor and never delay the terminal. A project
+        pane's rows are ``pane_*`` (SPEC s5 감사) instead of ``terminal_*``."""
         if self.audit is None:
             return
+        if "pane_id" in detail and event.startswith("terminal_"):
+            event = "pane_" + event[len("terminal_"):]
         tail = self._audit_tail
 
         async def write() -> None:
@@ -375,7 +395,12 @@ class BoardTerminal:
         for unsubscribe in connection.unsubscribe:
             unsubscribe()
         connection.unsubscribe.clear()
-        self.board.set_clients(terminal_id, len(clients))
+        if connection.pane is not None:
+            relay = self.panes.relays.get(connection.pane[0]) if self.panes is not None else None
+            if relay is not None:
+                relay.set_clients(connection.pane[1], len(clients))
+        else:
+            self.board.set_clients(terminal_id, len(clients))
         self._broadcast(terminal_id, {"t": "clients", "count": len(clients)})
         self._record(connection.end_event or "terminal_closed", connection.address,
                      self._who(terminal_id, connection))
@@ -389,6 +414,30 @@ class BoardTerminal:
         view = self.board.view(terminal_id)
         if view is not None:
             self._broadcast(terminal_id, {"t": "state", "terminal": view})
+
+    def _pane_changed(self, pane_id: str, event: str, value) -> None:
+        """A project pane's relay event (SPEC s5 "화면 중계"): output bytes, ``reset``, ``state``, ``size``, a
+        ``notice``; ``gone`` (registration removed) closes its WebSockets with 4404."""
+        clients = list(self.attached.get(pane_id, ()))
+        if event == "data":
+            for connection in clients:
+                connection.send_data(value)
+        elif event == "reset":
+            for connection in clients:
+                connection.send_json({"t": "reset"})
+        elif event == "state":
+            for connection in clients:
+                connection.send_json({"t": "state", "terminal": {**value, "clients": len(clients)}})
+        elif event == "size":
+            rows, cols = value
+            for connection in clients:
+                connection.send_json({"t": "size", "rows": rows, "cols": cols})
+        elif event == "notice":
+            for connection in clients:
+                connection.send_json(value)
+        elif event == "gone":
+            for connection in clients:
+                connection.close(CLOSE_GONE, "terminal gone", final={"t": "gone"})
 
     def _set_size(self, terminal_id: str, size: tuple[int, int]) -> None:
         if self.board.resize(terminal_id, *size):
@@ -466,7 +515,12 @@ class BoardTerminal:
             self._deny(connection, terminal_id, "csrf")
             connection.close(CLOSE_CSRF, "csrf")
             return
-        if self.board.find(terminal_id) is None:  # closed or deleted after the upgrade
+        pane = pane_relay.parse_pane_id(terminal_id)
+        if pane is not None:
+            gone = self.panes is None or await self.panes.entry(pane[0]) is None
+        else:
+            gone = self.board.find(terminal_id) is None
+        if gone:  # closed or deleted (a project: unregistered) after the upgrade
             connection.close(CLOSE_GONE, "terminal gone", final={"t": "gone"})
             return
         if self.clients(terminal_id) >= self.max_clients:
@@ -474,7 +528,16 @@ class BoardTerminal:
             connection.close(CLOSE_TOO_MANY, "too many clients",
                              final={"t": "refused", "reason": "too_many_clients", "limit": self.max_clients})
             return
-        self._attach(connection, terminal_id, hello)
+        if pane is not None:
+            relay = self.panes.relay(pane[0])
+            if relay is None:  # the Hub is stopping
+                connection.close(CLOSE_GONE, "terminal gone", final={"t": "gone"})
+                return
+            if relay.state == "too_old":
+                relay.poke()  # a new web hello checks an older backend again (SPEC s5 실패와 경계 동작)
+            self._attach_pane(connection, terminal_id, pane, relay, hello)
+        else:
+            self._attach(connection, terminal_id, hello)
         connection.tasks.append(asyncio.create_task(self._watch(connection)))
         while connection.closing is None:
             message = await connection.next_message()
@@ -506,10 +569,95 @@ class BoardTerminal:
         connection.unsubscribe.append(self.board.subscribe(terminal_id, connection.send_data))
         self._broadcast(terminal_id, {"t": "clients", "count": len(clients)}, skip=connection)
 
+    def _attach_pane(self, connection: Connection, pane_id: str, pane: tuple[str, str], relay, hello: dict) -> None:
+        """A project pane's attach, like :meth:`_attach` in one step (no await): the client set, ``attached`` with
+        the pane view, the Hub ring's replay, then live output (``_pane_changed``). The size rule is the Board's
+        while no TUI is attached; with one, the backend's pane size is followed and nothing is resized."""
+        clients = self.attached.setdefault(pane_id, [])
+        clients.append(connection)
+        connection.terminal_id = pane_id
+        connection.pane = pane
+        connection.size = hello["size"]
+        connection.last_seen = asyncio.get_running_loop().time()
+        name = pane[1]
+        relay.set_clients(name, len(clients))
+        if len(clients) == 1 and connection.size is not None:
+            self.owner[pane_id] = connection
+            relay.resize(name, connection.size)
+        self._record("terminal_attach", connection.address, self._who(pane_id, connection))
+        view = relay.view(name)
+        connection.send_json({"t": "attached", "v": PROTOCOL_VERSION, "terminal": view, "size": view["size"],
+                              "clients": len(clients), "heartbeat": self.heartbeat})
+        replay = relay.rings[name].snapshot()
+        for start in range(0, len(replay), REPLAY_CHUNK):
+            connection.send_data(replay[start:start + REPLAY_CHUNK])
+        self._broadcast(pane_id, {"t": "clients", "count": len(clients)}, skip=connection)
+
+    def _pane_relay(self, connection: Connection):
+        return self.panes.relays.get(connection.pane[0]) if self.panes is not None else None
+
+    def _pane_input(self, connection: Connection, data: bytes) -> None:
+        """One binary frame = one ``input`` request (never merged or split), in arrival order; a refusal goes back
+        to this connection only. Past the relay's unanswered cap this socket's reads stop until answers come."""
+        if len(data) > INPUT_LIMIT:
+            connection.reply({"t": "error", "reason": "too_large"})
+            return
+        pane_id, pane = connection.terminal_id, connection.pane[1]
+        relay = self._pane_relay(connection)
+
+        def refused(reason: str) -> None:
+            connection.send_json({"t": "input_refused", "reason": reason,
+                                  "detail": pane_relay.refused_detail(reason)})
+        if relay is None:
+            refused("pane_unavailable")
+            return
+        if connection.size is not None and self.owner.get(pane_id) is not connection:
+            self.owner[pane_id] = connection
+        if connection.size is not None and self.owner.get(pane_id) is connection:
+            relay.resize(pane, connection.size)  # sent only without a TUI and when the size differs
+        relay.input(pane, data, refused)
+        if relay.input_full():
+            connection.backpressure = True
+
+    def _pane_resize(self, connection: Connection, control: dict) -> None:
+        rows, cols = control.get("rows"), control.get("cols")
+        if not all(type(value) is int and MIN_SIZE <= value <= MAX_SIZE for value in (rows, cols)):
+            connection.reply({"t": "error", "reason": "bad_resize"})
+            return
+        connection.size = (rows, cols)
+        self.owner[connection.terminal_id] = connection
+        relay = self._pane_relay(connection)
+        if relay is not None:
+            relay.resize(connection.pane[1], connection.size)
+
+    async def _paced_pane(self, connection: Connection) -> None:
+        """The relay has its unanswered cap of input in flight: stop reading this socket until answers come (the
+        other connections' output goes on)."""
+        connection.backpressure = False
+        relay = self._pane_relay(connection)
+        if relay is None or not relay.input_full():
+            return
+        connection.paused = True
+        try:
+            room = asyncio.ensure_future(relay.room.wait())
+            stop = asyncio.ensure_future(connection.close_requested.wait())
+            try:
+                await asyncio.wait({room, stop}, return_when=asyncio.FIRST_COMPLETED)
+            finally:
+                for task in (room, stop):
+                    task.cancel()
+                await asyncio.gather(room, stop, return_exceptions=True)
+        finally:
+            connection.paused = False
+            connection.last_seen = asyncio.get_running_loop().time()
+
     async def _paced(self, connection: Connection) -> None:
         """A paste larger than the program reads at once: stop reading this socket (TCP then holds the client back)
         until the terminal's queued input drains; the other clients' input goes on. A close ends the wait at once;
         the heartbeat watch counts the pause as activity."""
+        if connection.pane is not None:
+            await self._paced_pane(connection)
+            return
         connection.backpressure = False
         connection.paused = True
         terminal_id = connection.terminal_id
@@ -570,7 +718,10 @@ class BoardTerminal:
         if connection.closing is not None:
             return
         if message.type == WSMsgType.BINARY:
-            self._input(connection, message.data)
+            if connection.pane is not None:
+                self._pane_input(connection, message.data)
+            else:
+                self._input(connection, message.data)
         elif message.type == WSMsgType.TEXT:
             self._control(connection, message.data)
 
@@ -587,7 +738,10 @@ class BoardTerminal:
             return
         kind = control["t"]
         if kind == "resize":
-            self._resize(connection, control)
+            if connection.pane is not None:
+                self._pane_resize(connection, control)
+            else:
+                self._resize(connection, control)
         elif kind == "ping":
             number = control.get("n")
             connection.reply({"t": "pong", "n": number if type(number) is int else None})
@@ -635,6 +789,13 @@ def routes(terminal: Callable[[], BoardTerminal | None]) -> Callable[[web.Applic
         current = terminal()
         if current is None or current.board.closed:
             return middleware.refuse(request, 503, "board_unavailable")
+        pane = pane_relay.parse_pane_id(request.match_info["terminal_id"])
+        if pane is not None:  # a project pane (SPEC s5): a registered project only; the Board registry is not asked
+            if current.panes is None or current.panes.stopped:
+                return middleware.refuse(request, 503, "board_unavailable")
+            if await current.panes.entry(pane[0]) is None:
+                return middleware.refuse(request, 404, "unknown_terminal")
+            return await current.handle(request, request.match_info["terminal_id"])
         if current.board.invalid is not None:
             return middleware.refuse(request, 503, "registry_invalid")
         terminal_id = request.match_info["terminal_id"]

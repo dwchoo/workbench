@@ -83,6 +83,14 @@ EXPECTED = {
     ('POST', '/api/board/terminals/{terminal_id}/delete'): API,
     ('POST', '/api/board/terminals/{terminal_id}/rename'): API,
     ('POST', '/api/board/options'): API,
+    # WBX-E2 (web-board-ux SPEC s5 "Pane 동작 API"): project pane buttons, session + CSRF only (Bearer 401); the pane
+    # WebSockets are ``GET /ws/board/{terminal_id}`` with a pane id (no route of their own)
+    ('POST', '/api/board/panes/{pane_id}/takeover_request'): API,
+    ('POST', '/api/board/panes/{pane_id}/takeover_confirm'): API,
+    ('POST', '/api/board/panes/{pane_id}/handoff'): API,
+    ('POST', '/api/board/panes/{pane_id}/stop'): API,
+    ('POST', '/api/board/panes/{pane_id}/restart'): API,
+    ('POST', '/api/board/panes/{pane_id}/kill'): API,
     # WBX-B1 REST ``/api/v1/`` (Bearer API key in the handler; method rules in the handler: 405 + Allow)
     ('*', '/api/v1/projects'): OWN,
     ('*', '/api/v1/requests'): OWN,
@@ -107,7 +115,7 @@ REST_ROUTES = frozenset(key for key in EXPECTED if key[1] == '/api/v1' or key[1]
 CSRF_EXEMPT = {('POST', '/login'): 'pre-session login token',
                **{route: 'Bearer API key; cookies ignored (WBX-B1 REST)' for route in REST_ROUTES}}
 PARAMS = {'key_id': 'abcdefghij', 'project_id': str(uuid.uuid4()), 'action': 'power-on', 'rid': str(uuid.uuid4()),
-          'terminal_id': 'a-0123456789ab'}
+          'terminal_id': 'a-0123456789ab', 'pane_id': f'{uuid.uuid4()}:host'}
 
 
 def route_marks(app: web.Application) -> dict:
@@ -225,7 +233,8 @@ class BehaviourAuditTests(RouteAuditCase):
                 status, _text = await self.send(method, concrete, cookie=False)
                 self.assertEqual(status, 401 if access == API else 303)
                 checked += 1
-        self.assertEqual(checked, 23)  # every unsafe route of EXPECTED but the two exemptions (WBX-D1: 14 - 1 + 10)
+        self.assertEqual(checked, 29)  # every unsafe route of EXPECTED but the two exemptions (WBX-D1: 14 - 1 + 10;
+        # WBX-E2: + 6 pane actions)
 
     async def test_mcp_is_gone_and_answers_like_any_unknown_path(self):  # WBX-B8 (SPEC "MCP 제거 순서" contract)
         self.assertEqual([key for key in route_marks(self.app) if 'mcp' in key[1].lower()], [])
@@ -266,9 +275,26 @@ class BehaviourAuditTests(RouteAuditCase):
         self.assertEqual(rest, sorted(path for _method, path in REST_ROUTES))
         for path in rest:
             for word in ('terminal', 'ws', 'board', 'link', 'power', 'backend', 'review', 'key', 'password',
-                         'audit', 'settings', 'raw', 'artifact', 'full'):
+                         'audit', 'settings', 'raw', 'artifact', 'full', 'pane', 'panes'):
                 with self.subTest(path=path, word=word):
                     self.assertNotIn(word, path.split('/'))
+
+    async def test_the_internal_listener_has_no_pane_or_board_route(self):  # WBX-E2 (AC-47)
+        from workbench.hub.rest import create_internal_app
+        internal = create_internal_app(self.services.api_keys, self.hub.api)
+        paths = sorted({path for _method, path in route_marks(internal)})
+        self.assertTrue(paths and all(path == '/api/v1' or path.startswith('/api/v1/') for path in paths), paths)
+        for path in paths:
+            self.assertNotIn('pane', path)
+            self.assertNotIn('board', path)
+
+    async def test_pane_actions_ignore_a_bearer_key(self):  # WBX-E2 (AC-47): session only, before any pane lookup
+        for name in ('takeover_request', 'stop', 'restart', 'kill'):
+            with self.subTest(action=name):
+                status, text = await self.send('POST', f'/api/board/panes/{PARAMS["pane_id"]}/{name}', cookie=False,
+                                               headers={'Authorization': 'Bearer wbk_abcdefghij_' + 'Q' * 43,
+                                                        'Content-Type': 'application/json'}, data=b'{}')
+                self.assertEqual(status, 401, text)
 
     async def test_skill_routes_are_read_only_and_answer_without_a_session(self):
         concrete = {'/skill/{tail}': '/skill/nothing-here'}

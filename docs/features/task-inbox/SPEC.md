@@ -315,7 +315,7 @@ Board agent는 별도 내부 listener(아래)의 같은 `/mcp`를 쓴다. 외부
 | `/static/…` | 인증 없이 제공(비밀 없음). `Cache-Control: public, max-age=3600` |
 | `POST/GET/DELETE /mcp` | 위 MCP. [2026-10-28 개정: 제거(WBX-B8). 대신 `/api/v1/…`(REST, Bearer 전용, 세션 cookie 무시)와 `GET /skill/README.md`, `/skill/wb-inbox/{SKILL.md,wb_inbox.py,.env.example}`(로그인 없음, `allow_from`·bind 적용). Cache 정책은 로그인한 page `private, no-cache`(key 발급 결과·raw/full/artifact는 `no-store`). 정본은 web-board-ux SPEC s3] |
 
-로그인하지 않은 page 요청은 `303 /login`, API·`/ws`는 401. 웹에는 manager·worker·host pane 입력 수단이 없다(D-09).
+로그인하지 않은 page 요청은 `303 /login`, API·`/ws`는 401. 웹에는 manager·worker·host pane 입력 수단이 없다(D-09). [2026-10-29 개정: 웹 pane 입력·pane 동작은 Board workspace의 프로젝트 pane widget으로 한다. 정본은 [web-board-ux SPEC](../web-board-ux/SPEC.md) s5 "트랙 E", BRIEF WBX-D59~D62]
 
 ### 프로젝트 제어 실행(Hub 쪽, D-09, Hub SPEC (A) 확장 6)
 
@@ -512,7 +512,7 @@ BRIEF의 P2-AC-01~45를 그대로 쓰고 기술 보완 기준 TI-T01~T10을 더�
 | P2-AC-18 | 감사 사건 기록, 입력 내용 없음 | TI-02, TI-03, TI-07, TI-17 | T1a, T2, T5 | inproc, runtime | TI-19 |
 | P2-AC-19 | key 한 번 표시·hash만, 폐기·만료 거절, 목록 필드, rate limit 없음 | TI-02, TI-07, TI-05 | T1a, T2, T4 | runtime | TI-19 |
 | P2-AC-20 | requester 자기 것만, editor scope, scope 밖 거절, key로 금지 동작 거절 | TI-04, TI-05, TI-08, TI-17 | T1, T4, T5 | runtime | TI-19 |
-| P2-AC-21 | 제어는 세션만·확인 page·취소면 불변, 끄기 HB-AC-09, pane 입력 수단 없음 | TI-08, TI-12 | T2, T6 | inproc, fixture | TI-19 |
+| P2-AC-21 | 제어는 세션만·확인 page·취소면 불변, 끄기 HB-AC-09, pane 입력 수단 없음 [2026-10-29 개정: pane 입력은 web-board-ux WBX-AC-39~43, WBX-E1~E4] | TI-08, TI-12 | T2, T6 | inproc, fixture | TI-19 |
 | P2-AC-22 | `manager_editor_not_empty` 대기 표시 | TI-10, TI-12 | T6, T2 | fixture | TI-19 |
 | P2-AC-23 | 꺼짐 접수 NEW·켜면 순서대로, Hub 꺼짐이면 실패·core 무관, 프로젝트 간 분리 | TI-04, TI-10 | T1, T6 | runtime | TI-19 |
 | P2-AC-24 | 자동: 쉬는 manager에 전달·REVIEWING, 선점 없음. 수동: NEW 유지 | TI-10 | T6 | fixture | TI-19 |

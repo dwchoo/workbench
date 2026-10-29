@@ -1,7 +1,7 @@
 # Web Board 사용성·외부 요청 API — 요구사항 합의
 
-Revision: r0.4; state: 승인(사용자 승인 2026-10-27; r0.2는 같은 날 SPEC s1 확인 항목 U1~U10의 사용자 답을 WBX-D20~D28과 WBX-D14에 더함; r0.3(2026-10-28)은 사용자 실제 Chrome 확인(WBX-A5 일부)의 피드백과 그에 따른 결정 WBX-D29~D35, 수락 기준 WBX-AC-21~23, 2026-10-27 OMP 로그인 유실 기록을 더함; r0.4(2026-10-28 오후)는 WBX-A6·B12·B4 재실행·B5·B8 뒤의 결정 WBX-D36~D40, WBX-AC-03 보충 2, WBX-A5 중간 결과와 B4 재실행 결과를 더함; r0.5(2026-10-29)는 WBX-A5 사용자 확인 결과, 한글 IME 수정 ticket WBX-A8, 트랙 D "Board workspace"의 결정 WBX-D41~D58과 수락 기준 WBX-AC-24~38을 더함). 작성일: 2026-10-27.
-WBX-D01~WBX-D16은 2026-10-27 요구사항 인터뷰(grilling)의 사용자 결정이며 사용자가 같은 날 각 결정을 확인했다. WBX-D17~D19는 같은 날 초안의 남은 확인(구 WBX-O03~O05)에 대한 사용자 답이다. WBX-D20~D28과 WBX-D14의 선택은 같은 날 SPEC s1의 확인 항목(U1~U10)에 대한 사용자 답이다. WBX-D29~D40은 2026-10-28 결정, WBX-D41~D58은 2026-10-29 결정이며 행마다 [사용자 결정] / [orchestrator 결정]을 표시했다. 문서 승인은 구현 권한과 별개다.
+Revision: r0.6; state: 승인(사용자 승인 2026-10-27; r0.2는 같은 날 SPEC s1 확인 항목 U1~U10의 사용자 답을 WBX-D20~D28과 WBX-D14에 더함; r0.3(2026-10-28)은 사용자 실제 Chrome 확인(WBX-A5 일부)의 피드백과 그에 따른 결정 WBX-D29~D35, 수락 기준 WBX-AC-21~23, 2026-10-27 OMP 로그인 유실 기록을 더함; r0.4(2026-10-28 오후)는 WBX-A6·B12·B4 재실행·B5·B8 뒤의 결정 WBX-D36~D40, WBX-AC-03 보충 2, WBX-A5 중간 결과와 B4 재실행 결과를 더함; r0.5(2026-10-29)는 WBX-A5 사용자 확인 결과, 한글 IME 수정 ticket WBX-A8, 트랙 D "Board workspace"의 결정 WBX-D41~D58과 수락 기준 WBX-AC-24~38을 더함; r0.6(2026-10-29 오후)은 트랙 E "Board workspace의 WB 프로젝트 pane"의 결정 WBX-D59~D67(Q56~Q61)과 수락 기준 WBX-AC-39~47, Board shell 기본 program 결정 WBX-D68·D69와 WBX-AC-48, 그리고 (A) D-08·D-09·P2-AC-21의 개정을 더함). 작성일: 2026-10-27.
+WBX-D01~WBX-D16은 2026-10-27 요구사항 인터뷰(grilling)의 사용자 결정이며 사용자가 같은 날 각 결정을 확인했다. WBX-D17~D19는 같은 날 초안의 남은 확인(구 WBX-O03~O05)에 대한 사용자 답이다. WBX-D20~D28과 WBX-D14의 선택은 같은 날 SPEC s1의 확인 항목(U1~U10)에 대한 사용자 답이다. WBX-D29~D40은 2026-10-28 결정, WBX-D41~D69는 2026-10-29 결정이며 행마다 [사용자 결정] / [orchestrator 결정]을 표시했다. 문서 승인은 구현 권한과 별개다.
 ID 접두사는 `WBX-`다. `WU-`는 [workbench-update](../workbench-update/BRIEF.md)(WU-AC-01~08, ticket WU-01~03), `UX-`는 dev-validation-log-retention의 cli-ux가 이미 쓴다.
 
 이 문서는 [Task Inbox & Web Board BRIEF](../task-inbox/BRIEF.md)(이하 (A), D-05~D-36)와 [Hub BRIEF](../workbench-hub/BRIEF.md)(이하 (B))가 만든 Web Board 위에서, 사용성 개선과 외부 접점 교체를 다룬다. 여기서 바뀌는 기존 결정은 "개정되는 기존 결정"에 모으고, 기존 문서에는 이 문서를 가리키는 짧은 개정 주석만 단다. 관련 ADR: [ADR-0006](../../adr/0006-rest-skill-single-external-contact.md).
@@ -17,6 +17,7 @@ ID 접두사는 `WBX-`다. `WU-`는 [workbench-update](../workbench-update/BRIEF
 - [사용자 PRD] 외부 agent가 API key로 보호된 경로로, 특별한 프로그램 없이 skill 하나로 요청을 등록할 수 있어야 한다. Skill 설치는 README 링크 하나로 끝나고 key는 env 파일로 관리한다. API 접근은 웹과 같은 규칙으로 허용·차단한다.
 - [목표] (1) 어느 화면에서든 한 번에 주요 기능으로 간다. (2) 외부 접점을 REST API와 `wb-inbox` skill 하나로 줄인다(MCP 제거). (3) 손으로 쓴 CSS design system과 dashboard로 첫 화면을 바꾼다.
 - [2026-10-29 사용자 요구, 트랙 D] `/board`에서 Board agent와 shell을 여러 개 띄워 원하는 자리·크기로 배치하고, 다른 기기에서도 같은 terminal을 함께 보고 입력한다.
+- [2026-10-29 사용자 요구, 트랙 E] 같은 workspace에서 WB 프로젝트의 manager·worker·host pane도 widget으로 열어, TUI가 붙어 있든 없든 그 pane을 보고 입력하고 TUI의 `Ctrl-]` 명령(인수·넘기기·명령 중지·재시작·강제 종료)을 버튼으로 쓴다.
 
 ## 공통 용어
 
@@ -27,6 +28,8 @@ ID 접두사는 `WBX-`다. `WU-`는 [workbench-update](../workbench-update/BRIEF
 - (2026-10-29) Board workspace: 격자 widget으로 Board agent와 shell을 배치하는 `/board` 화면(WBX-D42).
 - (2026-10-29) Terminal: Board workspace의 agent 하나 또는 shell 하나. Hub가 id·종류·이름·상태를 관리한다(SPEC s4 terminal registry).
 - (2026-10-29) 공유 연결: 한 terminal에 여러 브라우저·기기의 연결이 함께 붙어 같은 출력을 보고 입력하는 방식. 이전의 한 연결 lease·인수를 대신한다(WBX-D54).
+- (2026-10-29, 트랙 E) 프로젝트 pane widget: Board workspace에서 WB 프로젝트 하나의 manager·worker·host pane 하나를 보이는 widget. 제목은 "<프로젝트 이름> · manager"처럼 쓴다(WBX-D64). Hub가 만드는 terminal이 아니라 backend가 가진 pane을 Hub가 중계한다.
+- (2026-10-29, 트랙 E) 공유 attach: backend ui_v1에 더하는 Hub 전용 attach. TUI가 쓰는 기존 attach 자리(하나)와 따로 있어 TUI와 함께 붙는다(WBX-D65).
 
 ## 범위와 비목표
 
@@ -36,8 +39,11 @@ ID 접두사는 `WBX-`다. `WU-`는 [workbench-update](../workbench-update/BRIEF
 - [포함, 2026-10-28 추가] `/dashboard` 이동과 로그아웃 뒤 뒤로 가기 수정(WBX-D29·D34), agent별 skill 설치 README(WBX-D30·D35), 공유 OMP 로그인 완화(WBX-D32)와 probe 재실행(WBX-D33).
 - [포함, 2026-10-29 트랙 A 보충] Board terminal의 한글 IME 입력 오류 수정(WBX-D41, ticket WBX-A8).
 - [포함, 2026-10-29 트랙 D "Board workspace"] `/board`를 격자 widget workspace로 바꾼다(WBX-D42·D43·D50·D52·D57). Board agent 여러 개(WBX-D44)와 shell 여러 개(WBX-D45·D46), 기본 이름과 이름 바꾸기(WBX-D47·D48), 왼쪽 관리 panel(WBX-D49), 좁은 화면(WBX-D51), focus(WBX-D53), 한 연결 lease를 대신하는 공유 연결(WBX-D54·D55), 수명 세부(WBX-D56), agent별 신원(WBX-D58)을 다룬다.
-- [트랙 D 제외] 단축키(WBX-D53), 끌기 library·CDN(WBX-D52), agent·shell 사이의 OS 권한 분리(WBX-D58, ADR-0003), Hub 재시작 뒤 shell 복원, 여러 브라우저 사이의 배치 공유(WBX-D50: 배치는 브라우저별), manager·worker·host terminal의 widget화((A) D-08).
-- [계속 제외] (A) D-08의 제외 목록(웹의 manager·worker·host pane 조작, 파일 첨부, 외부 알림, OAuth 등), rate limit, CDN·CSS/JS framework, 새 runtime 의존성. API key로 terminal·승인 명세 연결·backend 제어(P2-AC-13·20).
+- [트랙 D 제외] 단축키(WBX-D53), 끌기 library·CDN(WBX-D52), agent·shell 사이의 OS 권한 분리(WBX-D58, ADR-0003), Hub 재시작 뒤 shell 복원, 여러 브라우저 사이의 배치 공유(WBX-D50: 배치는 브라우저별), manager·worker·host terminal의 widget화((A) D-08). [2026-10-29 r0.6 개정: manager·worker·host pane의 widget화는 트랙 E가 다룬다(WBX-D59~D67). 트랙 D의 범위는 그대로다.]
+- [계속 제외] (A) D-08의 제외 목록(웹의 manager·worker·host pane 조작, 파일 첨부, 외부 알림, OAuth 등), rate limit, CDN·CSS/JS framework, 새 runtime 의존성. API key로 terminal·승인 명세 연결·backend 제어(P2-AC-13·20). [2026-10-29 r0.6 개정: "웹의 manager·worker·host pane 조작"은 제외 목록에서 빠지고 트랙 E(WBX-D59~D67)가 된다. 나머지 제외는 그대로이고, API key로는 pane에도 닿지 않는다(WBX-AC-47).]
+- [포함, 2026-10-29 트랙 E "Board workspace의 WB 프로젝트 pane"] 등록된 WB 프로젝트의 manager·worker·host pane을 Board workspace widget으로 보고 입력한다(WBX-D59·D61). TUI가 붙어 있어도 함께 쓰도록 backend ui_v1에 Hub 전용 공유 attach를 더한다(WBX-D59·D65, 기존 TUI 동작은 그대로). 크기 주인(WBX-D60), pane 동작 버튼(WBX-D62), 감사(WBX-D63), panel의 "프로젝트" 묶음과 프로젝트 화면의 "작업 공간에서 열기"(WBX-D64), Hub 중계(WBX-D66), 실패 동작(WBX-D67)을 다룬다.
+- [트랙 E 제외] 웹에서 프로젝트 켜기·끄기·일시정지·재개(기존 프로젝트 화면 그대로, D-09), 웹의 `Ctrl-]` prefix와 TUI 단축키, backend focus 바꾸기(웹 focus는 브라우저 안에서만), keystroke 감사, TUI 화면에 웹 연결 표시, pane 사이 OS 권한 분리, 실행 중 backend의 자동 재시작(이전 판 backend는 소유자가 재시작한다, WBX-D67).
+- [포함, 2026-10-29 Board shell] Board shell의 기본 program을 bash로(없으면 sh) 바꾼다(WBX-D68·D69, ticket WBX-D4).
 - [제외] MCP와 REST의 병행 기간(WBX-D07), 별도 API 허용 목록(WBX-D06), GitHub 게시(사용자가 한다, WBX-D10), 이 목록 밖 기능의 구현(WBX-D16).
 
 ## 제약과 호환성
@@ -49,6 +55,9 @@ ID 접두사는 `WBX-`다. `WU-`는 [workbench-update](../workbench-update/BRIEF
 - [기존 계약, D-29] 새 의존성을 더하지 않는다. `wb_inbox.py`는 Python 3 표준 라이브러리만 쓴다.
 - [유지, 트랙 D] 모든 Board agent와 shell은 sandbox 없이 같은 OS 사용자로 돈다(ADR-0003). Terminal은 로그인한 소유자 세션만 열고 API key로는 열 수 없다(P2-AC-13·20, WBX-AC-08). OMP 로그인은 사용자 `agent.db`로의 symlink로만 공유하고 복사하지 않는다(C-D64, WBX-D32). `/board`의 CSP는 2026-10-26 결정(style nonce, `style-src-attr 'unsafe-inline'`) 그대로이고 `script-src 'self'`는 바뀌지 않는다.
 - [호환, 트랙 D] 이전 판으로 되돌려도(`wb update` rollback) 기존 Board agent의 세션·메모리(`<hub state>/board-agent/`)는 그대로 쓰인다. `hub.sqlite3`의 schema version은 올리지 않는다(SPEC s4 "트랙 D").
+- [유지, 트랙 E] 기존 TUI(`workbench-ui`)의 attach·화면·입력·`Ctrl-]` 명령·detach는 바뀌지 않는다. 두 번째 primary attach는 지금처럼 `attached_elsewhere`다. ui_v1 `VERSION`은 1 그대로이고 바뀜은 덧붙이기(새 request type·field·reason)뿐이다(WBX-D65). Backend의 입력 판정(`admit`)·host shell 입력 주인·`takeover_*`/`handoff`·lone Ctrl+C 규칙(ADR-0002, command-stop)·manager 입력창 대기는 그대로 쓴다(WBX-D61).
+- [유지, 트랙 E] 보호는 Board와 같다: 로그인한 소유자 세션만, CSRF, `allow_from`·bind, 감사. API key로는 닿지 않는다(P2-AC-13·20, WBX-AC-08). Hub ↔ backend는 기존 `<runtime>/ui.sock`(0600, `SO_PEERCRED` 같은 uid)이고, 공유 attach는 확인된 실행 중 Hub process만 쓴다(WBX-D65).
+- [호환, 트랙 E] `wb update` 뒤에도 이미 돌던 backend는 이전 판 code다. 그런 backend는 공유 attach를 모르므로 widget이 "backend 재시작 필요"를 보인다(WBX-D67). 새 판 Hub와 이전 판 backend, 이전 판 Hub와 새 판 backend 모두 기존 기능은 그대로 동작한다.
 
 ## 수락 기준
 
@@ -106,9 +115,25 @@ ID는 WBX-AC-nn이다. "관측"은 웹 화면, HTTP 응답(status·header·본�
 - WBX-AC-37 (WBX-D44·D48): 업데이트 뒤 기존 Board agent는 `agent-1`로 보이고 이전 세션·메모리를 잇는다(home 위치는 그대로 `<hub state>/board-agent/`). 첫 shell은 `shell-1`이다. 이전 판으로 되돌려도 `agent-1`의 세션·메모리가 그대로 쓰인다.
 - WBX-AC-38 (WBX-D54·D58, ADR-0003): 모든 Board 화면·동작·terminal 연결은 로그인한 세션만 쓸 수 있고, 상태를 바꾸는 동작은 CSRF 검사를 거친다. API key(Bearer)로는 어떤 Board 동작·terminal 연결에도 닿지 않는다(401). Terminal 이름은 HTML·script로 해석되지 않는다. `wb hub status`와 `wb hub stop`·`wb update`의 확인 목록에 실행 중인 모든 agent·shell이 이름과 함께 보이고, 확인하면 모두 끝난 뒤 Hub가 멈춘다.
 
+트랙 E (2026-10-29, Board workspace의 WB 프로젝트 pane)
+
+- WBX-AC-39 (WBX-D59·D61·D65·D66): 켜진 프로젝트 P의 manager widget을 열면 그 pane의 이전 출력(replay)과 이후 출력이 보이고, widget에서 친 글자가 manager OMP에 도착한다. P에 TUI가 붙어 있는 동안과 없는 동안 모두 같고, worker·host widget도 같다. 같은 pane widget을 두 브라우저에서 열면 둘 다 같은 출력을 보고 입력할 수 있다(입력은 Hub에 도착한 순서). TUI 쪽은 웹이 붙어 있는 동안에도 화면·입력·`Ctrl-]` 명령·detach·다시 attach가 이전과 같고, 두 번째 TUI attach는 지금처럼 `attached_elsewhere`다.
+- WBX-AC-40 (WBX-D65): 공유 attach는 hello 이름 `workbench-hub`, backend와 같은 peer uid, 확인된 실행 중 Hub process 세 조건이 모두 맞을 때만 받아들여지고, 하나라도 틀리면 거절되며 attach 자리·화면 전송은 바뀌지 않는다. 공유 attach가 읽지 않아 송신 한도를 넘으면 그 연결만 `slow_client`로 닫히고 TUI의 연결·화면과 pane process는 영향이 없다. 공유 attach를 모르는 이전 판 backend는 `unsupported_type`으로 답하고 TUI attach 자리를 빼앗지 않는다.
+- WBX-AC-41 (WBX-D60): TUI가 붙어 있는 동안 웹은 pane 크기를 바꾸지 않는다(웹이 보낸 크기 변경은 적용되지 않음). 웹 widget은 그 pane의 크기로 그리고 남으면 비우고(letterbox) 모자라면 scroll한다. TUI가 없으면 pane마다 가장 최근에 입력하거나 화면 크기를 바꾼 웹 연결의 크기를 따른다(WBX-AC-33과 같은 규칙). TUI가 다시 붙으면 TUI 크기로 돌아간다. 웹과 TUI, 두 웹 연결 사이에 크기를 서로 바꾸는 반복이 없다.
+- WBX-AC-42 (WBX-D61): Manager·worker widget에서는 어떤 글자든 그대로 간다. 단 Ctrl-d는 TUI처럼 첫 번째를 보내지 않고 "2초 안에 한 번 더" 안내를 보이며, 2초 안의 두 번째 Ctrl-d만 보내고, 다른 키가 오면 첫 Ctrl-d는 버린다. Host widget의 입력이 backend 규칙으로 거절되면(`host_shell_automation`, `input_owner_manager`, `input_target_unknown` 등) 그 widget에 이유 문장이 보이고 아무것도 shell에 가지 않는다. 확인된 foreground Workbench 명령으로 가는 lone Ctrl+C는 TUI와 같이 전달되고 backend journal에 남는다. 웹에서 manager 입력창에 글을 쓰면 자동 전달이 TUI 때와 같이 기다린다(대기 사유 표시). 웹에는 `Ctrl-]` prefix가 없고 그 byte는 친 그대로 간다.
+- WBX-AC-43 (WBX-D62): Host widget에 인수 요청·인수 확인·넘기기 버튼, 실행 중인 Workbench 명령이 있을 때 "명령 중지"(확인 dialog에 명령 이름, 확인하면 그 명령 id만 중지), 끝난 pane에 "재시작", host widget에 "강제 종료"(확인 dialog)가 있다. 결과(성공·거절 이유, 명령 중지의 최종 결과)가 widget에 보인다. Dialog에서 취소하면 아무것도 바뀌지 않는다. 지금 상태에서 할 수 없는 동작의 버튼은 비활성이다. 인수·넘기기 결과(입력 주인)는 TUI와 모든 웹 widget에 같게 보인다.
+- WBX-AC-44 (WBX-D63): 감사 기록에 웹 pane 연결·해제(연결별, 프로젝트 id·이름·pane·연결 수), 인수 요청·확인·넘기기, 명령 중지(명령 id, 최종 결과), 강제 종료, 재시작이 결과(성공·거절 이유)와 함께 남는다. 입력한 글자·붙여넣기 내용·byte 수는 남지 않는다.
+- WBX-AC-45 (WBX-D64): Board 왼쪽 panel에 "프로젝트" 묶음이 있고 등록된 프로젝트마다 이름·켜짐 상태와 manager·worker·host widget 추가 버튼이 있다. 추가한 widget의 제목은 "<프로젝트 이름> · manager"(worker, host)다. Widget의 ×와 숨기기는 이 브라우저에서 감출 뿐 pane과 process에 아무것도 하지 않는다. 프로젝트 화면의 "작업 공간에서 열기"를 누르면 `/board`에서 그 프로젝트의 widget이 보인다. 배치 기억(WBX-AC-25)·좁은 화면(WBX-AC-35)·focus(WBX-AC-36)는 pane widget에도 같다.
+- WBX-AC-46 (WBX-D66·D67): 프로젝트가 꺼져 있으면 widget은 "꺼짐"과 프로젝트 화면 링크를 보이고 입력을 받지 않는다. Backend가 다시 시작되면 widget은 화면을 지우고 새 backend의 replay로 저절로 다시 붙는다. Hub가 다시 시작돼도 다시 붙는다. 이전 판 backend면 "backend 재시작 필요"를 보이고 되풀이해 시도하지 않는다. 등록이 지워진 프로젝트의 widget은 사라진다. 한 pane에 9번째 웹 연결은 거절되고, 한 웹 연결이 느려 끊겨도 같은 pane의 다른 연결과 TUI는 영향이 없다.
+- WBX-AC-47 (WBX-D59·D65·D66): Pane widget 연결과 pane 동작은 로그인한 세션만 쓸 수 있고 CSRF 검사를 거친다. API key(Bearer)로는 401이고 `/api/v1/`·내부 listener에 pane 동작이 없다. 모르는 프로젝트·잘못된 pane 이름은 연결 전에 거절된다. `[web] enabled = false`나 `allow_from` 밖에서는 열리지 않는다. 프로젝트 이름은 HTML·script로 해석되지 않는다.
+
+Board shell (2026-10-29)
+
+- WBX-AC-48 (WBX-D68·D69): `[board_agent] shell`이 비어 있으면 새 Board shell은 bash(`/bin/bash`, `/usr/bin/bash`, Hub `PATH`의 `bash` 순서)이고, bash가 없으면 `/bin/sh`다. `$SHELL`이 무엇이든(없음, zsh, fish) 결과는 같다. `shell`이 설정되어 있으면 그 절대 경로만 쓴다. 이미 돌던 shell은 바뀌지 않는다.
+
 ## 결정과 근거
 
-WBX-D01~D28은 [사용자 결정 2026-10-27]이다. WBX-D29~D40은 2026-10-28 결정, WBX-D41~D58은 2026-10-29 결정이며 각 행 앞에 출처를 표시했다(r0.4: D36~D40, r0.5: D41~D58). 2026-10-29의 Q 번호는 그날 사용자에게 물은 질문 번호다. "개정"은 이 결정이 바꾸는 기존 결정이다.
+WBX-D01~D28은 [사용자 결정 2026-10-27]이다. WBX-D29~D40은 2026-10-28 결정, WBX-D41~D69는 2026-10-29 결정이며 각 행 앞에 출처를 표시했다(r0.4: D36~D40, r0.5: D41~D58, r0.6: D59~D69). 2026-10-29의 Q 번호는 그날 사용자에게 물은 질문 번호다. "개정"은 이 결정이 바꾸는 기존 결정이다.
 
 | ID | 결정 | 개정 |
 |---|---|---|
@@ -170,6 +195,17 @@ WBX-D01~D28은 [사용자 결정 2026-10-27]이다. WBX-D29~D40은 2026-10-28 �
 | WBX-D56 | [orchestrator 결정 2026-10-29] 수명 세부. (1) "열기"는 panel의 보이기·시작, widget의 시작 버튼, 그리고 이번 Hub run에서 한 번도 시작하지 않은 agent의 widget이 보이는 채로 `/board`를 여는 것이다(현행 "첫 연결 때 시작"을 잇는다). 소유자가 중지한 agent는 page를 다시 열어도 저절로 시작하지 않는다. (2) Widget의 "숨기기"는 이 브라우저에서만 감추고 process는 그대로 둔다. "닫기"(×)는 agent면 중지(확인), shell이면 종료·목록에서 제거(확인)다. (3) 이번 Hub run에 shell이 하나도 없고 이 run에서 shell을 만든 적이 없으면 첫 `/board` 열기에서 `shell-1`을 만든다(현행 "첫 연결에 shell이 있음"을 잇는다). (4) 한도를 지금 개수보다 작게 바꾸는 것은 거절한다(먼저 닫거나 삭제). (5) 새로 만들기는 곧 열기다(만들고, 시작하고, 이 브라우저에 보인다). | WBX-D44·D45 보완 |
 | WBX-D57 | [orchestrator 결정 2026-10-29] 배치 세부. 겹치는 자리에 놓으면 놓지 않고 마지막 유효 자리로 돌아간다(다른 widget을 밀어내지 않음). 저장된 배치가 없는 브라우저는 모든 terminal을 agent 먼저 자동 배치해 보인다. 저장된 배치가 있는 브라우저에는 다른 곳에서 만든 terminal이 panel에 "숨김"으로 나온다(배치를 흐트러뜨리지 않음). 없어진 terminal의 배치 항목은 버린다. | WBX-D42·D50 보완 |
 | WBX-D58 | [orchestrator 결정 2026-10-29] Agent별 system key와 출처 이름은 표시·감사용 구분이며 보안 경계가 아니다. 모든 agent·shell은 같은 OS 사용자로 sandbox 없이 돌아 서로의 env(`/proc/<pid>/environ`)·home을 읽을 수 있다(ADR-0003). 내부 listener는 실행 중인 agent 각자의 이번 시작 key만 받는다. | WBX-D24("이번 시작의 system key 하나" → 실행 중인 agent마다 하나) |
+| WBX-D59 | [사용자 결정 2026-10-29, Q56] 웹이 TUI가 붙어 있는 동안에도 같은 pane을 보고 입력할 수 있도록 backend를 바꾼다. 바꾸는 방식은 ui_v1에 덧붙이는 것(추가 attach와 화면 fan-out)이고, 기존 TUI는 바뀌지 않고 그대로 동작한다. | (A) D-08 "계속 제외"의 "웹의 manager·worker·host pane 조작", D-09 "manager·worker·host pane 조작은 없다", P2-AC-21 "웹에는 manager·worker·host pane 입력 수단이 없다"; 이 문서 "계속 제외"·"트랙 D 제외"의 같은 문구 |
+| WBX-D60 | [사용자 결정 2026-10-29, Q57] TUI가 붙어 있는 동안은 TUI가 pane 크기를 정하고 웹 연결은 그 크기를 따른다(letterbox/scroll). TUI가 없으면 pane 크기는 마지막으로 활동한 웹 연결을 따른다(Board terminal과 같은 규칙, WBX-D54). | — |
+| WBX-D61 | [사용자 결정 2026-10-29, Q58] Manager·worker pane은 TUI처럼 웹에서 자유롭게 입력하되 TUI의 Ctrl-d 두 번 누르기 규칙을 따른다. Host shell 입력은 backend의 기존 주인 규칙을 따르고, 웹은 거절 이유를 보인다. | (A) D-09·P2-AC-21(위와 같음) |
+| WBX-D62 | [사용자 결정 2026-10-29, Q59] Pane widget 버튼: host 인수 요청·인수 확인·넘기기, 실행 중 명령 중지(확인 dialog), 끝난 pane 재시작, pane 강제 종료(확인 dialog). TUI의 `Ctrl-]` 명령을 버튼으로 옮긴 것이다. | (A) D-09의 "웹 제어 버튼은 켜기/끄기·일시정지·재개·`confirm-boot`"(pane 동작 버튼이 더해짐; 프로젝트 제어 버튼은 그대로) |
+| WBX-D63 | [사용자 결정 2026-10-29, Q60] Hub 감사 기록에 웹 pane 연결·해제, 인수·넘기기, 명령 중지, 강제 종료, 재시작을 남긴다. Keystroke 내용은 절대 남기지 않는다. | — |
+| WBX-D64 | [사용자 결정 2026-10-29, Q61] Workspace 왼쪽 panel에 "프로젝트" 묶음을 두고, 프로젝트마다 manager / worker / host widget을 더한다. Widget 제목은 "<프로젝트 이름> · manager". 프로젝트 상세 화면에 "작업 공간에서 열기" 링크를 둔다. | WBX-D49(panel 내용에 프로젝트 묶음 추가) |
+| WBX-D65 | [orchestrator 결정 2026-10-29] ui_v1 덧붙이기의 모양. (1) 기존 `attach`는 TUI의 primary 자리 하나로 그대로 두고, 새 request `share_attach`·`share_detach`로 primary와 따로 있는 공유 attach를 더한다. 기존 `attach`에 field를 더하지 않는 이유: 이전 판 backend가 모르는 field를 무시하면 웹이 TUI 자리를 차지하게 된다. 새 type은 이전 판에서 `unsupported_type`이라 안전하게 구분된다. (2) 공유 attach는 Hub 전용이다: hello 이름 `workbench-hub` + 같은 peer uid + 확인된 실행 중 Hub process(현행 `inbox_notice`·`cancel_task`와 같은 문). (3) 화면(display)·상태(state)는 primary와 모든 공유 attach에 연결별 송신 buffer로 보내고, 한도를 넘긴 연결만 `slow_client`로 닫는다. (4) 공유 attach는 입력·붙여넣기·크기·인수·넘기기·명령 중지·재시작·강제 종료를 보낼 수 있고, primary와 같은 `admit` 경로와 거절 이유를 쓴다. Backend focus(`focus`)와 primary `detach`는 보낼 수 없다(TUI focus를 움직이지 않음). (5) Host shell 입력 주인은 backend에 하나(`manager`/`user`)이고 연결별이 아니다. "user"는 TUI와 웹 모두의 소유자 한 사람이다. 누가 인수·넘기기를 하든 모두에게 같게 적용되고, user가 주인일 때 TUI와 웹의 입력은 backend에 도착한 순서로 섞인다. (6) TUI가 붙어 있으면 공유 attach의 `resize`는 적용하지 않고 새 reason `resize_owned_by_ui`로 답한다. 세부는 SPEC s5 "트랙 E". | ui_v1 계약(덧붙이기만), (A) D-09 |
+| WBX-D66 | [orchestrator 결정 2026-10-29] Hub 중계는 프로젝트마다 ui_v1 연결 하나(공유 attach 하나)를 그 프로젝트의 모든 웹 연결이 함께 쓴다. 근거: backend는 select loop 하나에 연결 16개 한도와 연결당 송신 buffer 16 MiB를 둔다. 웹 연결마다 backend 연결을 두면 backend의 fan-out·replay·메모리가 웹 연결 수(pane당 8 × 3 × 프로젝트 수)만큼 늘고, 크기 주인 판정과 감사가 backend와 Hub로 나뉜다. 하나로 두면 backend는 연결 하나만 더 보고, 느린 웹 연결은 Hub의 연결별 queue에서 그 연결만 끊긴다(트랙 D WebSocket과 같은 방식). 웹 쪽 endpoint는 트랙 D의 `GET /ws/board/{id}` v2를 그대로 쓰고 id는 `<project_id>:manager`·`:worker`·`:host`다. 버튼 동작은 세션 API `POST /api/board/panes/{id}/{action}`(CSRF, 확인이 필요한 동작은 `confirm:true`)이다. Pane당 웹 연결 한도는 8(WBX-D54와 같음). | WBX-D55(id 공간에 pane id 추가) |
+| WBX-D67 | [orchestrator 결정 2026-10-29] 실패 동작. Backend가 꺼져 있으면 widget은 "꺼짐"이고 Hub는 backend에 연결하지 않는다(켜기는 프로젝트 화면에서). Backend가 끝나거나 다시 시작하면 Hub는 연결된 웹 widget이 있는 동안 backoff로 다시 붙고, 새 backend면 widget 화면을 지운 뒤 replay를 보낸다. 이전 판 backend(`share_attach`가 `unsupported_type`)는 "backend 재시작 필요"로 보이고 Hub가 backend를 재시작하지 않는다(실행 중인 실험을 끊지 않기 위해). | — |
+| WBX-D68 | [사용자 결정 2026-10-29] Board shell의 기본 program은 bash다. bash를 찾지 못하면 sh다. | (A) task-inbox SPEC "Board agent 세트"·이 문서 SPEC s4 "Shell"의 `$SHELL` 기본값, `hub.toml` 템플릿 주석, task-inbox USAGE §1.2 표의 `shell` 줄 |
+| WBX-D69 | [orchestrator 결정 2026-10-29] Shell 결정 순서: `hub.toml` `[board_agent] shell`(설정되어 있으면 그 절대 경로만, 실행할 수 없으면 지금처럼 `shell_unavailable`이고 다른 것으로 넘어가지 않음) → bash(`/bin/bash`, `/usr/bin/bash`, Hub 환경 `PATH`의 `bash`의 절대 경로 순서) → `/bin/sh`. `$SHELL`은 더 이상 보지 않는다. 근거: Hub는 자동 시작·systemd로 떠 `$SHELL`이 없거나 사용자의 대화형 shell과 다를 때가 많다. 새로 시작하는 shell(만들기·재시작)에만 적용하고 돌던 shell은 그대로다. Ticket WBX-D4(Sonnet, 작음). | WBX-D68의 구현 방식 |
 
 ## 개정되는 기존 결정
 
@@ -207,6 +243,19 @@ CONTEXT.md에서 MCP 없는 상태로 바꾼 용어에는 "(WBX 트랙 B 완료 
 | 결정 2번째 항목 (3) 감사의 "인수" ✓ | ADR-0003 | 인수가 없어짐(공유 연결). 결정 자체(sandbox 없음·로그인·bind·감사)는 그대로이고 여러 agent·shell에도 같다 | WBX-D54·D58 |
 | "Board agent", "Board agent 세트 / 웹 터미널" ✓ | CONTEXT.md | 여러 agent·shell과 공유 연결로 읽는다(트랙 D 완료 전에는 현행) | WBX-D44·D45·D54 |
 | WBX-D24 | 이 문서 | "이번 시작의 system key만" → 실행 중인 agent 각자의 이번 시작 key만 | WBX-D58 |
+
+### 트랙 E와 Board shell이 개정하는 기존 결정(2026-10-29, r0.6)
+
+원문은 고치지 않고 각 자리에 한 줄 개정 주석(이 문서 WBX-D59~D69를 가리킴)만 달았다. 주석을 단 곳에 ✓를 붙였다. 사용 안내(USAGE)·`hub.toml` 템플릿의 현재 동작 설명은 구현 뒤 WBX-E4·WBX-D4가 고친다.
+
+| 기존 | 문서 | 개정 내용 | 근거 |
+|---|---|---|---|
+| D-08 "계속 제외" ✓(범위 목록 줄과 결정 표 행) | task-inbox BRIEF | "웹에서 manager·worker·host pane 조작"을 제외 목록에서 뺀다. Board workspace의 프로젝트 pane widget으로 보고 입력하고 pane 동작 버튼을 쓴다. 나머지 제외는 그대로 | WBX-D59·D61·D62 |
+| D-09 ✓ | task-inbox BRIEF | "웹은 상태 보기 … manager·worker·host pane 조작은 없다" → pane widget으로 보고 입력하고 pane 동작 버튼(인수·넘기기·명령 중지·재시작·강제 종료)을 쓴다. 프로젝트 제어 버튼(켜기/끄기·일시정지·재개·`confirm-boot`)과 "API key로는 할 수 없다"는 그대로 | WBX-D59~D62 |
+| P2-AC-21 ✓ | task-inbox BRIEF | "웹에는 manager·worker·host pane 입력 수단이 없다" → 웹 pane 입력은 WBX-AC-39~43의 규칙을 따른다. 프로젝트 제어의 세션·확인 창 규칙은 그대로 | WBX-D59·D61 |
+| "웹에는 pane 입력 수단이 없다(D-09)" 줄 ✓, 수락 기준 표 P2-AC-21 행 ✓ | task-inbox SPEC(:318, :515) | 위와 같음. 정본은 이 문서 SPEC s5 "트랙 E" | WBX-D59 |
+| "계속 제외", "트랙 D 제외" ✓ | 이 문서 "범위와 비목표" | 위와 같음 | WBX-D59 |
+| `shell` 기본값 `$SHELL` | task-inbox SPEC(:68, "Board agent 세트" :389), task-inbox USAGE §1.2, `hub.toml` 템플릿, 이 문서 SPEC s4 "Shell" ✓ | `$SHELL` 대신 bash → `/bin/sh`(WBX-D69 순서). task-inbox 쪽과 템플릿은 WBX-D4가 고친다 | WBX-D68·D69 |
 
 ### 문서 갱신 대상(트랙 B 중)
 
@@ -270,6 +319,22 @@ CONTEXT.md에서 MCP 없는 상태로 바꾼 용어에는 "(WBX 트랙 B 완료 
 | 실제 agent의 skill 설치 확인(WBX-AC-22 대상 host)은 사용자가 뒤로 미뤘다 | 사용자 결정 2026-10-29 |
 | Board terminal에서 한글 IME로 "안녕하세요"를 치면 "녕녕녕녕녕안."이 들어간다 → WBX-D41·WBX-A8 | 사용자 관찰 2026-10-29 |
 
+2026-10-29 오후(r0.6), 트랙 E 전 읽기 조사(정적, 실행 없음). 경로는 `src/workbench/` 기준이다.
+
+| 사실 | 출처 |
+|---|---|
+| Backend UI 계약은 ui_v1(frame magic `WBUI`, `VERSION = 1`). 화면은 raw PTY bytes의 display frame(pane, session_id, generation, sequence, replay 표시), 상태는 바뀔 때만 JSON state frame(최소 0.25 s 간격) | `contracts/ui_v1.py`, `backend/service.py` state push |
+| Attach 자리는 하나다. 두 번째 `attach`는 `attached_elsewhere`. Attach한 연결만 display·state를 받고 input·paste·resize·focus·takeover_*·handoff·restart_pane·kill_pane·stop_command를 보낼 수 있다. Attach하지 않은 `workbench-hub`는 pause·resume·inbox_notice·task_status·cancel_task만 | `backend/ui_server.py:373-430` |
+| Socket은 `<runtime>/ui.sock`(0600), accept 때 `SO_PEERCRED`로 peer pid·uid를 읽는다. 연결 16개 한도, 연결당 송신 buffer 16 MiB(넘으면 `slow_client`로 그 연결을 닫고 primary였으면 detach) | `backend/ui_server.py` |
+| Hub는 이미 `workbench-hub` 이름으로 backend 신원(pid·start ticks)을 확인한 뒤 요청마다 연결한다 | `hub/inbox/backend_port.py:51-70` |
+| Pane: manager_omp·worker_omp는 `OmpPane`(`pty.fork`), host_shell은 `PersistentShell` 위의 `ShellPane`. Replay ring은 pane당 256 KiB. Resize는 `TIOCSWINSZ`이고 마지막 resize가 이긴다. Pane 크기는 TUI가 계산해 pane마다 보낸다. Pane view에 `rows`·`cols`가 있다 | `backend/panes.py` |
+| OMP pane은 모든 입력을 받는다. Manager 입력창 대기는 화면이 아니라 OMP bridge의 editor 상태로 판정하고 자동 전달만 미룬다. 사용자의 worker 입력은 허용된다 | `backend/panes.py:567`, core DECISIONS C-D69(6)(b) |
+| Host shell 수동 입력은 `host_shell_automation`·`input_owner_manager`·`input_target_unknown`으로 거절될 수 있고, `takeover_request` → `takeover_confirm` → `handoff`로 주인이 바뀐다. 입력 주인은 backend에 하나다. Lone Ctrl+C는 확인된 foreground 명령으로 가고 journal에 남는다 | `backend/panes.py:796-852`, ADR-0002, command-stop SPEC |
+| `Ctrl-]` prefix와 OMP pane의 Ctrl-d 두 번 누르기(2 s)는 TUI 안에만 있다. Backend focus가 바뀌면 TUI focus도 따라간다 | `ui/product/model.py`(`CTRL_D_CONFIRM_SECONDS`, `_send_input`), `ui/product/input.py`(`PREFIX`) |
+| Keystroke는 감사하지 않는다. 남는 것은 interrupt·stop·kill·restart의 journal뿐이다 | `backend/service.py`(`_command_interrupted`), command-stop |
+| 웹의 pane 조작을 막는 기존 결정: (A) D-08 "계속 제외", D-09, P2-AC-21, task-inbox SPEC:318·:515, 이 문서 "계속 제외"(:40) | 각 문서 |
+| Board shell은 `[board_agent] shell` → `$SHELL` → `/bin/sh` 순서로 정한다 | `hub/board/launch.py` `prepare_shell` |
+
 ## 남은 확인
 
 | ID | 내용 | 시점 |
@@ -282,6 +347,8 @@ CONTEXT.md에서 MCP 없는 상태로 바꾼 용어에는 "(WBX 트랙 B 완료 
 | WBX-O06 | 트랙 D의 실제 browser 확인: 끌기·크기 조절의 감각, 두 기기 공유 연결과 크기 따름(letterbox/scroll), 720 px 미만 화면, focus 테두리, 한글 IME(WBX-A8) | WBX-A8·D2 뒤, 사용자(S7) |
 | WBX-O07 | 실제 agent(Claude Code·Codex·OMP)의 `wb-inbox` skill 설치(WBX-AC-22 대상 host). 사용자가 2026-10-29에 미뤘다 | 사용자가 정하는 때 |
 | WBX-O08 | 사용자가 바꿀 수 있는 트랙 D orchestrator 결정: 중지한 agent는 page 열기로 시작하지 않음, run마다 첫 열기의 `shell-1` 자동 생성(WBX-D56), 겹치는 자리는 놓지 않음(WBX-D57), 가장 작은 빈 번호(WBX-D48), shell 한도 상한 32(WBX-D46). 구현을 막지 않는다 | WBX-D1·D2 전, 사용자 확인 권장 |
+| WBX-O09 | 트랙 E의 실제 확인: 실제 프로젝트에서 TUI와 웹 widget을 함께 쓸 때의 화면·입력·크기 따름, host 인수·넘기기, 명령 중지, 한글 IME(pane widget), 두 기기 | WBX-E4 뒤, 사용자(S7) |
+| WBX-O10 | 사용자가 바꿀 수 있는 트랙 E orchestrator 결정과 seam 조합: 프로젝트당 Hub 연결 하나(WBX-D66), 이전 판 backend는 재시작 안내만(WBX-D67), 웹은 backend focus를 바꾸지 않음(WBX-D65 (4)), "작업 공간에서 열기"가 그 프로젝트의 세 widget을 모두 엶(SPEC s5), 실제 TUI(Hub SPEC S8 PTY e2e)와 웹 WebSocket(task-inbox T6 sandbox)을 한 시험에서 함께 쓰는 seam 조합(SPEC s5 "시험") | WBX-E1 전, 사용자 확인 권장(seam 조합은 E2 전 확인 필요) |
 
 ## SPEC으로 넘기는 것
 
@@ -301,6 +368,8 @@ CONTEXT.md에서 MCP 없는 상태로 바꾼 용어에는 "(WBX 트랙 B 완료 
 | B 외부 요청 API | WBX-D05~D11 | `mcp.py` 대체 REST module, `board/launch.py`, `omp_bridge/board/ROLE.md`, `skills/`, packaging, MCP 테스트 이전, 문서 갱신 대상 | A와 병행. WBX-O02 probe가 Board 전환의 선행 조건 |
 | C 디자인 | WBX-D12~D14 | CSS 전체, `render.py`, `board_status.py`, 로그인 화면, dashboard JS | Mockup 선택 뒤. A의 `render.py` 변경 뒤에 시작 |
 | D Board workspace | WBX-D42~D58 | `hub/board/{set,ws,launch,registry}.py`, `hub/auth.py`(system key), `inbox/service.py`(출처 이름), `rest.py`(내부 listener), `web/app.py`·`pages/board.py`, `static/board*.js`·`board.css`, `server.py`·`cli.py`(status) | WBX-A8(IME) 뒤. D1(server) → D2(화면) → D3(문서·통합) |
+| D 보충 Board shell | WBX-D68·D69 | `hub/board/launch.py`(`prepare_shell`), `hub/config.py`(템플릿 주석), USAGE·task-inbox SPEC의 `shell` 줄 | WBX-D4, 선행 없음 |
+| E 프로젝트 pane | WBX-D59~D67 | `contracts/ui_v1.py`, `backend/ui_server.py`, `backend/service.py`(fan-out·크기), Hub 중계(`hub/board/` 새 module, `ws.py`), `web/pages/board_api.py`·`projects.py`, `static/board*.js`, 감사 | 트랙 D(D2·D3) 뒤. E1(backend) → E2(Hub 중계·endpoint·감사) → E3(화면) → E4(문서·통합) |
 
 ## 다음 단계
 
@@ -309,5 +378,7 @@ CONTEXT.md에서 MCP 없는 상태로 바꾼 용어에는 "(WBX 트랙 B 완료 
 2026-10-28(r0.3): 새 ticket WBX-A6(`/dashboard`, 뒤로 가기), WBX-B11(agent별 skill 설치 README), WBX-B12(공유 OMP 로그인 완화)는 SPEC s3·PLAN p3에 있다. 새 seam은 없다(S1·S3·S4·S5·S6·S8과 기존 backend 격리 seam을 쓴다).
 
 2026-10-29(r0.5): 새 ticket WBX-A8(한글 IME, WBX-D41)과 트랙 D의 WBX-D1(server: registry·수명·신원·공유 연결), WBX-D2(workspace 화면), WBX-D3(문서·통합 확인)는 SPEC s4·PLAN p5에 있다. 새 seam은 없다(S1·S3·S5·S6·S7·S8과 기존 Board seam을 쓴다). 요구사항 정본은 requirements-p5.json(WBX-AC-01~38).
+
+2026-10-29(r0.6): 트랙 E의 WBX-E1(backend ui_v1 공유 attach·fan-out·크기·입력 규칙, Opus, 독립 검증), WBX-E2(Hub 중계·WebSocket endpoint·pane 동작 API·감사, Opus), WBX-E3(pane widget·버튼·panel "프로젝트" 묶음·프로젝트 화면 링크, Sonnet), WBX-E4(USAGE·문서·통합, Sonnet)와 Board shell의 WBX-D4(Sonnet)는 SPEC s5·PLAN p6에 있다. 기존 seam(backend ui_server seam = Hub SPEC S5, Hub SPEC S6·S8, task-inbox T5·T6, S1·S3·S5·S6·S7·S8)을 쓴다. 실제 TUI와 웹 WebSocket을 한 시험에서 함께 쓰는 seam 조합은 사용자 확인 대상이다(WBX-O10). 요구사항 정본은 requirements-p6.json(WBX-AC-01~48).
 
 2026-10-28(r0.4): 새 ticket WBX-A7(뒤로 가기로 다시 보인 화면을 세션 확인까지 가림, WBX-D36)은 PLAN p4에 있다(완료). WBX-D37~D40은 이미 통합된 구현(B12·B8·B5)과 사용 안내(B9)를 기록한 것이다. 새 seam은 없다(A7은 S1·S8).

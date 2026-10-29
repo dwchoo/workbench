@@ -1,8 +1,8 @@
 # Web Board 사용성·외부 요청 API — 구현 명세
 
-Revision: s4; source brief: [BRIEF.md](BRIEF.md) r0.5 (사용자 승인 2026-10-27, r0.3~r0.4는 2026-10-28 결정, r0.5는 2026-10-29 결정 추가). state: 초안(bundle 승인은 digest와 함께 따로 기록). 작성일: 2026-10-27. s2(2026-10-27): s1의 확인 항목 U1~U10에 사용자가 모두 답했다(BRIEF WBX-D14 선택, WBX-D20~D28). 바뀐 곳: seam 확정, JS node seam(S8), A5 범위, 내부 listener key 제한, `submit --new`, 트랙 C 선택. s3(2026-10-28): 사용자 실제 Chrome 확인의 피드백과 결정(BRIEF WBX-D29~D35, AC-21~23). 바뀐 곳: dashboard 주소 `/dashboard`와 `/` 303, `back_forward` navigation의 세션 확인과 pagehide 정리, skill README 설치 계약, 공유 OMP 로그인 완화, B1 검증 관찰 메모. 새 seam은 없다. 2026-10-28 주석(revision 유지): BRIEF r0.4의 WBX-D36~D40이 이 문서의 몇 값을 정하거나 바꾼다. 해당 자리에 `[BRIEF r0.4 WBX-Dnn: …]` 주석을 달았다(WBX-A7, B12 최종 값, result 400, foreground env, ROLE.md 경로). s4(2026-10-29): BRIEF r0.5의 WBX-D41(한글 IME, WBX-A8)과 트랙 D "Board workspace"(WBX-D42~D58, AC-24~38). 바뀐 곳: 새 절 "Board terminal 한글 IME"와 "트랙 D: Board workspace", 수락 기준 대응, 테스트 결정의 트랙 D 명령, ticket 그래프. s3까지의 절은 바꾸지 않았다. 새 seam은 없다.
+Revision: s5; source brief: [BRIEF.md](BRIEF.md) r0.6 (사용자 승인 2026-10-27, r0.3~r0.4는 2026-10-28 결정, r0.5·r0.6은 2026-10-29 결정 추가). state: 초안(bundle 승인은 digest와 함께 따로 기록). 작성일: 2026-10-27. s2(2026-10-27): s1의 확인 항목 U1~U10에 사용자가 모두 답했다(BRIEF WBX-D14 선택, WBX-D20~D28). 바뀐 곳: seam 확정, JS node seam(S8), A5 범위, 내부 listener key 제한, `submit --new`, 트랙 C 선택. s3(2026-10-28): 사용자 실제 Chrome 확인의 피드백과 결정(BRIEF WBX-D29~D35, AC-21~23). 바뀐 곳: dashboard 주소 `/dashboard`와 `/` 303, `back_forward` navigation의 세션 확인과 pagehide 정리, skill README 설치 계약, 공유 OMP 로그인 완화, B1 검증 관찰 메모. 새 seam은 없다. 2026-10-28 주석(revision 유지): BRIEF r0.4의 WBX-D36~D40이 이 문서의 몇 값을 정하거나 바꾼다. 해당 자리에 `[BRIEF r0.4 WBX-Dnn: …]` 주석을 달았다(WBX-A7, B12 최종 값, result 400, foreground env, ROLE.md 경로). s4(2026-10-29): BRIEF r0.5의 WBX-D41(한글 IME, WBX-A8)과 트랙 D "Board workspace"(WBX-D42~D58, AC-24~38). 바뀐 곳: 새 절 "Board terminal 한글 IME"와 "트랙 D: Board workspace", 수락 기준 대응, 테스트 결정의 트랙 D 명령, ticket 그래프. s3까지의 절은 바꾸지 않았다. 새 seam은 없다. s5(2026-10-29 오후): BRIEF r0.6의 트랙 E "Board workspace의 WB 프로젝트 pane"(WBX-D59~D67, AC-39~47)과 Board shell 기본 program(WBX-D68·D69, AC-48). 바뀐 곳: 새 절 "트랙 E"와 "Board shell 결정", s4 "Shell" 줄의 개정 주석, 문서 갱신 배정·수락 기준·테스트 결정·열린 항목·ticket 그래프의 s5 행. s4까지의 절은 주석 말고 바꾸지 않았다. 새 seam은 없고, seam 조합 하나(실제 TUI + 웹 WebSocket)를 확인 대상으로 표시했다(BRIEF WBX-O10).
 
-BRIEF의 결정 WBX-D01~D58과 수락 기준 WBX-AC-01~38(AC-03 보충 포함)은 바꾸지 않는다. "기술 보완"은 코드 조사(2026-10-27, HEAD `4898f39`, 작업 트리에 미commit 문서 변경 있음)로 정한 구체 형태다. 약속된 동작·호환성을 바꿀 수 있는 항목은 "열린 결정·사용자 확인 항목"에 모았고 정하지 않았다. Test seam S1~S8은 사용자가 확정했다(WBX-D20·D21). 트랙 C는 mockup 방향 A로 정해졌다(WBX-D14, 아래 "트랙 C 선택").
+BRIEF의 결정 WBX-D01~D69와 수락 기준 WBX-AC-01~48(AC-03 보충 포함)은 바꾸지 않는다. "기술 보완"은 코드 조사(2026-10-27, HEAD `4898f39`, 작업 트리에 미commit 문서 변경 있음)로 정한 구체 형태다. 약속된 동작·호환성을 바꿀 수 있는 항목은 "열린 결정·사용자 확인 항목"에 모았고 정하지 않았다. Test seam S1~S8은 사용자가 확정했다(WBX-D20·D21). 트랙 C는 mockup 방향 A로 정해졌다(WBX-D14, 아래 "트랙 C 선택").
 
 ## 문제와 해결 방향
 
@@ -259,7 +259,7 @@ Terminal view(JSON, session API·WebSocket·hub_v1 status가 같은 모양을 �
 
 #### Shell(WBX-D45·D56)
 
-- 시작은 현행 `prepare_shell`(`[board_agent] shell` / `$SHELL` / `/bin/sh`, cwd `$HOME`, `hub_environment()` + `TERM` + UTF-8 locale). Shell마다 자기 PTY session이다.
+- 시작은 현행 `prepare_shell`(`[board_agent] shell` / `$SHELL` / `/bin/sh`, cwd `$HOME`, `hub_environment()` + `TERM` + UTF-8 locale). Shell마다 자기 PTY session이다. [s5 BRIEF r0.6 WBX-D68·D69: program 결정은 `[board_agent] shell` → bash → `/bin/sh`이고 `$SHELL`은 보지 않는다. 아래 "Board shell 결정", ticket WBX-D4]
 - 닫기: `busy` → `terminate`(현행 순서) → 메모리 registry에서 제거 → 그 terminal의 WebSocket에 `{"t":"gone"}` 뒤 4404 → 감사. 스스로 끝난 shell은 `exited`로 남고 "재시작"·"닫기"를 보인다.
 - 첫 열기 규칙(WBX-D56 (3)): `POST /api/board/open`이 왔을 때 이번 Hub run에서 shell을 한 번도 만들지 않았고 지금 shell이 0개면 `shell-1`을 만든다(이름은 기본 이름 규칙).
 
@@ -382,6 +382,203 @@ Actor는 `owner`(Hub 동작은 `hub`), client 주소를 남긴다. `terminal_tak
 
 새 seam은 없다. 위 "기존 Board seam"과 T5는 task-inbox SPEC 테스트 결정에서 이미 쓰는 것이다. Worker가 이 seam으로 잡을 수 없는 behavior를 찾으면 새 seam을 만들지 말고 orchestrator에 반환한다(사용자 확인 대상).
 
+### 트랙 E: Board workspace의 WB 프로젝트 pane(WBX-D59~D67, AC-39~47, s5)
+
+현행(2026-10-29 읽기 조사, BRIEF r0.6 "관측 사실"): backend의 UI 계약은 `contracts/ui_v1.py`(frame `WBUI`, `VERSION = 1`)이고 `backend/ui_server.py`의 `UiServer`가 `<runtime>/ui.sock`(0600, accept 때 `SO_PEERCRED`)에서 연결 16개까지 받는다. Attach 자리는 `UiServer.attached` 하나이고 두 번째 `attach`는 `attached_elsewhere`다. Display(raw PTY bytes, `pane`·`session_id`·`generation`·`sequence`·`replay`)와 state(바뀔 때만, 최소 0.25 s 간격)는 attach한 연결에만 간다(`broadcast`, `push_state`). Attach하지 않은 `workbench-hub`는 `pause`·`resume`·`inbox_notice`·`task_status`·`cancel_task`만 보낸다(`ui_server.py:373-430`). Hub는 요청마다 `workbench-hub` 이름으로 새로 연결하고 backend 신원(pid·start ticks)을 먼저 확인한다(`hub/inbox/backend_port.py:51-70`). 이 절은 그 계약에 Hub 전용 공유 attach를 덧붙이고(E1), Hub가 프로젝트마다 그 연결 하나로 웹 widget을 중계하며(E2), 화면이 pane widget을 그린다(E3). 아래에서 "기술 보완"이라고 쓴 값은 이 SPEC이 정한 것이고, 나머지는 BRIEF 결정이다.
+
+구성:
+
+```
+브라우저 widget ──/ws/board/<project_id>:manager (v2)──┐
+브라우저 widget ──/ws/board/<project_id>:host    (v2)──┤  Hub PaneRelay(프로젝트당 하나)
+                                                       │   pane별 ring 256 KiB, 연결별 송신 queue 4 MiB
+pane 동작 버튼 ──POST /api/board/panes/{id}/{action}───┘   크기 주인 판정, 감사
+                                                       │
+                              ui_v1 share_attach 하나(<runtime>/ui.sock)
+                                                       │
+TUI(workbench-ui) ── ui_v1 attach(primary, 그대로) ──── backend UiServer ── manager_omp / worker_omp / host_shell
+```
+
+#### ui_v1 덧붙이기: 공유 attach(WBX-D59·D65, backend, WBX-E1)
+
+`VERSION`은 1 그대로다. 기존 frame·type·reason의 뜻은 바뀌지 않고, 아래 type 두 개와 reason 하나, snapshot field 하나만 더한다.
+
+| 추가 | 모양 | 뜻 |
+|---|---|---|
+| request `share_attach` | `{"v":1,"type":"share_attach","id"}`(다른 field 없음, 있으면 `invalid_message`) | 이 연결을 공유 attach로 만든다. 답은 `result ok` + `snapshot`, 그 뒤 모든 pane의 replay display(`replay: true`), 그 뒤 live. Primary attach의 `attach` 응답 순서와 같다 |
+| request `share_detach` | `{"v":1,"type":"share_detach","id"}` | 공유 attach를 푼다. 답 `{"detached": true}`. 공유 attach가 아닌 연결이면 `not_attached` |
+| reason `resize_owned_by_ui` | `result ok:false` | Primary(TUI)가 붙어 있어 공유 attach의 `resize`를 적용하지 않았다 |
+| snapshot `shared_attachments` | 정수 ≥ 0 | 지금 공유 attach 수. 기존 `attached`(primary가 있는지)의 뜻은 그대로다 |
+
+받아들이는 조건(WBX-D65 (2)): hello 이름이 `NON_ATTACHED_CONTROL_CLIENTS`(`workbench-hub`)이고, accept 때 읽은 peer uid가 backend의 euid이며, peer pid가 확인된 실행 중 Hub(`hub_peer`)일 것. 현행 `_may_control_unattached` + `_is_hub_process`(`inbox_notice`·`cancel_task`의 문)와 같다. 하나라도 틀리면 `not_attached`("share_attach is a Workbench Hub request")이고 attach 자리·전송은 바뀌지 않는다. 그 밖의 거절(기술 보완): 이미 primary인 연결, 이미 공유 attach인 연결 → `invalid_message`. 공유 attach는 backend 전체에 최대 4개(`MAX_SHARED_ATTACHMENTS`, Hub 재시작 직후 이전 연결이 아직 닫히지 않은 겹침을 견디는 값)이고 넘으면 `queue_full`. 연결 16개 한도(`MAX_CONNECTIONS`)는 그대로다. 공유 attach인 연결의 `attach`는 `invalid_message`, primary 연결의 `share_attach`도 `invalid_message`다.
+
+공유 attach가 보낼 수 있는 request(WBX-D65 (4)): `input`, `paste`, `resize`(아래 크기 규칙), `takeover_request`, `takeover_confirm`, `handoff`, `restart_pane`, `kill_pane`, `stop_command`, `share_detach`. 처리는 primary와 같은 handler다(`controller.admit`, `restart_pane`, `kill_pane`, `_start_stop` …). `focus`와 `detach`는 `not_attached`("primary attach only")다. Backend focus는 TUI focus를 움직이기 때문이다(`ui/product/model.py`는 backend focus가 바뀌면 따라가고 잡아 둔 Ctrl-d를 버린다). 공유 attach가 아닌 연결(TUI 아닌 다른 client 포함)의 규칙은 현행 그대로다.
+
+Fan-out(WBX-D65 (3)):
+- `broadcast(chunk)`와 `push_state(snapshot)`은 primary와 모든 공유 attach(닫는 중이 아닌 것)에 보낸다. 각 연결은 지금처럼 자기 `outbound` buffer(한도 `max_outbound` 16 MiB)를 가진다.
+- 한도를 넘긴 연결은 지금처럼 그 연결만 `closing slow_client`로 닫는다. 공유 attach면 공유 집합에서 빠지고 primary·다른 공유 attach·pane은 영향이 없다. Primary면 현행대로 detach.
+- 상태 push 조건: 지금은 primary가 있을 때 보내던 주기 push(`_last_state_digest`가 바뀔 때만)를 primary나 공유 attach가 하나라도 있으면 보낸다. 새 공유 attach는 attach 응답의 `snapshot`으로 시작한다.
+- `stop_command`의 최종 result는 현행대로 요청한 연결에만 가고, 그 뒤 state push는 모든 attach에 간다. `close()`의 `closing backend_shutdown`은 지금처럼 hello를 마친 모든 연결에 간다.
+
+크기(WBX-D60, backend 쪽 규칙):
+- Primary `attach`의 `on_attach(size)`(모든 pane을 TUI 크기로)와 primary의 `resize`는 바뀌지 않는다. 마지막 resize가 이긴다(`TIOCSWINSZ`).
+- 공유 attach의 `resize`는 `pane`을 꼭 적어야 하고(`pane` 없음은 `invalid_message`), primary가 붙어 있으면 적용하지 않고 `resize_owned_by_ui`, 없으면 그 pane에 적용한다. 판정은 backend loop 안에서 하므로 TUI attach와 겹쳐도 "TUI가 붙은 뒤 웹 resize가 이기는" 경우가 없다.
+- 공유 attach는 attach할 때 크기를 바꾸지 않는다(`share_attach`에 `size`가 없다).
+- Pane view의 `rows`·`cols`(현행 `panes.py` `info()`)가 Hub와 웹이 따를 크기다.
+
+입력과 host shell 주인(WBX-D61, D65 (5)):
+- 입력은 primary와 같은 `admit(pane, data, kind)` 경로다. OMP pane은 모든 입력을 받는다(`panes.py:567`). Host shell의 거절 이유(`host_shell_automation`, `input_owner_manager`, `input_target_unknown`, `pane_unavailable`, `queue_full`, `paste_too_large`)와 lone Ctrl+C 예외(확인된 foreground 명령으로 전달, `command_interrupt` journal, `panes.py:796-852`, ADR-0002)는 그대로다. Journal에 어느 client에서 왔는지는 더하지 않는다.
+- Host shell 입력 주인은 backend에 하나(`input_owner`: `manager`/`user`)이고 연결별이 아니다. `user`는 TUI와 웹 모두의 같은 소유자다. TUI나 웹 어느 쪽의 `takeover_request`·`takeover_confirm`·`handoff`든 그 하나를 바꾸고, 결과는 state push로 모든 attach에 같게 보인다. `user`가 주인일 때 TUI와 웹의 입력은 backend loop에 도착한 순서대로 섞인다(공유 연결 WBX-D54와 같은 수용).
+- Manager 입력창 대기(`manager_editor_not_empty`)는 OMP bridge editor 상태로 판정하므로 웹 입력에도 그대로 적용된다(자동 전달만 미룸).
+- Worker pane의 사용자 입력은 허용(core DECISIONS C-D69(6)(b)).
+
+호환:
+- 기존 TUI(`workbench-ui`)는 아무것도 바꾸지 않는다. TUI가 snapshot의 모르는 key(`shared_attachments`)를 무시하는지 E1이 확인한다(무시하지 않으면 TUI가 아니라 field 이름·위치를 다시 정하고 orchestrator에 반환).
+- 이전 판 backend는 `share_attach`를 `ClientType`으로 모르므로 `unsupported_type`으로 답하고, attach 자리를 건드리지 않는다. 기존 `attach`에 field를 더하지 않은 이유가 이것이다(WBX-D65 (1)).
+- 이전 판 Hub는 `share_*`를 보내지 않는다. 새 backend에서 기존 Hub 동작은 그대로다.
+- Core SPEC `ui_v1` 설명(`docs/features/core-workbench/SPEC.md:211`)에는 E4가 개정 주석을 단다.
+
+#### Hub 중계: PaneRelay(WBX-D66, WBX-E2)
+
+위치(기술 보완): `src/workbench/hub/board/panes.py`(새). Hub event loop(aiohttp) 안에서 ui_v1 framing(`ui_v1.FrameDecoder`, `encode_frame`)을 쓰는 asyncio Unix socket client다. 막는 `UiClient`를 event loop에서 직접 부르지 않는다(필요하면 executor).
+
+프로젝트당 연결 하나(WBX-D66): 프로젝트 P의 pane widget 연결(WebSocket)과 pane 동작 API는 모두 P의 `PaneRelay` 하나를 쓴다. 그 relay가 backend에 연결 하나, 공유 attach 하나를 가진다.
+
+수명(기술 보완):
+1. 열기: P의 pane WebSocket 하나가 hello를 통과하거나 P에 pane 동작 API가 오면 연다. Registry에서 P의 root를 찾고(URL에서 경로를 만들지 않는다), `backend_port.call`과 같은 신원 확인(`inspect_backend(DataLayout(root/.wb))`, `state == running`, 기록된 pid·start ticks)을 한 뒤 `ui.sock`에 연결해 hello(`workbench-hub`) → welcome의 `backend_pid`가 기록의 pid와 같은지 확인 → `share_attach`.
+2. 준비: attach 응답의 snapshot을 저장하고, 뒤따르는 replay display로 pane별 Hub ring(256 KiB, backend `REPLAY_BYTES`와 같은 값)을 채운다. 그 사이 붙은 WebSocket은 `state`(`connecting`)만 받고, 준비가 끝나면 replay와 live를 받는다.
+3. 닫기: 마지막 pane WebSocket이 떠나고 진행 중 동작이 없으면 30 s 뒤 `share_detach` 후 닫는다(새로 고침마다 다시 attach·replay하지 않도록). Hub 정지 때는 즉시 닫는다(best-effort `share_detach`).
+4. 한 프로젝트의 relay 실패는 다른 프로젝트·Board terminal에 영향이 없다.
+
+화면 중계:
+- Display frame의 `pane`으로 나눈다: `manager_omp` → `manager`, `worker_omp` → `worker`, `host_shell` → `host`.
+- Pane마다 지금 ring의 `(session_id, generation)`을 기억한다. 다른 값의 frame이 오면(pane 재시작, 새 backend) ring을 비우고 그 pane의 WebSocket에 `{"t":"reset"}`을 보낸 뒤 새 bytes를 보낸다. `sequence`가 같은 session 안에서 건너뛰거나 거꾸로 가도 같은 처리를 하고 Hub log에 남긴다.
+- 새 `share_attach`마다(다시 붙기 포함) ring을 비우고 붙어 있던 WebSocket에 `reset`을 보낸 뒤 replay를 다시 보낸다(sequence로 겹침을 맞추지 않는다. 단순함과 빠짐 없음을 택함).
+- WebSocket attach는 트랙 D의 `_attach`처럼 await 없이 한 단계: client 집합에 넣기 → `attached` → Hub ring replay(64 KiB 조각) → live 구독. Replay와 live 사이에 빠지거나 겹치는 조각이 없다.
+- Hub는 backend socket을 계속 읽는다. 웹 연결로 보내는 것은 연결별 송신 queue(4 MiB, 넘으면 그 연결만 4003, 트랙 D 값)에 넣을 뿐이고, 느린 웹 연결이 backend 읽기를 막지 않는다.
+
+Pane view(JSON, `attached`·`state` message와 `GET /api/board`가 같은 모양):
+
+| field | 값 |
+|---|---|
+| `id` | `<project_id>:<pane>`. `project_id`는 registry의 소문자 canonical UUID, `pane`은 `manager`·`worker`·`host` |
+| `kind` | `pane` |
+| `project_id`, `project_name`, `pane` | registry 값과 위 이름 |
+| `name` | `<project_name> · <pane>`(WBX-D64) |
+| `state` | `off`(backend가 실행 중이 아님), `idle`(켜져 있으나 relay가 열려 있지 않음, 열면 붙음), `connecting`, `running`(pane이 살아 있음), `exited`(pane이 끝남, `exit_status`), `unavailable`(snapshot에 그 pane이 없음, 예: 준비 전), `unreachable`(신원 확인·연결 실패, 다시 시도 중), `too_old`(이전 판 backend) |
+| `size` | `[rows, cols]`(snapshot의 pane 크기) |
+| `ui_attached` | snapshot `attached`(TUI가 붙어 있는지 = 크기 주인이 TUI) |
+| `input_owner` | host: `manager`/`user`, OMP pane: `user` |
+| `automation_hold` | host: 문자열 또는 null |
+| `command` | host: `{command_id, label, owner, state}`(snapshot host `command`, TUI `_host_command`와 같은 판정) 또는 null |
+| `actions` | 지금 쓸 수 있는 버튼: `takeover_request`·`takeover_confirm`·`handoff`(host, 주인·hold 상태에 따라), `stop`(host, `command`가 있고 `state != "stopping"`), `restart`(`exited`), `kill`(host, 살아 있음) |
+| `clients` | 이 pane의 웹 연결 수(0~8) |
+| `busy` | 이 pane에 pane 동작이 진행 중 |
+| `message?` | `off`·`unreachable`·`too_old`·`unavailable`의 고정 문장 |
+
+입력(WBX-D61):
+- WebSocket binary frame 하나(≤ 64 KiB, 트랙 D 한도) = ui_v1 `input` request 하나(`kind` input). Hub는 frame을 합치거나 나누지 않는다. 그래서 웹에서 친 lone Ctrl+C(`\x03` 한 byte)는 그대로 lone이다.
+- 여러 웹 연결의 입력은 Hub에 도착한 순서대로 relay 연결에 쓴다(pipelining, 순서 보장). Hub는 request `id` → (웹 연결, pane)을 기억하고, `ok:false`는 그 웹 연결에만 `{"t":"input_refused","reason":<ui_v1 reason>,"detail":<고정 문장>}`으로 돌려준다(기술 보완: reason별 한국어 문장 표, E2가 SPEC 문구로 고정).
+- 미응답 상한(기술 보완): relay당 64 request 또는 미응답 입력 1 MiB. 넘으면 입력을 보낸 웹 socket의 읽기를 멈춘다(트랙 D `_paced`와 같은 backpressure, 다른 연결의 출력은 계속).
+- `state`가 `running`이 아니면 보내지 않고 `input_refused`(`pane_unavailable`, 꺼짐이면 `backend_off`).
+- Ctrl-d 두 번 누르기는 화면(E3)이 TUI와 같은 규칙으로 한다(Hub·backend는 받은 bytes를 그대로 보낸다). 웹에는 `Ctrl-]` prefix가 없어 `0x1d`도 친 그대로 간다.
+
+크기 주인(WBX-D60, Hub 쪽):
+- `ui_attached`가 true면 Hub는 `resize`를 보내지 않는다. Pane 크기가 바뀔 때마다 그 pane의 웹 연결에 `{"t":"size","rows","cols"}`. 웹은 그 크기로 그리고 letterbox/scroll(트랙 D client 규칙: `size`에 반응해 `resize`를 보내지 않음).
+- false면 pane마다 트랙 D의 크기 주인 규칙을 그대로 쓴다: 가장 최근에 입력·`resize`를 보낸 웹 연결이 주인, 주인의 기억한 크기가 pane 크기와 다르면 입력 전에 `resize(pane, rows, cols)`, hello `size`는 그 pane의 유일한 웹 연결일 때만, 주인이 떠나도 크기는 그대로.
+- `resize_owned_by_ui` 답은 버린다(TUI가 막 붙음. 다음 state가 `ui_attached: true`). TUI가 떠나면 다음 웹 입력·resize까지 크기는 TUI가 남긴 그대로다.
+
+Pane 동작 API(WBX-D62, 기술 보완). 트랙 D session API와 같은 규칙: 세션 route, `X-CSRF-Token`, Bearer 무시(401), body JSON ≤ 4 KiB(모르는 field 400), `no-store`, 응답 `{"ok":true,…}` / `{"ok":false,"reason","detail"}`.
+
+| method·path | body | pane | ui_v1 | 성공 |
+|---|---|---|---|---|
+| `POST /api/board/panes/{id}/takeover_request` | `{}` | host | `takeover_request` | 200 `{ok, pane:view}` |
+| `POST /api/board/panes/{id}/takeover_confirm` | `{}` | host | `takeover_confirm` | 200 |
+| `POST /api/board/panes/{id}/handoff` | `{}` | host | `handoff` | 200 |
+| `POST /api/board/panes/{id}/stop` | `{confirm:true, command_id}` | host | `stop_command(command_id)` | 202 `{ok, command_id, stop:{status:"stopping"}}`; 최종 결과는 그 pane의 웹 연결에 `{"t":"notice","action":"stop","command_id","stop":{…}}` |
+| `POST /api/board/panes/{id}/restart` | `{}` | 셋 다 | `restart_pane` | 200 |
+| `POST /api/board/panes/{id}/kill` | `{confirm:true}` | host | `kill_pane` | 200 |
+
+- `command_id`는 dialog에 보인 명령의 id이고(TUI처럼 "보인 id, 더 새 것이 아님"), 그 사이 명령이 바뀌었으면 backend의 판정을 그대로 돌려준다.
+- 오류: 400 `bad_input`·`confirm_required`·`wrong_pane`(host 전용 동작을 OMP pane에); 404 `unknown_terminal`(id 모양이 틀림, 등록되지 않은 프로젝트); 409 `terminal_busy`(같은 pane에 동작 진행 중), 409 `backend_refused` + `backend_reason`(ui_v1 reason: `takeover_held`, `handoff_held`, `pane_alive`, `pane_not_restartable`, `restart_in_progress`, `pane_not_killable`, `pane_exited`, `kill_in_progress`, `kill_failed`, `restart_failed`, `pane_unavailable`, `queue_full`, `backend_shutdown` …); 503 `backend_off`·`backend_unreachable`·`backend_too_old`·`board_unavailable`; 504 `backend_timeout`(10 s 안에 답이 없음. 결과를 알 수 없으므로 다시 보내지 않고 "결과를 알 수 없음 — pane 상태를 확인"을 보인다).
+- relay가 닫혀 있으면 API가 연다(위 수명 1).
+- TUI와 웹이 같이 있을 때 버튼은 TUI의 존재와 무관하게 쓸 수 있고, 결과는 backend 상태 하나로 양쪽에 보인다(위 "입력과 host shell 주인").
+
+WebSocket endpoint(WBX-D66): 트랙 D의 `GET /ws/board/{id}` v2를 그대로 쓴다(세션 cookie, `Origin` 정확히 일치, upgrade 전 한도 전체 128·세션당 hello 전 8, hello v2 + `csrf` + `size`, 연결별 heartbeat 10 s / 20+1 s, 세션 무효 4401, 송신 queue 4 MiB 4003, 1009, 1001, `release`, 재연결 규칙).
+- Id 판정(upgrade 전): `^<소문자 canonical UUID>:(manager|worker|host)$`이고 그 UUID가 Hub registry에 있어야 한다. 아니면 404. Board registry의 `registry_invalid`는 pane widget을 막지 않는다(agent registry 문제일 뿐). Web 꺼짐·Hub 정지 중은 503.
+- Pane당 웹 연결 한도 8: 9번째는 `refused`(`too_many_clients`) 뒤 4429(WBX-D54와 같음).
+- 더하는 server → client message: `{"t":"reset"}`(xterm을 지우고 이어지는 bytes를 처음부터), `{"t":"input_refused","reason","detail"}`, `{"t":"notice","action","…"}`. `attached`·`state`의 `terminal`은 pane view다. 등록이 지워지면 `gone` 뒤 4404. 새 close code는 없다.
+- Binary: client → server 입력 bytes, server → client 출력 bytes(트랙 D와 같음).
+
+`GET /api/board`에 `projects`를 더한다(기술 보완): `[{project_id, name, power:"on"|"off"|"unknown", panes:[pane view×3]}]`, 순서는 registry 순서. `power`는 dashboard가 쓰는 프로젝트 상태 값(`/api/dashboard`의 projects)과 같다. Relay가 열려 있지 않은 pane의 `state`는 `power`에서 정한다(`on` → `idle`, `off` → `off`, `unknown` → `unreachable`). 이 목록은 backend에 연결하지 않는다.
+
+감사(WBX-D63, AC-44):
+
+| event | 남기는 때 | detail |
+|---|---|---|
+| `pane_attach`, `pane_release`, `pane_timeout`, `pane_closed` | 웹 연결별 붙음·해제·heartbeat 끊김·그 밖의 끝(트랙 D `terminal_*`와 같은 때) | `pane_id`, `project_id`, `project_name`, `pane`, `client`, `clients` |
+| `pane_denied` | hello 오류·CSRF·pane당 한도 | 위 + `reason` |
+| `pane_takeover_request`, `pane_takeover_confirm`, `pane_handoff` | API 결과 | `pane_id`, `project_id`, `project_name`, `pane`, `ok`, `reason?`, `input_owner`(뒤의 값) |
+| `pane_stop` | 최종 결과가 왔을 때 한 행(Hub가 그 전에 멈추면 `outcome: "unknown"`) | 위 + `command_id`, `outcome`(`stop`의 status·reason) |
+| `pane_restart`, `pane_kill` | API 결과 | 위 + `ok`, `reason?` |
+
+Actor `owner`, client 주소. 입력 bytes·붙여넣기 내용·byte 수·입력 거절·resize는 남기지 않는다. Relay 연결 열기·닫기는 감사가 아니라 Hub log다. Lone Ctrl+C는 keystroke이므로 Hub 감사에 없고 backend journal(`command_interrupt`)에만 지금처럼 남는다.
+
+화면(WBX-D64, WBX-E3):
+- Panel: 트랙 D panel 아래 "프로젝트" 묶음. `GET /api/board`의 `projects`마다 이름(`textContent`)·켜짐 점·"manager"·"worker"·"host" 추가 버튼. 이미 보이는 widget이면 그 widget에 focus. 추가는 이 브라우저의 배치에만 쓴다(Hub에 저장하지 않음, WBX-D50과 같음).
+- Widget: 제목 "<프로젝트 이름> · manager", 상태 점, "다른 화면 N개 연결됨", TUI가 붙어 있으면 "TUI가 크기를 정함" 표시, 숨기기, ×(이 브라우저에서 감춤. Pane·process에 아무것도 하지 않는다. Board terminal의 ×와 다르므로 확인 dialog 없음). 본문 xterm. `off`·`unreachable`·`too_old`·`unavailable`은 본문 위에 `message`와 프로젝트 화면(`/projects/<project_id>`) 링크.
+- 버튼(`actions`에 있을 때만 활성): host "인수 요청"·"인수 확인"·"넘기기"·"명령 중지"(`<dialog>`: "<명령 이름>(<owner> 명령)을 중지합니다. SIGINT 뒤 끝나지 않으면 SIGTERM, SIGKILL로 이어집니다")·"강제 종료"(`<dialog>`: "host terminal과 그 안의 process를 바로 끝냅니다. 실행 중인 manager 명령은 결과를 알 수 없게 됩니다"), 끝난 pane "재시작". 결과·거절 이유는 widget 상태 줄에 보인다.
+- 입력(E3, 순수 logic은 `static/board-pane.js`(새)로 S8): manager·worker widget은 TUI `_send_input`과 같은 Ctrl-d 규칙(첫 `\x04`(또는 `ESC \x04`)은 보내지 않고 "Ctrl-d는 OMP를 종료할 수 있습니다 — 2초 안에 Ctrl-d를 한 번 더 누르면 전달" 안내, 2 s 안의 같은 widget 두 번째만 보냄, 다른 key·붙여넣기는 잡아 둔 것을 버리고 자기는 보냄, focus를 옮기면 버림). Host widget은 그대로 보낸다. `input_refused`는 widget 상태 줄에 이유 문장.
+- 배치 key: `wb.board.layout`의 `widgets`에 pane id를 그대로 쓴다(`v` 1 그대로, pane id는 Board id와 겹치지 않음). 맞추기(WBX-D57): 등록이 없어진 프로젝트의 pane 항목은 버린다. 자동 배치는 pane widget을 넣지 않는다(사용자가 더한 것만).
+- 좁은 화면(WBX-D51): panel의 선택 목록에 이 브라우저에 더한 pane widget이 들어간다.
+- 프로젝트 화면 링크(WBX-D64): `GET /projects/{project_id}`에 "작업 공간에서 열기" 링크 `/board#open=<project_id>`. `/board`의 JS가 fragment를 읽고(UUID 모양이고 `projects`에 있을 때만) 그 프로젝트의 manager·worker·host widget을 이 브라우저 배치에 더해(없으면 자동 배치) 보이고 manager에 focus한 뒤 fragment를 지운다. 서버는 fragment를 보지 않는다.
+- CSP·script 규칙은 트랙 D와 같다(`script-src 'self'`, inline 없음, 새 library 없음).
+
+보안(AC-47):
+- `/api/board/panes/*`와 pane id의 `/ws/board/*`는 세션 전용이고 CSRF·Origin 검사를 거친다. Bearer는 401. `/api/v1/`·내부 listener에는 pane 동작이 없다(route audit에 pin). `allow_from`·bind·`[web] enabled = false` 규칙은 트랙 D와 같다.
+- Hub ↔ backend는 `ui.sock`(0600, 같은 uid)이고 backend는 공유 attach를 확인된 Hub process에만 준다. Hub는 연결 전 backend 신원(pid·start ticks)과 welcome `backend_pid`를 확인한다.
+- 프로젝트 root는 registry에서만 얻는다. URL의 id는 registry key 조회에만 쓴다.
+- 프로젝트 이름은 escape·`textContent`(AC-47).
+- 위험의 크기: 웹 로그인으로 manager·worker OMP와 host shell에 입력할 수 있게 된다. Board shell(ADR-0003)이 이미 같은 OS 사용자 권한의 임의 명령이므로 새 권한 등급은 아니다. 보호는 Board와 같이 로그인·bind·감사이고, 감사는 동작을 남기되 keystroke는 남기지 않는다(WBX-D63).
+
+실패와 경계 동작(WBX-D67, AC-46):
+- 꺼짐: relay를 열지 않는다. Pane view `off`, 입력은 `input_refused`(`backend_off`), 동작 API는 503 `backend_off`. 켜지면(다음 `GET /api/board` 또는 다시 시도에서 `on`) 붙어 있던 웹 연결이 있으면 relay를 연다.
+- Backend 끝남·다시 시작(relay EOF, `closing backend_shutdown`, 신원 불일치): 모든 pane `unreachable`(신원이 실행 중 아님이면 `off`). 그 프로젝트의 웹 연결이 남아 있는 동안 1 → 2 → 4 … ≤ 15 s backoff로 다시 붙고, 붙으면 `reset` + replay.
+- `slow_client`로 backend가 relay를 닫음: 위와 같이 다시 붙음(`reset` + replay). 웹 연결은 끊지 않는다.
+- 이전 판 backend(`share_attach` → `unsupported_type`): `too_old`, `message` "이 프로젝트의 backend는 이전 판입니다. 프로젝트를 끄고 다시 켜면 웹에서 pane을 쓸 수 있습니다". 자동으로 다시 시도하지 않고, 그 프로젝트에 새 웹 hello가 오거나 60 s가 지나면 한 번 다시 확인한다. Hub는 backend를 재시작하지 않는다.
+- 공유 attach 거절(`not_attached`: Hub 확인 실패, `queue_full`): `unreachable` + Hub log, backoff 상한 60 s.
+- Hub 재시작: 웹은 1001 → 기존 재연결 → 새 relay.
+- 등록 지움(`wb hub remove`): 그 프로젝트의 웹 연결에 `gone` 뒤 4404, relay 닫기.
+- 메모리: relay가 열린 프로젝트마다 ring 256 KiB × 3, 웹 연결당 송신 queue ≤ 4 MiB, pane당 연결 8.
+
+#### 시험(기존 seam 재사용, 새 seam 없음, 조합 하나는 확인 대상)
+
+| 대상 | seam | 독립 기대값 |
+|---|---|---|
+| `share_attach`·`share_detach`·`resize_owned_by_ui` parse, 모르는 field 거절, `VERSION` 1 | 기존 계약 seam(`tests/contracts/test_ui_v1*.py`) | 이 절 표 |
+| 공유 attach 조건(이름·uid·Hub pid 각각 틀림), primary와 공존, primary 두 번째 `attached_elsewhere` 불변, fan-out(display·state 같은 bytes), 공유 attach의 `slow_client`가 primary를 건드리지 않음, `focus`·`detach` 거절, 크기 규칙, `MAX_SHARED_ATTACHMENTS`, 이전 판 동작(모르는 type → `unsupported_type`) | backend ui_server seam = Hub SPEC S5(`tests/backend/test_ui_server*.py`: 실제 `UiServer` + `FakeController` + 실제 `UiClient`, peer는 `peer_identity` 하위 클래스로 주입) | ui_v1 계약 문구, 이 절 |
+| 실제 pane의 입력 판정·거절 이유·lone Ctrl+C journal이 공유 attach에서도 같음, state push 조건, snapshot `shared_attachments`, 공유 attach 중 TUI attach의 pane 크기 | `tests/backend/test_panes.py` + Hub SPEC S6(실제 backend + fake OMP, driver subprocess) | journal, snapshot, `/proc` |
+| 기존 TUI 동작 불변(웹 공유 attach가 있을 때 TUI 화면·입력·`Ctrl-]`·detach), TUI가 snapshot 새 key를 무시 | Hub SPEC S8(PTY e2e, S6 backend) + 기존 TUI model 시험 | 화면 문자열 |
+| Relay 수명·화면 중계(reset·replay·순서)·입력 pipelining·거절 전달·크기 주인(TUI 있음/없음)·pane 동작 API·감사·실패(꺼짐, backend 재시작, Hub 재시작, 등록 지움) | task-inbox T6(`ProjectSandbox`: 실제 Hub + 실제 backend + fake OMP) + `support/ws_client.py`의 `Tab` 여러 개; TUI 대역은 test가 연 실제 `UiClient(name="workbench-ui")` primary attach | `sqlite3`로 읽은 `audit`, fake OMP가 기록한 입력, backend journal, `/proc` |
+| 이전 판 backend(`unsupported_type`), 신원 불일치 | Hub SPEC S4 계약 fixture backend(`tests/hub/fixtures/contract_backend.py`, `--frames-log`) | frames log, pane view |
+| Route·CSRF·Bearer 401·route audit·id 판정 404·프로젝트 화면 링크·이름 escape | S1 + S6 | 이 절 표 |
+| `board-pane.js`(Ctrl-d 규칙, `actions` → 버튼, 크기 따름 판정, `#open=` parse), panel 프로젝트 묶음 상태, 배치 맞추기 | S8 | 이 절 |
+| 외부 URL·inline script 없음 | S5 | AC-25·47 |
+| 실제 browser + 실제 TUI, IME | S7(WBX-O09) | 사용자 관찰 |
+
+- Fake OMP가 받은 입력을 기록·echo하도록 늘리는 것은 fixture 확장이며 새 seam이 아니다.
+- 확인 대상 조합(BRIEF WBX-O10): 실제 curses TUI(Hub SPEC S8 PTY e2e)와 웹 WebSocket(T6)을 한 시험에서 함께 쓰는 것. 각 seam은 있지만 함께 쓴 적이 없다. E2·E4가 이 조합이 필요하다고 보면 쓰기 전에 orchestrator에 반환하고 사용자 확인을 받는다. 그 전에는 TUI 대역(실제 `UiClient` primary)으로 시험한다.
+- Worker가 위 seam으로 잡을 수 없는 behavior를 찾으면 새 seam을 만들지 말고 반환한다.
+
+### Board shell 결정(WBX-D68·D69, AC-48, s5)
+
+- `BoardLauncher.prepare_shell` 순서: (1) `[board_agent] shell`이 비어 있지 않으면 그 값만 쓴다. 절대 경로이고 실행 가능해야 하며 아니면 지금처럼 `shell_unavailable`(다른 것으로 넘어가지 않음). (2) 비어 있으면 bash: `/bin/bash`, `/usr/bin/bash`, Hub 환경(`hub_environment()`)의 `PATH`에서 찾은 `bash`(`shutil.which(..., path=…)`, 절대 경로일 때만) 순서로 처음 실행 가능한 일반 파일. (3) 없으면 `/bin/sh`, 그것도 실행할 수 없으면 `shell_unavailable`.
+- `$SHELL`은 읽지 않는다. 기술 보완: shell process env의 `SHELL`은 고른 program의 경로로 둔다(그 안에서 `$SHELL`을 띄우는 program이 같은 shell을 쓰게).
+- argv는 `[path]` 하나(login·`-i` 옵션 없음, PTY라 대화형이다). cwd·env·`TERM`·UTF-8 locale은 현행 그대로.
+- 결정은 shell을 시작할 때마다(만들기, 재시작) 한다. 돌던 shell은 그대로다.
+- 시험 가능하게(기술 보완): 고정 후보 `("/bin/bash", "/usr/bin/bash")`와 `/bin/sh`는 `BoardLauncher`의 인자(기본값은 그 값)로 받아, 기존 Board seam(`tests/hub/test_board_launch.py`)에서 temp 경로로 "bash 없음"을 만든다. 실제 Hub의 shell process가 bash인지는 S3(`/proc/<pid>/exe`, `$SHELL=/bin/zsh`를 준 Hub 환경)로 본다.
+- 문서: `hub/config.py` 템플릿 주석("기본값 ""(bash, 없으면 /bin/sh)"), task-inbox USAGE §1.2 표의 `shell` 줄, task-inbox SPEC:68·:389의 개정 주석(WBX-D4).
+
 ### 문서 갱신 배정
 
 | 문서·절 | ticket |
@@ -397,6 +594,8 @@ Actor는 `owner`(Hub 동작은 `hub`), client 주소를 남긴다. `terminal_tak
 | workbench-hub SPEC·USAGE의 MCP 문구, ADR-0004:18, ADR-0005:12(개정 주석), CONTEXT.md의 "(WBX 트랙 B 완료 전에는 MCP가 현행)" 표시 제거, `README.md`의 MCP 언급 | WBX-B9 |
 | task-inbox `PROBE-OMP-MCP.md`, TI ticket | 고치지 않는다(이력) |
 | (s4) task-inbox USAGE §7(머리, 7.2 연결, 7.3 재시작, 7.4 home), §8 감사, §10.3 close code를 트랙 D 현재 동작으로 다시 씀; task-inbox BRIEF·SPEC·ADR-0003·CONTEXT.md의 2026-10-29 개정 주석은 r0.5 작성 때 달았고 D3는 확인만; CONTEXT.md의 "(트랙 D 완료 전에는 현행)" 표시 제거 | WBX-D3 |
+| (s5) task-inbox USAGE §1.2 표의 `shell` 줄, `hub/config.py` 템플릿 주석, task-inbox SPEC:68·:389의 개정 주석(`$SHELL` → bash → `/bin/sh`) | WBX-D4 |
+| (s5) task-inbox USAGE: §6에 "작업 공간에서 열기", §7에 프로젝트 pane widget 절(보기·입력, TUI와 함께 쓰기, 크기 따름, Ctrl-d, host 입력 주인과 거절 이유, 버튼, 실패 표시, 이전 판 backend 재시작 안내), §8 감사 `pane_*`, §10.3에 pane id의 4404·4429; core-workbench SPEC:211(`ui_v1` 설명)에 공유 attach 개정 주석; CONTEXT.md에 "프로젝트 pane widget" 용어; task-inbox BRIEF·SPEC의 2026-10-29 r0.6 개정 주석(D-08·D-09·P2-AC-21·SPEC:318·:515)은 r0.6 작성 때 달았고 E4는 확인만 | WBX-E4 |
 
 ## 상태 전이, 실패와 경계 동작
 
@@ -442,6 +641,10 @@ WBX-D01~D19, BRIEF "제약과 호환성"의 유지 항목(등급·scope, idempot
 | (s3) `/dashboard`·뒤로 가기 | `web/render.py`(`HOME_PATH`), `web/pages/login.py`(`/`·`/dashboard` route), `web/middleware.py`(돌아갈 곳 fallback), `pages/{dashboard,projects,board_status}.py`, `static/{session-check,dashboard,badge}.js` |
 | (s3) Skill 설치 README | `skills/README.md`, `web/pages/settings.py`(한 줄 안내) |
 | (s3) 로그인 완화 | `backend/launcher.py`(`_stop_group`, `check_isolation`), `hub/board/launch.py`·`hub/board/set.py`(log 보존), `tests/integration/live_real_summary.py`(복사 제거) |
+| (s5) 공유 attach | `contracts/ui_v1.py`(type·reason), `backend/ui_server.py`(공유 집합·fan-out·조건·크기), `backend/service.py`(state push 조건, snapshot `shared_attachments`) |
+| (s5) Hub 중계 | `hub/board/panes.py`(새, `PaneRelay`), `hub/board/ws.py`(pane id 분기·message), `web/pages/board_api.py`(pane 동작 API, `projects`), `web/app.py`(route), 감사 |
+| (s5) Pane 화면 | `static/board-pane.js`(새, 순수 logic), `static/board.js`·`board-layout.js`·`board-panel.js`·`board.css`, `web/pages/board.py`, `web/pages/projects.py`(링크) |
+| (s5) Board shell | `hub/board/launch.py`(`prepare_shell`), `hub/config.py`(템플릿 주석) |
 
 ## 수락 기준
 
@@ -476,6 +679,16 @@ BRIEF의 WBX-AC-01~23을 그대로 쓴다. 대응(PLAN.json `acceptance_trace`�
 | 32, 33 (s4) | D1(server·`board-state.js`), D2(표시) | T5(`test_board_ws.py`) + S8 | runtime(loopback), fixture | D3 + 두 기기 사용자 확인 `pending` |
 | 34 (s4) | D1 | T5 + S1(`audit` 행을 `sqlite3`로 읽음) | runtime | D3 |
 | 38 (s4) | D1 | S1(route audit, Bearer 401, CSRF) + S3(정지 확인 목록) + S6(이름 escape) | fixture, runtime | D3 |
+| 39 (s5) | E1(backend 공존·fan-out), E2(중계·WebSocket), E3(표시) | Hub SPEC S5 + S6 + S8(TUI 불변), T6 + `ws_client` | runtime | E4 + 실제 TUI·browser 사용자 확인 `pending`(WBX-O09) |
+| 40 (s5) | E1 | Hub SPEC S5(`test_ui_server*`), 계약 seam(`test_ui_v1*`) | fixture | E4 |
+| 41 (s5) | E1(backend 규칙), E2(Hub 크기 주인), E3(letterbox) | Hub SPEC S5, T6, S8 | fixture, runtime | E4 + 사용자 `pending` |
+| 42 (s5) | E1(admit 경로), E3(Ctrl-d 규칙·거절 표시) | `test_panes.py` + Hub SPEC S6, S8 | runtime, fixture | E4 |
+| 43 (s5) | E2(API·결과 전달), E3(버튼·dialog) | T6 + S1, S8 | runtime, fixture | E4 + 사용자 `pending` |
+| 44 (s5) | E2 | T6 + S1(`audit` 행을 `sqlite3`로 읽음) | runtime | E4 |
+| 45 (s5) | E3 | S8 + S1·S6(panel 틀, 프로젝트 화면 링크) + S5 | fixture, static | E4 + 사용자 `pending` |
+| 46 (s5) | E2(실패·재연결·한도), E3(표시) | T6 + Hub SPEC S4(`contract_backend.py`), S8 | runtime, fixture | E4 |
+| 47 (s5) | E2 | S1(route audit, Bearer 401, CSRF, id 404) + S6(이름 escape) + Hub SPEC S5(공유 attach 조건) | fixture | E4 |
+| 48 (s5) | D4 | 기존 Board seam(`test_board_launch.py`, 후보 인자) + S3(`/proc/<pid>/exe`) | fixture, runtime | D4 |
 
 ## 테스트 결정
 
@@ -509,6 +722,12 @@ BRIEF의 WBX-AC-01~23을 그대로 쓴다. 대응(PLAN.json `acceptance_trace`�
   - (s4) 트랙 D server(D1): `discover -s tests/hub -p 'test_board_*.py'`, `-p 'test_hub_auth*.py'`, `-p 'test_inbox_service.py'`, `-p 'test_hub_board_status_text.py'`, `-p 'test_web_route_audit.py'`, `-p 'test_web_dashboard*.py'`; JS protocol `-p 'test_board_state_js.py'`
   - (s4) 트랙 D 화면(D2): `discover -s tests/hub -p 'test_web_pages_board*.py'`, `-p 'test_web_board_csp*.py'`, `-p 'test_board_state_js.py'`(node: `board_layout*.test.mjs` 등)
   - (s4) 트랙 D 통합(D3): `discover -s tests/hub`, `discover -s tests/backend -p 'test_omp_isolation*.py'`
+  - (s5) Board shell(D4): `discover -s tests/hub -p 'test_board_launch*.py'`, `-p 'test_board_*.py'`(S3 포함), `-p 'test_hub_config_template.py'`
+  - (s5) 공유 attach(E1): `discover -s tests/contracts -p 'test_ui_v1*.py'`, `discover -s tests/backend -p 'test_ui_server*.py'`, `-p 'test_panes.py'`; 실제 backend(Hub SPEC S6) `discover -s tests/hub -p 'test_project_control*.py'`; TUI 불변 `discover -s tests/ui -p 'test_product_model*.py'`, `-p 'test_product_pty*.py'`
+  - (s5) Hub 중계(E2): `discover -s tests/hub -p 'test_board_pane*.py'`, `-p 'test_board_ws*.py'`, `-p 'test_web_route_audit.py'`, `-p 'test_hub_list*.py'`(contract fixture 회귀)
+  - (s5) 화면(E3): `discover -s tests/hub -p 'test_web_pages_board*.py'`, `-p 'test_web_pages_projects*.py'`, `-p 'test_web_board_csp*.py'`, `-p 'test_board_state_js.py'`(node: `board_pane*.test.mjs` 등)
+  - (s5) 트랙 E 통합(E4): `discover -s tests/hub`, `discover -s tests/backend -p 'test_ui_server*.py'`, `discover -s tests/contracts`, `discover -s tests/ui -p 'test_product_*.py'`
+- (s5) 트랙 E·D4는 새 seam이 없다. 재사용: 계약 seam, backend ui_server seam(Hub SPEC S5), Hub SPEC S4·S6·S8, task-inbox T5·T6, S1·S3·S5·S6·S7·S8. 실제 TUI(S8 PTY e2e)와 웹 WebSocket(T6)을 한 시험에서 함께 쓰는 조합은 쓰기 전에 사용자 확인(BRIEF WBX-O10). E1·E2는 독립 test_designer(Sonnet) 필수. 보안·순서 초점: 공유 attach 조건 우회(이름만 맞음, 다른 uid, Hub가 아닌 같은 uid process), 공유 attach가 primary 자리를 차지하는 경로, 공유 attach의 overflow가 TUI를 끊는 경로, TUI가 붙은 뒤 웹 resize가 이기는 경로, replay와 live 사이의 빠짐·중복, `reset` 없이 다른 session bytes가 이어지는 경로, 입력 순서 뒤바뀜, lone Ctrl+C가 합쳐지는 경로, 감사에 입력 내용이 남는 경로, Bearer·cross-origin으로 pane에 닿는 경로.
 - Hub·backend runtime을 만드는 테스트(S2·S3·S4)는 CLAUDE.md "테스트 실행" 규칙: `/tmp` 아래 짧은 private `XDG_RUNTIME_DIR`, temp HOME/XDG_STATE_HOME, `WORKBENCH_HUB_AUTOSTART=0`, 실행 전후 `ls /tmp/omp-workbench-<uid> | wc -l` 동일.
 - 각 ticket 뒤 독립 test_designer(Sonnet)가 계약에서 시나리오를 먼저 도출하고, reviewer가 diff를 본다. 보안 초점: REST cookie 무시, token 재사용·타 key, 오류에 경로·stack 없음, `/skill/`에 `.env`·key 없음, Board shell env, `wb_inbox.py` 출력의 key.
 
@@ -540,6 +759,8 @@ s1의 U1~U10은 2026-10-27 사용자가 모두 제안대로 답했다. 기록은
 
 s4(2026-10-29)의 결정은 BRIEF r0.5 WBX-D41~D58에 있다. 사용자가 바꿀 수 있는 orchestrator 결정은 BRIEF WBX-O08에 모았다(구현을 막지 않음). 이 SPEC s4의 기술 보완 중 사용자 노출 동작에 닿는 값: 격자 칸 크기·widget 최소 크기, `/ws/board/*` 전체 128·세션당 hello 전 8, panel 목록 5 s 갱신, 확인 dialog 문구. D2가 격자 값을 바꾸면 출력에 적는다.
 
+s5(2026-10-29 오후)의 결정은 BRIEF r0.6 WBX-D59~D69에 있다. 사용자가 바꿀 수 있는 트랙 E orchestrator 결정과 seam 조합은 BRIEF WBX-O10에 모았다(seam 조합만 E2 전 확인 필요, 나머지는 구현을 막지 않음). 이 SPEC s5의 기술 보완 중 사용자 노출 동작에 닿는 값: relay 닫기 유예 30 s, `MAX_SHARED_ATTACHMENTS` 4, 이전 판 backend 다시 확인 60 s, 동작 API 답 대기 10 s, "작업 공간에서 열기"가 세 widget을 모두 엶, pane widget의 ×는 확인 없이 감추기만, Board shell env의 `SHELL`을 고른 program으로 둠.
+
 s3(2026-10-28)의 결정은 BRIEF r0.3 WBX-D29~D35에 있다. 사용자에게 물을 새 항목은 없다. 남은 관측: Chrome "Always use secure connections" 설정(A5), 실제 OMP의 RPC stdin EOF 종료(B12), B4 재실행 판정. 메모로 남긴 후속: REST 인증의 executor 공유(위 "외부 요청 API" 메모).
 
 ### 트랙 C 선택(WBX-D14, 2026-10-27)
@@ -559,4 +780,6 @@ PLAN.json이 정본이다(의존·자원·gate·acceptance trace). 요약:
 - I1 최종 통합(← A4·A5·A6·A7·B9·B11·B12·C2).
 - (s4) 트랙 A 보충: A8 한글 IME(선행 없음, 진행 중). 트랙 D: D1 server(← A8; registry·agent 여러 개·shell 여러 개·agent별 신원·공유 연결과 `board-state.js` protocol v2·한도·감사·이행) → D2 workspace 화면(← A8·D1) → D3 문서·통합 확인(← D1·D2). D1은 `board-state.js`와 현행 두 tab 화면의 최소 glue도 v2로 맞춰 D1과 D2 사이에도 `/board`가 동작하게 한다(현행 `board.js`는 protocol 규칙을 `board-state.js`에 둔다).
 - 처음 시작 가능: A1, A2, A3, A6, B1, B12(C0은 충족). `render.py`를 쓰는 A1·A2·A3·A6·C1·C2는 자원 `file:src/workbench/hub/web/render.py`로 직렬화한다. `backend/launcher.py`를 쓰는 B12는 B4 재실행·B5보다 먼저 끝난다.
+- (s5) Board shell: D4(선행 없음, `hub/board/launch.py`). 트랙 E: E1 backend 공유 attach(← D3: 트랙 D 통합 뒤) → E2 Hub 중계·endpoint·동작 API·감사(← E1) → E3 pane widget·버튼·panel 묶음·프로젝트 화면 링크(← E2) → E4 문서·통합(← E3). E1·E2는 Opus + 독립 test_designer, E3·E4·D4는 Sonnet. E2가 쓰는 `hub/board/ws.py`와 E3가 쓰는 `board.js`·`board.css`는 트랙 D(D1·D2) 뒤라 의존 사슬로 직렬화된다.
+- (s5) 요구사항 정본: [requirements-p6.json](requirements-p6.json)(WBX-AC-01~48; p6은 AC-39~48과 gate WBX-G-D4·E1·E2·E3·E4를 더함). PLAN p6 기준 `validate_plan.py` valid.
 - 요구사항 정본: [requirements-p5.json](requirements-p5.json)(p1~p4 판은 이력으로 보존)(WBX-AC-01~38, gate WBX-G-*; p5는 AC-24~38과 gate WBX-G-A8·D1·D2·D3를 더함). PLAN p5 기준 `validate_plan.py` valid. p4까지: WBX-AC-01~23, p4는 수락 기준·gate 변화 없이 authority만 BRIEF r0.4로 갱신.

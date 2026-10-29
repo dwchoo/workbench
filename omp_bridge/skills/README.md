@@ -18,8 +18,11 @@ with explicit read conditions. Read only the reference needed for the current
 action; do not preload the whole reference tree or duplicate its instructions.
 Reuse details already in context instead of reading them again on every call.
 
-The Workbench worker launch also appends a short reporting policy to OMP's
-system prompt. Routine progress stays in the host terminal/logs; Manager reports
+Each launch also appends a short always-on role prompt to OMP's system prompt
+(`MANAGER_ROLE_PROMPT`, `WORKER_ROLE_PROMPT` in `launcher.py`; manager-worker-roles
+MWR-D01): the core role rules a fresh session (e.g. after a pane restart) needs
+before it loads any skill. The skills keep the details. The worker launch also
+appends a short reporting policy. Routine progress stays in the host terminal/logs; Manager reports
 are reserved for actionable issues/decisions, explicit status requests and final
 Task results. Automatic monitor questions require no healthy acknowledgement.
 

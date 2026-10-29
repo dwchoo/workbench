@@ -15,7 +15,8 @@ Scenarios (plan result-p27-cw16-plan-01.md s5.4; C-D72 (3) for F5):
       report (2nd check is the manager's): success / exit != 0 / exit 0 with the failure marker / missing result
       (indeterminate); a missing commit -> preparation failure reported, nothing run.
   F3  a delegated change inside the approved paths -> only a local commit; a local bare remote's refs are
-      unchanged (no push), the experiment worktree is detached (no branch).
+      unchanged (no push), the experiment worktree is detached (no branch). Since manager-worker-roles MWR-D07
+      (Q69 b) the worker has no edit/write: the manager writes src/f3.txt, the worker only runs the commands.
   F5  worker direct requests (C-D72 (3)): no Task -> unrestricted; inside an open Task -> run/report linked to
       that Task; beyond the open Task's scope -> nothing outside the Task runs and the worker's request reaches
       the manager classified as a scope expansion (no new Task, Task unchanged).
@@ -419,21 +420,25 @@ class Cw16FlowScenarios(unittest.TestCase):
         commands = ["git add src/f3.txt", "git commit -qm 'f3 delegated change'"]
         work = {}
 
-        def manager_work(r):
-            work["call"] = rig.to_worker(kind="work", message="write src/f3.txt and commit it locally",
+        def manager_work(r, c):
+            work["call"] = rig.to_worker(kind="work", message="commit the prepared src/f3.txt locally",
                                          spec=spec("F3 delegated change", ["src/"]), commands=commands)
-            return h.tools(work["call"])
+            return work["call"]
 
-        rig.p.on(user_text("f3-work"), manager_work, role="manager", once=True)
+        # MWR-D07: the manager writes the file (its own OMP write tool); the worker only runs the commands.
+        manager = Chain(rig, "manager", user_text("f3-work"), [
+            lambda r, c: rig.p.call("manager", "write", {"path": "src/f3.txt", "content": "F3 delegated change\n"}),
+            manager_work,
+            lambda r, c: "F3 delegated; waiting for the worker's report",
+        ], "f3-manager")
         tid: dict = {}
 
         def first(r, c):
             tid["id"] = r.injected["task_id"]
-            return rig.p.call("worker", "write", {"path": "src/f3.txt", "content": "F3 delegated change\n"})
+            return rig.terminal(commands[0])
 
         worker = Chain(rig, "worker", task_injected, [
             first,
-            lambda r, c: rig.terminal(commands[0]),
             lambda r, c: rig.terminal(commands[1]),
             lambda r, c: rig.to_manager(kind="done", message="F3 committed locally", task_id=tid["id"]),
             lambda r, c: "F3 done",
@@ -443,8 +448,9 @@ class Cw16FlowScenarios(unittest.TestCase):
 
         def delegated():
             rig.say("manager_omp", "f3-work")
-            assert worker.wait(90), {"results": worker.results}
-            write, add, commit, report = worker.results
+            assert worker.wait(90), {"results": worker.results, "manager": manager.results}
+            write = manager.results[0]
+            add, commit, report = worker.results
             assert add["status"] == "exited" and add["exit_code"] == 0, add
             assert commit["status"] == "exited" and commit["exit_code"] == 0, commit
             rig.wait_task(lambda t: t.get("status") == "closed" and t.get("closed_reason") == "done", 60, "F3 done")

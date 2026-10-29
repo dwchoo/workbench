@@ -34,7 +34,7 @@ class ManagerReportIntegrationTests(unittest.TestCase):
 
     def test_report_connection_does_not_widen_worker_tools_or_agents(self):
         self.assertEqual(launcher.WORKER_TOOLS,
-                         ("read", "grep", "glob", "edit", "write", "web_search", "todo", "task"))
+                         ("read", "grep", "glob", "web_search", "todo", "task"))  # MWR-D07: no edit/write
         self.assertEqual(launcher.WORKER_BRIDGE_TOOLS, {"to_manager", "terminal", "workbench_logs", "workbench_records"})
         self.assertEqual(launcher.ROLE_TASK_AGENTS["worker"], {"explorer"})
         self.assertNotIn("important-log-summary", launcher.role_skill_allowlist("manager"))

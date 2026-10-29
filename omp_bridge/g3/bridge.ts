@@ -229,18 +229,19 @@ const TO_WORKER_PARAMETERS = {
 			description: `The active Task this follow-up, cancel or re-run belongs to (from a to_worker result); ${NOT_USED} `
 				+ "null starts a new Task." },
 		kind: { type: "string", enum: ["experiment", "work"],
-			description: "experiment: run a command and judge criteria; work: the worker does the work itself." },
+			description: "experiment: run a command and judge criteria; work: the worker runs the Task's commands; you create and "
+				+ "edit the files and scripts (small changes: exact edit commands such as `sed -i` in commands)." },
 		message: { ...TEXT, description: "The instruction or summary for the worker (no secret values). For kind work "
 			+ "give an executable procedure (commands or steps, allowed fallbacks, when to stop, the result you need "
 			+ "back), not an open question, with the exact commands themselves in commands; keep it as concise as the "
 			+ "task needs: key commands, allowed fallbacks, when to stop, the values to return (no multi-section essays)." },
 		spec: {
 			type: ["object", "null"], additionalProperties: false, required: ["goal", "paths"],
-			description: `The Task: goal and the paths the worker may change (required for a new Task); ${NOT_USED} `
+			description: `The Task: goal and the paths the Task's commands may change (required for a new Task); ${NOT_USED} `
 				+ "null for a follow-up or cancel.",
 			properties: {
 				goal: { ...OPTIONAL_TEXT, description: "What the Task must achieve." },
-				paths: { ...PATHS, description: `Paths the worker may change. ${PATHS.description}` },
+				paths: { ...PATHS, description: `Paths the Task's commands may change. ${PATHS.description}` },
 				instructions: { ...OPTIONAL_TEXT, description: `Extra instructions for the worker; ${NOT_USED}` },
 				execution: {
 					type: ["object", "null"], additionalProperties: false,
@@ -317,7 +318,8 @@ const HANDOFF_TOOLS: Record<Role, { name: "to_worker" | "to_manager"; label: str
 	manager: {
 		name: "to_worker", label: "To worker", parameters: TO_WORKER_PARAMETERS,
 		description: "Send an instruction to the Workbench worker OMP. The worker does the delegated task, not you: "
-			+ "do not do it yourself (no commands, edits or checks for it); wait for the worker's to_manager report. "
+			+ "do not do it yourself (do not run its commands or checks; you write its files and scripts beforehand); "
+			+ "wait for the worker's to_manager report. "
 			+ "The worker is an executor: delegate a procedure (commands or steps to run, fallbacks it may use, when "
 			+ "to stop, what to return); you decide scope and interpretation and write up the result for the user. "
 			+ "E.g. good: \"collect CPU/RAM/GPU/disk with these read-only commands; if one is missing or denied, "

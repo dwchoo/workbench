@@ -30,7 +30,8 @@ import time
 import unittest
 from unittest import mock
 
-from workbench.backend.launcher import RECORDS_PROMPT, WORKER_REPORTING_PROMPT, LaunchPlan
+from workbench.backend.launcher import (MANAGER_ROLE_PROMPT, RECORDS_PROMPT, WORKER_REPORTING_PROMPT,
+                                        WORKER_ROLE_PROMPT, LaunchPlan)
 from workbench.backend.panes import OmpPane
 from workbench.backend.paths import DataLayout, ensure_private_dir
 from workbench.backend.service import Backend
@@ -327,11 +328,17 @@ class RestartLaunchIdentityTests(_BackendCase):
                 self.assertFalse({"--resume", "-r", "--continue", "-c", "--session"} & set(argv), argv)
                 for flag in ("--no-extensions", "--no-title", "--plan-arg"):
                     self.assertIn(flag, argv)
-                # launcher.omp_command always appends the records prompt (worker: reporting prompt first)
-                expected_prompt = (WORKER_REPORTING_PROMPT + "\n\n" + RECORDS_PROMPT if role == "worker"
-                                   else RECORDS_PROMPT)
+                # launcher.omp_command always appends the records prompt after the role prompt (worker: role
+                # prompt, then the reporting prompt). MWR-AC-04: a restarted OMP gets the same always-on role rules.
+                expected_prompt = (WORKER_ROLE_PROMPT + "\n\n" + WORKER_REPORTING_PROMPT + "\n\n" + RECORDS_PROMPT
+                                   if role == "worker" else MANAGER_ROLE_PROMPT + "\n\n" + RECORDS_PROMPT)
                 self.assertEqual(expected_prompt, argv[argv.index("--append-system-prompt") + 1])
                 self.assertEqual("/x/bridge.ts", argv[argv.index("--extension") + 1])
+                if role == "worker":  # MWR-D07: a restarted worker gets no shell and no file-editing tools
+                    tools = argv[argv.index("--tools") + 1].split(",")
+                    self.assertFalse({"bash", "eval", "edit", "write"} & set(tools), tools)
+                else:
+                    self.assertNotIn("--tools", argv)
                 overlays = [argv[i + 1] for i, a in enumerate(argv) if a == "--config"]
                 self.assertTrue(any(p.endswith(f"omp-isolation-{role}.yml") and Path(p).is_file() for p in overlays),
                                 overlays)

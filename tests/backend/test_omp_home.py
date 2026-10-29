@@ -121,7 +121,8 @@ class LauncherEnvironmentTests(HomeFixture):
         self.assertEqual(argv, ["/x/omp", "--config", str(launcher.default_isolation_overlay()),
                                 "--config", "/d/omp-isolation-worker.yml", "--no-extensions",
                                 "--append-system-prompt",
-                                launcher.WORKER_REPORTING_PROMPT + "\n\n" + launcher.RECORDS_PROMPT, "--no-title",
+                                launcher.WORKER_ROLE_PROMPT + "\n\n" + launcher.WORKER_REPORTING_PROMPT + "\n\n"
+                                + launcher.RECORDS_PROMPT, "--no-title",
                                 "--tools", ",".join(launcher.WORKER_TOOLS),  # C-D68: worker without bash/eval
                                 "--model", "m", "--extension", "/x/bridge.ts"])
         shells = self.root / "bin"

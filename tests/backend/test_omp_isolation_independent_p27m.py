@@ -151,10 +151,13 @@ def sha(path: Path) -> str:
 
 
 def expected_append_prompt(role: str, extra: str = "") -> str:
-    """The ``--append-system-prompt`` value of a role (a6d877f): worker reporting prompt (worker only), then the
-    shared records prompt, then any caller text, joined by a blank line. Built from the launcher's constants so the
+    """The ``--append-system-prompt`` value of a role (a6d877f; manager-worker-roles MWR-AC-01/02): the role prompt
+    (manager: manager role prompt; worker: worker role prompt, then the worker reporting prompt), then the shared
+    records prompt, then any caller text, joined by a blank line. Built from the launcher's constants so the
     composition and its order stay pinned without copying the prose."""
-    parts = (launcher.WORKER_REPORTING_PROMPT if role == "worker" else "", launcher.RECORDS_PROMPT, extra)
+    role_parts = {"manager": (launcher.MANAGER_ROLE_PROMPT,),
+                  "worker": (launcher.WORKER_ROLE_PROMPT, launcher.WORKER_REPORTING_PROMPT)}.get(role, ())
+    parts = (*role_parts, launcher.RECORDS_PROMPT, extra)
     return "\n\n".join(part for part in parts if part)
 
 

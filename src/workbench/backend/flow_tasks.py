@@ -227,8 +227,8 @@ def _commands_fields(commands: list[str] | None) -> dict[str, Any]:
             "commands_rule": COMMANDS_RULE}
 
 
-MANAGER_RULE = ("The worker does this Task; do not do it yourself (no commands, edits or checks for it). End "
-                "your turn and wait for the worker's to_manager report.")
+MANAGER_RULE = ("The worker does this Task; do not do it yourself (do not run its commands or checks; you write its "
+                "files and scripts beforehand). End your turn and wait for the worker's to_manager report.")
 # Task Inbox (TI-11, SPEC "Manager 도구"): each link step's own wait; both fit in the bridge's 10 s result limit.
 INBOX_LINK_TIMEOUT = 3.0
 INBOX_SPEC_KEY = "inbox_request_id"  # additive in the Task spec document of a linked revision
@@ -348,7 +348,7 @@ def repo_relative_paths(paths: list[str], project_dir: str | Path | None,
                 continue
             if relative == "":
                 errors.append(f"{where}: is the project root itself; list the repo-relative files or directories "
-                              "the worker may change (e.g. src/)")
+                              "the Task may change (e.g. src/)")
                 continue
             path = relative + ("/" if directory else "")
         while path.startswith("./"):

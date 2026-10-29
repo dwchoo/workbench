@@ -185,10 +185,11 @@ class RoleOverlayTests(unittest.TestCase):
 
 
 class WorkerToolsTests(unittest.TestCase):
-    def test_worker_allowlist_has_no_bash_or_eval_and_keeps_the_file_tools(self):
-        self.assertFalse({"bash", "eval"} & set(launcher.WORKER_TOOLS))
-        self.assertTrue({"read", "grep", "glob", "edit", "write", "web_search", "todo", "task"} <= set(launcher.WORKER_TOOLS))
-        self.assertEqual(launcher.WORKER_FORBIDDEN_TOOLS, {"bash", "eval"})
+    def test_worker_allowlist_has_no_bash_eval_or_file_editing_tools(self):
+        # C-D68 (1); MWR-D07 (Q69 b) removed edit/write: the manager writes every file and script.
+        self.assertFalse({"bash", "eval", "edit", "write"} & set(launcher.WORKER_TOOLS))
+        self.assertTrue({"read", "grep", "glob", "web_search", "todo", "task"} <= set(launcher.WORKER_TOOLS))
+        self.assertEqual(launcher.WORKER_FORBIDDEN_TOOLS, {"bash", "eval", "edit", "write"})
 
     def test_worker_command_passes_tools_before_user_arguments(self):
         command = launcher.omp_command(LaunchPlan(None, "/x/omp", "omp/18.6.1", "/x/bridge.ts", ("--model", "m")),  # type: ignore[arg-type]
@@ -228,7 +229,7 @@ class LeakRuleTests(unittest.TestCase):
         # the worker has no async bash job, so `wait` only invited waiting on a terminal command (smoke-02 M4).
         self.assertNotIn("wait", launcher.WORKER_TOOLS)
         self.assertEqual(set(launcher.WORKER_TOOLS),
-                         {"read", "grep", "glob", "edit", "write", "web_search", "todo", "task"})
+                         {"read", "grep", "glob", "web_search", "todo", "task"})  # MWR-D07: no edit/write
         worker = observed(tools=list(launcher.WORKER_TOOLS) + ["to_manager", "terminal", "wait"],
                           task_agents=["explorer"])
         self.assertEqual(launcher.isolation_leaks(worker, allowed_skills=(), role="worker"), ["tool:wait"])

@@ -16,7 +16,8 @@ Some experiment messages carry a `response_contract` (stage `execute` or judge).
 
 ## Work execution
 - Follow only the manager's steps and allowed fallbacks, inside the Task's paths. Run listed `commands` exactly, one per `terminal` call, in order; never write, change, split or combine them. On failure or missing information, report facts and stop; do not widen scope.
-- Before executing a Work Task or sending its report, read [work and report details](references/reports.md). Before creating or editing task code, read [script rules](../to-worker/references/task-scripts.md).
+- You execute, monitor and report; the manager plans, writes task code and decides. Never write or edit code or scripts and never make decisions. If an instruction is complex or unclear, or needs code written or a judgement, do not do it: report `blocked` with a `reason` asking the manager to split or simplify it.
+- Before executing a Work Task or sending its report, read [work and report details](references/reports.md).
 - Report facts through `to_manager`; finish with `done` or `blocked`. After a queued final report, end your turn; after `done`, do not send another report for the same Task.
 - Do not push, merge or publish. Never put environment variable values or secrets in reports.
 

@@ -6,7 +6,7 @@
 - The Task message shows `analysis` and `analysis_rule`. With `summary` (default): report facts plus a short summary-level analysis only. Analyse in detail only when the Task says `analysis: detailed`.
 - Report: what you ran, the key output, failures/missing items; enough factual detail, no length limit, but no extra investigation or conclusions beyond a summary.
 - One `to_manager` `message` holds 8192 characters; a longer one is rejected. The report itself has no length limit: prefer a concise final report and point to the log or file path that holds full details (for example the `log_path` of a `terminal` command). Only if the Manager explicitly requests the full body, split longer factual output into several `progress` reports before the final `done`.
-- Do the work yourself with your own tools (read, edit; run commands with `terminal`) and stay inside the paths the Task allows. If you need more, ask with `to_manager` (`request`: `goal` and `paths`); the manager decides.
+- Execute with your own tools (read; run commands with `terminal`) and stay inside the paths the Task allows; never write or edit code or scripts (the manager writes them). If you need more, ask with `to_manager` (`request`: `goal` and `paths`); the manager decides.
 - Do not push, merge or publish. Never put environment variable values or secrets in reports.
 - Answer a manager question with `to_manager` `kind: answer` and `in_reply_to` set to its `workbench_message_id`.
 - A question with `payload.stage: periodic_review` is an automatic monitor, not a direct status request: report only a new actionable problem/decision; remain locally quiet toward the Manager when healthy. Routine progress, elapsed/remaining time, budget updates, intermediate completions and "no errors" are not reportable events unless explicitly requested. Avoid unsolicited repeat issue reports without new actionable evidence; explicit answers and the final Task result (`done`/`blocked`) are still required.
@@ -16,7 +16,7 @@
 ## Report fields
 - Report to the manager with the `to_manager` tool. Send every field; set each one you do not use to null:
   - `kind`: `progress` (explicitly requested status or new actionable issue), `done` (Task finished), `blocked` (cannot continue; give `reason`), `answer` (reply to a direct manager question), `report` (other actionable information).
-  - `message` (required): what happened, what you changed, what you checked and its result.
+  - `message` (required): what ran, what happened, what you checked and its result.
   - `task_id`: the Task this belongs to.
   - `in_reply_to`: the `workbench_message_id` of the manager message you answer; otherwise null.
   - `requires_code_change`: `true` only when the result needs a code change (then give `reason`); otherwise null.

@@ -37,6 +37,11 @@ _UNATTACHED_CONTROL = frozenset({ClientType.PAUSE, ClientType.RESUME})
 _HUB_ONLY = frozenset({ClientType.INBOX_NOTICE, ClientType.TASK_STATUS, ClientType.CANCEL_TASK})
 # ... of which these change backend state, so the peer must also be the verified running Hub process (``hub_peer``)
 _HUB_PROCESS_ONLY = frozenset({ClientType.INBOX_NOTICE, ClientType.CANCEL_TASK})
+# WBX-E1: shared attachments (the Hub's ``share_attach``) next to the single primary attach. Hub restarts can overlap
+# an old connection that has not closed yet, hence more than one.
+MAX_SHARED_ATTACHMENTS = 4
+# ... which may not move the backend focus (it moves the UI's) or detach the primary: these stay primary-only
+_PRIMARY_ONLY = frozenset({ClientType.FOCUS, ClientType.DETACH})
 
 
 class Held(Exception):
@@ -108,6 +113,8 @@ class UiServer:
         self.max_outbound = max_outbound
         self.connections: list[_Connection] = []
         self.attached: _Connection | None = None
+        # WBX-E1: the Hub's shared attachments, in attach order; they get display and state like the primary
+        self.shared: list[_Connection] = []
         self.stats = {"accepted": 0, "closed": 0, "protocol_errors": 0, "version_rejects": 0,
                       "attaches": 0, "detaches": 0, "handler_errors": 0}
         listener = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
@@ -254,8 +261,7 @@ class UiServer:
             self._queue(connection, ui_v1.encode_frame(
                 {"v": ui_v1.VERSION, "type": ServerType.CLOSING.value, "reason": Reason.SLOW_CLIENT.value}))
             connection.closing = True
-            if connection is self.attached:
-                self._detach(connection)
+            self._release(connection)
             return
         self._queue(connection, data)
 
@@ -270,12 +276,10 @@ class UiServer:
     def _fail(self, connection: _Connection, reason: Reason, detail: str) -> None:
         self._header(connection, ui_v1.reject(reason, detail))
         connection.closing = True
-        if connection is self.attached:
-            self._detach(connection)
+        self._release(connection)
 
     def _drop(self, connection: _Connection) -> None:
-        if connection is self.attached:
-            self._detach(connection)
+        self._release(connection)
         if connection in self.connections:
             self.connections.remove(connection)
             self.stats["closed"] += 1
@@ -284,20 +288,38 @@ class UiServer:
         except OSError:
             pass
 
+    def _release(self, connection: _Connection) -> None:
+        """A closing or closed connection leaves its attachment: the primary detaches, a shared one leaves the set
+        (WBX-E1; the primary and the other attachments are not touched)."""
+        if connection is self.attached:
+            self._detach(connection)
+        if connection in self.shared:
+            self.shared.remove(connection)
+
     def _detach(self, connection: _Connection) -> None:
         if self.attached is connection:
             self.attached = None
             self.stats["detaches"] += 1
             self.controller.on_detach()
 
+    def _attachments(self) -> list[_Connection]:
+        """The primary attach and every shared attachment that is not closing (a copy: sending may drop one)."""
+        primary = [self.attached] if self.attached is not None else []
+        return [c for c in primary + self.shared if not c.closing]
+
     def broadcast(self, chunk: DisplayChunk) -> None:
-        if self.attached is not None and not self.attached.closing:
-            self._send(self.attached, ui_v1.encode_display(chunk))
+        attachments = self._attachments()
+        if attachments:
+            frame = ui_v1.encode_display(chunk)
+            for connection in attachments:
+                self._send(connection, frame)
 
     def push_state(self, snapshot: dict[str, Any]) -> None:
-        if self.attached is not None and not self.attached.closing:
-            self._header(self.attached, {"v": ui_v1.VERSION, "type": ServerType.STATE.value,
-                                         "snapshot": snapshot})
+        attachments = self._attachments()
+        if attachments:
+            frame = ui_v1.encode_frame({"v": ui_v1.VERSION, "type": ServerType.STATE.value, "snapshot": snapshot})
+            for connection in attachments:
+                self._send(connection, frame)
 
     # -- requests --------------------------------------------------------
     def _handle(self, connection: _Connection, frame: ui_v1.Frame) -> None:
@@ -372,6 +394,10 @@ class UiServer:
         if self.attached is not connection:
             raise Held(Reason.NOT_ATTACHED, "attach before sending terminal or control input")
 
+    def _require_primary(self, connection: _Connection, kind: ClientType) -> None:
+        if kind in _PRIMARY_ONLY and connection in self.shared:
+            raise Held(Reason.NOT_ATTACHED, f"{kind.value} is for the primary attach only")
+
     @staticmethod
     def _may_control_unattached(connection: _Connection) -> bool:
         """``pause``/``resume`` without attaching (HB-06): only a ``NON_ATTACHED_CONTROL_CLIENTS`` hello name whose
@@ -396,7 +422,16 @@ class UiServer:
         kind, fields, controller = message.type, message.fields, self.controller
         if kind is ClientType.SNAPSHOT:
             return {"snapshot": controller.snapshot()}
+        if kind is ClientType.SHARE_ATTACH:
+            return self._share_attach(connection, message)
+        if kind is ClientType.SHARE_DETACH:
+            if connection not in self.shared:
+                raise Held(Reason.NOT_ATTACHED, "this connection is not a shared attachment")
+            self.shared.remove(connection)
+            return {"detached": True}
         if kind is ClientType.ATTACH:
+            if connection in self.shared:
+                raise Held(Reason.INVALID_MESSAGE, "a shared attachment cannot attach; share_detach first")
             if self.attached is not None and self.attached is not connection:
                 raise Held(Reason.ATTACHED_ELSEWHERE, "another UI client is attached")
             if self.attached is None:
@@ -408,6 +443,7 @@ class UiServer:
                 self._send(connection, ui_v1.encode_display(chunk, replay=True))
             return None
         if kind is ClientType.DETACH:
+            self._require_primary(connection, kind)
             self._require_attached(connection)
             self._detach(connection)
             return {"detached": True}
@@ -441,7 +477,9 @@ class UiServer:
                 return controller.task_status(fields["task_ids"], fields["detail"])
             return controller.cancel_task(fields["task_id"], fields["request_id"], fields["expect"],
                                           fields["reason"])
-        if not (kind in _UNATTACHED_CONTROL and self._may_control_unattached(connection)):
+        if connection in self.shared:
+            self._require_primary(connection, kind)
+        elif not (kind in _UNATTACHED_CONTROL and self._may_control_unattached(connection)):
             self._require_attached(connection)
         if kind in {ClientType.INPUT, ClientType.PASTE}:
             data = message.payload
@@ -452,6 +490,13 @@ class UiServer:
                 raise Held(*refused)
             return {"pane": fields["pane"].value, "accepted_bytes": len(data)}
         if kind is ClientType.RESIZE:
+            if connection in self.shared:
+                # WBX-E1 (WBX-D60): the attached UI owns the size; decided here on the loop, so a web resize never
+                # wins over a UI that attached first
+                if fields["pane"] is None:
+                    raise Held(Reason.INVALID_MESSAGE, "a shared attachment's resize names its pane")
+                if self.attached is not None:
+                    raise Held(Reason.RESIZE_OWNED_BY_UI, "the attached UI owns the pane size")
             controller.resize(fields["pane"], fields["rows"], fields["cols"])
             return {}
         if kind is ClientType.FOCUS:
@@ -474,6 +519,22 @@ class UiServer:
         if kind is ClientType.RESUME:
             return controller.resume(fields["reconciled"])
         raise Held(Reason.UNSUPPORTED_TYPE, f"unsupported type {kind.value}")
+
+    def _share_attach(self, connection: _Connection, message: ui_v1.ClientMessage) -> None:
+        """WBX-E1: make a verified Hub connection a shared attachment; answered like ``attach`` (result + snapshot,
+        then every pane's replay, then live), without the UI's ``on_attach`` and without touching the attach slot."""
+        if not (self._may_control_unattached(connection) and self._is_hub_process(connection)):
+            raise Held(Reason.NOT_ATTACHED, "share_attach is a Workbench Hub request")
+        if connection is self.attached:
+            raise Held(Reason.INVALID_MESSAGE, "the primary attachment cannot also share_attach")
+        if connection in self.shared:
+            raise Held(Reason.INVALID_MESSAGE, "this connection is already a shared attachment")
+        if len(self.shared) >= MAX_SHARED_ATTACHMENTS:
+            raise Held(Reason.QUEUE_FULL, f"at most {MAX_SHARED_ATTACHMENTS} shared attachments")
+        self.shared.append(connection)
+        self._header(connection, ui_v1.result(message.id, True, snapshot=self.controller.snapshot()))
+        for chunk in self.controller.replay():
+            self._send(connection, ui_v1.encode_display(chunk, replay=True))
 
     # -- stop_command (CS-O10) --------------------------------------------
     def _start_stop(self, connection: _Connection, request_id: str, command_id: str) -> dict[str, Any]:
@@ -524,7 +585,7 @@ class UiServer:
             delivered = True
             if connection in self.connections and not connection.closing:  # a client that left misses it
                 self._send_stop_final(connection, request_id, command_id, outcome)
-        if delivered and self.attached is not None:
+        if delivered and self._attachments():
             try:  # the command's state changed: tell the UI at once, not on the next periodic push
                 self.push_state(self.controller.snapshot())
             except Exception:

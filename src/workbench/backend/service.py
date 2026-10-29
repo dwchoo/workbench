@@ -953,6 +953,8 @@ class Backend:
                             "started_at": self.started_wall, "omp_version": self.plan.omp_version},
                 "phase": self.phase, "reason": self.reason,
                 "attached": self.ui is not None and self.ui.attached is not None,
+                # WBX-E1 (additive): the Hub's shared attachments; ``attached`` still means the primary (UI) attach
+                "shared_attachments": len(self.ui.shared) if self.ui is not None else 0,
                 "focus": self.focus.value,
                 "panes": self._panes_view(task),
                 "bridge": self.bridge_state(), "automation": (automation := self._automation_view()),

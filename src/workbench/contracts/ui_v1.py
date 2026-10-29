@@ -270,6 +270,29 @@ slot and push no ``state``. An older backend answers ``unsupported_type``.
   stopped; a repeated cancel of a Task the user already cancelled answers the
   same ``cancel`` with ``stop: null`` and ``repeat: true``.
 
+Hub shared attach (web-board-ux WBX-E1, WBX-D65; additive, the contract version stays 1)
+------------------------------------------------------------------------------------
+``share_attach`` (no field besides ``v``/``type``/``id``; any other is ``invalid_message``) makes the connection a
+shared attachment next to the single ``attach`` (the primary, the TUI), which is unchanged. It is served only when the
+hello ``client`` is in :data:`NON_ATTACHED_CONTROL_CLIENTS`, the peer uid read at accept is the backend's effective uid
+and the peer pid is the verified running Hub (as ``inbox_notice``/``cancel_task``); otherwise ``not_attached`` and
+nothing changes. The primary connection and a connection that is already shared get ``invalid_message`` (so does
+``attach`` from a shared connection); more than four shared attachments get ``queue_full``. The answer is ``result ok``
+with ``snapshot``, then each pane's replay (``replay: true``), then live display and ``state`` pushes, in the
+primary's order. Display and state reach the primary and every shared attachment; each has its own outbound buffer
+and one that overflows is closed alone with ``closing slow_client``. A ``stop_command`` final goes to the requester
+only; the ``state`` push after it, or after a successful ``restart_pane``/``kill_pane``, reaches every attachment.
+``share_detach`` -> ``{detached: true}`` ends it (``not_attached`` for a connection that is not shared).
+
+A shared attachment may send ``input``, ``paste``, ``resize``, ``takeover_request``, ``takeover_confirm``,
+``handoff``, ``restart_pane``, ``kill_pane``, ``stop_command`` and ``share_detach``, handled exactly as the
+primary's (the same admit path, refusal reasons, lone Ctrl+C rule and journal; one host shell input owner per
+backend, ``user`` covering the TUI and the web alike). ``focus`` and ``detach`` are ``not_attached`` (primary attach
+only). Its ``resize`` must name a ``pane`` (else ``invalid_message``) and is refused with ``resize_owned_by_ui``
+while a primary is attached; without one it resizes that pane (the last resize wins). ``share_attach`` never resizes.
+The snapshot's ``shared_attachments`` is the number of shared attachments; ``attached`` still means the primary. An
+older backend answers ``share_attach`` with ``unsupported_type``.
+
 Automation state (CW-18 U3; additive)
 -------------------------------------
 A snapshot's ``automation`` is ``{state, source, detail, paused, transition,
@@ -377,6 +400,8 @@ class ClientType(StrEnum):
     INBOX_NOTICE = "inbox_notice"
     TASK_STATUS = "task_status"
     CANCEL_TASK = "cancel_task"
+    SHARE_ATTACH = "share_attach"  # WBX-E1: Hub-only shared attachment (additive; the version stays 1)
+    SHARE_DETACH = "share_detach"
 
 
 class ServerType(StrEnum):
@@ -424,11 +449,14 @@ class Reason(StrEnum):
     HOST_SHELL_AUTOMATION = "host_shell_automation"
     RESUME_NOT_RECONCILED = "resume_not_reconciled"
     TASK_CHANGED = "task_changed"  # Task Inbox cancel_task: the Task or its command is not what was confirmed
+    RESIZE_OWNED_BY_UI = "resize_owned_by_ui"  # WBX-E1: a shared attachment's resize while a UI is attached
 
 
 # Requests whose ``id`` is mandatory. ``hello`` is answered by welcome/reject.
 _REQUEST_TYPES = frozenset(ClientType) - {ClientType.HELLO}
 _PAYLOAD_TYPES = frozenset({ClientType.INPUT, ClientType.PASTE})
+# Requests that carry no field besides ``v``/``type``/``id``; any other field is refused (WBX-E1)
+_FIELDLESS_TYPES = frozenset({ClientType.SHARE_ATTACH, ClientType.SHARE_DETACH})
 
 
 class ProtocolError(ContractError):
@@ -610,7 +638,11 @@ def parse_client_frame(frame: Frame, version: int | None) -> ClientMessage:
     if kind not in _PAYLOAD_TYPES and (frame.payload or frame.discarded_bytes):
         raise ContractError(f"{kind.value} carries no payload")
     fields: dict[str, Any] = {}
-    if kind in _PAYLOAD_TYPES:
+    if kind in _FIELDLESS_TYPES:
+        extra = sorted(set(header) - {"v", "type", "id"})
+        if extra:
+            raise ContractError(f"{kind.value} carries no fields: {', '.join(map(str, extra))}")
+    elif kind in _PAYLOAD_TYPES:
         fields["pane"] = _pane(header.get("pane"))
     elif kind is ClientType.RESIZE:
         fields["pane"] = _pane(header.get("pane")) if header.get("pane") is not None else None

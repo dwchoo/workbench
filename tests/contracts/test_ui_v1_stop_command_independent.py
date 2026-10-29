@@ -22,9 +22,11 @@ def parse(header, payload=b"", discarded=0, version=1):
 
 class StopCommandParseTests(unittest.TestCase):
     def test_exactly_the_known_new_client_types_exist(self):
-        # stop_command (CS) plus the three Hub-only Task Inbox requests (TI-09, SPEC "Hub -> backend"); nothing else.
+        # stop_command (CS) plus the three Hub-only Task Inbox requests (TI-09, SPEC "Hub -> backend") and the two
+        # Hub-only shared attach requests (WBX-E1, web-board-ux SPEC s5); nothing else.
         self.assertEqual({t.value for t in ClientType},
-                         BASELINE_CLIENT_TYPES | {"stop_command", "inbox_notice", "task_status", "cancel_task"})
+                         BASELINE_CLIENT_TYPES | {"stop_command", "inbox_notice", "task_status", "cancel_task",
+                                                  "share_attach", "share_detach"})
 
     def test_a_canonical_uuid_of_any_version_parses_to_that_id_only(self):
         ids = [str(uuid4()), "12345678-1234-1234-8234-123456789abc", "01890a5d-ac96-774b-bcce-b302099a8057",

@@ -408,30 +408,34 @@ def managed_controller_source(shell: str, *, handoff_checks: bool = False) -> st
     """Persistent control shell launches a fixed helper with one opaque token."""
     helper = shlex.quote(str(Path(__file__).resolve()))
     bash = Path(shell).name == "bash"
+    # HSB review fix 2: the persistent Bash controller calls builtins through ``builtin`` (and reads files with
+    # ``$(<file)``) so a user function named printf/trap/read/cat/... cannot replace them. sh has no ``builtin``.
+    b = "builtin " if bash and handoff_checks else ""
+    read_traps = '$(< "$BOUNDARY_TRAPS")' if b else '$(cat "$BOUNDARY_TRAPS")'
     prompt = ("PROMPT_COMMAND='__b_emit READY'\nPS1='$ '\n" if bash else
               "PS1='$( __b_emit READY; printf \"$ \" )'\n")
     prompt_check = (
-        '[ "$PROMPT_COMMAND" = "__b_emit READY" ] || '
-        '[ "$PROMPT_COMMAND" = "__b_emit PRIOR_HOOK; __b_emit READY" ]'
+        f'{b}[ "$PROMPT_COMMAND" = "__b_emit READY" ] || '
+        f'{b}[ "$PROMPT_COMMAND" = "__b_emit PRIOR_HOOK; __b_emit READY" ]'
         if bash else
         '[ "$PS1" = \'$( __b_emit READY; printf "$ " )\' ] || '
         '[ "$PS1" = \'$( __b_emit PRIOR_HOOK; __b_emit READY; printf "$ " )\' ] || '
         '[ "$PS1" = "$VIRTUAL_ENV_PROMPT"\'$( __b_emit READY; printf "$ " )\' ] || '
         '[ "$PS1" = "$VIRTUAL_ENV_PROMPT"\'$( __b_emit PRIOR_HOOK; __b_emit READY; printf "$ " )\' ]'
     )
-    ps1_check = ('[ "$PS1" = \'$ \' ] || { [ -n "$VIRTUAL_ENV" ] && '
-                 '[ "$PS1" = "$VIRTUAL_ENV_PROMPT"\'$ \' ]; }' if bash else ":")
+    ps1_check = (f'{b}[ "$PS1" = \'$ \' ] || {{ {b}[ -n "$VIRTUAL_ENV" ] && '
+                 f'{b}[ "$PS1" = "$VIRTUAL_ENV_PROMPT"\'$ \' ]; }}' if bash else ":")
     handoff = '__b_emit "HANDOFF:$$"; __b_loop'
     if handoff_checks:
-        handoff = '''__b_emit "HANDOFF:$$"
-    trap > "$BOUNDARY_TRAPS"
+        handoff = f'''__b_emit "HANDOFF:$$"
+    {b}trap >| "$BOUNDARY_TRAPS"
     if ! __b_hook_compatible; then
         __b_emit HOOK_REJECTED
-        return 1
+        {b}return 1
     fi
     __b_emit HOOK_OK:HANDOFF
     __b_emit JOBS_BEGIN:HANDOFF
-    jobs -p >&9
+    {b}jobs -p >&9
     __b_emit JOBS_END:HANDOFF
     __b_emit "CONTROL_READY:$$"
     __b_loop'''
@@ -445,38 +449,38 @@ def managed_controller_source(shell: str, *, handoff_checks: bool = False) -> st
     env_bin = shutil.which("env", path="/usr/bin:/bin")
     cut_bin = shutil.which("cut", path="/usr/bin:/bin")
     if bash:
-        env_names = "{ printf 'WBENV1 L\\n' && compgen -e && printf '\\001END\\n'; }"
+        env_names = f"{{ {b}printf 'WBENV1 L\\n' && {b}compgen -e && {b}printf '\\001END\\n'; }}"
     elif env_bin and cut_bin:
         env_names = (f"{{ printf 'WBENV1 Z\\n' && {shlex.quote(env_bin)} -0 | {shlex.quote(cut_bin)} -z -d= -f1 "
                      "&& printf '\\001END\\n'; }")
     else:
         env_names = ":"  # no names file: the environment stays unverified (never guessed)
     emit = f'''__b_emit() {{
-    if [ "$1" = READY ] && [ -n "${{BOUNDARY_ENV_NAMES-}}" ]; then
+    if {b}[ "$1" = READY ] && {b}[ -n "${{BOUNDARY_ENV_NAMES-}}" ]; then
         {env_names} 2>/dev/null >|"$BOUNDARY_ENV_NAMES"
     fi
-    printf '%s\\n' "$1" >&9
+    {b}printf '%s\\n' "$1" >&9
 }}'''
     return f'''{emit}
 {prompt}
 __b_hook_compatible() {{
-    {{ {prompt_check}; }} || return 1
-    {{ {ps1_check}; }} || return 1
-    case "$(cat "$BOUNDARY_TRAPS")" in *CHLD*) return 1;; esac
+    {{ {prompt_check}; }} || {b}return 1
+    {{ {ps1_check}; }} || {b}return 1
+    case "{read_traps}" in *CHLD*) {b}return 1;; esac
 }}
 __b_loop() {{
-    trap > "$BOUNDARY_TRAPS"
-    trap '__b_emit PARENT_INT' INT
+    {b}trap >| "$BOUNDARY_TRAPS"
+    {b}trap '__b_emit PARENT_INT' INT
     __b_emit "WAIT:$$:$PWD:$BOUNDARY_PREPARED"
-    while :; do
-        if IFS= read -r __b_line <&8; then
+    while {b}:; do
+        if IFS= {b}read -r __b_line <&8; then
             case $__b_line in
                 RUN:*)
                     __b_payload=${{__b_line#RUN:}}
                     if ! __b_hook_compatible; then
                         __b_emit HOOK_LOST
                         __b_emit HOOK_REJECTED
-                        continue
+                        {b}continue
                     fi
                     __b_emit ACCEPT
                     __b_emit START
@@ -489,22 +493,22 @@ __b_loop() {{
                     __b_emit "WAIT:$$:$PWD:$BOUNDARY_PREPARED"
                     ;;
                 TAKEOVER)
-                    trap - INT
-                    eval "$(cat "$BOUNDARY_TRAPS")"
-                    trap > "$BOUNDARY_TRAPS_AFTER"
+                    {b}trap - INT
+                    {b}eval "{read_traps}"
+                    {b}trap >| "$BOUNDARY_TRAPS_AFTER"
                     __b_emit "TAKEOVER_ACK:$$"
-                    return
+                    {b}return
                     ;;
                 *) __b_emit BAD_REQUEST;;
             esac
         else
             __b_emit CONTROL_LOST
-            while :; do sleep 1; done
+            while {b}:; do {b and "builtin command "}sleep 1; done
         fi
     done
 }}
 __b_handoff() {{ {handoff}; }}
-alias wb-handoff=__b_handoff
+{b}alias wb-handoff=__b_handoff
 '''
 
 

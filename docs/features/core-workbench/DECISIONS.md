@@ -46,6 +46,7 @@
 - C-D40: 같은 답변의 `2-a`. Worktree 준비 실패는 worker가 원인을 보고하고 manager와 조정해 허용 범위 내 local commit 준비·새 경로 선택 등으로 자동 해결한다. 해결할 수 없거나 추가 권한이 필요하면 사용자에게 묻는다. 사용자 변경을 임의 삭제·stash하거나 개발 중 디렉터리에서 대신 실행하지 않는다. 첫 버전은 일반 도구와 운영 가이드로 적용한다.
 
 - C-D41: 사용자가 `zsh가 설치되어 있어도 bash를 실행해서 할 수 있는거잖아? 그러면 일단 bash만 하는게 좋겠어.`라고 명확히 했다. 기본/login shell이 zsh여도 Workbench의 host terminal은 전용 persistent Bash로 시작한다. 사용자 기본 shell 설정은 변경하지 않는다. 최초 Bash 시작과 실행 오류를 우회하기 위한 매 작업 새 shell 시작은 구분한다. C-D39의 미지원 shell 제한은 기존 기본 shell이 zsh라는 이유로 Workbench 시작을 막는 의미가 아니다.
+  - 2026-10-29 보완: host Bash의 `--rcfile` init이 먼저 사용자 `~/.bashrc`를 source하고 Workbench hook을 마지막에 다시 정한다(사용자 파일은 읽기만 하며 v0.3 명세 §5.2 "초기화 파일 상태 유지"와 정렬). [host-shell-bashrc BRIEF](../host-shell-bashrc/BRIEF.md) HSB-D01~D07.
 
 - C-D42: 사용자가 `bash 혹은 못해도 sh는 지원해야해.`라고 보완했다. Bash 우선, Bash가 없으면 sh로도 Workbench를 사용할 수 있도록 최소 지원 대상으로 포함한다. C-D39/C-D41의 Bash 전용 출시 범위를 확장하며 zsh adapter는 계속 후속이다. 기본/login shell 설정을 바꾸지 않고 전용 persistent shell을 시작한다. sh의 실제 구현별 자동 실행·관측·입력 경합을 검증해야 하며 Bash 시험만으로 sh 지원 완료를 선언하지 않는다.
 

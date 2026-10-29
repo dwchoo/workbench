@@ -73,6 +73,7 @@ check `p27-cw16-compat-c18-r2`(exit 0)의 결과다. 같은 argv의 첫 실행 `
 - PROMPT_COMMAND(bash)나 PS1(dash)을 덮어쓰면 자동 입력은 정확히 보류된다. C16에서는 사유가 `not at a clean prompt (mode manual_input)`로만 표시됐다. fix-03 뒤 C18 보고서의 사유 문구는 "…(mode manual_input): a user PROMPT_COMMAND (bash) or PS1 (sh) change may have replaced Workbench's prompt hook, or a shell builtin or multi-line command is still running or waiting for input"이다. builtin `read`, 반복문, PS2 continuation도 같은 상태라서 원인을 단정하지 않는다.
 - `setsid`(`-w` 없음)로 double-fork해 shell tree를 벗어난 daemon은 추적되지 않는다.
 - C-D55에 따라 conda 전용 activation과 deactivation은 범위 밖이다.
+- Host Bash는 시작할 때 사용자 `~/.bashrc`를 적용하고 그 뒤 PS1·PROMPT_COMMAND·trap·옵션을 Workbench 값으로 되돌린다. rc가 끝나지 않거나 hook을 되돌릴 수 없게 만들면 rc 없이 다시 시작하고 이유를 pane에 보인다([host-shell-bashrc BRIEF](../host-shell-bashrc/BRIEF.md) HSB-D02·D05). 위 보류 규칙은 시작 뒤 사용자가 직접 바꾼 경우에 그대로 적용된다.
 
 ## 4. OMP 버전별 판정
 

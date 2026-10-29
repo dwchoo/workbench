@@ -675,7 +675,8 @@ class ShellPane(_OwnedSession, Pane):
         # A restarted host shell (C-D63) streams under a new session id and a higher generation.
         self.generation = generation
         self.choice = choice
-        self.shell = PersistentShell(user_environment=environment, choice=choice)
+        # HSB-D01: the product host shell applies the user's ~/.bashrc (restart included).
+        self.shell = PersistentShell(user_environment=environment, choice=choice, load_user_rc=True)
         self._pending = bytearray()
         self.pid = self.shell.parent_pid
         self.ref = process_ref("host_shell", self.pid)
@@ -892,7 +893,8 @@ class ShellPane(_OwnedSession, Pane):
                 "takeover_confirmed": state["takeover_confirmed"],
                 "held_reasons": list(state["held_reasons"]), "request_id": life.get("request_id"),
                 "supervisor": ref_dict(self._supervisor_ref) if life.get("supervisor_pid") else None,
-                "unknown": list(life.get("unknown") or ()), "error": self.error}
+                "unknown": list(life.get("unknown") or ()), "error": self.error,
+                "user_rc": None if self.shell.user_rc is None else dict(self.shell.user_rc)}
 
     def shutdown_work(self) -> dict[str, Any]:
         """종료 동의에 표시할 현재 session jobs; shell 입력 없이 읽는다."""
